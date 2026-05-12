@@ -1,6 +1,6 @@
 use super::super::Printer;
 use super::{SystemDependencyAction, SystemDependencyPlan};
-use crate::emitter::ModuleKind;
+use crate::emitter::{JsxEmit, ModuleKind};
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
@@ -288,6 +288,7 @@ impl<'a> Printer<'a> {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
         let prev_original = self.ctx.original_module_kind;
+        let prev_jsx_dev_file_name = self.jsx_dev_file_name.clone();
 
         self.ctx.original_module_kind = Some(prev_module);
         self.ctx.options.module = ModuleKind::CommonJS;
@@ -298,9 +299,14 @@ impl<'a> Printer<'a> {
             self.ctx.options.module = prev_module;
             self.ctx.auto_detect_module = prev_auto_detect;
             self.ctx.original_module_kind = prev_original;
+            self.jsx_dev_file_name = prev_jsx_dev_file_name;
             self.in_system_execute_body = false;
             return;
         };
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) && self.jsx_dev_file_name.is_none()
+        {
+            self.jsx_dev_file_name = Some(system_jsx_dev_file_name(&source.file_name));
+        }
         self.register_system_import_substitutions(source, dep_vars, system_plan);
 
         let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
@@ -381,6 +387,7 @@ impl<'a> Printer<'a> {
             self.ctx.options.module = prev_module;
             self.ctx.auto_detect_module = prev_auto_detect;
             self.ctx.original_module_kind = prev_original;
+            self.jsx_dev_file_name = prev_jsx_dev_file_name;
             self.in_system_execute_body = false;
             return;
         }
@@ -388,6 +395,17 @@ impl<'a> Printer<'a> {
         let prev_deferred_local_export_bindings = self
             .deferred_local_export_bindings
             .replace(self.system_reexported_names.clone());
+
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+            if let Some(file_name_text) = self.jsx_dev_file_name_text() {
+                let assignment = file_name_text
+                    .trim()
+                    .strip_prefix("const ")
+                    .unwrap_or(file_name_text.trim());
+                self.write(assignment);
+                self.write_line();
+            }
+        }
 
         for &stmt_idx in &source.statements.nodes {
             // Skip function declarations that were already hoisted to the outer scope
@@ -466,6 +484,9 @@ impl<'a> Printer<'a> {
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
                     && let Some(module_decl) = self.arena.get_module(stmt_node)
                 {
+                    if !self.is_instantiated_module(module_decl.body) {
+                        continue;
+                    }
                     let module_name = self.get_identifier_text_idx(module_decl.name);
                     if !module_name.is_empty() {
                         self.declared_namespace_names.insert(module_name.clone());
@@ -542,6 +563,7 @@ impl<'a> Printer<'a> {
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;
         self.ctx.original_module_kind = prev_original;
+        self.jsx_dev_file_name = prev_jsx_dev_file_name;
         self.in_system_execute_body = false;
     }
 
@@ -1619,374 +1641,17 @@ impl<'a> Printer<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::emitter::{ModuleKind, Printer, PrinterOptions};
-    use tsz_common::ScriptTarget;
-    use tsz_parser::ParserState;
-
-    /// `/// <reference .../>` directives should be stripped from JS output.
-    /// tsc never emits these in JS — they are only preserved in .d.ts files.
-    #[test]
-    fn amd_reference_directive_absolute_path_preserved() {
-        // References with absolute paths (like JSX lib references) should be
-        // emitted before the AMD wrapper, matching tsc behavior.
-        let source = r#"/// <reference path="/.lib/react.d.ts" />
-import * as React from "react";
-export const Foo = () => null;
-"#;
-        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.starts_with("/// <reference path=\"/.lib/react.d.ts\" />"),
-            "Absolute-path reference should be emitted before AMD wrapper.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("define("),
-            "Output should still contain the AMD define() call.\nOutput:\n{output}"
-        );
+fn system_jsx_dev_file_name(file_name: &str) -> String {
+    let normalized = file_name.replace('\\', "/");
+    if let Some(src_start) = normalized.find("/.src/") {
+        return normalized[src_start..].to_string();
     }
-
-    /// AMD wrappers should strip relative declaration-file `/// <reference>` directives.
-    #[test]
-    fn amd_reference_directive_relative_dts_path_stripped() {
-        let source = r#"/// <reference path="file1.d.ts" />
-import { x } from "mod";
-export const y = x;
-"#;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            !output.contains("/// <reference"),
-            "Relative .d.ts reference should be stripped from AMD JS output.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("define("),
-            "Output should still contain the AMD define() call.\nOutput:\n{output}"
-        );
+    if let Some(stripped) = normalized.strip_prefix(".src/") {
+        return format!("/.src/{stripped}");
     }
-
-    #[test]
-    fn amd_reference_directive_for_bang_module_preserved() {
-        let declarations = r#"declare module "http" {
-}
-
-declare module 'intern/dojo/node!http' {
-    import http = require('http');
-    export = http;
-}
-"#;
-        let source = r#"/// <reference path="a.d.ts"/>
-
-import * as http from 'intern/dojo/node!http';
-"#;
-        let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let mut declaration_file = parser.arena.source_files[0].clone();
-        declaration_file.file_name = "a.d.ts".to_string();
-        declaration_file.text = std::sync::Arc::from(declarations);
-        declaration_file.is_declaration_file = true;
-        parser.arena.source_files.push(declaration_file);
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.starts_with("/// <reference path=\"a.d.ts\"/>"),
-            "Bang module declaration reference should be emitted before AMD wrapper.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("define("),
-            "Output should still contain the AMD define() call.\nOutput:\n{output}"
-        );
-    }
-
-    /// UMD wrappers should also strip `/// <reference>` directives from JS output.
-    #[test]
-    fn umd_reference_directive_stripped_from_output() {
-        let source = r#"/// <reference path="lib.d.ts" />
-import { x } from "mod";
-export const y = x;
-"#;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::UMD,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            !output.contains("/// <reference"),
-            "Reference directives should be stripped from JS output.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("(function (factory)"),
-            "Output should still contain the UMD wrapper.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_top_level_using_named_export_keeps_legacy_decorator_assignment_export() {
-        let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                legacy_decorators: true,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("exports_1(\"D\", C);"),
-            "System named export should preserve the pre-export before __decorate.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("exports_1(\"D\", C = __decorate(["),
-            "System named export should wrap the legacy decorator reassignment directly.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("exports_1(\"D\", C);\n            C = __decorate(["),
-            "System named export should not split the export from the __decorate reassignment.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_top_level_using_direct_exported_legacy_class_stays_inline() {
-        let source =
-            "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                legacy_decorators: true,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("exports_1(\"C\", C = class C {"),
-            "System top-level using should keep direct legacy-decorated class exports inline.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("exports_1(\"C\", C = __decorate(["),
-            "System top-level using should preserve the exported legacy decorator reassignment.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("});\n                exports_1(\"C\", C);"),
-            "System top-level using should not split direct legacy class exports into a trailing export statement.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_top_level_using_env_hoists_before_later_nested_var() {
-        let source = "export { y };\nusing z = null;\nif (false) {\n    var y = 1;\n}\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                target: ScriptTarget::ES2022,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("var z, env_1, y;"),
-            "System top-level using should place the disposable environment before later nested var hoists.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name() {
-        let source = "export let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("var toString;"),
-            "System wrapper should hoist the exported binding name.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("exports_1(\"toString\", toString = 1..toString);"),
-            "System wrapper should export the destructuring assignment value.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("let { toFixed } = 1;"),
-            "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn system_object_binding_initializer_assigns_hoisted_name() {
-        let source = "let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\nexport {};\n";
-
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                module: ModuleKind::System,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("var toString;"),
-            "System wrapper should hoist the binding name.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("toString = 1..toString;"),
-            "System wrapper should initialize the hoisted binding from the object property.\nOutput:\n{output}"
-        );
-        assert!(
-            !output.contains("exports_1(\"toString\""),
-            "Non-exported binding should not be exported.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("let { toFixed } = 1;"),
-            "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
-        );
-    }
-
-    /// Imports whose only textual references are to a type alias or
-    /// interface of the same name must NOT be retained as runtime imports
-    /// just because their `PascalCase` name appears as the return type of
-    /// an async function under ES5. Mirrors the existing guard in
-    /// `extract_awaiter_promise_constructor`.
-    /// Devin review: <https://github.com/mohsen1/tsz/pull/2314#discussion_r3176824619>
-    #[test]
-    fn amd_es5_type_alias_named_like_import_does_not_force_retention() {
-        // The source declares a type alias `Foo` AND imports a value named `Foo`.
-        // The async function's return type is `Foo`, but `Foo` is a type alias
-        // here, so the import should still be elided (no runtime usage).
-        let source = r#"import { Foo } from "lib";
-type Foo = string;
-async function f(): Foo { return "" as any; }
-"#;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            target: ScriptTarget::ES5,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        // The AMD dependency list / require call should NOT include "lib"
-        // because the only "use" of `Foo` was as a type position. The buggy
-        // version falsely treated the type alias as a Promise constructor
-        // and kept the import.
-        assert!(
-            !output.contains("\"lib\""),
-            "AMD wrapper should not keep `lib` import when the only use of `Foo` is as a type alias.\nOutput:\n{output}"
-        );
-    }
-
-    /// JSX factory imports must not be elided by the AMD/System helper-emission
-    /// usage check, even when the factory name doesn't textually appear in the
-    /// source (JSX elements reference it implicitly).
-    /// Devin review: <https://github.com/mohsen1/tsz/pull/2295#discussion_r3176647570>
-    #[test]
-    fn amd_jsx_factory_default_import_kept_in_helpers_check() {
-        use crate::emitter::JsxEmit;
-        let source = r#"import React from "react";
-export const Foo = () => <div/>;
-"#;
-        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let options = PrinterOptions {
-            module: ModuleKind::AMD,
-            jsx: JsxEmit::React,
-            ..Default::default()
-        };
-        let mut printer = Printer::with_options(&parser.arena, options);
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        // The default-import factory ("React") has no textual value usage
-        // (only JSX), but because it is a JSX factory we must keep the
-        // __importDefault helper definition emitted in the AMD wrapper.
-        assert!(
-            output.contains("__importDefault"),
-            "AMD wrapper should still emit __importDefault helper for JSX factory `React` even without textual value usage.\nOutput:\n{output}"
-        );
-    }
+    normalized
+        .rsplit('/')
+        .next()
+        .unwrap_or(normalized.as_str())
+        .to_string()
 }

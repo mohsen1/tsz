@@ -1,7 +1,7 @@
 mod anonymous_default;
 mod export_default_parens;
 
-use super::super::{ModuleKind, Printer, ScriptTarget};
+use super::super::{JsxEmit, ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
 use crate::transforms::emit_utils;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
@@ -1658,6 +1658,9 @@ impl<'a> Printer<'a> {
         if self.ctx.options.module_detection_force {
             return true;
         }
+        if self.jsx_automatic_runtime_makes_module() {
+            return true;
+        }
         // Node16/NodeNext resolved to ESM: file is definitively a module based on
         // file extension (.mts) or package.json "type":"module", regardless of content
         if self.ctx.options.resolved_node_module_to_esm {
@@ -1705,6 +1708,25 @@ impl<'a> Printer<'a> {
         false
     }
 
+    fn jsx_automatic_runtime_makes_module(&self) -> bool {
+        if self.ctx.options.module_detection_legacy {
+            return false;
+        }
+        if !matches!(
+            self.ctx.options.jsx,
+            JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
+        ) {
+            return false;
+        }
+        (0..self.arena.len()).any(|idx| {
+            self.arena.get(NodeIndex(idx as u32)).is_some_and(|node| {
+                node.kind == syntax_kind_ext::JSX_ELEMENT
+                    || node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                    || node.kind == syntax_kind_ext::JSX_FRAGMENT
+            })
+        })
+    }
+
     pub(in crate::emitter) fn collect_module_dependencies(
         &self,
         statements: &[NodeIndex],
@@ -1744,6 +1766,23 @@ impl<'a> Printer<'a> {
                 {
                     deps.push(text);
                 }
+            }
+        }
+
+        if self.jsx_automatic_runtime_makes_module() {
+            let source = self
+                .ctx
+                .options
+                .jsx_import_source
+                .as_deref()
+                .unwrap_or("react");
+            let runtime = if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+                format!("{source}/jsx-dev-runtime")
+            } else {
+                format!("{source}/jsx-runtime")
+            };
+            if !deps.contains(&runtime) {
+                deps.push(runtime);
             }
         }
 
