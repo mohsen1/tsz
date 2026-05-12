@@ -2,8 +2,8 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 11
-- Potential important unresolved threads: 138
+- PRs excluded as already followed-up: 12
+- Potential important unresolved threads: 137
 
 ## Top Subsystems
 
@@ -15,7 +15,6 @@
 - `scripts`: 6
 - `crates/tsz-cli`: 2
 - `crates/tsz-binder`: 1
-- `crates/tsz-common`: 1
 - `crates/tsz-wasm`: 1
 
 ## Top PRs By Candidate Count
@@ -183,8 +182,6 @@
   - `arena_ref` selection uses `self.ctx.arena.get(alias.type_node).is_some()` to guess which arena owns `alias.type_node`, but `NodeIndex` values are not globally unique across arenas. This can pick `ctx.arena` even when...
 - [#4982](https://github.com/mohsen1/tsz/pull/4982) `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs:200` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The explicit-`any` detection doesn't unwrap wrapped type nodes (notably `syntax_kind_ext::PARENTHESIZED_TYPE`). For `type X = (any)` (or nested parentheses), `alias.type_node` will be a wrapped type whose inner is the...
-- [#4987](https://github.com/mohsen1/tsz/pull/4987) `crates/tsz-common/src/perf_counters.rs:593` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` “compile out entirely”, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inlin...
 - [#4990](https://github.com/mohsen1/tsz/pull/4990) `crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs:1896` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `recursive_tuple_declared_assignment_types` special-cases by `def.name == "TupleOf"` but doesn't verify the definition kind. If a user defines an `interface TupleOf<...>` (or other non-alias DefKind) this branch can i...
 - [#4991](https://github.com/mohsen1/tsz/pull/4991) `crates/tsz-wasm/src/wasm_tests.rs:182` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -243,3 +240,5 @@
   - `precompute_computed_property_names` currently encodes every `unique symbol` computed name as a synthetic `"__unique_<id>"` atom. Elsewhere (e.g. `get_property_name_resolved`) unique symbols that are members of the gl...
 - [#5104](https://github.com/mohsen1/tsz/pull/5104) `crates/tsz-checker/src/state/type_resolution/symbol_types.rs:937` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `precompute_symbol_named_computed_property_names` re-traverses the same declarations as `precompute_computed_property_names` and recomputes `get_type_of_node` for each computed property expression. This duplicates pot...
+- [#5110](https://github.com/mohsen1/tsz/pull/5110) `crates/tsz-checker/src/state/state_checking_members/ambient_signature_checks.rs:389` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - `get_type_of_node_with_request` already performs class-expression member checking in `dispatch.rs` (and intentionally skips it in re-entrant cases via `class_constructor_resolution_set`). Calling `check_direct_class_e...

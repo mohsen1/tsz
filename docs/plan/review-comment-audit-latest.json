@@ -10,6 +10,7 @@
     4955,
     4956,
     4960,
+    4987,
     5003,
     5094,
     5743,
@@ -18,7 +19,7 @@
     5830,
     5901
   ],
-  "candidate_count": 138,
+  "candidate_count": 137,
   "candidates": [
     {
       "pr_number": 5089,
@@ -1184,22 +1185,6 @@
       "line": 200,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The explicit-`any` detection doesn't unwrap wrapped type nodes (notably `syntax_kind_ext::PARENTHESIZED_TYPE`). For `type X = (any)` (or nested parentheses), `alias.type_node` will be a wrapped type whose inner is the `TypeReference` to `any`, so this helper will return false and TS2315 will still be suppressed. Consider skipping through `PARENTHESIZED_TYPE` via `get_wrapped_type` (looping as needed) before checking for `TYPE_REFERENCE`/`AnyKeyword`.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4987,
-      "pr_title": "perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4987",
-      "merged_at": "2026-05-10T13:04:17Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5myc",
-      "path": "crates/tsz-common/src/perf_counters.rs",
-      "line": 593,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` \u201ccompile out entirely\u201d, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inline wrapper). Consider rewording to avoid implying the symbol is removed, and instead state that the timing/recording path is compiled out when the feature is off.",
       "score": 1,
       "reasons": [
         "detailed-thread"

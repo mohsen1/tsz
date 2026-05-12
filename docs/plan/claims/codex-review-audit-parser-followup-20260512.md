@@ -29,6 +29,10 @@ Close remaining high-signal parser review-audit threads by:
     `current_specifier_recovered_braced_unicode_escape_debris`.
   - confirmed parser regressions for import/export braced-astral recovery and
     reset state clearing pass in `parser_improvement_tests`.
+- review comments left on #4987:
+  - verified the historical `perf-counters-timing` docstring wording about
+    `time_shard_write` compiling out entirely is no longer present in current
+    `perf_counters.rs`; the stale thread no longer corresponds to current code.
 
 ## Files Touched
 
@@ -43,9 +47,10 @@ Close remaining high-signal parser review-audit threads by:
 - `crates/tsz-parser/src/parser/state_declarations_exports.rs`
 - `crates/tsz-parser/src/parser/state.rs`
 - `crates/tsz-parser/tests/parser_improvement_tests.rs`
+- `crates/tsz-common/src/perf_counters.rs`
 
 ## Verification
 
 - `cargo fmt --check`
 - `cargo test -p tsz-parser`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=138`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=137`)
