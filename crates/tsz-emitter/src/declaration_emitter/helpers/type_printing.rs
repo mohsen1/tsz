@@ -770,7 +770,10 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
     pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
-        self.print_type_id_with_policy(type_id, Self::should_preserve_named_application_for_emit)
+        let printed = self
+            .print_type_id_with_policy(type_id, Self::should_preserve_named_application_for_emit);
+        self.expand_imported_indexed_access_type_text(&printed)
+            .unwrap_or(printed)
     }
 
     pub(crate) fn print_type_id_for_inferred_declaration(
@@ -799,6 +802,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let printed =
             Self::simplify_inexact_optional_mapped_intersection_text(&printed).unwrap_or(printed);
+        let printed = self
+            .expand_imported_indexed_access_type_text(&printed)
+            .unwrap_or(printed);
         if Self::contains_portable_mapped_object_text(&printed)
             && let Some(expanded) =
                 self.expand_portable_intersection_type_text(self.arena, &printed)
