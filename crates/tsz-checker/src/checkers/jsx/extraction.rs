@@ -763,12 +763,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let (types_to_check, is_union) = if let Some(members) =
+        let types_to_check = if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
         {
-            (members, true)
+            members
         } else {
-            (vec![component_type], false)
+            vec![component_type]
         };
 
         let mut any_checked = false;
@@ -794,13 +794,6 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 member_type,
             ) {
-                continue;
-            }
-            if is_union
-                && self
-                    .get_jsx_props_type_for_component_member(member_type, None)
-                    .is_some()
-            {
                 continue;
             }
             let is_unresolved = |t: TypeId| -> bool {

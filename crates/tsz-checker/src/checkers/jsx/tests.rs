@@ -2574,3 +2574,58 @@ let v = <Comp x={3} />;
         "Without any-spread, mismatched explicit attr must produce TS2322; got: {diagnostics:?}"
     );
 }
+
+/// TS2786 MUST fire for a union component where both members have invalid return
+/// types. Having extractable props does not exempt union members from return-type
+/// validation.
+///
+/// Mirrors `jsxComponentTypeErrors.tsx` MixedComponent case: when
+/// `FunctionComp | ClassComp` is used as a JSX component and both members
+/// return types incompatible with `JSX.Element` / `JSX.ElementClass`, the
+/// union must emit TS2786.
+#[test]
+fn jsx_union_component_with_invalid_return_types_emits_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface ElementClass { render(): Element; }
+            interface IntrinsicElements {}
+        }
+        declare function BadFunc(props: {}): string;
+        interface BadClassType { new(props: {}): { render(): string }; props: {}; }
+        declare var BadClass: BadClassType;
+        type MixedBad = typeof BadFunc | BadClassType;
+        declare var Mixed: MixedBad;
+        <Mixed />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2786),
+        "Union component with invalid return types must emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+/// TS2786 must NOT fire for a union component where all members have valid return
+/// types. A valid union of JSX components is still a valid JSX component.
+#[test]
+fn jsx_union_component_with_valid_return_types_no_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { }
+            interface ElementClass { render(): Element; }
+            interface IntrinsicElements {}
+        }
+        declare function GoodFuncA(props: {}): JSX.Element;
+        declare function GoodFuncB(props: {}): JSX.Element;
+        type UnionComp = typeof GoodFuncA | typeof GoodFuncB;
+        declare var Comp: UnionComp;
+        <Comp />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2786),
+        "Union component with valid return types must NOT emit TS2786, got: {diagnostics:?}"
+    );
+}
