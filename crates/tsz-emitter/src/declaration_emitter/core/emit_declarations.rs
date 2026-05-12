@@ -1071,6 +1071,11 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let (Some(return_type_text), true) =
+            self.function_body_return_hint(func, func_body)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let Some(return_type_text) = self
             .js_function_body_preferred_return_text_for_declaration(
                 func.body,

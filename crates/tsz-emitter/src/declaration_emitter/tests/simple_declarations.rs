@@ -5350,3 +5350,35 @@ u.noError();
         "Expected dynamic require alias to be preserved: {output}"
     );
 }
+
+#[test]
+fn test_js_returned_function_expression_uses_attached_jsdoc_signature() {
+    let output = emit_js_dts(
+        r#"
+function f1() {
+    /**
+     * @param {number} a
+     * @param {number} b
+     * @returns {number}
+     */
+    return (a, b) => a + b;
+}
+
+function f2() {
+    /** @type {(a: string, b: string) => string} */
+    return function (a, b) {
+        return a + b;
+    };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f1(): (a: number, b: number) => number;"),
+        "Expected returned arrow signature to use attached @param/@returns JSDoc: {output}"
+    );
+    assert!(
+        output.contains("declare function f2(): (a: string, b: string) => string;"),
+        "Expected returned function expression signature to use attached @type JSDoc: {output}"
+    );
+}
