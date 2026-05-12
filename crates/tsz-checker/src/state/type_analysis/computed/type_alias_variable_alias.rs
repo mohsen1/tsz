@@ -193,7 +193,8 @@ impl<'a> CheckerState<'a> {
 
                 if params.is_empty() {
                     let db = self.ctx.types;
-                    if crate::query_boundaries::common::is_evaluable_meta_type(db, alias_type)
+                    if (crate::query_boundaries::common::is_conditional_type(db, alias_type)
+                        || crate::query_boundaries::common::is_index_access_type(db, alias_type))
                         && !crate::query_boundaries::common::contains_type_parameters(
                             db, alias_type,
                         )
