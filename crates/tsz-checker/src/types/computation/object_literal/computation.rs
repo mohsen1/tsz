@@ -991,11 +991,12 @@ impl<'a> CheckerState<'a> {
                         {
                             value_type
                         } else {
-                            crate::query_boundaries::common::apply_contextual_type(
+                            let applied = crate::query_boundaries::common::apply_contextual_type(
                                 self.ctx.types,
                                 value_type,
                                 property_context_type,
-                            )
+                            );
+                            self.reduce_literal_index_access_property_types(applied)
                         };
 
                         // Widen literal types for object literal properties.
