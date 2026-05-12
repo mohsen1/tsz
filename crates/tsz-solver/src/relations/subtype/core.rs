@@ -1136,6 +1136,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
+            // Recursive array aliases can compare an array source whose element
+            // is the alias application against the alias body's union. The
+            // direct `source <: array-branch` check may fail before expanding
+            // that element alias, so compare the evaluated source element to
+            // each array branch's element type.
+            if let Some(source_elem) = array_element_type(self.interner, source).or_else(|| {
+                crate::type_queries::get_tuple_element_type_union(self.interner, source)
+            }) {
+                let source_elem_eval = self.evaluate_type(source_elem);
+                for &member in member_list.iter() {
+                    if let Some(target_elem) = array_element_type(self.interner, member)
+                        && (source_elem == target_elem
+                            || source_elem_eval == target_elem
+                            || (source_elem_eval != source_elem
+                                && self.check_subtype(source_elem_eval, target_elem).is_true())
+                            || self.recursive_array_alias_element_matches_array_interface(
+                                source_elem_eval,
+                                target_elem,
+                                target,
+                            ))
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+
             // Trace: Source is not a subtype of any union member
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
