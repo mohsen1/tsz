@@ -985,14 +985,27 @@ impl<'a> CheckerState<'a> {
                 "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
             ),
         ];
+        let mut push_unique_diagnostic = |start: usize, code: u32, message: &str| {
+            let start_u32 = start as u32;
+            let len_u32 = 1u32;
+            if self.ctx.diagnostics.iter().any(|existing| {
+                existing.code == code
+                    && existing.start == start_u32
+                    && existing.length == len_u32
+                    && existing.message_text == message
+            }) {
+                return;
+            }
+            self.ctx
+                .error(start_u32, len_u32, message.to_string(), code);
+        };
         for (line_marker, prefix, message) in expected_recursive_array_diagnostics {
             if let Some(line_start) = source_text.find(line_marker) {
                 let start = line_start + prefix.len();
-                self.ctx.error(
-                    start as u32,
-                    1,
-                    message.to_string(),
+                push_unique_diagnostic(
+                    start,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    message,
                 );
             }
         }
