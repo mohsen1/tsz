@@ -6,6 +6,7 @@ use super::super::{DeclarationEmitter, ImportPlan, PlannedImportModule, PlannedI
 use crate::emitter::type_printer::TypePrinter;
 #[allow(unused_imports)]
 use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+use crate::transforms::emit_utils::string_literal_text;
 #[allow(unused_imports)]
 use rustc_hash::{FxHashMap, FxHashSet};
 #[allow(unused_imports)]
@@ -1157,8 +1158,39 @@ impl<'a> DeclarationEmitter<'a> {
                 return false;
             }
 
+            if self.symbol_declared_in_ambient_module(used_sym_id, import_module) {
+                return false;
+            }
+
             used_symbol.import_module.as_deref() == Some(import_module)
                 || self.resolve_symbol_module_path(used_sym_id).as_deref() == Some(import_module)
+        })
+    }
+
+    fn symbol_declared_in_ambient_module(&self, sym_id: SymbolId, module_specifier: &str) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let mut current_idx = decl_idx;
+            while let Some(parent_idx) = self.arena.parent_of(current_idx) {
+                let Some(parent_node) = self.arena.get(parent_idx) else {
+                    return false;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(module) = self.arena.get_module(parent_node)
+                    && string_literal_text(self.arena, module.name).as_deref()
+                        == Some(module_specifier)
+                {
+                    return true;
+                }
+                current_idx = parent_idx;
+            }
+            false
         })
     }
 
