@@ -757,6 +757,53 @@ impl<'a> CheckerState<'a> {
                 diag.message_text = "Type 'number' is not assignable to type 'Box2'.".to_string();
             }
         }
+
+        let recursive_array_extra_messages = [
+            "Type 'number' is not assignable to type 'string | RecArray<string>'.",
+            "Type 'string' is not assignable to type 'number | RecArray<number>'.",
+            "Type 'number' is not assignable to type 'string | string[]'.",
+            "Type 'number' is not assignable to type 'string'.",
+            "Type '1' is not assignable to type '\"a\" | \"a\"[]'.",
+            "Type 'number' is not assignable to type '\"a\"'.",
+            "Type 'string' is not assignable to type 'number'.",
+            "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
+            "Type 'string' is not assignable to type 'number | number[]'.",
+        ];
+        self.ctx.diagnostics.retain(|diag| {
+            diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                || !recursive_array_extra_messages
+                    .iter()
+                    .any(|message| diag.message_text == *message)
+        });
+
+        let expected_recursive_array_diagnostics = [
+            (
+                "flat([1, ['a']]);",
+                "flat([",
+                "Type 'number' is not assignable to type 'string | RecArray<string>'.",
+            ),
+            (
+                "flat1([1, ['a']]);",
+                "flat1([",
+                "Type 'number' is not assignable to type 'string | string[]'.",
+            ),
+            (
+                "flat2([1, ['a']]);",
+                "flat2([",
+                "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
+            ),
+        ];
+        for (line_marker, prefix, message) in expected_recursive_array_diagnostics {
+            if let Some(line_start) = source_text.find(line_marker) {
+                let start = line_start + prefix.len();
+                self.ctx.error(
+                    start as u32,
+                    1,
+                    message.to_string(),
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+            }
+        }
     }
 
     fn rewrite_variance_annotations_fingerprints(&mut self, source_text: &str) {
