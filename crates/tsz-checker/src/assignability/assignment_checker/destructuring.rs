@@ -424,12 +424,24 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(rest_type);
         self.ensure_relation_input_ready(rest_target_type);
 
-        let _ = self.check_assignable_or_report_at_exact_anchor(
-            rest_type,
-            rest_target_type,
-            spread_expr,
-            spread_expr,
-        );
+        if !self.is_assignable_to(rest_type, rest_target_type) {
+            // Emit TS2322 directly from the computed rest TypeId. The rest
+            // target is also the diagnostic anchor, so the generic
+            // exact-anchor reporter can re-derive the source display from the
+            // target identifier's declared type and produce misleading output
+            // like `{ a: string; }` -> `{ a: string; }`.
+            let source_str = self.format_type_diagnostic(rest_type);
+            let target_str = self.format_type_diagnostic(rest_target_type);
+            let message = crate::diagnostics::format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            self.error_at_node(
+                spread_expr,
+                &message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
     }
 
     /// TS2341/TS2445: Check private/protected accessibility for properties
