@@ -1224,6 +1224,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
+        self.report_missing_lib_type_name(name, type_name_idx);
+
         if !self.ctx.compiler_options.no_lib
             && self.is_promise_like_name(name)
             && let Some(args) = &type_ref.type_arguments
@@ -1265,8 +1267,6 @@ impl<'a> CheckerState<'a> {
                     .application(promise_base, type_args);
             }
         }
-
-        self.report_missing_lib_type_name(name, type_name_idx);
 
         if let Some(args) = &type_ref.type_arguments {
             for &arg_idx in &args.nodes {
