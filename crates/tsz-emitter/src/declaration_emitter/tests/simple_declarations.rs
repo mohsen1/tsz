@@ -4732,29 +4732,30 @@ export class Aleph {
      * @param {Aleph} a
      * @param {null} b
      */
-    constructor(a, b) {
-        /**
-         * Field is always null
-         */
-        this.field = b;
-    }
+	    constructor(a, b) {
+	        /**
+	         * Field is always null
+	         */
+	        this.field = b;
+	        /**
+	         * Explicitly typed count.
+	         * @type {number}
+	         */
+	        this.count = 1;
+	    }
 
     /**
      * Doesn't actually do anything
      * @returns {void}
      */
     doIt() {}
-}
-"#;
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut emitter = DeclarationEmitter::new(&parser.arena);
-    let output = emitter.emit(root);
+	}
+	"#;
+    let output = emit_js_dts(source);
 
     assert!(
         output.contains(
-            "/**\n     * Field is always null\n     */\n    field: any;\n    /**\n     * Doesn't actually do anything"
+            "/**\n     * Field is always null\n     */\n    field: null;\n    /**\n     * Explicitly typed count.\n     * @type {number}\n     */\n    count: number;\n    /**\n     * Doesn't actually do anything"
         ),
         "Expected documented constructor assignment field before method declaration: {output}"
     );

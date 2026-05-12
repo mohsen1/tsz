@@ -1482,35 +1482,35 @@ impl<'a> DeclarationEmitter<'a> {
                     .last()
                     .cloned()
             });
-            let type_text = if jsdoc.is_some() {
-                "any".to_string()
-            } else {
-                let resolved_type = self.resolve_declaration_type_text(&[rhs_idx], Some(rhs_idx));
-                resolved_type
-                    .as_ref()
-                    .filter(|resolved| {
-                        resolved.type_id != tsz_solver::types::TypeId::ANY
-                            && resolved.emitted_type_text != "any"
-                    })
-                    .map(|resolved| resolved.emitted_type_text.clone())
-                    .or_else(|| {
-                        self.get_node_type_or_names(&[rhs_idx])
-                            .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
-                            .map(|type_id| self.print_type_id(type_id))
-                    })
-                    .or_else(|| {
-                        self.js_constructor_assignment_expression_type_text(
-                            rhs_idx,
-                            &ctor.parameters,
-                            0,
-                        )
-                    })
-                    .or_else(|| self.infer_fallback_type_text(rhs_idx))
-                    .or_else(|| self.allowlisted_initializer_type_text(rhs_idx))
-                    .or_else(|| self.js_namespace_value_member_type_text(rhs_idx))
-                    .or_else(|| resolved_type.map(|resolved| resolved.emitted_type_text))
-                    .unwrap_or_else(|| "any".to_string())
-            };
+            let resolved_type = self.resolve_declaration_type_text(&[rhs_idx], Some(rhs_idx));
+            let type_text = self
+                .jsdoc_type_text_for_node(stmt_idx)
+                .or_else(|| {
+                    resolved_type
+                        .as_ref()
+                        .filter(|resolved| {
+                            resolved.type_id != tsz_solver::types::TypeId::ANY
+                                && resolved.emitted_type_text != "any"
+                        })
+                        .map(|resolved| resolved.emitted_type_text.clone())
+                })
+                .or_else(|| {
+                    self.get_node_type_or_names(&[rhs_idx])
+                        .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+                .or_else(|| {
+                    self.js_constructor_assignment_expression_type_text(
+                        rhs_idx,
+                        &ctor.parameters,
+                        0,
+                    )
+                })
+                .or_else(|| self.infer_fallback_type_text(rhs_idx))
+                .or_else(|| self.allowlisted_initializer_type_text(rhs_idx))
+                .or_else(|| self.js_namespace_value_member_type_text(rhs_idx))
+                .or_else(|| resolved_type.map(|resolved| resolved.emitted_type_text))
+                .unwrap_or_else(|| "any".to_string());
 
             if let Some(jsdoc) = jsdoc {
                 self.emit_multiline_jsdoc_comment(&jsdoc);
@@ -1521,6 +1521,39 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(&type_text);
             self.write(";");
             self.write_line();
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn emit_ordered_class_members_with_js_constructor_assignment_properties(
+        &mut self,
+        members: &NodeList,
+    ) {
+        let mut emitted_js_constructor_assignment_properties = false;
+        for member_idx in self.class_member_emit_order(members) {
+            let before_jsdoc_len = self.writer.len();
+            let saved_comment_idx = self.comment_emit_idx;
+            if let Some(member_node) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(member_node.pos);
+            }
+            let before_member_len = self.writer.len();
+            self.emit_class_member(member_idx);
+            if self.writer.len() == before_member_len {
+                self.writer.truncate(before_jsdoc_len);
+                self.comment_emit_idx = saved_comment_idx;
+                if let Some(member_node) = self.arena.get(member_idx) {
+                    self.skip_comments_in_node(member_node.pos, member_node.end);
+                }
+            }
+            if !emitted_js_constructor_assignment_properties
+                && self.source_is_js_file
+                && self
+                    .arena
+                    .get(member_idx)
+                    .is_some_and(|member_node| member_node.kind == syntax_kind_ext::CONSTRUCTOR)
+            {
+                self.emit_js_inferred_constructor_assignment_properties(members);
+                emitted_js_constructor_assignment_properties = true;
+            }
         }
     }
 

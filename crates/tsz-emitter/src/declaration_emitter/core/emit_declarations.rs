@@ -1474,36 +1474,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        // Members
-        let mut emitted_js_constructor_assignment_properties = false;
-        for member_idx in self.class_member_emit_order(&class.members) {
-            let before_jsdoc_len = self.writer.len();
-            let saved_comment_idx = self.comment_emit_idx;
-            if let Some(mn) = self.arena.get(member_idx) {
-                self.emit_leading_jsdoc_comments(mn.pos);
-            }
-            let before_member_len = self.writer.len();
-            self.emit_class_member(member_idx);
-            if self.writer.len() == before_member_len {
-                // Member didn't emit anything (e.g., skipped implementation overload).
-                // Rollback the speculatively emitted JSDoc comments.
-                self.writer.truncate(before_jsdoc_len);
-                self.comment_emit_idx = saved_comment_idx;
-                if let Some(mn) = self.arena.get(member_idx) {
-                    self.skip_comments_in_node(mn.pos, mn.end);
-                }
-            }
-            if !emitted_js_constructor_assignment_properties
-                && self.source_is_js_file
-                && self
-                    .arena
-                    .get(member_idx)
-                    .is_some_and(|member_node| member_node.kind == syntax_kind_ext::CONSTRUCTOR)
-            {
-                self.emit_js_inferred_constructor_assignment_properties(&class.members);
-                emitted_js_constructor_assignment_properties = true;
-            }
-        }
+        self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
 
         self.decrease_indent();
         self.write_indent();
