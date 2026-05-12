@@ -927,6 +927,27 @@ var notOK = 0;
 }
 
 #[test]
+fn test_js_variable_preserves_generic_jsdoc_type_reference() {
+    let output = emit_js_dts(
+        r#"
+/** @template T @typedef {<T1 extends T>(data: T1) => T1} Test */
+
+/** @type {Test<number>} */
+const test = dibbity => dibbity
+"#,
+    );
+
+    assert!(
+        output.contains("declare const test: Test<number>;"),
+        "Expected generic JSDoc @type alias reference to be preserved: {output}"
+    );
+    assert!(
+        output.contains("type Test<T> = <T1 extends T>(data: T1) => T1;"),
+        "Expected same-line @template/@typedef alias to emit clean type parameters: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
