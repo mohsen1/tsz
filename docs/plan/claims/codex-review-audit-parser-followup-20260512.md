@@ -145,6 +145,35 @@ Close remaining high-signal parser review-audit threads by:
     populated `fixture.*` attribution metadata and sanitized portable
     `command_line[0]` values (`tsz`), so the original provenance/path-leak
     threads are stale on current code/docs.
+- review comments left on #4982:
+  - verified `symbol_declaration_body_is_explicit_any` in
+    `symbol_declaration_helpers.rs` now resolves each declaration through
+    `arena_for_declaration_or(...)` and performs type-alias/body reads against
+    that single declaration arena, addressing the cross-arena index-mismatch
+    concern in the original thread.
+  - verified explicit-any alias detection unwraps parenthesized types in
+    `type_node_is_explicit_any(...)`, covering `type X = (any)` and nested
+    wrapped forms.
+  - confirmed TS2315 explicit-any alias regression coverage still passes in
+    `ts2315_explicit_any_type_alias_tests`.
+  - treated the PR-description vs conformance-snapshot wording thread as stale
+    historical metadata relative to current merged baseline state.
+- review comments left on #4992:
+  - verified `ts2315_fires_on_parenthesized_explicit_any_alias_body` now
+    asserts both TS2315 presence and TS2344 absence, covering the cascade
+    suppression concern from the thread.
+  - treated the conformance snapshot/PR-verification wording comments as stale
+    historical metadata from that PR's review cycle; current baseline files are
+    no longer actionable against that old diff context.
+- review comments left on #5114:
+  - verified the TS2322 assertions in
+    `intersection_index_signature_fingerprint_tests.rs` now use stable
+    substring checks (`message.contains(...)`) for source/target type surfaces
+    instead of brittle full-message equality.
+  - confirmed the key intersection/index-signature fingerprint tests pass with
+    the current matcher shape.
+  - treated the PR-description scope wording thread as stale historical metadata
+    relative to the merged test content.
 
 ## Files Touched
 
@@ -170,6 +199,11 @@ Close remaining high-signal parser review-audit threads by:
 - `docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md`
 - `docs/plan/perf-runs/raw/monorepo-00{1..6}-diag.json`
 - `crates/tsz-checker/src/state/type_analysis/cross_file.rs`
+- `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs`
+- `crates/tsz-checker/tests/ts2315_explicit_any_type_alias_tests.rs`
+- `crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs`
+- `scripts/conformance/conformance-baseline.txt`
+- `scripts/conformance/conformance-detail.json`
 - `scripts/arch/check-checker-boundaries.sh`
 - `scripts/arch/arch_guard.py`
 - `crates/tsz-checker/src/types/computation/call_finalize.rs`
@@ -196,5 +230,9 @@ Close remaining high-signal parser review-audit threads by:
 - `cargo test -p tsz-solver test_infer_generic_constraint_fallback -- --nocapture`
 - `cargo test -p tsz-solver test_generic_parameter_without_constraint_fallback_to_unknown -- --nocapture`
 - `for f in docs/plan/perf-runs/raw/monorepo-00{1..6}-diag.json; do jq -r '.fixture,.command_line[0]' "$f"; done`
+- `cargo test -p tsz-checker --test ts2315_explicit_any_type_alias_tests ts2315_fires_on_explicit_any_alias_called_with_type_args -- --nocapture`
+- `cargo test -p tsz-checker --test ts2315_explicit_any_type_alias_tests ts2315_fires_on_parenthesized_explicit_any_alias_body -- --nocapture`
+- `cargo test -p tsz-checker --test intersection_index_signature_fingerprint_tests assignment_to_index_signature_preserves_declared_intersection_and_alias_surfaces -- --nocapture`
+- `cargo test -p tsz-checker --test intersection_index_signature_fingerprint_tests assignment_to_primitive_index_signature_preserves_anonymous_intersection_surface -- --nocapture`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=124`)
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` is currently blocked by GitHub GraphQL rate-limit exhaustion until reset at `2026-05-12T21:09:52Z`.
