@@ -27,19 +27,18 @@ Once the contract stabilizes, this doc should split into separate status, contra
 tsz check --sound src/
 ```
 
-```json
-{
-  "compilerOptions": {
-    "sound": true
-  }
-}
-```
+There is no committed tsconfig surface yet. In the normal tsc-compatible
+tsconfig path, `compilerOptions.sound` is reported as an unknown compiler
+option and must not be documented as a working entrypoint. The playground /
+WASM API uses `soundMode`, but that is not the public project config shape.
 
-Per-file pragmas and broader `sound*` option families are still not wired, and the full public config shape remains intentionally open.
+Per-file pragmas, server/LSP exposure, report-only behavior, and broader
+`sound*` option families are still not wired. The full public config shape
+remains intentionally open.
 
 ## Implementation Status
 
-Today, sound mode is a project-wide boolean exposed through both CLI (`--sound`) and tsconfig (`compilerOptions.sound`). Per-file pragmas and server/LSP exposure are not wired yet. The live implementation works by tightening the existing Lawyer (`CompatChecker`) with `strict_subtype_checking` and `strict_any_propagation` flags on `RelationPolicy`. Errors are still emitted as standard TS diagnostic codes (TS2322, TS2345, etc.), not dedicated TSZ-family sound diagnostics yet.
+Today, sound mode is a project-wide checker boolean exposed through the hidden CLI flag (`--sound`) and through the playground / WASM `soundMode` input. It is **not** exposed through the normal tsc-compatible tsconfig path: `compilerOptions.sound` is intentionally rejected there today. Per-file pragmas and server/LSP exposure are not wired yet. The live implementation works by tightening the existing Lawyer (`CompatChecker`) with `strict_subtype_checking` and `strict_any_propagation` flags on `RelationPolicy`. Errors are still emitted as standard TS diagnostic codes (TS2322, TS2345, etc.), not dedicated TSZ-family sound diagnostics yet.
 
 **Note on diagnostic codes:** The codebase defines `SoundDiagnosticCode` with codes TS9001–TS9005 in `crates/tsz-solver/src/sound_prototype.rs`. Those should be treated as temporary implementation placeholders, not the public contract. This doc uses the target **family-based TSZNNNN taxonomy** (`TSZ1000`, `TSZ2000`, etc.), which has not yet been applied to the implementation. A `DiagnosticDomain::Sound` infrastructure exists but is not yet used by the checker.
 
@@ -47,7 +46,7 @@ Today, sound mode is a project-wide boolean exposed through both CLI (`--sound`)
 |---------|------------|-----------|--------|-----------|
 | Method bivariance | TSZ2002 | TS9003 | LIVE | `strict_subtype_checking` disables method bivariance |
 | `any` restriction | TSZ1001 | TS9004 | LIVE | `strict_any_propagation` → `TopLevelOnly` mode |
-| Sticky freshness | TSZ3006 | TS9001 | LIVE (temporary) | Skips `widen_freshness()` in 4 checker locations even though the target design treats it as pedantic |
+| Sticky freshness | TSZ3006 | TS9001 | LIVE (temporary) | Skips `widen_freshness()` in several checker value-flow locations even though the target design treats it as pedantic |
 | Mutable array covariance | TSZ2001 | TS9002 | Dead code | `SoundLawyer.check_array_covariance()` exists but not wired into pipeline |
 | Enum-number assignment | TSZ6001 | TS9005 | Dead code | `SoundModeConfig.strict_enums` defined but unused |
 | Unsafe type assertion | TSZ1011 | — | Planned | No implementation |
@@ -55,10 +54,10 @@ Today, sound mode is a project-wide boolean exposed through both CLI (`--sound`)
 | Missing index signature | TSZ3007 | — | Planned | Currently uses standard TS2329 |
 
 **Known implementation gaps:**
-- `SoundLawyer` struct in `sound.rs` is fully defined but never called from the checker pipeline (dead code)
+- `SoundLawyer` struct in `sound_prototype.rs` is fully defined but never called from the checker pipeline (prototype-only code)
 - `SoundModeConfig` struct with granular flags is defined but never consumed
-- cache correctness still needs a precise sound-policy audit: method-bivariance disablement is now represented in relation flags, but `strict_any_propagation` still piggybacks on `FLAG_STRICT_FUNCTION_TYPES`, and some query-cache helper paths still construct keys with `any_mode = 0`
-- Only `compilerOptions.sound` is currently wired; broader flat `sound*` family options remain planned
+- cache correctness still needs a precise sound-policy audit: current `RelationPolicy::cache_config()` has dedicated bits for strict subtype and strict-any policy, so the remaining risk is entrypoint coverage, older helper paths, and making every future policy knob cache-visible
+- Normal tsconfig support is not currently wired; `compilerOptions.sound` is rejected for tsc compatibility, and broader flat `sound*` family options remain planned
 - `tsz-server` / LSP currently hardcodes `sound_mode: false`
 - CLI help / dead prototype code still reference older `TS900x` semantics and should not be treated as the product contract
 
@@ -87,7 +86,7 @@ Important limits:
 
 Today, even that narrow target is not fully implemented:
 
-1. Sound mode is currently a project-wide boolean from CLI (`--sound`) or tsconfig (`compilerOptions.sound`).
+1. Sound mode is currently a project-wide checker boolean from CLI (`--sound`) or the playground / WASM `soundMode` input. Normal tsconfig `compilerOptions.sound` is not accepted today.
 2. Method bivariance tightening is live.
 3. `any` handling is only partial: nested restrictions exist, but top-level `any` still behaves too permissively.
 4. Declaration-boundary quarantine is **not** implemented.
@@ -422,7 +421,7 @@ If a subsection does not say otherwise, treat it as design discussion rather tha
 
 #### TSZ2001: Covariant Mutable Arrays
 
-> **Implementation: PARTIAL / not part of the first stable contract.** `SoundLawyer.check_array_covariance()` in `sound.rs` can detect covariant array assignments, but `SoundLawyer` is not wired into the checker pipeline. The live `SubtypeChecker` still treats arrays covariantly in sound mode. The diagnostic helper exists but is disconnected from the assignability flow.
+> **Implementation: PARTIAL / not part of the first stable contract.** `SoundLawyer.check_array_covariance()` in `sound_prototype.rs` can detect covariant array assignments, but `SoundLawyer` is not wired into the checker pipeline. The live `SubtypeChecker` still treats arrays covariantly in sound mode. The diagnostic helper exists but is disconnected from the assignability flow.
 
 **TypeScript allows:**
 ```typescript
@@ -442,7 +441,7 @@ animals.push(new Cat());         // 💥 Runtime: Cat in Dog[]
 
 #### TSZ2002: Method Parameter Bivariance
 
-> **Implementation: LIVE.** `strict_subtype_checking` → `disable_method_bivariance = true` in `SubtypeChecker`. Activated via `RelationPolicy` in `assignability.rs:103`. Errors emit as standard TS codes (TS2322/TS2345), not TSZ2002. The `@tsz-bivariant` annotation mechanism is planned but not implemented.
+> **Implementation: LIVE.** `strict_subtype_checking` → `disable_method_bivariance = true` in `SubtypeChecker`. Activated through `RelationPolicy` in the checker query-boundary assignability paths. Errors emit as standard TS codes (TS2322/TS2345), not TSZ2002. The `@tsz-bivariant` annotation mechanism is planned but not implemented.
 
 This is the linchpin of Sound Mode. TypeScript documents that even `strictFunctionTypes` intentionally does not apply to method syntax because of unsafe hierarchies (including DOM).
 
@@ -807,7 +806,7 @@ user.age.toFixed(); // 💥 Runtime: user.age is a string!
 
 #### TSZ3006: Sticky Freshness
 
-> **Implementation: LIVE.** Sound mode skips `widen_freshness()` calls at 4 checker locations (`variable_checking/core.rs:844`, `state/state.rs:987`, `computation/call.rs:923`, `computation/identifier.rs:814`). Currently active under `sound: true` (not behind a separate pedantic flag, since pedantic layer doesn't exist yet). Freshness is preserved by keeping the `FRESH_LITERAL` object flag.
+> **Implementation: LIVE.** Sound mode skips `widen_freshness()` calls in several checker value-flow locations, including variable checking, call-result computation, for-loop element inference, state storage, identifier computation, and some type-alias / variable-alias analysis. It is currently active under `--sound` (not behind a separate pedantic flag, since the pedantic layer does not exist yet). Freshness is preserved by keeping the `FRESH_LITERAL` object flag.
 
 **Layer: Pedantic** (not part of the first stable sound contract)
 
@@ -930,7 +929,7 @@ const len = tuple.length; // ✅ tsc says '2', 💥 Runtime: actual length is 3
 
 #### TSZ6001: Strict Nominal Enums
 
-> **Implementation: PARTIAL (dead code).** `SoundModeConfig.strict_enums` exists in `sound.rs` but is never used by `SoundLawyer.is_assignable()` or any other code path. Standard tsc bidirectional enum/number behavior runs in sound mode.
+> **Implementation: PARTIAL (prototype-only code).** `SoundModeConfig.strict_enums` exists in `sound_prototype.rs` but is never used by `SoundLawyer.is_assignable()` or any other code path. Standard tsc bidirectional enum/number behavior runs in sound mode.
 
 *Note: Modern TypeScript (5.0+) already fixes the classic `const s: Status = 999` bug. The `tsz` baseline matches this modern behavior.*
 
@@ -1613,7 +1612,7 @@ Implementation sketch:
 2. Either wire `SoundLawyer` into the assignability path or port its semantics into the unified relation policy
 3. Ensure top-level `any -> T` no longer succeeds in sound user code except for `T = any | unknown`
 4. Keep an explicit legacy path for non-sound mode
-5. Remove or make explicit the accidental coupling between `strict_any_propagation` and `FLAG_STRICT_FUNCTION_TYPES`
+5. Keep regression coverage proving `strict_any_propagation` is independent from `FLAG_STRICT_FUNCTION_TYPES`
 6. Decide whether dead `SoundLawyer` code is being promoted into product behavior, renamed as prototype code, or deleted
 
 Primary touchpoints:
@@ -1768,7 +1767,7 @@ Caching is the hidden complexity of gradual soundness. Because Sound Mode is a p
 - **Boundary Projection Caches:** projected declaration views should live in a cache separate from the base symbol/type caches. File identity/hash is only part of the invalidation story; the actual cache key will also need to reflect the observed symbol/type, polarity, and relevant instantiation context. This matters especially for project references, where downstream rebuild decisions already track the freshness of emitted `.d.ts` files.
 - **Overlay Object Cache:** the persistent overlay object store should stay separate from projected boundary caches. They may share low-level freshness inputs such as declaration-closure hashes, but they should not share one invalidation table or one storage model because they serve different layers of the system.
 
-> **Current state:** `RelationCacheKey` in `types.rs:259` already carries more sound-relevant state than an earlier version of this doc claimed: method-bivariance disablement is represented in packed relation flags and `any_mode` differentiates `any` propagation modes. The remaining cache risk is more specific: `RelationPolicy::from_flags()` still derives strict-`any` behavior from `FLAG_STRICT_FUNCTION_TYPES`, and some query-cache helper paths still construct keys with `any_mode = 0`. The right next step is a cache-entrypoint audit, not a vague "add one sound bit" claim.
+> **Current state:** `RelationCacheKey` and `RelationPolicy::cache_config()` already carry more sound-relevant state than an earlier version of this doc claimed: method-bivariance disablement is represented in packed relation flags, strict subtype and strict-any policy have dedicated bits, and `any_mode` differentiates `any` propagation modes. `RelationPolicy::from_flags()` no longer derives strict-`any` behavior from `FLAG_STRICT_FUNCTION_TYPES`. The remaining cache risk is more specific: audit every relation entrypoint and helper path to prove each behavior-affecting policy knob reaches the canonical cache config, and require future sound knobs to add cache-partition tests before they ship.
 
 ### Compatibility & Performance
 

@@ -172,13 +172,9 @@ const user: User = {
 
     let semantic = program.get_semantic_diagnostics_json(None);
     let semantic_json: Vec<Value> = serde_json::from_str(&semantic).unwrap();
-    let ts2322: Vec<_> = semantic_json
-        .iter()
-        .filter(|diag| diag.get("code").and_then(|v| v.as_u64()) == Some(2322))
-        .collect();
     assert!(
-        ts2322.is_empty(),
-        "expected nested anonymous object literal assignment to be valid, got {semantic}"
+        semantic_json.is_empty(),
+        "expected nested anonymous object literal assignment to be diagnostic-free, got {semantic}"
     );
 }
 
