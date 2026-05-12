@@ -9,8 +9,7 @@
 //! TS6188 (at the underscore) and TS1124 (at end-of-literal); tsc emits
 //! only TS6188.
 
-use crate::parser::state::ParserState;
-use crate::parser::test_fixture::parse_source;
+use crate::parser::test_fixture::{parse_source, parse_source_named};
 
 fn parse_codes(source: &str) -> Vec<u32> {
     let (parser, _root) = parse_source(source);
@@ -87,8 +86,7 @@ fn parser_state_reset_clears_scanner_diagnostics_and_high_water_mark() {
     // suppresses the new error.
 
     // Parse 1 — produce some scanner diagnostics (e.g. TS1124 on `1e+`).
-    let mut parser = ParserState::new("first.ts".to_string(), "1e+".to_string());
-    let _ = parser.parse_source_file();
+    let (mut parser, _root) = parse_source_named("first.ts", "1e+");
     let scan_count_after_first = parser.scanner.get_scanner_diagnostics().len();
     assert!(
         scan_count_after_first > 0,
