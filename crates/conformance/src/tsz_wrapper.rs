@@ -356,6 +356,16 @@ pub fn prepare_test_dir_with_lib_dir(
                     if lower.ends_with("tsconfig.json") || lower.ends_with("package.json") {
                         return None;
                     }
+                    // Keep authored package declarations available on disk for
+                    // module resolution, but do not make them root files. The
+                    // TypeScript harness resolves these through the importing
+                    // source; listing nested package declarations as roots can
+                    // change declaration-portability diagnostics such as TS2883.
+                    if (lower.contains("/node_modules/") || lower.starts_with("node_modules/"))
+                        && lower.ends_with(".d.ts")
+                    {
+                        return None;
+                    }
                     // When noTypesAndSymbols is set, tsc's harness does NOT
                     // include @types files as root files — they remain on disk
                     // for module resolution but aren't loaded into the program

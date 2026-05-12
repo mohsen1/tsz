@@ -92,6 +92,10 @@ fn compile_test(
                     .or_insert(serde_json::Value::Bool(true));
             }
         }
+        if let serde_json::Value::Object(ref mut map) = compiler_options {
+            map.entry("skipLibCheck")
+                .or_insert(serde_json::Value::Bool(true));
+        }
         let tsconfig_content = serde_json::json!({
             "compilerOptions": compiler_options,
             "include": include,
@@ -818,8 +822,16 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
         "plain .ts roots should stay in files when module-extension inputs are explicit"
     );
     assert!(
-        file_values.contains(&"node_modules/pkg/index.d.ts"),
-        "authored node_modules fixtures should stay in files when explicit roots are used"
+        !file_values.contains(&"node_modules/pkg/index.d.ts"),
+        "authored node_modules declarations should stay on disk for module resolution, not become root files"
+    );
+    assert!(
+        prepared
+            .temp_dir
+            .path()
+            .join("node_modules/pkg/index.d.ts")
+            .exists(),
+        "authored node_modules declarations should still be written to disk"
     );
     assert!(
         parsed.get("exclude").is_none(),
