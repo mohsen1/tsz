@@ -17,6 +17,7 @@ Usage:
 """
 
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -30,7 +31,10 @@ def progress_bar(current, total, width=20):
     pct = current / total
     filled = round(pct * width)
     empty = width - filled
-    return f"[{'█' * filled}{'░' * empty}] {pct * 100:.1f}%"
+    percent = pct * 100
+    if current < total:
+        percent = math.floor(percent * 10) / 10
+    return f"[{'█' * filled}{'░' * empty}] {percent:.1f}%"
 
 
 def load_conformance():
