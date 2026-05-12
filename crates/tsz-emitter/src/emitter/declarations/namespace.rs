@@ -1846,7 +1846,29 @@ impl<'a> Printer<'a> {
                             }
                         } else {
                             // class/function/enum: emit without export, then add assignment
-                            let export_names = self.get_export_names_from_clause(inner_idx);
+                            let recovered_anonymous_default_class_name =
+                                if inner_kind == syntax_kind_ext::CLASS_DECLARATION {
+                                    self.arena.get_class_at(inner_idx).and_then(|class| {
+                                        if class.name.is_none()
+                                            && (export.is_default_export
+                                                || self.arena.has_modifier(
+                                                    &class.modifiers,
+                                                    SyntaxKind::DefaultKeyword,
+                                                ))
+                                        {
+                                            Some(self.next_anonymous_default_export_name())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                } else {
+                                    None
+                                };
+                            let export_names =
+                                recovered_anonymous_default_class_name.clone().map_or_else(
+                                    || self.get_export_names_from_clause(inner_idx),
+                                    |name| vec![name],
+                                );
 
                             // For exported enums in namespace, fold the export into the
                             // IIFE closing pattern instead of emitting a separate assignment.
@@ -1864,9 +1886,18 @@ impl<'a> Printer<'a> {
 
                             let before_len = self.writer.len();
                             let prev = self.in_namespace_iife;
+                            let prev_anonymous_default_export_name =
+                                self.anonymous_default_export_name.clone();
+                            if let Some(name) = recovered_anonymous_default_class_name.as_ref() {
+                                self.anonymous_default_export_name = Some(name.clone());
+                            }
                             self.in_namespace_iife = true;
                             self.emit(inner_idx);
                             self.in_namespace_iife = prev;
+                            if recovered_anonymous_default_class_name.is_some() {
+                                self.anonymous_default_export_name =
+                                    prev_anonymous_default_export_name;
+                            }
                             let emitted = self.writer.len() > before_len;
                             // Emit trailing comments on the same line,
                             // but don't consume comments past the body's closing brace
@@ -1908,17 +1939,65 @@ impl<'a> Printer<'a> {
                         }
                     }
                 } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
-                    // Non-exported class in namespace: just emit it
+                    let class_export_name = self.arena.get_class(stmt_node).and_then(|class| {
+                        if self
+                            .arena
+                            .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                        {
+                            self.get_identifier_text_opt(class.name).or_else(|| {
+                                if self
+                                    .arena
+                                    .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword)
+                                {
+                                    Some(self.next_anonymous_default_export_name())
+                                } else {
+                                    None
+                                }
+                            })
+                        } else {
+                            None
+                        }
+                    });
+                    let prev_anonymous_default_export_name =
+                        self.anonymous_default_export_name.clone();
+                    if let Some(name) = class_export_name.as_ref()
+                        && self
+                            .arena
+                            .get_class(stmt_node)
+                            .is_some_and(|class| class.name.is_none())
+                    {
+                        self.anonymous_default_export_name = Some(name.clone());
+                    }
+
+                    // Class declarations in namespace: emit local binding, then
+                    // attach exported classes to the namespace object.
                     let prev = self.in_namespace_iife;
                     self.in_namespace_iife = true;
                     self.emit(stmt_idx);
                     self.in_namespace_iife = prev;
+                    if class_export_name.is_some()
+                        && self
+                            .arena
+                            .get_class(stmt_node)
+                            .is_some_and(|class| class.name.is_none())
+                    {
+                        self.anonymous_default_export_name = prev_anonymous_default_export_name;
+                    }
                     let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                     self.emit_trailing_comments_before(token_end, body_close_pos);
                     // Only write newline if not already at line start (class
                     // declarations with lowered static fields already end with
                     // write_line after the last ClassName.field = value;).
                     if !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
+                    if let Some(name) = class_export_name {
+                        self.write(&ns_name);
+                        self.write(".");
+                        self.write(&name);
+                        self.write(" = ");
+                        self.write(&name);
+                        self.write(";");
                         self.write_line();
                     }
                 } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
