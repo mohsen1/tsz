@@ -1190,10 +1190,12 @@ impl<'a> CheckerState<'a> {
 
         let mut rendered = Vec::with_capacity(members.len());
         let mut collapsed_enum = None;
+        let mut rendered_enum_member = false;
 
         for member in members {
             if let Some(name) = self.format_enum_member_name_for_message(member) {
                 rendered.push(name);
+                rendered_enum_member = true;
                 continue;
             }
             let widened = self.widen_enum_member_type(member);
@@ -1214,7 +1216,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if collapsed_enum.is_some() {
+        if collapsed_enum.is_some() || rendered_enum_member {
             Some(rendered.join(" | "))
         } else {
             None

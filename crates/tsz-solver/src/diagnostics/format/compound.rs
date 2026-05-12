@@ -484,20 +484,13 @@ impl<'a> TypeFormatter<'a> {
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 self.type_is_or_contains_type_query(shape.return_type)
-                    || shape
-                        .params
-                        .iter()
-                        .any(|param| self.type_is_or_contains_type_query(param.type_id))
             }
             Some(TypeData::Callable(shape_id)) => {
                 let shape = self.interner.callable_shape(shape_id);
-                shape.call_signatures.iter().any(|sig| {
-                    self.type_is_or_contains_type_query(sig.return_type)
-                        || sig
-                            .params
-                            .iter()
-                            .any(|param| self.type_is_or_contains_type_query(param.type_id))
-                })
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| self.type_is_or_contains_type_query(sig.return_type))
             }
             _ => false,
         }
@@ -509,20 +502,13 @@ impl<'a> TypeFormatter<'a> {
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 self.type_is_or_contains_type_query(shape.return_type)
-                    || shape
-                        .params
-                        .iter()
-                        .any(|param| self.type_is_or_contains_type_query(param.type_id))
             }
             Some(TypeData::Callable(shape_id)) => {
                 let shape = self.interner.callable_shape(shape_id);
-                shape.call_signatures.iter().any(|sig| {
-                    self.type_is_or_contains_type_query(sig.return_type)
-                        || sig
-                            .params
-                            .iter()
-                            .any(|param| self.type_is_or_contains_type_query(param.type_id))
-                })
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| self.type_is_or_contains_type_query(sig.return_type))
             }
             _ => false,
         }

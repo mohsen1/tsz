@@ -102,3 +102,28 @@ f6("");
         "recursive overloaded typeof parameter should use callable object surface, got: {diag:?}"
     );
 }
+
+#[test]
+fn non_recursive_nested_typeof_function_return_does_not_elide() {
+    let diagnostics = diagnostics_for(
+        r#"
+declare function refFn(v: number): number;
+declare let expected: () => (x: typeof refFn) => number;
+expected = 3;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for assigning number to nested function-return type");
+    assert!(
+        diag.message_text
+            .contains("() => (x: typeof refFn) => number"),
+        "non-recursive nested typeof in function return should keep full surface, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("() => ..."),
+        "non-recursive nested typeof in function return must not be over-elided, got: {diag:?}"
+    );
+}
