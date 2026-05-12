@@ -102,6 +102,11 @@ jobs:
           set -euo pipefail
           DOMAIN="tsz.dev"
 
+          if ! command -v dig >/dev/null 2>&1; then
+            echo "::error::dig is required for DNS health checks but was not found on the runner"
+            exit 1
+          fi
+
           A_RECORDS=$(dig +short A "$DOMAIN" || true)
           AAAA_RECORDS=$(dig +short AAAA "$DOMAIN" || true)
 
