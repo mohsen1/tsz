@@ -790,6 +790,94 @@ fn jsx_union_of_invalid_function_and_class_component_emits_ts2786() {
 }
 
 #[test]
+fn jsx_react_component_type_union_does_not_emit_ts2786() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null;
+            interface ReactElement<P> { props: P; }
+            interface Component<P = {}, S = {}> {
+                props: Readonly<P>;
+                render(): ReactNode;
+            }
+            interface ComponentClass<P = {}, S = {}> {
+                new(props: P, context?: any): Component<P, S>;
+            }
+            interface FunctionComponent<P = {}> {
+                (props: P & { children?: ReactNode }, context?: any): ReactElement<any> | null;
+            }
+            type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>;
+        }
+        interface P1 {
+            p?: boolean;
+            c?: string;
+        }
+        interface P2 {
+            p?: boolean;
+            c?: any;
+            d?: any;
+        }
+        declare const C: React.ComponentType<P1> | React.ComponentType<P2>;
+        const a = <C p={true} />;
+        "#,
+    );
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2786),
+        "React.ComponentType unions with compatible class/function branches should not emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_react_type_union_with_string_does_not_emit_ts2786() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {
+                a: {};
+                button: {};
+            }
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null;
+            type ReactType<P = any> = string | ComponentType<P>;
+            interface ReactElement<P> { props: P; }
+            interface Component<P = {}, S = {}> {
+                props: Readonly<P>;
+                render(): ReactNode;
+            }
+            interface ComponentClass<P = {}, S = {}> {
+                new(props: P, context?: any): Component<P, S>;
+            }
+            interface FunctionComponent<P = {}> {
+                (props: P & { children?: ReactNode }, context?: any): ReactElement<any> | null;
+            }
+            type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>;
+        }
+        declare const props: { component: React.ReactType };
+        const Comp: React.ReactType = props.component;
+        const elem = <Comp />;
+        "#,
+    );
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2786),
+        "React.ReactType unions include intrinsic string tags and should not emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     let diagnostics = check_jsx_codes(
         r#"

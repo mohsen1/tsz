@@ -3,7 +3,7 @@
 - **Date**: 2026-05-12
 - **Branch**: `fix/calls-on-complex-signatures-ts2786-20260512`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Conformance regression)
 
 ## Intent
@@ -14,13 +14,31 @@ Fix the JSX component validity path so valid `React.ComponentType<P1> | React.Co
 
 ## Files Touched
 
-TBD after investigation.
+- `crates/tsz-checker/src/checkers/jsx/extraction.rs`
+- `crates/tsz-checker/src/checkers/jsx/tests.rs`
 
 ## Verification
 
-Planned:
-
 - `scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter callsOnComplexSignatures --verbose`
-- focused checker JSX unit tests
+  - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `.target/dist-fast/tsz-conformance --filter jsxComponentTypeErrors --cache-file scripts/conformance/tsc-cache-full.json`
+  - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `.target/dist-fast/tsz-conformance --filter tsxTypeArgumentPartialDefinitionStillErrors --cache-file scripts/conformance/tsc-cache-full.json`
+  - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `.target/dist-fast/tsz-conformance --filter inlineJsxFactoryDeclarationsLocalTypes --cache-file scripts/conformance/tsc-cache-full.json`
+  - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `.target/dist-fast/tsz-conformance --filter tsxElementResolution10 --cache-file scripts/conformance/tsc-cache-full.json`
+  - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `.target/dist-fast/tsz-conformance --filter tsxSfcReturnUndefinedStrictNullChecks --cache-file scripts/conformance/tsc-cache-full.json`
+  - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `cargo test -p tsz-checker jsx_react_ -- --nocapture`
+  - passed, including 6 matching JSX tests
 - `cargo fmt --all --check`
+  - passed
 - `git diff --check`
+  - passed
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run`
+  - `FINAL RESULTS: 12569/12582 passed (99.9%)`
+  - skipped 3, known failures 3, fingerprint-only 9
+  - remaining code mismatch: `TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNamesImportRef.ts` missing TS2883
+  - net `12563 -> 12569 (+6)`

@@ -546,6 +546,36 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
+        {
+            let mut saw_component_union = false;
+            let mut all_component_unions = true;
+            for member_type in members {
+                let member_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
+                    self.ctx.types,
+                    member_type,
+                ) {
+                    self.evaluate_type_with_env(member_type)
+                } else {
+                    member_type
+                };
+                if self.is_jsx_string_tag_type(member_type) {
+                    continue;
+                }
+                saw_component_union = true;
+                if self
+                    .get_jsx_props_type_for_component_member(member_type, None)
+                    .is_none()
+                {
+                    all_component_unions = false;
+                    break;
+                }
+            }
+            if saw_component_union && all_component_unions {
+                return;
+            }
+        }
         // Check if the type (or any union member) has call/construct signatures
         let (types_to_check, is_union) = if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
@@ -733,12 +763,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let types_to_check = if let Some(members) =
+        let (types_to_check, is_union) = if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
         {
-            members
+            (members, true)
         } else {
-            vec![component_type]
+            (vec![component_type], false)
         };
 
         let mut any_checked = false;
@@ -753,6 +783,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 member_type
             };
+            if self.is_jsx_string_tag_type(member_type) {
+                continue;
+            }
             if !is_concrete(member_type) {
                 continue;
             }
@@ -763,7 +796,13 @@ impl<'a> CheckerState<'a> {
             ) {
                 continue;
             }
-
+            if is_union
+                && self
+                    .get_jsx_props_type_for_component_member(member_type, None)
+                    .is_some()
+            {
+                continue;
+            }
             let is_unresolved = |t: TypeId| -> bool {
                 !is_concrete(t)
                     || crate::query_boundaries::common::needs_evaluation_for_merge(
