@@ -2056,7 +2056,11 @@ impl<'a> Printer<'a> {
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_common::ScriptTarget;
-    use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     /// Async arrow functions must always have parenthesized parameters,
     /// matching tsc behavior. `async x => x` becomes `async (x) => x`.
@@ -2064,8 +2068,7 @@ mod tests {
     fn async_arrow_always_parenthesizes_params() {
         let source = "const f = async i => i;";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -2084,8 +2087,7 @@ mod tests {
     fn non_async_arrow_preserves_no_parens() {
         let source = "const f = x => x;";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -2108,8 +2110,7 @@ mod tests {
     fn async_arrow_with_source_parens_keeps_them() {
         let source = "const f = async (x) => x;";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -2126,8 +2127,7 @@ mod tests {
     fn parenthesized_arrow_body_type_erasure_strips_parens_across_comment() {
         let source = "const x = (a: any[]) => (\n    // comment\n    undefined as number\n);";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(
             &parser.arena,
@@ -2161,8 +2161,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "function f() { (async () => { return 10; })(); }";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2178,8 +2177,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "const g = async () => { return 10; };";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2195,8 +2193,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "class C { method() { return (async () => 42)(); } }";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2211,8 +2208,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "const outer = () => async () => 1;";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2227,8 +2223,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "const f = async (dispatch: Dispatch, { foo }: OwnProps) => { return foo; };";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2245,8 +2240,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "async ({ foo, bar, ...rest }) => bar(await foo);";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2274,8 +2268,7 @@ mod tests {
     fn function_with_empty_parameter_comment_preserves_comment() {
         let source = "function foo(/** nothing */) { return 1; }";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -2296,8 +2289,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "var foo = async (a = await): Promise<void> => {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2312,8 +2304,7 @@ mod tests {
         use crate::output::printer::lower_and_print;
 
         let source = "async function foo(a = await => await): Promise<void> {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(
             &parser.arena,
             root,
@@ -2337,8 +2328,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "async function foo(a = await => await): Promise<void> {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2353,8 +2343,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "async function foo({ foo = await bar }) {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2374,8 +2363,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "async function h(a, { x }) {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2394,8 +2382,7 @@ mod tests {
     fn malformed_rest_parameter_modifier_recovers_following_parameter() {
         let source = "class C { constructor(...public rest: string[]) {} }";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -2418,8 +2405,7 @@ mod tests {
   ) {}
 }";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -2439,8 +2425,7 @@ mod tests {
     fn empty_param_name_dropped() {
         let source = "function f(a,\u{00AC}) {}";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -2462,8 +2447,7 @@ mod tests {
     fn omitted_call_args_dropped() {
         let source = "foo(a,,b);";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
