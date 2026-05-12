@@ -5,8 +5,8 @@ use crate::class_inheritance::ClassInheritanceChecker;
 use crate::query_boundaries::common::{
     self as common, ContextualLiteralAllowKind, TypeTraversalKind, are_same_base_literal_kind,
     classify_for_contextual_literal, classify_for_traversal, contains_type_parameters,
-    index_access_types, intersection_members, is_conditional_type, is_index_access_type,
-    is_keyof_type, is_this_type, keyof_inner_type, lazy_def_id, mapped_type_info,
+    index_access_types, intersection_members, is_conditional_type, is_evaluable_meta_type,
+    is_index_access_type, is_this_type, keyof_inner_type, lazy_def_id, mapped_type_info,
     number_literal_value, object_shape_for_type, string_literal_value, type_application,
     type_parameter_constraint, union_members,
 };
@@ -310,10 +310,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Evaluate KeyOf/IndexAccess to concrete form before classification.
-        if is_keyof_type(self.ctx.types, ctx_type)
-            || is_index_access_type(self.ctx.types, ctx_type)
-            || is_conditional_type(self.ctx.types, ctx_type)
-        {
+        if is_evaluable_meta_type(self.ctx.types, ctx_type) {
             let evaluated = self.evaluate_type_with_env(ctx_type);
             if evaluated != ctx_type && evaluated != TypeId::ERROR {
                 return self.contextual_type_allows_literal_inner(evaluated, literal_type, visited);
