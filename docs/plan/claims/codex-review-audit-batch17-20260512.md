@@ -71,6 +71,12 @@ initializer relation path performs an additional raw initializer re-check.
     forms in `tsz-cli` (`unused_expect_error_*`).
   - historical PR-description/snapshot delta thread is stale relative to later
     snapshot churn; no code-side follow-up remains.
+- review comments left on #4990:
+  - verified the `TupleOf` recursive-assignment special-case now requires
+    `DefKind::TypeAlias` in addition to name match, preventing non-alias
+    symbols (e.g. `interface TupleOf`) from taking the alias-only path.
+  - reran tuple-directionality regression tests covering alias-vs-interface
+    behavior in `conditional_infer_tests`.
 
 ## Files Touched
 
@@ -84,6 +90,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `crates/tsz-checker/src/types/computation/call_result.rs`
 - `crates/tsz-wasm/src/wasm_tests.rs`
 - `crates/tsz-cli/src/driver/check_utils.rs` (verified current behavior; no edit needed)
+- `crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs` (verified current behavior; no edit needed)
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -98,5 +105,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-emitter decimal_numeric_separators_with_exponents_downlevel_to_number_text -- --nocapture`
 - `cargo test -p tsz-wasm ts_program_accepts_nested_anonymous_object_literal_assignment -- --nocapture`
 - `cargo test -p tsz-cli unused_expect_error_ -- --nocapture`
+- `cargo test -p tsz-checker --test conditional_infer_tests recursive_tuple_alias_assignment_reports_both_directions -- --nocapture`
+- `cargo test -p tsz-checker --test conditional_infer_tests interface_tupleof_assignment_uses_constraint_directionality -- --nocapture`
 - `cargo fmt --all --check`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (last successful run: `candidate_count=56`; subsequent attempts blocked by GitHub GraphQL rate limit)
