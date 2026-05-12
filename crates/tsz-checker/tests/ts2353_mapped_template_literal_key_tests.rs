@@ -2,7 +2,7 @@
 //!
 //! Issue #5882: For non-generic mapped types like `{ [K in `data-${string}`]: V }`,
 //! tsz emitted TS2353 for every source property because the solver's
-//! `is_key_in_mapped_constraint` had no case for `TypeData::TemplateLiteral`
+//! `is_key_in_mapped_constraint` had no arm for template-literal constraints
 //! and fell through to a conservative "reject" branch. The fix matches the
 //! source property name against the template literal pattern.
 
