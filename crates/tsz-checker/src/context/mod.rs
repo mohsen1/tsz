@@ -55,7 +55,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{PropertyInfo, TypeId};
 
-// Re-export CheckerOptions and ScriptTarget from tsz-common
+// Re-export context-facing types used by downstream crates.
+pub use tsz_binder::LibContext;
 use tsz_binder::{BinderState, ModuleAugmentation};
 pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
@@ -1365,15 +1366,6 @@ pub struct CheckerContext<'a> {
     // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
     // This fixes the "Zombie Freshness" bug by interning fresh vs non-fresh
     // object shapes distinctly.
-}
-
-/// Context for a lib file (arena + binder) for global type resolution.
-#[derive(Clone, Debug)]
-pub struct LibContext {
-    /// The AST arena for this lib file.
-    pub arena: Arc<NodeArena>,
-    /// The binder state with symbols from this lib file.
-    pub binder: Arc<BinderState>,
 }
 
 /// Project-wide shared environment for multi-file type checking.
