@@ -1,4 +1,4 @@
-# chore(conformance): prune isolated declaration suppression
+# chore(conformance): prune isolated suppression debt
 
 - **Date**: 2026-05-12
 - **Branch**: `chore/prune-isolated-suppression-20260512`
