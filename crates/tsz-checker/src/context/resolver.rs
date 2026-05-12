@@ -255,20 +255,28 @@ impl<'a> CheckerContext<'a> {
         &self,
         type_params: &NodeList,
     ) -> Option<Arc<[Variance]>> {
+        self.declared_type_param_variances_for_list_in_arena(self.arena, type_params)
+    }
+
+    fn declared_type_param_variances_for_list_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_params: &NodeList,
+    ) -> Option<Arc<[Variance]>> {
         use tsz_scanner::SyntaxKind;
 
         let mut saw_annotation = false;
         let mut variances = Vec::with_capacity(type_params.nodes.len());
 
         for &param_idx in &type_params.nodes {
-            let param_node = self.arena.get(param_idx)?;
-            let param = self.arena.get_type_parameter(param_node)?;
+            let param_node = arena.get(param_idx)?;
+            let param = arena.get_type_parameter(param_node)?;
             let mut declared_in = false;
             let mut declared_out = false;
 
             if let Some(modifiers) = &param.modifiers {
                 for &modifier_idx in &modifiers.nodes {
-                    let Some(modifier_node) = self.arena.get(modifier_idx) else {
+                    let Some(modifier_node) = arena.get(modifier_idx) else {
                         continue;
                     };
                     if modifier_node.kind == SyntaxKind::InKeyword as u16 {
@@ -296,20 +304,26 @@ impl<'a> CheckerContext<'a> {
         &self,
         decl_idx: NodeIndex,
     ) -> Option<Arc<[Variance]>> {
-        let node = self.arena.get(decl_idx)?;
-        if let Some(interface) = self.arena.get_interface(node) {
-            return interface
-                .type_parameters
-                .as_ref()
-                .and_then(|params| self.declared_type_param_variances_for_list(params));
+        self.declared_type_param_variances_for_node_in_arena(self.arena, decl_idx)
+    }
+
+    fn declared_type_param_variances_for_node_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<Arc<[Variance]>> {
+        let node = arena.get(decl_idx)?;
+        if let Some(interface) = arena.get_interface(node) {
+            return interface.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
         }
-        if let Some(class) = self.arena.get_class(node) {
-            return class
-                .type_parameters
-                .as_ref()
-                .and_then(|params| self.declared_type_param_variances_for_list(params));
+        if let Some(class) = arena.get_class(node) {
+            return class.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
         }
-        if let Some(alias) = self.arena.get_type_alias(node) {
+        if let Some(alias) = arena.get_type_alias(node) {
             // tsc rejects `in`/`out` annotations on type aliases whose body
             // is not an object/function/constructor/mapped type (TS2637)
             // and IGNORES the declared variance for assignability. We mirror
@@ -318,7 +332,7 @@ impl<'a> CheckerContext<'a> {
             // computed (default-covariant) variance instead of enforcing the
             // user's `in out` annotation.
             use tsz_parser::parser::syntax_kind_ext;
-            let body_kind = self.arena.kind_at(alias.type_node);
+            let body_kind = arena.kind_at(alias.type_node);
             let variance_supported = body_kind.is_some_and(|kind| {
                 kind == syntax_kind_ext::TYPE_LITERAL
                     || kind == syntax_kind_ext::FUNCTION_TYPE
@@ -328,10 +342,9 @@ impl<'a> CheckerContext<'a> {
             if !variance_supported {
                 return None;
             }
-            return alias
-                .type_parameters
-                .as_ref()
-                .and_then(|params| self.declared_type_param_variances_for_list(params));
+            return alias.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
         }
         None
     }
@@ -346,13 +359,18 @@ impl<'a> CheckerContext<'a> {
 
         let mut merged: Option<Vec<Variance>> = None;
         for decl_idx in symbol.all_declarations() {
-            let Some(node) = self.arena.get(decl_idx) else {
+            let decl_arena = self
+                .binder
+                .arena_for_declaration_or(symbol.id, decl_idx, self.arena);
+            let Some(node) = decl_arena.get(decl_idx) else {
                 continue;
             };
-            if self.arena.get_interface(node).is_none() {
+            if decl_arena.get_interface(node).is_none() {
                 continue;
             }
-            let Some(variances) = self.declared_type_param_variances_for_node(decl_idx) else {
+            let Some(variances) =
+                self.declared_type_param_variances_for_node_in_arena(decl_arena, decl_idx)
+            else {
                 continue;
             };
 
