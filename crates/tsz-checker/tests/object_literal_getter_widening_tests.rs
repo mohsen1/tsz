@@ -18,7 +18,7 @@
 //! literal property types. But it must NOT inherit into the getter body's
 //! own widening decision — getters are function-like nested scopes (the same
 //! reason `return_expression_type` already clears the flag when descending
-//! into nested ARROW_FUNCTION/FUNCTION_EXPRESSION return expressions).
+//! into nested `ARROW_FUNCTION` / `FUNCTION_EXPRESSION` return expressions).
 
 use tsz_checker::test_utils::check_source_code_messages as get_diagnostics;
 
