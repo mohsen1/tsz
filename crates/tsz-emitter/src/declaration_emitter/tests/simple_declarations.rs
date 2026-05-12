@@ -2711,6 +2711,28 @@ m1.__proto__ = 0;
 }
 
 #[test]
+fn test_namespace_exported_proto_interface_is_public_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace m1 {
+    export interface __proto__ {
+        value: string;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("interface __proto__"),
+        "Expected exported __proto__ interface to stay in namespace d.ts: {output}"
+    );
+    assert!(
+        output.contains("value: string;"),
+        "Expected exported __proto__ interface members to stay in namespace d.ts: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_getter_before_setter_preserves_both_accessors() {
     let output = emit_js_dts(
         r#"
