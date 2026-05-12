@@ -1612,22 +1612,22 @@ impl DefinitionStore {
         >,
     {
         let mut overlay_entries: rustc_hash::FxHashMap<
-            tsz_binder::SymbolId,
-            &tsz_binder::SemanticDefEntry,
+            (u32, u32),
+            (tsz_binder::SymbolId, &tsz_binder::SemanticDefEntry),
         > = rustc_hash::FxHashMap::default();
         for overlay in overlays {
             for (&sym_id, entry) in overlay {
-                overlay_entries.insert(sym_id, entry);
+                overlay_entries.insert((sym_id.0, entry.file_id), (sym_id, entry));
             }
         }
 
         let mut entries = Vec::with_capacity(base.len().saturating_add(overlay_entries.len()));
         entries.extend(
             base.iter()
-                .filter(|(sym_id, _)| !overlay_entries.contains_key(sym_id))
+                .filter(|(sym_id, entry)| !overlay_entries.contains_key(&(sym_id.0, entry.file_id)))
                 .map(|(&sym_id, entry)| (sym_id, entry)),
         );
-        entries.extend(overlay_entries);
+        entries.extend(overlay_entries.into_values());
 
         Self::from_semantic_def_entries(&entries, intern_string)
     }

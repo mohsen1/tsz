@@ -19,6 +19,7 @@ use tsz_binder::state::LibContext as BinderLibContext;
 use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
@@ -69,6 +70,62 @@ fn lib_files_available() -> bool {
 
 fn has_error(diagnostics: &[(u32, String)], code: u32) -> bool {
     diagnostics.iter().any(|(c, _)| *c == code)
+}
+
+#[test]
+fn imported_promise_return_does_not_pick_dom_symbol() {
+    let libs = tsz_checker::test_utils::load_lib_files(&[
+        "es5.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.iterable.d.ts",
+        "es2022.d.ts",
+        "dom.d.ts",
+    ]);
+    if libs.is_empty() {
+        eprintln!("Skipping test: lib files not available");
+        return;
+    }
+
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[
+            (
+                "./a.ts",
+                r#"
+export interface I {
+  getSchemas(): Promise<SchemaMetadata[]>
+}
+export interface SchemaMetadata {
+  readonly name: string
+}
+"#,
+            ),
+            (
+                "./b.ts",
+                r#"
+import type { I, SchemaMetadata } from "./a"
+
+export class C implements I {
+  async getSchemas(): Promise<SchemaMetadata[]> {
+    return []
+  }
+}
+"#,
+            ),
+        ],
+        "./b.ts",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            target: ScriptTarget::ES2017,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let diagnostics: Vec<_> = diagnostics.into_iter().filter(|d| d.code != 2318).collect();
+    assert!(
+        diagnostics.is_empty(),
+        "Promise<T> should not resolve as a DOM interface across files: {diagnostics:?}"
+    );
 }
 
 fn compile_with_lib(source: &str) -> Vec<(u32, String)> {
