@@ -110,8 +110,8 @@ fn count_code(diags: &[(u32, String)], code: u32) -> usize {
 fn load_es5_lib_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
         manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
         manifest_dir.join("../../TypeScript/src/lib"),
     ];
 
@@ -121,7 +121,7 @@ fn load_es5_lib_for_test() -> Vec<Arc<LibFile>> {
             && let Ok(content) = std::fs::read_to_string(&lib_path)
         {
             return vec![Arc::new(LibFile::from_source(
-                "es5.d.ts".to_string(),
+                "lib.es5.d.ts".to_string(),
                 content,
             ))];
         }
@@ -134,9 +134,9 @@ fn load_es5_and_dom_lib_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_roots = [
         (
-            manifest_dir.join("../../TypeScript/lib"),
-            "lib.es5.d.ts",
-            "lib.dom.d.ts",
+            manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
+            "es5.d.ts",
+            "dom.d.ts",
         ),
         (
             manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
@@ -144,28 +144,30 @@ fn load_es5_and_dom_lib_for_test() -> Vec<Arc<LibFile>> {
             "dom.d.ts",
         ),
         (
-            manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-            "es5.d.ts",
-            "dom.d.ts",
+            manifest_dir.join("../../TypeScript/lib"),
+            "lib.es5.d.ts",
+            "lib.dom.d.ts",
         ),
     ];
 
     for (root, es5_name, dom_name) in lib_roots {
-        let lib_paths = [root.join(es5_name), root.join(dom_name)];
-        let mut lib_files = Vec::new();
-        for lib_path in lib_paths {
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-                && let Some(file_name) = lib_path.file_name()
-            {
-                lib_files.push(Arc::new(LibFile::from_source(
-                    file_name.to_string_lossy().to_string(),
-                    content,
-                )));
-            }
-        }
-        if lib_files.len() == 2 {
-            return lib_files;
+        let es5_path = root.join(es5_name);
+        let dom_path = root.join(dom_name);
+        if es5_path.exists()
+            && dom_path.exists()
+            && let Ok(es5_content) = std::fs::read_to_string(&es5_path)
+            && let Ok(dom_content) = std::fs::read_to_string(&dom_path)
+        {
+            return vec![
+                Arc::new(LibFile::from_source(
+                    "lib.es5.d.ts".to_string(),
+                    es5_content,
+                )),
+                Arc::new(LibFile::from_source(
+                    "lib.dom.d.ts".to_string(),
+                    dom_content,
+                )),
+            ];
         }
     }
 
@@ -177,7 +179,13 @@ fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, Str
 }
 
 fn check_js_with_es5_and_dom_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
-    check_js_with_lib_files(source, options, load_es5_and_dom_lib_for_test())
+    let lib_files = load_es5_and_dom_lib_for_test();
+    assert_eq!(
+        lib_files.len(),
+        2,
+        "expected ES5 + DOM libs for JS constructor property tests; checked stripped assets, full assets, and TypeScript/lib"
+    );
+    check_js_with_lib_files(source, options, lib_files)
 }
 
 fn check_js_with_lib_files(
