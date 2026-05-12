@@ -446,6 +446,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.emitted_scope_marker = true;
         self.emitted_module_indicator = true;
+        self.js_cjs_export_aliases.clear();
     }
 
     pub(crate) fn emit_js_local_export_aliases(&mut self) {
