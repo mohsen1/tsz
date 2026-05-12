@@ -475,3 +475,30 @@ fn nested_namespace_uses_parent_current_namespace_lexically() {
         "Current-block parent namespace should not be qualified through the parent object.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn namespace_default_function_recovery_emits_default_assignment() {
+    let source = "namespace ns_function {\n    export default function () {}\n}\n\nnamespace ns_async_function {\n    export default async function () {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("default function () { }\n    ns_function.default_1 = default_1;"),
+        "Recovered namespace default function should keep tsc's default-function recovery and export assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("default function () {\n        return __awaiter(this, void 0, void 0, function* () { });\n    }\n    ns_async_function.default_2 = default_2;"),
+        "Recovered async namespace default function should lower async body and export assignment.\nOutput:\n{output}"
+    );
+}
