@@ -229,7 +229,7 @@ impl ProcessPool {
 
     fn spawn_worker_with_mem_limit(
         tsz_binary: &str,
-        #[allow(unused_variables)] max_rss_bytes: usize,
+        #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] max_rss_bytes: usize,
     ) -> anyhow::Result<BatchWorker> {
         let mut cmd = Command::new(tsz_binary);
         cmd.arg("--batch")
