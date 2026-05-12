@@ -762,6 +762,34 @@ fn jsx_generic_sfc_incompatible_return_emits_ts2786() {
 }
 
 #[test]
+fn jsx_union_of_invalid_function_and_class_component_emits_ts2786() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface ElementClass { type: 'element-class'; }
+            interface IntrinsicElements { }
+        }
+        function FunctionComponent<T extends string>({type}: {type?: T}) {
+            return { type };
+        }
+        class ClassComponent {
+            type = 'string';
+        }
+        declare const pick: boolean;
+        const MixedComponent = pick ? FunctionComponent : ClassComponent;
+        const elem = <MixedComponent />;
+        "#,
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| { diag.code == 2786 && diag.message_text.contains("'MixedComponent'") }),
+        "Union component with invalid function/class members should emit TS2786 at MixedComponent, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     let diagnostics = check_jsx_codes(
         r#"

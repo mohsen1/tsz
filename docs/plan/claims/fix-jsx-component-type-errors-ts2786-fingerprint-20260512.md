@@ -1,9 +1,9 @@
 # Claim: jsxComponentTypeErrors TS2786 fingerprint
 
-Status: claim
+Status: ready
 Owner: Codex
 Branch: fix/jsx-component-type-errors-ts2786-fingerprint-20260512
-PR: TBD
+PR: #5660
 
 ## Target
 
@@ -21,3 +21,16 @@ missing: TS2786 test.tsx:28:16 'MixedComponent' cannot be used as a JSX componen
 ## Plan
 
 Fix the JSX component validity diagnostic path so the TS2786 fingerprint for `<MixedComponent />` matches tsc's anchor/message while preserving the single expected TS2786 code.
+
+## Result
+
+Implemented union JSX component return validation after recovered props resolution. Validation:
+
+```text
+cargo test -p tsz-checker jsx_union_of_invalid_function_and_class_component_emits_ts2786
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter jsxComponentTypeErrors --verbose
+FINAL RESULTS: 1/1 passed
+Fingerprint-only: 0
+cargo fmt --all --check
+git diff --check
+```

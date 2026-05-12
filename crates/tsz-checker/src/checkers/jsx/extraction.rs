@@ -745,6 +745,14 @@ impl<'a> CheckerState<'a> {
         let mut all_valid = true;
 
         for &member_type in &types_to_check {
+            let member_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
+                self.ctx.types,
+                member_type,
+            ) {
+                self.evaluate_type_with_env(member_type)
+            } else {
+                member_type
+            };
             if !is_concrete(member_type) {
                 continue;
             }
