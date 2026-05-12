@@ -116,6 +116,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
+    fn union_call_arg_contains_correlated_type_param(&self, arg_type: TypeId) -> bool {
+        crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
+            || matches!(
+                self.interner.lookup(arg_type),
+                Some(TypeData::IndexAccess(_, index))
+                    if crate::type_queries::contains_type_parameters_db(self.interner, index)
+            )
+    }
+
     /// Resolve a function call: func(args...) -> result
     ///
     /// This is pure type logic - no AST nodes, just types in and types out.
@@ -1184,9 +1193,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         // Phase 3: Result aggregation.
         if let Some(ref combined) = combined
-            && !arg_types.iter().any(|&arg_type| {
-                crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
-            })
+            && !arg_types
+                .iter()
+                .any(|&arg_type| self.union_call_arg_contains_correlated_type_param(arg_type))
         {
             for (i, &arg_type) in arg_types.iter().enumerate() {
                 if i < combined.param_types.len() {
@@ -1270,9 +1279,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // actually reached. When all arguments are fully concrete (e.g.,
                 // `string | number` passed to `((a: string) => void) | ((a: number) => void)`),
                 // tsc correctly rejects the call (TS2345).
-                let has_generic_args = arg_types.iter().any(|&arg_type| {
-                    crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
-                });
+                let has_generic_args = arg_types
+                    .iter()
+                    .any(|&arg_type| self.union_call_arg_contains_correlated_type_param(arg_type));
                 if has_generic_args && combined.param_types.contains(&TypeId::NEVER) {
                     let all_arg_mismatch = failures
                         .iter()
@@ -1298,7 +1307,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     })
                                     .collect();
                                 let param_union = self.interner.union(member_param_types);
-                                if !self.checker.is_assignable_to(arg_type, param_union) {
+                                let evaluated_arg = self.checker.evaluate_type(arg_type);
+                                let indexed_access_evaluates_to_param_union = matches!(
+                                    self.interner.lookup(arg_type),
+                                    Some(TypeData::IndexAccess(_, index))
+                                            if crate::type_queries::contains_type_parameters_db(
+                                                self.interner,
+                                                index,
+                                            )
+                                ) && evaluated_arg
+                                    != arg_type
+                                    && self.checker.is_assignable_to(evaluated_arg, param_union);
+                                if !self.checker.is_assignable_to(arg_type, param_union)
+                                    && !indexed_access_evaluates_to_param_union
+                                {
                                     param_union_pass = false;
                                     break;
                                 }

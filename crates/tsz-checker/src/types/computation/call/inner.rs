@@ -3024,6 +3024,10 @@ impl<'a> CheckerState<'a> {
                         .get_parameter_type_for_call(index, args.len())
                     });
                 if let Some(expected) = expected
+                    && !(expected == TypeId::NEVER
+                        && common::index_access_parts(self.ctx.types, actual).is_some_and(
+                            |(_, index)| common::contains_type_parameters(self.ctx.types, index),
+                        ))
                     && self
                         .checker_only_assignability_failure_reason(actual, expected)
                         .is_some()

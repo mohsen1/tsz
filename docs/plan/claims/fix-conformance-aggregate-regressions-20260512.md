@@ -25,3 +25,11 @@ CI aggregate on PR #5911 at run 25746688287 reports 12,573/12,585, below snapsho
 ## Verification plan
 
 Run targeted conformance filters for selected regressions, add focused checker tests where practical, then run broader conformance checks before marking ready.
+
+## 2026-05-12 update: correlatedUnions
+
+Fixed the extra TS2345 in `TypeScript/tests/cases/compiler/correlatedUnions.ts` for correlated indexed-access arguments passed to union callees whose synthetic parameter display reduces to `never`.
+
+Verification:
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --lib correlated_index_access_argument_satisfies_union_callee_param_union -- --nocapture` -> passed
+- `./scripts/conformance/conformance.sh run --filter "correlatedUnions" --verbose` -> 1/1 passed
