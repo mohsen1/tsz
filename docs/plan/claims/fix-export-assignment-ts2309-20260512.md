@@ -1,24 +1,23 @@
 # fix(checker): emit TS2309 for export assignment conflicts
 
-Status: ready
+- **Date**: 2026-05-12
+- **Branch**: `fix/export-assignment-ts2309-20260512`
+- **PR**: #5869
+- **Status**: ready
+- **Workstream**: diagnostics correctness
 
-Owner: Codex
-Branch: fix/export-assignment-ts2309-20260512
-Issue: #5841
-
-## Scope
+## Intent
 
 Restore the missing TS2309 diagnostic when a source file combines `export =`
-with other exported elements. The first target is the minimal issue
-reproduction where `tsc` reports TS1203 and TS2309 but `tsz` currently only
-reports TS1203.
+with other exported elements. This closes #5841's minimal reproduction where
+`tsc` reports TS1203 and TS2309 but `tsz` previously only reported TS1203.
 
-## Plan
+## Files Touched
 
-- Find the current export-assignment diagnostic path and where source-file
-  export declarations are summarized.
-- Add checker-owned TS2309 emission without weakening existing TS1203 behavior.
-- Add focused regression coverage and run the targeted conformance repro.
+- `crates/tsz-checker/src/diagnostics.rs`
+- `crates/tsz-checker/src/types/checker/ast.rs`
+- `crates/tsz-checker/tests/export_assignment_tests.rs`
+- `docs/plan/claims/fix-export-assignment-ts2309-20260512.md`
 
 ## Verification
 
