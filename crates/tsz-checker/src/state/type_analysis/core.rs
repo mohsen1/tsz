@@ -2053,12 +2053,7 @@ impl<'a> CheckerState<'a> {
                             file = self.ctx.file_name.as_str(),
                             "(cached provisional) get_type_of_symbol"
                         );
-                        if tsz_common::perf_counters::enabled_fast() {
-                            tsz_common::perf_counters::inc(
-                                &tsz_common::perf_counters::counters()
-                                    .compute_type_of_symbol_cache_hits,
-                            );
-                        }
+                        tsz_common::perf_counters::record_compute_type_of_symbol_cache_hit();
                         return provisional;
                     }
                     // Restore ERROR if provisional failed
@@ -2076,11 +2071,7 @@ impl<'a> CheckerState<'a> {
                     file = self.ctx.file_name.as_str(),
                     "(cached) get_type_of_symbol"
                 );
-                if tsz_common::perf_counters::enabled_fast() {
-                    tsz_common::perf_counters::inc(
-                        &tsz_common::perf_counters::counters().compute_type_of_symbol_cache_hits,
-                    );
-                }
+                tsz_common::perf_counters::record_compute_type_of_symbol_cache_hit();
                 return cached;
             }
         }
