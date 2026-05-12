@@ -55,3 +55,15 @@ Verification:
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test ts2322_tests exact_optional_tuple_source_display_preserves_boolean_literal_elements -- --nocapture` -> passed
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test ts2322_tests variadic_tuple_source_display_maps_middle_positions_to_rest_before_suffix -- --nocapture` -> passed
 - `./scripts/conformance/conformance.sh run --filter "variadicTuples2" --verbose` -> 1/1 passed
+
+## 2026-05-12 remaining sampled regressions
+
+Additional targeted checks:
+- `./scripts/conformance/conformance.sh run --filter "variadicTuples2" --verbose` -> 1/1 passed on this branch
+- `./scripts/conformance/conformance.sh run --filter "keyRemappingKeyofResult" --verbose` -> still fingerprint-only; TS2322 code/span match, target display expands `keyof Remapped` instead of preserving alias
+- `./scripts/conformance/conformance.sh run --filter "enumLiteralAssignableToEnumInsideUnion" --verbose` -> still fingerprint-only; target displays expanded enum members instead of enum name
+- `./scripts/conformance/conformance.sh run --filter "enumLiteralTypes3" --verbose` -> still fingerprint-only; target displays `Choice.No | Choice.Yes` instead of alias `YesNo`
+- `./scripts/conformance/conformance.sh run --filter "stringEnumLiteralTypes3" --verbose` -> still fingerprint-only; target displays expanded enum-member union instead of alias `YesNo`
+- `./scripts/conformance/conformance.sh run --filter "recursiveTypeReferences1" --verbose` -> still fingerprint-only; extra expanded recursive alias TS2322 display
+
+Next likely slice: diagnostic display alias preservation for type-alias unions/keyof results, not semantic checking.
