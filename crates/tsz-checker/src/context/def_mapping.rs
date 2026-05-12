@@ -301,7 +301,6 @@ impl<'a> CheckerContext<'a> {
                     .binder
                     .file_locals
                     .get(expected_name)
-                    .filter(|&candidate| candidate != sym_id)
                     .filter(|&candidate| {
                         lib_ctx
                             .binder
@@ -311,6 +310,28 @@ impl<'a> CheckerContext<'a> {
             }) {
                 return self.get_canonical_lib_def_id(expected_name, lib_sym_id);
             }
+        }
+
+        let current_symbol_matches_expected = self
+            .binder
+            .symbols
+            .get(sym_id)
+            .is_some_and(|symbol| symbol.escaped_name == expected_name);
+        if !current_symbol_matches_expected
+            && let Some(lib_sym_id) = self.lib_contexts.iter().find_map(|lib_ctx| {
+                lib_ctx
+                    .binder
+                    .file_locals
+                    .get(expected_name)
+                    .filter(|&candidate| {
+                        lib_ctx
+                            .binder
+                            .get_symbol(candidate)
+                            .is_some_and(|symbol| symbol.escaped_name == expected_name)
+                    })
+            })
+        {
+            return self.get_canonical_lib_def_id(expected_name, lib_sym_id);
         }
 
         let matching_symbol = self
@@ -362,7 +383,6 @@ impl<'a> CheckerContext<'a> {
                     .binder
                     .file_locals
                     .get(expected_name)
-                    .filter(|&candidate| candidate != sym_id)
                     .filter(|&candidate| {
                         lib_ctx
                             .binder
@@ -1359,9 +1379,15 @@ impl<'a> CheckerContext<'a> {
             }
 
             // Also skip if the DefinitionStore already has a mapping for this
-            // symbol (e.g., from another lib binder that declared the same
-            // global interface via declaration merging).
-            if self.definition_store.find_def_by_symbol(sym_id.0).is_some() {
+            // exact symbol/file pair. Raw SymbolIds are only binder-local; using
+            // the file-agnostic index here can make unrelated lib symbols with
+            // colliding raw ids suppress each other (for example Promise and a
+            // DOM interface from separate lib arenas).
+            if self
+                .definition_store
+                .lookup_by_symbol(sym_id.0, entry.file_id)
+                .is_some()
+            {
                 continue;
             }
 
@@ -1506,8 +1532,12 @@ impl<'a> CheckerContext<'a> {
         // and register them as exports of their parent's DefinitionInfo.
         for (&sym_id, entry) in semantic_defs {
             if let Some(parent_sym) = entry.parent_namespace {
-                let child_def = self.definition_store.find_def_by_symbol(sym_id.0);
-                let parent_def = self.definition_store.find_def_by_symbol(parent_sym.0);
+                let child_def = self
+                    .definition_store
+                    .lookup_by_symbol(sym_id.0, entry.file_id);
+                let parent_def = self
+                    .definition_store
+                    .lookup_by_symbol(parent_sym.0, entry.file_id);
                 if let (Some(child_def_id), Some(parent_def_id)) = (child_def, parent_def) {
                     let name = self.types.intern_string(&entry.name);
                     self.definition_store

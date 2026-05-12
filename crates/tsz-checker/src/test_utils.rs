@@ -443,6 +443,20 @@ pub fn check_multi_file(
     entry_file: &str,
     options: CheckerOptions,
 ) -> Vec<Diagnostic> {
+    check_multi_file_with_libs(files, entry_file, options, &[])
+}
+
+/// Parse, bind, and type-check a multi-file project with explicit lib files.
+///
+/// Mirrors [`check_multi_file`] but wires the same lib contexts into every file
+/// binder and into the entry checker. Use this for regressions that only appear
+/// when cross-file user code and standard library declarations interact.
+pub fn check_multi_file_with_libs(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> Vec<Diagnostic> {
     let mut arenas = Vec::with_capacity(files.len());
     let mut binders = Vec::with_capacity(files.len());
     let mut roots = Vec::with_capacity(files.len());
@@ -452,7 +466,11 @@ pub fn check_multi_file(
         let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
         let root = parser.parse_source_file();
         let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
+        if lib_files.is_empty() {
+            binder.bind_source_file(parser.get_arena(), root);
+        } else {
+            binder.bind_source_file_with_libs(parser.get_arena(), root, lib_files);
+        }
         arenas.push(Arc::new(parser.get_arena().clone()));
         binders.push(Arc::new(binder));
         roots.push(root);
@@ -478,7 +496,19 @@ pub fn check_multi_file(
     checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
     checker.ctx.set_current_file_idx(entry_idx);
-    checker.ctx.set_lib_contexts(Vec::new());
+    if lib_files.is_empty() {
+        checker.ctx.set_lib_contexts(Vec::new());
+    } else {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
     checker
         .ctx
         .set_resolved_module_paths(Arc::new(resolved_module_paths));

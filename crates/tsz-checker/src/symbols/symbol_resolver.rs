@@ -1548,7 +1548,14 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_symbol_with_libs(resolved_sym, &lib_binders)
             })
-            .map_or(canonical_name, |symbol| symbol.escaped_name.as_str());
+            .map_or(canonical_name, |symbol| {
+                let resolved_name = symbol.escaped_name.as_str();
+                if resolved_name == canonical_name {
+                    resolved_name
+                } else {
+                    canonical_name
+                }
+            });
         let def_id = self
             .ctx
             .get_or_create_def_id_for_symbol_name(resolved_sym, expected_name);
