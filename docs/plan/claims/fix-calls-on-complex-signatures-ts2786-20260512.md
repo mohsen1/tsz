@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/calls-on-complex-signatures-ts2786-20260512`
-- **PR**: TBD
+- **PR**: #5679
 - **Status**: ready
 - **Workstream**: 1 (Conformance regression)
 
