@@ -115,3 +115,20 @@ function foo(thing: Thing | undefined, defaultValue: Thing | undefined) {
         "Expected no TS18048 for thing.name in if(thing ??= ...) true branch, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn test_compound_plus_equals_preserves_number_narrowing() {
+    let source = r#"
+function compoundAssign(x: number | string) {
+    if (typeof x === "number") {
+        x += 1;
+        x.toFixed();
+    }
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&2339),
+        "Expected no TS2339 after x += 1 preserves number narrowing, got: {codes:?}"
+    );
+}
