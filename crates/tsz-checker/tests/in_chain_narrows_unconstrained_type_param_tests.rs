@@ -400,3 +400,21 @@ function genericCase<T>(x: T) {
         "Expected property accesses to use the `in`-narrowed record shape, got {diagnostics:#?}"
     );
 }
+
+#[test]
+fn in_operator_keeps_unknown_property_after_explicit_null_check() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+function test(x: unknown) {
+  if (typeof x === "object" && x !== null && "foo" in x) {
+    const val = x.foo;
+  }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected explicit null check plus `in` narrowing to expose `foo`, got {diagnostics:#?}"
+    );
+}
