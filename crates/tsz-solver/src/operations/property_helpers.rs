@@ -390,8 +390,109 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 .constraint
                 .is_some_and(|constraint| self.is_key_in_mapped_constraint(constraint, prop_name)),
 
+            // Template literal constraint: a property key is in the constraint when
+            // its string form matches the template pattern. Without this branch,
+            // `{ [K in `data-${string}`]: V }` rejects every literal key like
+            // `"data-id"`, surfacing as TS2353 false positives in object literals.
+            TypeData::TemplateLiteral(list_id) => {
+                self.literal_matches_template_pattern(prop_name, list_id)
+            }
+
             // Other types - be conservative and reject
             _ => false,
+        }
+    }
+
+    /// Match a literal property name against a template literal pattern.
+    ///
+    /// Handles the common cases sufficient for mapped-type key checks:
+    /// - `Text(atom)` spans must match the prefix of the remaining input.
+    /// - `Type(t)` spans where `t` is a string literal must match exactly.
+    /// - `Type(t)` spans where `t` is `string`/`any`/`unknown` consume any
+    ///   characters (with backtracking when followed by more spans).
+    /// - `Type(t)` spans where `t` is `number` consume a numeric token.
+    ///
+    /// More exotic Type span contents (intersections, generic intrinsics,
+    /// constrained type parameters) are not handled here — they require the
+    /// solver's full subtype context and are not reachable through ordinary
+    /// `{ [K in \`prefix-${string}\`]: V }`-style mapped constraints.
+    fn literal_matches_template_pattern(
+        &self,
+        prop_name: &str,
+        list_id: crate::types::TemplateLiteralId,
+    ) -> bool {
+        let spans = self.interner().template_list(list_id);
+        self.match_template_spans(prop_name, &spans, 0)
+    }
+
+    fn match_template_spans(
+        &self,
+        remaining: &str,
+        spans: &[crate::types::TemplateSpan],
+        idx: usize,
+    ) -> bool {
+        use crate::types::{IntrinsicKind, TemplateSpan};
+        use crate::visitor::{intrinsic_kind, literal_string};
+
+        if idx >= spans.len() {
+            return remaining.is_empty();
+        }
+
+        match &spans[idx] {
+            TemplateSpan::Text(text_atom) => {
+                let text = self.interner().resolve_atom(*text_atom);
+                if let Some(rest) = remaining.strip_prefix(text.as_str()) {
+                    self.match_template_spans(rest, spans, idx + 1)
+                } else {
+                    false
+                }
+            }
+            TemplateSpan::Type(type_id) => {
+                if let Some(literal) = literal_string(self.interner(), *type_id) {
+                    let lit = self.interner().resolve_atom(literal);
+                    if let Some(rest) = remaining.strip_prefix(lit.as_str()) {
+                        return self.match_template_spans(rest, spans, idx + 1);
+                    }
+                    return false;
+                }
+                let kind = intrinsic_kind(self.interner(), *type_id);
+                match kind {
+                    Some(IntrinsicKind::String)
+                    | Some(IntrinsicKind::Any)
+                    | Some(IntrinsicKind::Unknown) => {
+                        // Backtrack over all possible split points: try matching
+                        // 0, 1, ..., n characters of `remaining` against the
+                        // wildcard, deferring the rest to subsequent spans.
+                        for split in 0..=remaining.len() {
+                            if remaining.is_char_boundary(split)
+                                && self.match_template_spans(&remaining[split..], spans, idx + 1)
+                            {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                    Some(IntrinsicKind::Number) => {
+                        let digits_end = remaining
+                            .char_indices()
+                            .take_while(|(_, c)| c.is_ascii_digit())
+                            .last()
+                            .map_or(0, |(i, c)| i + c.len_utf8());
+                        if digits_end == 0 {
+                            return false;
+                        }
+                        for split in 1..=digits_end {
+                            if remaining.is_char_boundary(split)
+                                && self.match_template_spans(&remaining[split..], spans, idx + 1)
+                            {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                    _ => false,
+                }
+            }
         }
     }
 
