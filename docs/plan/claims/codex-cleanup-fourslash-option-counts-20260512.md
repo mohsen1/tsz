@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-fourslash-option-counts-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5846
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -18,4 +18,4 @@ making the helper code easier to scan.
 
 ## Verification
 
-- `cargo nextest run -p tsz-lsp --lib --no-fail-fast`
+- `cargo nextest run -p tsz-lsp --lib --no-fail-fast` (3739 tests pass, 5 skipped)
