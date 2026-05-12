@@ -4,8 +4,8 @@
 - **Branch**: `codex/cleanup-lowering-helper-size-20260512`
 - **Base**: `origin/main`
 - **Issue**: n/a
-- **PR**: tbd
-- **Status**: claim
+- **PR**: [#6023](https://github.com/mohsen1/tsz/pull/6023)
+- **Status**: ready
 - **Labels**: `DRY`, `emitter`
 
 ## Intent
@@ -24,4 +24,4 @@ checked-in baseline without a ratchet bump.
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-solver --lib -E 'test(solver_file_size_ceiling_tests::test_emitter_file_size_ceiling)' --no-fail-fast`
-- `cargo nextest run -p tsz-emitter --lib -E 'test(lowering_helpers)' --no-fail-fast`
+- `cargo nextest run -p tsz-emitter --lib -E 'test(/lowering::helpers::tests::/)' --no-fail-fast`
