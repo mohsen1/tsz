@@ -38,8 +38,7 @@ function maybeReturn(x: string | null): string | undefined {
     let codes = check_with_no_implicit_returns(source);
     assert!(
         !codes.contains(&7030),
-        "TS7030 must not be emitted when return type is string | undefined; got: {:?}",
-        codes
+        "TS7030 must not be emitted when return type is string | undefined; got: {codes:?}"
     );
 }
 
@@ -57,8 +56,7 @@ function f(): number | undefined {
     let codes = check_with_no_implicit_returns(source);
     assert!(
         !codes.contains(&7030),
-        "TS7030 must not be emitted when return type is number | undefined; got: {:?}",
-        codes
+        "TS7030 must not be emitted when return type is number | undefined; got: {codes:?}"
     );
 }
 
@@ -78,8 +76,7 @@ function f() {
     let codes = check_with_no_implicit_returns(source);
     assert!(
         codes.contains(&7030),
-        "TS7030 must be emitted for unannotated functions with partial returns; got: {:?}",
-        codes
+        "TS7030 must be emitted for unannotated functions with partial returns; got: {codes:?}"
     );
 }
 
@@ -97,7 +94,6 @@ const f = (): string | undefined => {
     let codes = check_with_no_implicit_returns(source);
     assert!(
         !codes.contains(&7030),
-        "TS7030 must not be emitted for arrow with string | undefined return; got: {:?}",
-        codes
+        "TS7030 must not be emitted for arrow with string | undefined return; got: {codes:?}"
     );
 }
