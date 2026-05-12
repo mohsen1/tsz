@@ -679,3 +679,37 @@ render() {
     );
     assert!(output.contains("return _jsxDEV(\"div\""));
 }
+
+#[test]
+fn system_react_jsxdev_runtime_dependency_overrides_stale_file_name_cache() {
+    use crate::emitter::JsxEmit;
+    let source = r#"namespace JSX {}
+class Component {
+render() {
+    return <div>{null}</div>;
+}
+}
+"#;
+    let mut parser = ParserState::new("fresh.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        jsx: JsxEmit::ReactJsxDev,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.jsx_dev_file_name = Some("stale.tsx".to_string());
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("_jsxFileName = \"fresh.tsx\";"),
+        "System jsxdev emit should always assign the current source file name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_jsxFileName = \"stale.tsx\";"),
+        "System jsxdev emit should not reuse stale _jsxFileName values.\nOutput:\n{output}"
+    );
+}
