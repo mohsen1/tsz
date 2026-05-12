@@ -113,8 +113,13 @@ impl<'a> CheckerState<'a> {
         let type_lit = self.ctx.arena.get_type_literal(obj_node)?;
         let mut key_types = Vec::new();
         for &member_idx in &type_lit.members.nodes {
-            if let Some(member_node) = self.ctx.arena.get(member_idx)
-                && let Some(sig) = self.ctx.arena.get_signature(member_node)
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                return None;
+            }
+            if let Some(sig) = self.ctx.arena.get_signature(member_node)
                 && let Some(name) = self.get_property_name(sig.name)
             {
                 let key_type = self

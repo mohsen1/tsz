@@ -742,6 +742,7 @@ impl<'a> CheckerState<'a> {
         let mut index_constraint =
             crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, index_type);
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
+            && index_constraint.is_none()
             && let Some(ast_constraint) =
                 self.resolve_index_constraint_from_declaration(data.index_type, data.object_type)
         {
