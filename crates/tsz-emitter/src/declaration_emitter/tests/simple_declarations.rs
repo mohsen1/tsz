@@ -453,6 +453,35 @@ export function j() {}
 }
 
 #[test]
+fn test_js_local_enum_exports_are_deferred_before_alias_group() {
+    let source = r#"
+export enum A {}
+enum B {}
+export { B };
+enum CC {}
+export { CC as C };
+export enum D {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let expected = r#"export enum A {
+}
+export enum D {
+}
+export enum B {
+}
+declare enum CC {
+}
+export { CC as C };
+"#;
+
+    assert_eq!(
+        output, expected,
+        "Expected local enum exports to match tsc order"
+    );
+}
+
+#[test]
 fn test_js_cjs_export_aliases_are_grouped_in_source_order() {
     let source = r#"
 function hh() {}
