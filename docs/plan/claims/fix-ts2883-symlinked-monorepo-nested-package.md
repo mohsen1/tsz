@@ -3,7 +3,7 @@
 - **Date**: 2026-04-30
 - **Branch**: `fix/ts2883-symbol-link-import-ref-20260512`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -43,3 +43,8 @@ PASS without regressing any of the four other `@link`-using conformance tests.
   failure on `main` before this change)
 - Unit: `cargo nextest run -p tsz-emitter --lib` — 1641 tests pass
   (5 new tests included)
+- Unit: `cargo test -p tsz-emitter symlinked_nested_package_reference -- --nocapture` — 6 tests pass
+- Conformance: `scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter symbolLinkDeclarationEmitModuleNamesImportRef --verbose` — PASS
+- Conformance adjacency: `symlinkedWorkspaceDependenciesNoDirectLink`, `declarationEmitMonorepoBaseUrl`, and `declarationEmitCommonSourceDirectoryDoesNotContainAllFiles` — PASS
+- Full conformance on branch: 12569/12582 passed, 9 fingerprint-only; only code mismatch is `callsOnComplexSignatures.tsx` TS2786, covered by PR #5679 and not caused by this TS2883 change
+- Formatting/whitespace: `cargo fmt --all --check`, `git diff --check` — PASS

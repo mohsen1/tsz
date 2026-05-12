@@ -2084,13 +2084,6 @@ impl<'a> DeclarationEmitter<'a> {
         let package_name = package_parts.join("/");
         let package_root: std::path::PathBuf =
             path.components().take(pkg_start + pkg_len).collect();
-        if self
-            .package_specifier_for_package_json_path(current_file_path, source_path)
-            .is_some()
-        {
-            return None;
-        }
-
         let package_json = package_root.join("package.json");
         if let Ok(pkg_content) = std::fs::read_to_string(&package_json)
             && let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content)
