@@ -1,6 +1,7 @@
 //! Namespace type merging and re-export resolution for declaration merging.
 
 use crate::query_boundaries::class_type as query;
+use crate::query_boundaries::common::ObjectFlags;
 use crate::state::{CheckerState, EnumKind};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
@@ -8,7 +9,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape, TypeId, Visibility};
+use tsz_solver::{IndexSignature, ObjectShape, TypeId, Visibility};
 
 /// Maximum recursion depth for namespace export merging.
 ///
@@ -404,7 +405,7 @@ impl<'a> CheckerState<'a> {
         // it as `typeof M` instead of expanding to the structural object shape.
         let namespace_type = self.ctx.types.factory().object_with_flags_and_symbol(
             props,
-            tsz_solver::ObjectFlags::empty(),
+            ObjectFlags::empty(),
             Some(sym_id),
         );
         self.ctx
