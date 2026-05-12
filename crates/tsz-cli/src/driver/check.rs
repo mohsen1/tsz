@@ -3683,7 +3683,7 @@ mod tests {
     }
 
     #[test]
-    fn large_wildcard_barrel_uses_sequential_check_lane() {
+    fn detects_large_wildcard_barrel() {
         let mut files = Vec::new();
         let mut barrel = String::new();
         for i in 0..LARGE_WILDCARD_BARREL_EXPORTS {

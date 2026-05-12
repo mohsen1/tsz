@@ -1164,12 +1164,11 @@ impl<'a> BinaryOpEvaluator<'a> {
                             self.interner.lookup(index_type)
                         && let Some(constraint) = info.constraint
                     {
-                        return self
-                            .interner
-                            .is_assignable_to(constraint, self.interner.keyof(object_type));
+                        self.interner
+                            .is_assignable_to(constraint, self.interner.keyof(object_type))
+                    } else {
+                        true
                     }
-
-                    true
                 } else {
                     self.is_valid_key_type_impl(evaluated, defer_unresolved, seen)
                 }
