@@ -1,9 +1,9 @@
-//! Tests for TS1338: 'infer' declarations are only permitted in the 'extends'
-//! clause of a conditional type.
+//! Tests for conditional-type grammar diagnostics.
 //!
 //! `infer T` is only valid inside the `extends` portion of a conditional type.
 //! Anywhere else (standalone type alias, `check_type`, `true_type`, `false_type`, etc.)
 //! must emit TS1338.
+//! `unique symbol` is not valid as the `extends` type and must emit TS1335.
 
 use crate::test_utils::check_source_code_messages as get_diagnostics;
 
@@ -72,5 +72,29 @@ fn infer_with_constraint_in_extends_no_error() {
     assert!(
         !has_error_with_code(source, 1338),
         "Should NOT emit TS1338 for constrained infer in extends clause"
+    );
+}
+
+#[test]
+fn unique_symbol_in_conditional_extends_emits_ts1335() {
+    let source = r#"
+declare const mySymbol: unique symbol;
+type Check = typeof mySymbol extends unique symbol ? true : false;
+"#;
+    assert!(
+        has_error_with_code(source, 1335),
+        "Should emit TS1335 for unique symbol in conditional extends"
+    );
+}
+
+#[test]
+fn parenthesized_unique_symbol_in_conditional_extends_emits_ts1335() {
+    let source = r#"
+declare const mySymbol: unique symbol;
+type Check = typeof mySymbol extends (unique symbol) ? true : false;
+"#;
+    assert!(
+        has_error_with_code(source, 1335),
+        "Should emit TS1335 for parenthesized unique symbol in conditional extends"
     );
 }
