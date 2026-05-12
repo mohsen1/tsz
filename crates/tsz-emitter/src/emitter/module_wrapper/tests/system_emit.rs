@@ -165,6 +165,33 @@ console.log(A + B + C + D + E + F);
 }
 
 #[test]
+fn system_import_temps_follow_mixed_source_order() {
+    let source = r#"const local = "local";
+import { value } from "mod";
+
+console.log(local, value);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var local, mod_1;"),
+        "System hoists should preserve local/import source order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_top_level_using_named_export_keeps_legacy_decorator_assignment_export() {
     let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
 
