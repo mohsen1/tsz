@@ -115,38 +115,8 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                     continue;
                 }
 
-                // Avoid canonicalizing package-link paths whose lexical path is
-                // outside node_modules but whose real target lives under
-                // node_modules. Ordinary resolved package files should still
-                // canonicalize so tempdir aliases like /var -> /private/var
-                // collapse to a stable path.
-                let resolved = if options.follow_links {
-                    let canonical =
-                        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-                    let path_has_node_modules = path.components().any(|component| {
-                        matches!(
-                            component,
-                            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                        )
-                    });
-                    let canonical_has_node_modules = canonical.components().any(|component| {
-                        matches!(
-                            component,
-                            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                        )
-                    });
-                    let preserve_symlink_identity =
-                        !path_has_node_modules && canonical_has_node_modules;
-                    if preserve_symlink_identity
-                        || path_has_symlinked_package_ancestor(path, &options.base_dir)
-                    {
-                        path.to_path_buf()
-                    } else {
-                        canonical
-                    }
-                } else {
-                    path.to_path_buf()
-                };
+                let resolved =
+                    resolve_discovered_path(path, &options.base_dir, options.follow_links);
                 files.insert(resolved);
             }
         }
@@ -162,6 +132,25 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     Ok(list)
 }
 
+fn resolve_discovered_path(path: &Path, base_dir: &Path, follow_links: bool) -> PathBuf {
+    if !follow_links {
+        return path.to_path_buf();
+    }
+
+    // Avoid canonicalizing package-link paths whose lexical path is outside
+    // node_modules but whose real target lives under node_modules. Ordinary
+    // resolved package files should still canonicalize so tempdir aliases like
+    // /var -> /private/var collapse to a stable path.
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let preserve_symlink_identity =
+        !path_has_node_modules_component(path) && path_has_node_modules_component(&canonical);
+    if preserve_symlink_identity || path_has_symlinked_package_ancestor(path, base_dir) {
+        path.to_path_buf()
+    } else {
+        canonical
+    }
+}
+
 fn path_has_symlinked_package_ancestor(path: &Path, base_dir: &Path) -> bool {
     let mut current = path.parent();
     while let Some(dir) = current {
@@ -173,16 +162,20 @@ fn path_has_symlinked_package_ancestor(path: &Path, base_dir: &Path) -> bool {
             .unwrap_or(false)
         {
             let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-            return canonical.components().any(|component| {
-                matches!(
-                    component,
-                    std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
-                )
-            });
+            return path_has_node_modules_component(&canonical);
         }
         current = dir.parent();
     }
     false
+}
+
+fn path_has_node_modules_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(part) if part.to_str() == Some("node_modules")
+        )
+    })
 }
 
 fn include_walk_roots(base_dir: &Path, include_patterns: &[String]) -> Vec<PathBuf> {
@@ -665,6 +658,22 @@ mod tests {
         );
         assert_eq!(path_to_pattern(base_dir, Path::new("")), None);
         assert_eq!(path_to_pattern(base_dir, Path::new("/other/place")), None);
+    }
+
+    #[test]
+    fn test_path_has_node_modules_component_matches_whole_component() {
+        assert!(path_has_node_modules_component(Path::new(
+            "project/node_modules/pkg/index.d.ts"
+        )));
+        assert!(path_has_node_modules_component(Path::new(
+            "/repo/node_modules"
+        )));
+        assert!(!path_has_node_modules_component(Path::new(
+            "project/not_node_modules/pkg/index.d.ts"
+        )));
+        assert!(!path_has_node_modules_component(Path::new(
+            "project/node_modules_cache/pkg/index.d.ts"
+        )));
     }
 
     #[test]
