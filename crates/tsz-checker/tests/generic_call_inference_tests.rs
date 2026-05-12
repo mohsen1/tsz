@@ -606,13 +606,21 @@ fn direct_generic_argument_mismatch_is_not_recovered_to_success() {
 declare function bar<T>(item1: T, item2: T): T;
 bar(1, "");
 "#;
-    let diags = relevant_diagnostics(source);
-    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
-    assert!(
-        ts2345.is_some(),
-        "Expected TS2345 for conflicting direct inference candidates. Diagnostics: {diags:#?}"
+    let diagnostics = compile_and_get_raw_diagnostics(source);
+    let second_arg_start = source
+        .find("bar(1, \"\")")
+        .map(|idx| idx + "bar(1, ".len())
+        .expect("expected bar(1, \"\") call");
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345 && diag.start == second_arg_start as u32)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected one TS2345 anchored at bar's second argument. Diagnostics: {diagnostics:#?}"
     );
-    let msg = &ts2345.unwrap().1;
+    let msg = &ts2345[0].message_text;
     assert!(
         msg.contains("Argument of type '\"\"' is not assignable to parameter of type '1'."),
         "TS2345 should preserve direct literal candidates. Got: {msg:?}"
@@ -625,13 +633,21 @@ fn direct_generic_argument_mismatch_survives_context_sensitive_callback() {
 declare function g<T>(a: T, b: T, c: (t: T) => T): T;
 g("", 3, a => a);
 "#;
-    let diags = relevant_diagnostics(source);
-    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
-    assert!(
-        ts2345.is_some(),
-        "Expected TS2345 for conflicting direct candidates before callback inference. Diagnostics: {diags:#?}"
+    let diagnostics = compile_and_get_raw_diagnostics(source);
+    let second_arg_start = source
+        .find("g(\"\", 3, a => a)")
+        .map(|idx| idx + "g(\"\", ".len())
+        .expect("expected g(\"\", 3, a => a) call");
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345 && diag.start == second_arg_start as u32)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected one TS2345 anchored at g's second argument. Diagnostics: {diagnostics:#?}"
     );
-    let msg = &ts2345.unwrap().1;
+    let msg = &ts2345[0].message_text;
     assert!(
         msg.contains("Argument of type '3' is not assignable to parameter of type '\"\"'."),
         "TS2345 should preserve the first direct literal inference candidate in the diagnostic. Got: {msg:?}"
@@ -644,13 +660,21 @@ fn rest_generic_argument_mismatch_displays_primitive_bases() {
 declare function rest<T>(...items: T[]): T;
 rest(1, "");
 "#;
-    let diags = relevant_diagnostics(source);
-    let ts2345 = diags.iter().find(|(code, _)| *code == 2345);
-    assert!(
-        ts2345.is_some(),
-        "Expected TS2345 for conflicting rest inference candidates. Diagnostics: {diags:#?}"
+    let diagnostics = compile_and_get_raw_diagnostics(source);
+    let second_arg_start = source
+        .find("rest(1, \"\")")
+        .map(|idx| idx + "rest(1, ".len())
+        .expect("expected rest(1, \"\") call");
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345 && diag.start == second_arg_start as u32)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected one TS2345 anchored at rest's second argument. Diagnostics: {diagnostics:#?}"
     );
-    let msg = &ts2345.unwrap().1;
+    let msg = &ts2345[0].message_text;
     assert!(
         msg.contains("Argument of type 'string' is not assignable to parameter of type 'number'."),
         "TS2345 should display primitive bases for conflicting rest generic candidates. Got: {msg:?}"

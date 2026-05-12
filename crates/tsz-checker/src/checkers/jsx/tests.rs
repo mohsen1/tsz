@@ -422,11 +422,17 @@ fn jsx_union_component_with_invalid_return_emits_ts2786() {
         r#"
         declare namespace JSX {
             interface Element { type: 'element'; }
+            interface ElementClass { render(): Element; }
+            interface ElementAttributesProperty { props: {}; }
             interface IntrinsicElements { }
         }
-        declare function BadFC(props: {}): { type: string };
-        declare class BadClass { render(): { type: string }; }
-        declare var MixedComponent: typeof BadFC | typeof BadClass;
+        declare function GoodFC(props: {}): JSX.Element;
+        declare class BadClass {
+            constructor(props: {});
+            props: {};
+            render(): { type: string };
+        }
+        declare var MixedComponent: typeof GoodFC | typeof BadClass;
         <MixedComponent />;
         "#,
     );
@@ -443,10 +449,16 @@ fn jsx_union_component_all_valid_no_ts2786() {
         r#"
         declare namespace JSX {
             interface Element { type: 'element'; }
+            interface ElementClass { render(): Element; }
+            interface ElementAttributesProperty { props: {}; }
             interface IntrinsicElements { }
         }
         declare function GoodFC(props: {}): JSX.Element;
-        declare class GoodClass { render(): JSX.Element; }
+        declare class GoodClass {
+            constructor(props: {});
+            props: {};
+            render(): JSX.Element;
+        }
         declare var ValidUnion: typeof GoodFC | typeof GoodClass;
         <ValidUnion />;
         "#,
@@ -846,8 +858,7 @@ fn jsx_union_of_invalid_function_and_class_component_emits_ts2786() {
 
 #[test]
 fn jsx_user_named_component_type_alias_union_still_checks_returns() {
-    let diagnostics = check_jsx_strict(
-        r#"
+    let source = r#"
         declare namespace JSX {
             interface Element { ok: true; }
             interface ElementClass { render(): Element; }
@@ -864,11 +875,24 @@ fn jsx_user_named_component_type_alias_union_still_checks_returns() {
             InvalidClassComponent<P> | InvalidFunctionComponent<P>;
         declare const Bad: ComponentType<{ p?: boolean }>;
         const elem = <Bad p={true} />;
-        "#,
+        "#;
+    let diagnostics = check_jsx_strict(source);
+    let expected_start = source
+        .find("<Bad p={true}")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <Bad ...>");
+    let ts2786: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2786 && diag.message_text.contains("'Bad'"))
+        .collect();
+    assert_eq!(
+        ts2786.len(),
+        1,
+        "User-defined aliases named ComponentType must emit one TS2786 on <Bad ...>, got: {diagnostics:?}"
     );
-    assert!(
-        diagnostics.iter().any(|diag| diag.code == 2786),
-        "User-defined aliases named ComponentType must not bypass TS2786, got: {diagnostics:?}"
+    assert_eq!(
+        ts2786[0].start, expected_start,
+        "TS2786 should anchor at the Bad JSX tag name, got: {diagnostics:?}"
     );
 }
 
