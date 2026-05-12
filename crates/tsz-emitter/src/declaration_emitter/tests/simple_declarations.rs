@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // 1. Simple Declarations
@@ -242,8 +247,7 @@ function f5({ await: _await, ...rest }: P) {
 #[test]
 fn test_non_exported_function_declaration_emits_declare_function() {
     let source = "function helper(x: string): string { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -269,8 +273,7 @@ fn test_class_declaration() {
         }
     }
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -310,8 +313,7 @@ var c = new C();
 #[test]
 fn test_interface_declaration() {
     let source = "export interface Point { x: number; y: number; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -326,8 +328,7 @@ fn test_interface_declaration() {
 #[test]
 fn test_type_alias() {
     let source = "export type ID = string | number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -347,8 +348,7 @@ fn test_type_only_export_module_gets_empty_export_marker() {
 import "some-dep";
 type T = { x: number };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -369,8 +369,7 @@ export interface I {
     f: T;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -413,8 +412,7 @@ export class Bar {
 #[test]
 fn test_empty_named_export_has_no_extra_spacing() {
     let source = "export {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -528,8 +526,7 @@ declare class C {
     private set x(foo: string);
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -551,8 +548,7 @@ declare class C {
     set x(foo: string);
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -911,8 +907,7 @@ fn test_js_const_literal_uses_type_annotation() {
 #[test]
 fn test_ts_const_await_literal_uses_initializer() {
     let source = "const x = await 1;\nexport { x };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -1570,8 +1565,7 @@ fn test_ts_import_meta_url_infers_string() {
 const x = import.meta.url;
 export { x };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -1832,8 +1826,7 @@ export = X;
 
 #[test]
 fn test_namespace_shadowed_default_export_uses_self_import_type_names() {
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.current_namespace_self_import_alias = Some("me".to_string());
     emitter.current_namespace_shadowed_default_name = Some("MyComponent".to_string());
@@ -2487,8 +2480,7 @@ const numMem = 42;
 foo[numMem] = "ok";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let interner = TypeInterner::new();
@@ -3689,8 +3681,7 @@ class C {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(root_node) = parser.arena.get(root) else {
         panic!("missing root node");
@@ -3738,8 +3729,7 @@ abstract class C {
     abstract prop = 1;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -3760,8 +3750,7 @@ export var basePrototype = {
   },
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -3888,8 +3877,7 @@ const obj = {
     [Symbol.observer]: 0
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let obj_decl = parser
         .arena
@@ -3963,8 +3951,7 @@ const obj = {
     [key]: 0
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let obj_decl = parser
         .arena
@@ -4030,8 +4017,7 @@ const obj = {
     [Symbol.iterator]: 0
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let obj_decl = parser
         .arena
@@ -4132,8 +4118,7 @@ export const Baa = {
     [Foo.BANANA]: 1,
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let baa_decl = parser
         .arena
@@ -4315,8 +4300,7 @@ class Foo {
     Hello = Hello;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let source_file = parser
@@ -4491,8 +4475,7 @@ var c = new C(1);
 var d = new D(1);
 var e = new E(1);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(root_node) = parser.arena.get(root) else {
         panic!("missing root node");
@@ -4625,8 +4608,7 @@ declare var ctor: Factory;
 declare var value: Input;
 var instance = new ctor(value);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(root_node) = parser.arena.get(root) else {
         panic!("missing root node");
@@ -4672,8 +4654,7 @@ var instance = new ctor(value);
 #[test]
 fn test_constructor_type_no_double_semicolon() {
     let source = "export type Ctor = new (...args: any[]) => void;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4691,8 +4672,7 @@ fn test_constructor_type_no_double_semicolon() {
 #[test]
 fn test_template_literal_type_no_double_semicolon() {
     let source = r#"export type Outcome = `${string}_${string}`;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4710,8 +4690,7 @@ fn test_template_literal_type_no_double_semicolon() {
 #[test]
 fn test_infer_type_no_double_semicolon() {
     let source = "export type Unpack<T> = T extends (infer U)[] ? U : T;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4729,8 +4708,7 @@ fn test_infer_type_no_double_semicolon() {
 #[test]
 fn test_abstract_constructor_type() {
     let source = "export type AbstractCtor = abstract new () => object;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4748,8 +4726,7 @@ fn test_abstract_constructor_type() {
 #[test]
 fn test_simple_template_literal_type() {
     let source = r#"export type Greeting = `hello`;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4775,8 +4752,7 @@ fn test_public_modifier_omitted_from_dts_class_members() {
         private z: number;
     }
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);

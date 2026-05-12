@@ -11,6 +11,11 @@ use crate::parser::ParserState;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use std::mem::size_of;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // Basic Parsing Tests
@@ -18,8 +23,7 @@ use std::mem::size_of;
 
 #[test]
 fn test_parser_simple_expression() {
-    let mut parser = ParserState::new("test.ts".to_string(), "1 + 2".to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source("1 + 2");
 
     assert!(root.is_some());
     assert!(!parser.arena.is_empty());
@@ -620,8 +624,7 @@ fn test_parser_template_expression_spans() {
 #[test]
 fn test_parser_unterminated_template_expression_no_crash() {
     let source = "var v = `foo ${ a";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     assert!(
@@ -637,8 +640,7 @@ fn test_parser_unterminated_template_expression_no_crash() {
 #[test]
 fn test_parser_unterminated_template_literal_reports_ts1160() {
     let source = "`";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     assert!(
@@ -654,8 +656,7 @@ fn test_parser_unterminated_template_literal_reports_ts1160() {
 #[test]
 fn test_parser_template_literal_property_name_no_ts1160() {
     let source = "var x = { `abc${ 123 }def${ 456 }ghi`: 321 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     let diagnostics = parser.get_diagnostics();
@@ -676,8 +677,7 @@ fn test_parser_template_literal_property_name_no_ts1160() {
 #[test]
 fn test_parser_double_comma_emits_ts1136() {
     let source = "Boolean({ x: 0,, });";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     let diagnostics = parser.get_diagnostics();
@@ -812,8 +812,7 @@ fn test_parser_class_extends_property_access() {
 
 #[test]
 fn test_parser_decorator_class() {
-    let mut parser = ParserState::new("test.ts".to_string(), "@Component class Foo {}".to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source("@Component class Foo {}");
 
     assert!(root.is_some());
     assert!(
@@ -2814,8 +2813,7 @@ fn test_parser_optional_chaining() {
 
 #[test]
 fn test_parser_optional_chain_call_with_type_arguments() {
-    let mut parser = ParserState::new("test.ts".to_string(), "let x = obj?.<T>(value)".to_string());
-    let root = parser.parse_source_file();
+    let (_parser, root) = parse_test_source("let x = obj?.<T>(value)");
 
     assert!(root.is_some());
 }
@@ -2970,8 +2968,7 @@ fn test_parser_type_identifier_assignment_statement() {
 
 #[test]
 fn test_parser_nullish_coalescing() {
-    let mut parser = ParserState::new("test.ts".to_string(), "let x = a ?? b ?? c".to_string());
-    let root = parser.parse_source_file();
+    let (_parser, root) = parse_test_source("let x = a ?? b ?? c");
 
     assert!(root.is_some());
 }
@@ -3494,8 +3491,7 @@ fn test_parser_await_as_type_name() {
 #[test]
 fn test_parser_await_as_parameter_name() {
     // 'await' should be valid as parameter name outside async functions
-    let mut parser = ParserState::new("test.ts".to_string(), "function f(await) { }".to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source("function f(await) { }");
 
     assert!(root.is_some());
     assert!(
@@ -3851,8 +3847,7 @@ outer: for (let i = 0; i < 10; i++) {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
@@ -3898,8 +3893,7 @@ outer: for (let i = 0; i < 10; i++) {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
@@ -3943,8 +3937,7 @@ for (let i = 0; i < 10; i++) {
     if (i > 5) break;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
@@ -3973,8 +3966,7 @@ for (let i = 0; i < 10; i++) {
     if (i > 5) continue;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
@@ -4003,8 +3995,7 @@ myLabel: while (true) {
     break myLabel;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
     assert!(parser.get_diagnostics().is_empty());
@@ -4032,8 +4023,7 @@ outer: for (;;) {
     outer;  // This becomes a separate expression statement (unused label)
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     assert!(root.is_some());
 
@@ -4064,16 +4054,14 @@ outer: for (;;) {
 #[test]
 fn test_ts1038_declare_inside_declare_namespace() {
     let source = r#"declare namespace X { declare var y: number; }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (_parser, root) = parse_test_source(source);
     assert!(root.is_some());
 }
 
 #[test]
 fn test_ts1038_declare_inside_regular_namespace() {
     let source = r#"namespace M { declare module 'nope' { } }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (_parser, root) = parse_test_source(source);
     assert!(root.is_some());
 }
 

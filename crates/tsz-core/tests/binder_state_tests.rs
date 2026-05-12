@@ -11,6 +11,11 @@
 
 use crate::binder::{BinderState, symbol_flags};
 use crate::parser::ParserState;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // Basic Declaration Binding Tests
@@ -511,8 +516,7 @@ function f(x: number) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -785,7 +789,6 @@ export function getModuleInstanceStateForAliasTarget(
 #[test]
 fn test_namespace_binding_debug() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace foo {
@@ -796,8 +799,7 @@ namespace foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -846,7 +848,6 @@ namespace foo {
 fn test_import_alias_binding() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -856,8 +857,7 @@ import Alias = NS.C;
 var x: Alias;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -893,7 +893,6 @@ var x: Alias;
 #[test]
 fn test_namespace_exports_merge_across_decls() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -906,8 +905,7 @@ namespace Merge {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -941,7 +939,6 @@ namespace Merge {
 #[test]
 fn test_class_namespace_merge_exports() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 class Merge {
@@ -953,8 +950,7 @@ namespace Merge {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -986,7 +982,6 @@ namespace Merge {
 #[test]
 fn test_namespace_class_merge_exports_reverse_order() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -998,8 +993,7 @@ class Merge {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1031,7 +1025,6 @@ class Merge {
 #[test]
 fn test_function_namespace_merge_exports() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 function Merge() {}
@@ -1041,8 +1034,7 @@ namespace Merge {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1074,7 +1066,6 @@ namespace Merge {
 #[test]
 fn test_namespace_function_merge_exports_reverse_order() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -1084,8 +1075,7 @@ namespace Merge {
 function Merge() {}
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1117,7 +1107,6 @@ function Merge() {}
 #[test]
 fn test_enum_namespace_merge_exports() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 enum Merge {
@@ -1129,8 +1118,7 @@ namespace Merge {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1168,7 +1156,6 @@ namespace Merge {
 #[test]
 fn test_namespace_enum_merge_exports_reverse_order() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -1180,8 +1167,7 @@ enum Merge {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1234,8 +1220,7 @@ fn test_binder_deep_binary_expression() {
     }
     source.push(';');
 
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(&source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1250,7 +1235,6 @@ fn test_binder_deep_binary_expression() {
 #[test]
 fn test_namespace_member_resolution_basic() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -1266,8 +1250,7 @@ const c = new NS.Bar();
 const d = NS.Color.Red;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1301,7 +1284,6 @@ const d = NS.Color.Red;
 #[test]
 fn test_namespace_member_resolution_nested() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -1315,8 +1297,7 @@ const a = Outer.Inner.value;
 const b = Outer.Inner.getDouble();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1345,7 +1326,6 @@ const b = Outer.Inner.getDouble();
 #[test]
 fn test_namespace_member_resolution_non_exported() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -1356,8 +1336,7 @@ namespace NS {
 const a = NS.exported;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1383,7 +1362,6 @@ const a = NS.exported;
 #[test]
 fn test_namespace_deep_chain_resolution() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace A {
@@ -1399,8 +1377,7 @@ const a = A.B.C.deepValue;
 const b = A.B.C.deepFunc();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1423,7 +1400,6 @@ const b = A.B.C.deepFunc();
 #[test]
 fn test_enum_member_access() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 enum Color {
@@ -1437,8 +1413,7 @@ const b = Color.Green;
 const c = Color.Blue;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1476,7 +1451,6 @@ const c = Color.Blue;
 #[test]
 fn test_enum_namespace_merging_access() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 enum Direction {
@@ -1495,8 +1469,7 @@ const b = Direction.getName(Direction.Down);
 const c = Direction.helperValue;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1547,7 +1520,6 @@ const c = Direction.helperValue;
 #[test]
 fn test_enum_with_initialized_members() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 enum Status {
@@ -1561,8 +1533,7 @@ const b = Status.Active;
 const c = Status.Done;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1607,7 +1578,6 @@ const c = Status.Done;
 fn test_const_enum_declaration() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 const enum Priority {
@@ -1621,8 +1591,7 @@ const b = Priority.Medium;
 const c = Priority.High;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1673,7 +1642,6 @@ const c = Priority.High;
 #[test]
 fn test_namespace_reopening_exports() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 namespace Reopened {
@@ -1689,8 +1657,7 @@ const b = Reopened.second;
 const c = Reopened.combined();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1728,7 +1695,6 @@ const c = Reopened.combined();
 #[test]
 fn test_enum_namespace_merging_with_exports() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 enum ErrorCode {
@@ -1749,8 +1715,7 @@ const err2 = ErrorCode.ServerError;
 const msg2 = ErrorCode.getMessage(ErrorCode.ServerError);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1792,7 +1757,6 @@ const msg2 = ErrorCode.getMessage(ErrorCode.ServerError);
 fn test_scope_chain_traversal() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     // Test that identifier resolution walks the scope chain correctly.
     // - Global symbols (globalX, foo) should be in file_locals
@@ -1806,8 +1770,7 @@ function foo() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1867,7 +1830,6 @@ function foo() {
 #[test]
 fn test_variable_shadowing() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 let x = "global";
@@ -1878,8 +1840,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -1905,7 +1866,6 @@ function test() {
 fn test_deeply_nested_scope_chain() {
     use crate::binder::BinderState;
     use crate::binder::ContainerKind;
-    use crate::parser::ParserState;
 
     let source = r#"
 const outerVar = 1;
@@ -1929,8 +1889,7 @@ function outer() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2018,7 +1977,6 @@ function outer() {
 #[test]
 fn test_class_method_outer_scope_access() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 const globalConfig = { debug: true };
@@ -2039,8 +1997,7 @@ class MyClass {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2068,7 +2025,6 @@ class MyClass {
 fn test_block_scope_let_const() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 {
@@ -2077,8 +2033,7 @@ fn test_block_scope_let_const() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2112,7 +2067,6 @@ fn test_block_scope_let_const() {
 fn test_var_hoisting() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -2123,8 +2077,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2173,7 +2126,6 @@ function test() {
 fn test_imported_symbol_visibility() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 import { foo, bar as baz } from 'module';
@@ -2183,8 +2135,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2205,15 +2156,13 @@ function test() {
 fn test_default_import_visibility() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 import defaultExport from 'module';
 const value = defaultExport;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2233,15 +2182,13 @@ const value = defaultExport;
 fn test_namespace_import_visibility() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 import * as ns from 'module';
 const value = ns.foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2257,15 +2204,13 @@ const value = ns.foo;
 #[test]
 fn test_type_only_imports() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 import type { Type1, Type2 as Alias2 } from 'module';
 import type Type3 from 'module';
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2286,15 +2231,13 @@ import type Type3 from 'module';
 fn test_type_only_import_merges_with_local_value() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 import type { A } from 'module';
 const A: A = "a";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2323,14 +2266,12 @@ const A: A = "a";
 fn test_re_export_from_module() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     let source = r#"
 export { foo, bar as baz } from 'module';
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2349,15 +2290,13 @@ export { foo, bar as baz } from 'module';
 #[test]
 fn test_import_and_export_in_same_file() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 import { importedFunc } from 'module';
 export const localValue = importedFunc();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2379,7 +2318,6 @@ export const localValue = importedFunc();
 #[test]
 fn test_symbol_table_validation_valid_code() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 const x = 1;
@@ -2387,8 +2325,7 @@ function foo() { return x; }
 class MyClass { value: number = 42; }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2405,12 +2342,10 @@ class MyClass { value: number = 42; }
 #[test]
 fn test_symbol_table_validation_detects_orphans() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = "const x = 1;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2434,12 +2369,10 @@ fn test_symbol_table_validation_detects_orphans() {
 #[test]
 fn test_symbol_table_validation_broken_links() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = "const x = 1;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2461,7 +2394,6 @@ fn test_symbol_table_validation_broken_links() {
 #[test]
 fn test_closure_variable_capture() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     // Test that variables declared in outer scopes are resolvable inside closures.
     // This is the core issue for Task 2.
@@ -2477,8 +2409,7 @@ const functionExpr = function() {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -2541,7 +2472,6 @@ const functionExpr = function() {
 fn test_module_import_resolution_basic_named_import() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     // Simulate file1.ts which exports symbols
     let exporter_source = r#"
@@ -2643,7 +2573,6 @@ const y = bar;
 fn test_module_import_resolution_renamed_import() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     // Simulate file1.ts which exports a symbol
     let exporter_source = r#"
@@ -2726,7 +2655,6 @@ const x = aliasedValue;
 fn test_module_import_resolution_non_import_symbol_unchanged() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;
-    use crate::parser::ParserState;
 
     // Test that regular (non-import) symbols are not affected by import resolution
     let source = r#"
@@ -2734,8 +2662,7 @@ const localValue = 42;
 function localFunction() { return localValue; }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2797,7 +2724,6 @@ function localFunction() { return localValue; }
 #[test]
 fn test_multiple_wildcard_reexports() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     // This file re-exports from multiple modules
     let source = r#"
@@ -2846,7 +2772,6 @@ export * from './moduleC';
 #[test]
 fn test_mixed_reexports() {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
 
     let source = r#"
 export { foo, bar } from './named';
@@ -2890,15 +2815,13 @@ export * from './wildcard2';
 #[test]
 fn test_export_resolution_multiple_wildcards() {
     use crate::binder::{BinderState, SymbolTable, symbol_flags};
-    use crate::parser::ParserState;
     use std::sync::Arc;
 
     // Setup: We'll create module_exports and wildcard_reexports manually
     // to test the resolution logic without parsing multiple files
     let source = "const x = 1;"; // Minimal source just to create a binder
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
