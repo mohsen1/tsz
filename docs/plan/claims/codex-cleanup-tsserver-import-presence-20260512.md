@@ -1,7 +1,10 @@
-Status: ready
-Branch: codex/cleanup-tsserver-import-presence-20260512
-Owner: Codex
-Date: 2026-05-12 01:53:44 UTC
+# chore(tsserver): simplify import binding presence checks
+
+- **Date**: 2026-05-12
+- **Branch**: `codex/cleanup-tsserver-import-presence-20260512`
+- **PR**: #5682
+- **Status**: ready
+- **Workstream**: DRY cleanup
 
 ## Intent
 
@@ -9,18 +12,12 @@ Clean up inverted `NodeIndex` sentinel checks in the tsserver incoming-call
 import-binding scan by replacing `!x.is_none()` with direct `x.is_some()`
 presence checks.
 
-## Scope
+## Files Touched
 
 - `crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs`
+- `docs/plan/claims/codex-cleanup-tsserver-import-presence-20260512.md`
 
-## Verification Plan
-
-- `cargo fmt --check`
-- `cargo nextest run -p tsz-cli incoming_calls`
-- `cargo nextest run -p tsz-cli`
-- CI: unit, conformance, fourslash, emit
-
-## Verification Results
+## Verification
 
 - `cargo fmt --check` passed.
 - `cargo nextest run -p tsz-cli incoming_calls` compiled successfully but matched
@@ -34,3 +31,5 @@ presence checks.
   `array_values_iterator_helpers_do_not_report_missing_members`), not the
   touched tsserver call-hierarchy import-binding tests.
 - `cargo clippy -p tsz-cli --all-targets -- -D warnings` passed.
+- CI passed: unit, conformance, fourslash, emit, lint, dist, wasm, wasm-web,
+  and CI Summary.
