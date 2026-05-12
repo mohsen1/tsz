@@ -1,0 +1,182 @@
+name: Install test
+
+# Validates the curl-installable install scripts end-to-end:
+#   1. Every supported runner downloads + executes the installer.
+#   2. The resulting `tsz` binary runs.
+# Triggers:
+#   - on every release publish (full validation against real assets)
+#   - on PR/push changes to the installer or this workflow (syntax/logic check)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to test (default: latest)"
+        required: false
+        default: "latest"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - ".github/workflows/install-test.yml"
+  pull_request:
+    paths:
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - ".github/workflows/install-test.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-test-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-checks:
+    name: shellcheck + powershell parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: shellcheck install.sh
+        run: shellcheck -S warning scripts/install.sh
+      - name: powershell parse install.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.PSParser]::Tokenize((Get-Content scripts/install.ps1 -Raw), [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
+  installer-from-release:
+    name: install on ${{ matrix.label }}
+    # Only run against real release artifacts when:
+    #  - this is a release publish, OR
+    #  - someone manually dispatched this workflow.
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs: static-checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-gnu-x86_64
+            shell: bash
+          - os: ubuntu-24.04-arm
+            label: linux-gnu-aarch64
+            shell: bash
+          - os: macos-13
+            label: darwin-x86_64
+            shell: bash
+          - os: macos-14
+            label: darwin-aarch64
+            shell: bash
+          - os: windows-latest
+            label: windows-x86_64
+            shell: pwsh
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Determine version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "version=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run install.sh
+        if: matrix.shell == 'bash'
+        shell: bash
+        env:
+          TSZ_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://tsz.dev/install | bash -s -- --version "$TSZ_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run install.ps1
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        env:
+          TSZ_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          $script = Invoke-WebRequest -UseBasicParsing https://tsz.dev/install.ps1
+          $sb = [ScriptBlock]::Create($script.Content)
+          & $sb -Version $env:TSZ_VERSION
+          "$HOME\.local\bin" | Out-File -Append $env:GITHUB_PATH
+
+      - name: Verify tsz runs
+        shell: bash
+        run: |
+          which tsz || echo "tsz not on PATH"
+          tsz --version || tsz --help | head -5
+
+  installer-syntax-only:
+    name: installer syntax (no release yet)
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    needs: static-checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shell: bash
+          - os: macos-latest
+            shell: bash
+          - os: windows-latest
+            shell: pwsh
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Dry-run: the installer should successfully resolve a target + version
+      # and only fail at the actual download (because the tested branch may
+      # not have a matching release yet). We use a temporary --owner that
+      # always 404s on the download step, and assert that earlier logic ran.
+      - name: install.sh dry-run
+        if: matrix.shell == 'bash'
+        shell: bash
+        run: |
+          set +e
+          out=$(bash scripts/install.sh --version v0.0.0-no-such-release --owner mohsen1 --repo tsz 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          echo "exit=$rc"
+          echo "$out" | grep -q "target:" || { echo "installer did not detect target"; exit 1; }
+          echo "$out" | grep -q "install dir:" || { echo "installer did not resolve install dir"; exit 1; }
+          # The download must fail for a non-existent tag — that proves we got
+          # past target/version detection and into the actual download path.
+          if [ "$rc" -eq 0 ]; then echo "expected non-zero exit when release missing"; exit 1; fi
+
+      - name: install.ps1 dry-run
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        run: |
+          # The installer's internal `$ErrorActionPreference = "Stop"` turns the
+          # 404 from a nonexistent release into a terminating error that
+          # discards in-pipeline buffered stdout. Tee-Object streams each line
+          # to disk as it is emitted, so we can read the partial log after the
+          # script aborts.
+          $ErrorActionPreference = 'Continue'
+          $logFile = New-TemporaryFile
+          try {
+              & .\scripts\install.ps1 -Version 'v0.0.0-no-such-release' *>&1 |
+                  Tee-Object -FilePath $logFile.FullName | Out-Null
+          } catch {
+              Write-Host "(install.ps1 exited with terminating error, which is expected for a missing tag)"
+          }
+          $out = Get-Content $logFile.FullName -Raw
+          Write-Host $out
+          if (-not ($out -match 'target:')) { Write-Error 'installer did not detect target'; exit 1 }
+          if (-not ($out -match 'install dir:')) { Write-Error 'installer did not resolve install dir'; exit 1 }
