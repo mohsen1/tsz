@@ -784,7 +784,14 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
-        let result = checker.type_of_value_declaration_with_mode(decl_idx, true);
+        let mut result = checker.type_of_value_declaration_with_mode(decl_idx, true);
+        if result.is_unknown_or_error()
+            && let Some(node) = target_arena.get(decl_idx)
+            && let Some(var_decl) = target_arena.get_variable_declaration(node)
+            && var_decl.initializer.is_some()
+        {
+            result = checker.get_type_of_node(var_decl.initializer);
+        }
         let _ = sym_id;
         Self::leave_cross_arena_delegation();
         result

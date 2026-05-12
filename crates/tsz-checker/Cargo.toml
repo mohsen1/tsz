@@ -606,6 +606,10 @@ name = "import_attributes_resolution_mode_tests"
 path = "tests/import_attributes_resolution_mode_tests.rs"
 
 [[test]]
+name = "imported_companion_value_type_tests"
+path = "tests/imported_companion_value_type_tests.rs"
+
+[[test]]
 name = "json_namespace_import_tests"
 path = "tests/json_namespace_import_tests.rs"
 
@@ -948,6 +952,10 @@ path = "tests/symbol_index_signature_tests.rs"
 [[test]]
 name = "ts2855_static_super_field_tests"
 path = "tests/ts2855_static_super_field_tests.rs"
+
+[[test]]
+name = "ts2852_await_using_context_tests"
+path = "tests/ts2852_await_using_context_tests.rs"
 
 [[test]]
 name = "jsdoc_tag_boundary_tests"
