@@ -15,6 +15,31 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn identifier_value_initializer_primitive_type(&self, idx: NodeIndex) -> Option<TypeId> {
+        let sym_id = self.resolve_identifier_symbol_without_tracking(idx)?;
+        let symbol = self.get_symbol_globally(sym_id)?;
+        let value_decl = symbol.value_declaration;
+        if !value_decl.is_some() {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(value_decl)?;
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let initializer = decl.initializer;
+        if !initializer.is_some() {
+            return None;
+        }
+        let literal = self.literal_type_from_initializer(initializer)?;
+        let primitive = crate::query_boundaries::common::widen_type(self.ctx.types, literal);
+        matches!(
+            primitive,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
+        )
+        .then_some(primitive)
+    }
+
     /// Inner implementation of property access type resolution.
     pub(crate) fn get_type_of_property_access_inner(
         &mut self,
@@ -114,6 +139,15 @@ impl<'a> CheckerState<'a> {
                 access.expression,
                 &base_ident.escaped_text,
             )
+            && self
+                .current_file_value_type_named(&base_ident.escaped_text)
+                .is_none()
+            && self
+                .same_file_value_symbol_for_type_symbol(base_sym_id)
+                .is_none()
+            && self
+                .same_scope_value_type_shadowing_symbol(access.expression, base_sym_id)
+                .is_none()
         {
             if self.is_heritage_type_only_context(access.expression)
                 || self.is_in_ambient_computed_property_context()
@@ -181,6 +215,15 @@ impl<'a> CheckerState<'a> {
                 access.expression,
                 &base_ident.escaped_text,
             )
+            && self
+                .current_file_value_type_named(&base_ident.escaped_text)
+                .is_none()
+            && self
+                .same_file_value_symbol_for_type_symbol(local_sym_id)
+                .is_none()
+            && self
+                .same_scope_value_type_shadowing_symbol(access.expression, local_sym_id)
+                .is_none()
         {
             self.report_wrong_meaning_diagnostic(
                 &base_ident.escaped_text,
@@ -664,6 +707,43 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                     PropertyAccessResult::PropertyNotFound { .. } => {
+                        let evaluated_base = self.evaluate_type_with_resolution(resolved_base);
+                        let evaluated_base = if crate::query_boundaries::common::is_string_literal(
+                            self.ctx.types,
+                            evaluated_base,
+                        ) {
+                            TypeId::STRING
+                        } else {
+                            evaluated_base
+                        };
+                        if evaluated_base != resolved_base
+                            && evaluated_base != TypeId::UNKNOWN
+                            && evaluated_base != TypeId::ERROR
+                        {
+                            let evaluated_fast_result =
+                                self.ctx.types.resolve_property_access_with_options(
+                                    evaluated_base,
+                                    property_name,
+                                    self.ctx.compiler_options.no_unchecked_indexed_access,
+                                );
+                            if let PropertyAccessResult::Success {
+                                type_id,
+                                write_type,
+                                ..
+                            } = self.resolve_property_access_with_env_post_query(
+                                evaluated_base,
+                                property_name,
+                                evaluated_fast_result,
+                            ) {
+                                let result_type = effective_write_result(type_id, write_type);
+                                return self.finalize_property_access_result(
+                                    idx,
+                                    result_type,
+                                    skip_flow_narrowing,
+                                    skip_result_flow_for_result,
+                                );
+                            }
+                        }
                         self.ctx
                             .narrowing_cache
                             .property_cache
@@ -1539,6 +1619,27 @@ impl<'a> CheckerState<'a> {
             }
             if object_type_for_access == TypeId::ERROR {
                 return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+            }
+            let evaluated_object_type_for_access =
+                self.evaluate_type_with_resolution(object_type_for_access);
+            let widened_object_type_for_access = crate::query_boundaries::common::widen_type(
+                self.ctx.types,
+                evaluated_object_type_for_access,
+            );
+            if matches!(
+                widened_object_type_for_access,
+                TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
+            ) {
+                object_type_for_access = widened_object_type_for_access;
+            }
+            if let Some(initializer_primitive) =
+                self.identifier_value_initializer_primitive_type(access.expression)
+                && matches!(
+                    self.resolve_property_access_with_env(initializer_primitive, property_name),
+                    PropertyAccessResult::Success { .. }
+                )
+            {
+                object_type_for_access = initializer_primitive;
             }
 
             // In write context (skip_flow_narrowing), skip this shortcut:
@@ -2463,6 +2564,35 @@ impl<'a> CheckerState<'a> {
                         // Use display_object_type to preserve literal types in error messages
                         // while maintaining nominal identity (e.g., D<string>)
                         // Report at the property name node, not the full expression (matches tsc behavior)
+                        let resolved_display_object_type =
+                            self.evaluate_type_with_resolution(display_object_type);
+                        if crate::query_boundaries::common::is_string_literal(
+                            self.ctx.types,
+                            resolved_display_object_type,
+                        ) && let PropertyAccessResult::Success {
+                            type_id,
+                            write_type,
+                            ..
+                        } =
+                            self.resolve_property_access_with_env(TypeId::STRING, property_name)
+                        {
+                            return self.finalize_property_access_result(
+                                idx,
+                                effective_write_result(type_id, write_type),
+                                skip_flow_narrowing,
+                                false,
+                            );
+                        }
+
+                        if let Some(base_ident) =
+                            self.ctx.arena.get_identifier_at(access.expression)
+                            && self
+                                .current_file_value_type_named(&base_ident.escaped_text)
+                                .is_some()
+                        {
+                            return TypeId::ANY;
+                        }
+
                         if let Some(sym_id) = self.resolve_qualified_symbol(access.expression)
                             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                             && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
@@ -2788,6 +2918,15 @@ impl<'a> CheckerState<'a> {
             && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
             && !self
                 .source_file_has_value_import_binding_named(expression, &base_ident.escaped_text)
+            && self
+                .current_file_value_type_named(&base_ident.escaped_text)
+                .is_none()
+            && self
+                .same_file_value_symbol_for_type_symbol(local_sym_id)
+                .is_none()
+            && self
+                .same_scope_value_type_shadowing_symbol(expression, local_sym_id)
+                .is_none()
         {
             self.report_wrong_meaning_diagnostic(
                 &base_ident.escaped_text,

@@ -2,11 +2,19 @@ use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
 
 fn check(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)> {
+    check_with_module(files, entry_file, ModuleKind::ESNext)
+}
+
+fn check_with_module(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    module: ModuleKind,
+) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_multi_file(
         files,
         entry_file,
         CheckerOptions {
-            module: ModuleKind::ESNext,
+            module,
             strict: true,
             ..CheckerOptions::default()
         },
@@ -58,6 +66,27 @@ const sql: any = q.sql
     assert!(
         diagnostics.is_empty(),
         "imported companion interface+const should resolve the value side in expression position, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn type_alias_value_merge_uses_primitive_apparent_members() {
+    let diagnostics = check_with_module(
+        &[(
+            "a.ts",
+            r#"
+type A = "a"
+const A: A = "a"
+A.toUpperCase()
+"#,
+        )],
+        "a.ts",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "value merged with a string-literal type alias should expose primitive string members, got: {diagnostics:?}"
     );
 }
 

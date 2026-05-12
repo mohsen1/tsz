@@ -25,6 +25,37 @@ pub(super) struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn callee_identifier_has_local_instantiated_namespace_value(
+        &self,
+        callee_expr: NodeIndex,
+    ) -> bool {
+        let Some(ident) = self.ctx.arena.get_identifier_at(callee_expr) else {
+            return false;
+        };
+        let Some(binder) = self.ctx.get_binder_for_file(self.ctx.current_file_idx) else {
+            return false;
+        };
+        binder
+            .get_symbols()
+            .find_all_by_name(&ident.escaped_text)
+            .iter()
+            .any(|&sym_id| {
+                let Some(symbol) = binder.get_symbol(sym_id) else {
+                    return false;
+                };
+                symbol.escaped_name == ident.escaped_text
+                    && symbol.has_any_flags(
+                        tsz_binder::symbol_flags::NAMESPACE_MODULE
+                            | tsz_binder::symbol_flags::VALUE_MODULE,
+                    )
+                    && symbol
+                        .declarations
+                        .iter()
+                        .copied()
+                        .any(|decl| self.is_namespace_declaration_instantiated(decl))
+            })
+    }
+
     fn is_generic_indexed_access_surface(&self, type_id: TypeId) -> bool {
         self.generic_indexed_access_surface_inner(type_id)
             || self
@@ -884,6 +915,9 @@ impl<'a> CheckerState<'a> {
                     self.error_class_constructor_without_new_at(callee_type, callee_expr);
                 } else if self.is_get_accessor_call(callee_expr) {
                     self.error_get_accessor_not_callable_at(callee_expr);
+                } else if self.callee_identifier_has_local_instantiated_namespace_value(callee_expr)
+                {
+                    self.error_not_callable_at(callee_type, callee_expr);
                 } else if self.ctx.compiler_options.strict_null_checks {
                     let (_non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
                     if let Some(cause) = nullish_cause {
