@@ -34,6 +34,12 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        if (param_type == TypeId::NEVER
+            || self.evaluate_type_for_assignability(param_type) == TypeId::NEVER)
+            && self.generic_indexed_access_argument_surface(arg_type)
+        {
+            return true;
+        }
 
         if crate::query_boundaries::assignability::are_types_structurally_identical(
             self.ctx.types,
