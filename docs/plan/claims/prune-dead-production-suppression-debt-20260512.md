@@ -2,6 +2,7 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/promisetry-conformance-20260512`
+- **PR**: #5772
 - **Status**: implemented
 - **Workstream**: 1 (Conformance - suppression debt cleanup)
 
