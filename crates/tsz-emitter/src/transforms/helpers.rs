@@ -584,12 +584,12 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(DECORATE_HELPER);
         output.push('\n');
     }
-    if helpers.run_initializers {
-        output.push_str(RUN_INITIALIZERS_HELPER);
-        output.push('\n');
-    }
     if helpers.es_decorate {
         output.push_str(ES_DECORATE_HELPER);
+        output.push('\n');
+    }
+    if helpers.run_initializers {
+        output.push_str(RUN_INITIALIZERS_HELPER);
         output.push('\n');
     }
     if helpers.prop_key {
@@ -999,7 +999,7 @@ mod tests {
     #[test]
     fn emit_helpers_order_decorators_and_async_helpers() {
         // emit_helpers source orders priority-2 helpers as:
-        //   decorate, runInitializers, esDecorate,
+        //   decorate, esDecorate, runInitializers,
         //   propKey, importStar (with setModuleDefault),
         //   rewriteRelativeImportExtension, exportStar
         // and places setFunctionName after awaiter/generator but before
@@ -1022,8 +1022,8 @@ mod tests {
 
         let output = emit_helpers(&helpers);
         let i_decorate = find_helper(&output, "__decorate");
-        let i_run = find_helper(&output, "__runInitializers");
         let i_es_decorate = find_helper(&output, "__esDecorate");
+        let i_run = find_helper(&output, "__runInitializers");
         let i_set_name = find_helper(&output, "__setFunctionName");
         let i_prop_key = find_helper(&output, "__propKey");
         let i_awaiter = find_helper(&output, "__awaiter");
@@ -1034,9 +1034,9 @@ mod tests {
         let i_rewrite = find_helper(&output, "__rewriteRelativeImportExtension");
         let i_export_star = find_helper(&output, "__exportStar");
 
-        assert!(i_decorate < i_run);
-        assert!(i_run < i_es_decorate);
-        assert!(i_es_decorate < i_prop_key);
+        assert!(i_decorate < i_es_decorate);
+        assert!(i_es_decorate < i_run);
+        assert!(i_run < i_prop_key);
         assert!(i_prop_key < i_import_star);
         assert!(i_import_star < i_rewrite);
         assert!(i_rewrite < i_export_star);

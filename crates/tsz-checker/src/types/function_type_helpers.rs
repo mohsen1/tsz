@@ -930,7 +930,11 @@ impl<'a> CheckerState<'a> {
                 is_async,
                 function_is_generator,
             );
-            if !self.should_skip_no_implicit_return_check(ts7030_check_type, has_type_annotation) {
+            if !self.should_skip_no_implicit_return_check(
+                ts7030_check_type,
+                has_type_annotation,
+                function_is_generator,
+            ) {
                 // TSC points TS7030 to: return type annotation > function name > node itself
                 let error_node = if has_type_annotation {
                     type_annotation
