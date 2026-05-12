@@ -4,8 +4,8 @@
 - **Branch**: `codex/cleanup-namespace-qualified-message-helper-20260512`
 - **Base**: `origin/main`
 - **Issue**: n/a
-- **PR**: tbd
-- **Status**: claim
+- **PR**: [#5980](https://github.com/mohsen1/tsz/pull/5980)
+- **Status**: ready
 - **Labels**: `DRY`, `checker-tests`
 
 ## Intent
