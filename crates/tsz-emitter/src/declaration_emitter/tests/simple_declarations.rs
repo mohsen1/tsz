@@ -1008,6 +1008,78 @@ const values = [];
 }
 
 #[test]
+fn test_js_jsdoc_array_empty_args_normalizes_to_any_array() {
+    // `Array.<>` (legacy JSDoc empty-args generic) should normalize to `any[]`
+    // in declaration emit, matching tsc. Without the fix it surfaces as
+    // `Array<>` which is not valid TypeScript.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {Array.<>}
+ */
+function z() { return null; }
+"#,
+    );
+
+    assert!(
+        output.contains("any[]"),
+        "Expected `Array.<>` to normalize to `any[]`: {output}"
+    );
+    assert!(
+        !output.contains("Array<>"),
+        "Did not expect invalid `Array<>` token in emitted type: {output}"
+    );
+}
+
+#[test]
+fn test_js_jsdoc_array_empty_args_in_union() {
+    // The original conformance test exercises `(Array.<> | null)` as the return
+    // type — the parens, union, and empty-args generic all interact. Lock in
+    // that the result is `(any[] | null)`, not `(Array<> | null)`.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {(Array.<> | null)} list of devices
+ */
+function z() { return null; }
+"#,
+    );
+
+    assert!(
+        output.contains("any[] | null") || output.contains("(any[] | null)"),
+        "Expected `Array.<>` inside union to normalize: {output}"
+    );
+    assert!(
+        !output.contains("Array<>"),
+        "Did not expect raw `Array<>` token: {output}"
+    );
+}
+
+#[test]
+fn test_js_jsdoc_promise_empty_args_normalizes_to_promise_any() {
+    // `Promise.<>` (legacy empty-args form) mirrors the Array case — should
+    // normalize to `Promise<any>`, matching tsc and the bare-name fallback in
+    // `resolve_jsdoc_global_implicit_any_type`.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {Promise.<>}
+ */
+function p() { return Promise.resolve(); }
+"#,
+    );
+
+    assert!(
+        output.contains("Promise<any>"),
+        "Expected `Promise.<>` to normalize to `Promise<any>`: {output}"
+    );
+    assert!(
+        !output.contains("Promise<>"),
+        "Did not expect invalid `Promise<>` token: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
