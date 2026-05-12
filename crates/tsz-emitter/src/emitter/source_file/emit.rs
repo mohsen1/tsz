@@ -1,6 +1,6 @@
 use super::super::Printer;
 use super::super::core::JsxEmit;
-use tsz_common::common::ModuleKind;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -573,21 +573,25 @@ impl<'a> Printer<'a> {
                 }
             }
         }
-        let first_stmt_is_auto_accessor_class = source
-            .statements
-            .nodes
-            .iter()
-            .filter_map(|&idx| self.arena.get(idx))
-            .find(|stmt_node| {
-                !self.ctx.flags.in_declaration_emit && !self.is_erased_statement(stmt_node)
-            })
-            .is_some_and(|stmt_node| {
-                stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    && self
-                        .arena
-                        .get_class(stmt_node)
-                        .is_some_and(|class| self.class_has_auto_accessor_members(class))
-            });
+        let auto_accessor_class_leading_comments_need_deferral = self.ctx.options.target
+            != ScriptTarget::ESNext
+            && (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        let first_stmt_is_auto_accessor_class = auto_accessor_class_leading_comments_need_deferral
+            && source
+                .statements
+                .nodes
+                .iter()
+                .filter_map(|&idx| self.arena.get(idx))
+                .find(|stmt_node| {
+                    !self.ctx.flags.in_declaration_emit && !self.is_erased_statement(stmt_node)
+                })
+                .is_some_and(|stmt_node| {
+                    stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        && self
+                            .arena
+                            .get_class(stmt_node)
+                            .is_some_and(|class| self.class_has_auto_accessor_members(class))
+                });
 
         let mut deferred_header_comments: Vec<(String, bool)> = Vec::new();
         let mut jsx_deferred_comments: Vec<(String, bool)> = Vec::new();
@@ -1727,12 +1731,13 @@ impl<'a> Printer<'a> {
             // the statement's first token, so they won't be emitted here.
             let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                 && self.should_defer_for_of_comments(stmt_node);
-            let skip_auto_accessor_leading_comments = stmt_node.kind
-                == syntax_kind_ext::CLASS_DECLARATION
-                && self
-                    .arena
-                    .get_class(stmt_node)
-                    .is_some_and(|class| self.class_has_auto_accessor_members(class));
+            let skip_auto_accessor_leading_comments =
+                auto_accessor_class_leading_comments_need_deferral
+                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    && self
+                        .arena
+                        .get_class(stmt_node)
+                        .is_some_and(|class| self.class_has_auto_accessor_members(class));
             // Save state before leading comments so we can undo them if the
             // statement produces no output (same pattern as emit_block_body).
             let pre_comment_writer_len = self.writer.len();

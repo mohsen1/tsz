@@ -17,6 +17,14 @@ pub(in crate::emitter) type StaticFieldInit = (
 );
 pub(in crate::emitter) type AutoAccessorInfo = (NodeIndex, String, Option<NodeIndex>, bool);
 
+pub(in crate::emitter) struct AutoAccessorEmitOptions<'a> {
+    pub static_accessor_alias: Option<&'a str>,
+    pub lower_to_private_fields: bool,
+    pub class_name: &'a str,
+    pub property_end: u32,
+    pub omit_storage_initializer: bool,
+}
+
 /// Replace all occurrences of an identifier with a replacement, respecting word boundaries.
 pub(crate) fn replace_identifier(text: &str, name: &str, replacement: &str) -> String {
     let bytes = text.as_bytes();
