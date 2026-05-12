@@ -2,6 +2,7 @@
 //! "Class name cannot be 'Object' when targeting ES5 and above with module X."
 
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_source_with_file_is_esm;
 use tsz_common::common::ModuleKind;
 
 fn has_ts2725(source: &str, module: ModuleKind, file_is_esm: Option<bool>) -> bool {
@@ -10,27 +11,9 @@ fn has_ts2725(source: &str, module: ModuleKind, file_is_esm: Option<bool>) -> bo
         ..CheckerOptions::default()
     };
 
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.ctx.file_is_esm = file_is_esm;
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().any(|d| d.code == 2725)
+    check_source_with_file_is_esm(source, "test.ts", options, file_is_esm)
+        .iter()
+        .any(|d| d.code == 2725)
 }
 
 #[test]

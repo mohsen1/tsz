@@ -21,6 +21,11 @@ use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -79,8 +84,7 @@ fn compile_with_lib(source: &str) -> Vec<(u32, String)> {
 fn compile_with_lib_and_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
     let lib_files = load_lib_files_for_test();
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     let checker_lib_contexts = if lib_files.is_empty() {
@@ -134,8 +138,7 @@ fn inspect_symbol_with_lib(
 ) -> (String, Vec<String>, Vec<String>) {
     let lib_files = load_lib_files_for_test();
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     let checker_lib_contexts = if lib_files.is_empty() {
@@ -1261,8 +1264,7 @@ fn test_array_base_display_properties_preserve_lib_order() {
 
     let lib_files = load_lib_files_for_test();
     let source = "const marker = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     let checker_lib_contexts: Vec<_> = lib_files
@@ -2186,8 +2188,7 @@ class MyError extends Error {
 const e: MyError = new MyError("oops");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     let raw_contexts: Vec<_> = lib_files
@@ -2258,8 +2259,7 @@ class Child extends Base {
 const c: Child = new Child();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2312,8 +2312,7 @@ interface Dog extends Animal {
 const d: Dog = { name: "Rex", breed: "Lab" };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -4418,8 +4417,7 @@ fn compile_with_es2015_sublibs(source: &str) -> Vec<(u32, String)> {
         return Vec::new();
     }
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     let raw_contexts: Vec<_> = lib_files

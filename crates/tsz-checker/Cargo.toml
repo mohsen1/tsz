@@ -142,6 +142,10 @@ name = "ts1240_tests"
 path = "tests/ts1240_tests.rs"
 
 [[test]]
+name = "ts2802_downlevel_iteration_tests"
+path = "tests/ts2802_downlevel_iteration_tests.rs"
+
+[[test]]
 name = "ts6133_unused_type_params_tests"
 path = "tests/ts6133_unused_type_params_tests.rs"
 
