@@ -1,15 +1,18 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_goto_definition_simple_variable() {
     // const x = 1;
     // x + 1;
     let source = "const x = 1;\nx + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -39,8 +42,7 @@ fn test_goto_definition_simple_variable() {
 #[test]
 fn test_goto_definition_type_reference() {
     let source = "type Foo = { value: string };\nconst x: Foo = { value: \"\" };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -70,8 +72,7 @@ fn test_goto_definition_type_reference() {
 #[test]
 fn test_goto_definition_binding_pattern() {
     let source = "const { foo } = obj;\nfoo;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -101,8 +102,7 @@ fn test_goto_definition_binding_pattern() {
 #[test]
 fn test_goto_definition_parameter_binding_pattern() {
     let source = "function demo({ foo }: { foo: number }) {\n  return foo;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -132,8 +132,7 @@ fn test_goto_definition_parameter_binding_pattern() {
 #[test]
 fn test_goto_definition_class_method_local() {
     let source = "class Foo {\n  method() {\n    const value = 1;\n    return value;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -163,8 +162,7 @@ fn test_goto_definition_class_method_local() {
 #[test]
 fn test_goto_definition_class_method_name() {
     let source = "class Foo {\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -194,8 +192,7 @@ fn test_goto_definition_class_method_name() {
 #[test]
 fn test_goto_definition_class_member_not_in_scope() {
     let source = "class Foo {\n  value = 1;\n  method() {\n    return value;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -218,8 +215,7 @@ fn test_goto_definition_class_member_not_in_scope() {
 #[test]
 fn test_goto_definition_class_self_reference() {
     let source = "class Foo {\n  method() {\n    return Foo;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -249,8 +245,7 @@ fn test_goto_definition_class_self_reference() {
 #[test]
 fn test_goto_definition_class_expression_name() {
     let source = "const Foo = class Bar {\n  method() {\n    return Bar;\n  }\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -280,8 +275,7 @@ fn test_goto_definition_class_expression_name() {
 #[test]
 fn test_goto_definition_nested_arrow_in_conditional() {
     let source = "const handler = cond ? (() => {\n  const value = 1;\n  return value;\n}) : null;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -308,8 +302,7 @@ fn test_goto_definition_nested_arrow_in_conditional() {
 #[test]
 fn test_goto_definition_nested_arrow_in_if_condition() {
     let source = "if ((() => {\n  const value = 1;\n  return value;\n})()) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -339,8 +332,7 @@ fn test_goto_definition_nested_arrow_in_if_condition() {
 #[test]
 fn test_goto_definition_nested_arrow_in_while_condition() {
     let source = "while ((() => {\n  const value = 1;\n  return value;\n})()) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -370,8 +362,7 @@ fn test_goto_definition_nested_arrow_in_while_condition() {
 #[test]
 fn test_goto_definition_nested_arrow_in_for_of_expression() {
     let source = "for (const item of (() => {\n  const value = 1;\n  return value;\n})()) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -401,8 +392,7 @@ fn test_goto_definition_nested_arrow_in_for_of_expression() {
 #[test]
 fn test_goto_definition_export_default_expression() {
     let source = "export default (() => {\n  const value = 1;\n  return value;\n})();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -432,8 +422,7 @@ fn test_goto_definition_export_default_expression() {
 #[test]
 fn test_goto_definition_labeled_statement_local() {
     let source = "label: {\n  const value = 1;\n  value;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -463,8 +452,7 @@ fn test_goto_definition_labeled_statement_local() {
 #[test]
 fn test_goto_definition_with_statement_local() {
     let source = "with (obj) {\n  const value = 1;\n  value;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -494,8 +482,7 @@ fn test_goto_definition_with_statement_local() {
 #[test]
 fn test_goto_definition_var_hoisted_in_nested_block() {
     let source = "function demo() {\n  value;\n  if (cond) {\n    var value = 1;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -525,8 +512,7 @@ fn test_goto_definition_var_hoisted_in_nested_block() {
 #[test]
 fn test_goto_definition_decorator_reference() {
     let source = "const deco = () => {};\n@deco\nclass Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -553,8 +539,7 @@ fn test_goto_definition_decorator_reference() {
 #[test]
 fn test_goto_definition_decorator_argument_local() {
     let source = "const deco = (cb) => cb();\n@deco(() => {\n  const value = 1;\n  return value;\n})\nclass Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -584,8 +569,7 @@ fn test_goto_definition_decorator_argument_local() {
 #[test]
 fn test_goto_definition_nested_arrow_in_object_literal() {
     let source = "const holder = { run: () => {\n  const value = 1;\n  return value;\n} };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -615,8 +599,7 @@ fn test_goto_definition_nested_arrow_in_object_literal() {
 #[test]
 fn test_goto_definition_class_static_block_local() {
     let source = "class Foo {\n  static {\n    const value = 1;\n    value;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -643,8 +626,7 @@ fn test_goto_definition_class_static_block_local() {
 #[test]
 fn test_goto_definition_not_found() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -674,8 +656,7 @@ fn test_goto_definition_builtin_console_returns_none() {
     // "console" is a built-in global with no user declaration.
     // Should return None gracefully instead of crashing.
     let source = "console.log('hello');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -699,8 +680,7 @@ fn test_goto_definition_builtin_console_returns_none() {
 #[test]
 fn test_goto_definition_builtin_array_returns_none() {
     let source = "const arr = new Array(10);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -723,8 +703,7 @@ fn test_goto_definition_builtin_array_returns_none() {
 #[test]
 fn test_goto_definition_builtin_promise_returns_none() {
     let source = "const p: Promise<number> = Promise.resolve(42);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -747,8 +726,7 @@ fn test_goto_definition_builtin_promise_returns_none() {
 #[test]
 fn test_goto_definition_no_crash_on_position_beyond_file() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -772,8 +750,7 @@ fn test_goto_definition_no_crash_on_position_beyond_file() {
 #[test]
 fn test_goto_definition_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -796,8 +773,7 @@ fn test_goto_definition_empty_source() {
 fn test_goto_definition_self_declaration_identifier() {
     // Clicking on the declaration itself should navigate to it
     let source = "function hello() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -846,8 +822,7 @@ fn test_goto_definition_multiple_builtin_globals_no_crash() {
     // Multiple built-in references in one file should all return None
     let source =
         "console.log(Array.from([1, 2, 3]));\nPromise.resolve(42);\nsetTimeout(() => {}, 100);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -874,8 +849,7 @@ fn test_goto_definition_multiple_builtin_globals_no_crash() {
 fn test_goto_definition_interface_reference() {
     // Interface declarations should be findable
     let source = "interface IFoo { bar: string; }\nconst x: IFoo = { bar: 'hi' };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -902,8 +876,7 @@ fn test_goto_definition_interface_reference() {
 #[test]
 fn test_goto_definition_enum_reference() {
     let source = "enum Color { Red, Green, Blue }\nconst c: Color = Color.Red;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -930,8 +903,7 @@ fn test_goto_definition_enum_reference() {
 fn test_goto_definition_default_export_function() {
     // Export default function should be navigable
     let source = "export default function greet() { return 'hi'; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -955,8 +927,7 @@ fn test_goto_definition_default_export_function() {
 fn test_goto_definition_validated_positions_are_in_bounds() {
     // Ensure returned positions are always within the source text bounds
     let source = "const x = 1;\nconst y = x + 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -997,8 +968,7 @@ fn test_goto_definition_validated_positions_are_in_bounds() {
 #[test]
 fn test_goto_definition_for_node_with_none_index() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1022,8 +992,7 @@ fn test_goto_definition_for_node_with_none_index() {
 #[test]
 fn test_goto_definition_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1037,8 +1006,7 @@ fn test_goto_definition_empty_file() {
 #[test]
 fn test_goto_definition_class_reference() {
     let source = "class MyClass {}\nlet c = new MyClass();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1058,8 +1026,7 @@ fn test_goto_definition_class_reference() {
 #[test]
 fn test_goto_definition_enum_usage() {
     let source = "enum Direction { Up, Down }\nlet d = Direction.Up;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1079,8 +1046,7 @@ fn test_goto_definition_enum_usage() {
 #[test]
 fn test_goto_definition_function_in_nested_scope() {
     let source = "function outer() {\n  function inner() {}\n  inner();\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1100,8 +1066,7 @@ fn test_goto_definition_function_in_nested_scope() {
 #[test]
 fn test_goto_definition_type_alias_usage() {
     let source = "type MyStr = string;\nlet x: MyStr = 'hello';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1121,8 +1086,7 @@ fn test_goto_definition_type_alias_usage() {
 #[test]
 fn test_goto_definition_at_semicolon_returns_none() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1139,8 +1103,7 @@ fn test_goto_definition_at_semicolon_returns_none() {
 #[test]
 fn test_goto_definition_multiple_declarations_same_name() {
     let source = "let x = 1;\nx = 2;\nx;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1169,8 +1132,7 @@ fn test_goto_definition_multiple_declarations_same_name() {
 fn test_goto_definition_generic_type_parameter_usage() {
     // Go-to-definition on a generic type parameter used in function body type position
     let source = "function identity<T>(arg: T): T {\n  let result: T = arg;\n  return result;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1198,8 +1160,7 @@ fn test_goto_definition_generic_type_parameter_usage() {
 fn test_goto_definition_generic_type_param_in_return_type() {
     // Go-to-definition on a generic type parameter used as return type
     let source = "function wrap<U>(val: U): U {\n  return val;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1224,8 +1185,7 @@ fn test_goto_definition_generic_type_param_in_return_type() {
 fn test_goto_definition_default_export_class() {
     // Go-to-definition on a default-exported class name
     let source = "export default class Widget {\n  render() {}\n}\nconst w = new Widget();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1253,8 +1213,7 @@ fn test_goto_definition_default_export_class() {
 fn test_goto_definition_namespace_member_access() {
     // Go-to-definition on namespace member access (ns.member)
     let source = "namespace MyNS {\n  export const value = 42;\n}\nconst x = MyNS.value;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1282,8 +1241,7 @@ fn test_goto_definition_namespace_member_access() {
 fn test_goto_definition_namespace_exported_member() {
     // Go-to-definition on the member part of namespace access (ns.member)
     let source = "namespace NS {\n  export function helper() {}\n}\nNS.helper();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1311,8 +1269,7 @@ fn test_goto_definition_namespace_exported_member() {
 fn test_goto_definition_decorator_factory() {
     // Go-to-definition on a decorator used as a factory
     let source = "function sealed(target: any) { return target; }\n@sealed\nclass MyService {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1343,8 +1300,7 @@ fn test_goto_definition_decorator_factory() {
 fn test_goto_definition_inherited_class_member_via_instance() {
     // Go-to-definition on a member that's defined in a base class
     let source = "class Base {\n  greet() { return 'hi'; }\n}\nclass Child extends Base {}\nconst c = new Child();\nc.greet();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1369,8 +1325,7 @@ fn test_goto_definition_inherited_class_member_via_instance() {
 fn test_goto_definition_computed_property_name() {
     // Go-to-definition on a computed property name using a variable
     let source = "const key = 'myProp';\nconst obj = { [key]: 42 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1402,8 +1357,7 @@ fn test_goto_definition_computed_property_name() {
 fn test_goto_definition_shorthand_property() {
     // Go-to-definition on a shorthand property in object literal
     let source = "const name = 'Alice';\nconst obj = { name };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1435,8 +1389,7 @@ fn test_goto_definition_shorthand_property() {
 fn test_goto_definition_at_start_of_file() {
     // Go-to-definition at position (0,0) on a valid identifier
     let source = "myVar + 1;\nconst myVar = 10;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1461,8 +1414,7 @@ fn test_goto_definition_string_enum_member_value() {
     // Go-to-definition on a string enum member
     let source =
         "enum Status {\n  Active = 'active',\n  Inactive = 'inactive'\n}\nconst s = Status.Active;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1490,8 +1442,7 @@ fn test_goto_definition_string_enum_member_value() {
 fn test_goto_definition_typeof_usage() {
     // Go-to-definition on a variable used in typeof expression
     let source = "const original = { a: 1 };\ntype Copy = typeof original;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1519,8 +1470,7 @@ fn test_goto_definition_typeof_usage() {
 fn test_goto_definition_interface_property_via_member_access() {
     // Go-to-definition on a property accessed through a typed variable
     let source = "interface Config {\n  host: string;\n  port: number;\n}\nconst cfg: Config = { host: 'localhost', port: 3000 };\ncfg.host;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1551,8 +1501,7 @@ fn test_goto_definition_interface_property_via_member_access() {
 fn test_goto_definition_catch_clause_variable() {
     // Go-to-definition on a catch clause variable
     let source = "try {\n  throw new Error();\n} catch (err) {\n  console.log(err);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1584,8 +1533,7 @@ fn test_goto_definition_catch_clause_variable() {
 fn test_goto_definition_for_loop_variable() {
     // Go-to-definition on a for-of loop variable
     let source = "const items = [1, 2, 3];\nfor (const item of items) {\n  item;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1617,8 +1565,7 @@ fn test_goto_definition_for_loop_variable() {
 fn test_goto_definition_keyword_null_returns_none() {
     // Go-to-definition on null keyword should return None
     let source = "const x = null;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1642,8 +1589,7 @@ fn test_goto_definition_keyword_null_returns_none() {
 fn test_goto_definition_keyword_true_returns_none() {
     // Go-to-definition on boolean true keyword should return None
     let source = "const flag = true;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1668,8 +1614,7 @@ fn test_goto_definition_class_property_via_typed_instance() {
     // Go-to-definition on a class member accessed via a typed variable
     let source =
         "class Dog {\n  name: string = '';\n  bark() {}\n}\nconst d: Dog = new Dog();\nd.name;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1697,8 +1642,7 @@ fn test_goto_definition_class_property_via_typed_instance() {
 fn test_goto_definition_arguments_returns_none() {
     // Go-to-definition on the special 'arguments' identifier should return None
     let source = "function foo() {\n  return arguments;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1725,8 +1669,7 @@ fn test_goto_definition_arguments_returns_none() {
 #[test]
 fn test_goto_definition_getter_accessor() {
     let source = "class Box {\n  private _v = 0;\n  get value(): number { return this._v; }\n}\nconst b = new Box();\nb.value;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1744,8 +1687,7 @@ fn test_goto_definition_getter_accessor() {
 #[test]
 fn test_goto_definition_setter_accessor() {
     let source = "class Box {\n  private _v = 0;\n  set value(v: number) { this._v = v; }\n}\nconst b = new Box();\nb.value = 5;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1762,8 +1704,7 @@ fn test_goto_definition_setter_accessor() {
 #[test]
 fn test_goto_definition_nested_class() {
     let source = "class Outer {\n  inner() {\n    class Inner {\n      method() {}\n    }\n    const i = new Inner();\n    i;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1785,8 +1726,7 @@ fn test_goto_definition_nested_class() {
 #[test]
 fn test_goto_definition_default_parameter() {
     let source = "function greet(name: string = 'world') {\n  return name;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1808,8 +1748,7 @@ fn test_goto_definition_default_parameter() {
 #[test]
 fn test_goto_definition_rest_parameter() {
     let source = "function sum(...nums: number[]) {\n  return nums.length;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1834,8 +1773,7 @@ fn test_goto_definition_rest_parameter() {
 #[test]
 fn test_goto_definition_empty_file_returns_none() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1850,8 +1788,7 @@ fn test_goto_definition_empty_file_returns_none() {
 #[test]
 fn test_goto_definition_arrow_function_param() {
     let source = "const fn = (x: number) => x * 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1873,8 +1810,7 @@ fn test_goto_definition_arrow_function_param() {
 #[test]
 fn test_goto_definition_enum_in_type_annotation() {
     let source = "enum Status { Active, Inactive }\nfunction check(s: Status) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1896,8 +1832,7 @@ fn test_goto_definition_enum_in_type_annotation() {
 #[test]
 fn test_goto_definition_interface_used_as_type() {
     let source = "interface Point { x: number; y: number; }\nfunction draw(p: Point) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1919,8 +1854,7 @@ fn test_goto_definition_interface_used_as_type() {
 #[test]
 fn test_goto_definition_type_alias_used_as_type() {
     let source = "type ID = string | number;\nfunction process(id: ID) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1942,8 +1876,7 @@ fn test_goto_definition_type_alias_used_as_type() {
 #[test]
 fn test_goto_definition_variable_in_for_in_loop() {
     let source = "const obj = { a: 1 };\nfor (const key in obj) {\n  key;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1968,8 +1901,7 @@ fn test_goto_definition_variable_in_for_in_loop() {
 #[test]
 fn test_goto_definition_class_in_extends() {
     let source = "class Base {\n  value = 1;\n}\nclass Derived extends Base {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1991,8 +1923,7 @@ fn test_goto_definition_class_in_extends() {
 #[test]
 fn test_goto_definition_namespace_member() {
     let source = "namespace NS {\n  export const val = 1;\n}\nNS.val;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2006,8 +1937,7 @@ fn test_goto_definition_namespace_member() {
 #[test]
 fn test_goto_definition_optional_param() {
     let source = "function f(x?: number) {}\nf();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2020,8 +1950,7 @@ fn test_goto_definition_optional_param() {
 #[test]
 fn test_goto_definition_const_enum_member() {
     let source = "const enum Dir { Up, Down }\nlet d = Dir.Up;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2036,8 +1965,7 @@ fn test_goto_definition_const_enum_member() {
 #[test]
 fn test_goto_definition_decorated_class() {
     let source = "function Deco(target: any) {}\n@Deco\nclass MyClass {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2053,8 +1981,7 @@ fn test_goto_definition_decorated_class() {
 #[test]
 fn test_goto_definition_generic_type_param() {
     let source = "function id<T>(x: T): T { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2069,8 +1996,7 @@ fn test_goto_definition_generic_type_param() {
 #[test]
 fn test_goto_definition_rest_param() {
     let source = "function sum(...nums: number[]) { return nums.reduce((a, b) => a + b, 0); }\nsum(1, 2, 3);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2083,8 +2009,7 @@ fn test_goto_definition_rest_param() {
 #[test]
 fn test_goto_definition_interface_method() {
     let source = "interface Foo {\n  bar(): void;\n}\nfunction f(x: Foo) { x.bar(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2100,8 +2025,7 @@ fn test_goto_definition_interface_method() {
 #[test]
 fn test_goto_definition_computed_property_key() {
     let source = "const key = 'name';\nconst obj = { [key]: 'value' };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2117,8 +2041,7 @@ fn test_goto_definition_computed_property_key() {
 #[test]
 fn test_goto_definition_async_function() {
     let source = "async function fetchData() { return 42; }\nfetchData();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2137,8 +2060,7 @@ fn test_goto_definition_async_function() {
 #[test]
 fn test_goto_definition_template_literal_variable() {
     let source = "const name = 'world';\nconst greeting = `hello ${name}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2154,8 +2076,7 @@ fn test_goto_definition_template_literal_variable() {
 #[test]
 fn test_goto_definition_destructured_object() {
     let source = "const obj = { a: 1, b: 2 };\nconst { a, b } = obj;\na + b;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2171,8 +2092,7 @@ fn test_goto_definition_destructured_object() {
 #[test]
 fn test_goto_definition_destructured_array() {
     let source = "const arr = [1, 2, 3];\nconst [first, second] = arr;\nfirst;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2188,8 +2108,7 @@ fn test_goto_definition_destructured_array() {
 #[test]
 fn test_goto_definition_switch_case_variable() {
     let source = "const val = 1;\nswitch (val) {\n  case 1:\n    const inside = 2;\n    inside;\n    break;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2206,8 +2125,7 @@ fn test_goto_definition_switch_case_variable() {
 fn test_goto_definition_class_constructor() {
     let source =
         "class Animal {\n  constructor(public name: string) {}\n}\nconst a = new Animal('dog');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2223,8 +2141,7 @@ fn test_goto_definition_class_constructor() {
 #[test]
 fn test_goto_definition_function_overload() {
     let source = "function f(x: string): string;\nfunction f(x: number): number;\nfunction f(x: any): any { return x; }\nf(1);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2239,8 +2156,7 @@ fn test_goto_definition_function_overload() {
 #[test]
 fn test_goto_definition_ternary_variable() {
     let source = "const flag = true;\nconst result = flag ? 'yes' : 'no';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2257,8 +2173,7 @@ fn test_goto_definition_ternary_variable() {
 #[test]
 fn test_goto_definition_numeric_literal_returns_none() {
     let source = "const x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2273,8 +2188,7 @@ fn test_goto_definition_numeric_literal_returns_none() {
 #[test]
 fn test_goto_definition_string_literal_returns_none() {
     let source = "const x = 'hello';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2288,8 +2202,7 @@ fn test_goto_definition_string_literal_returns_none() {
 #[test]
 fn test_goto_definition_class_private_field() {
     let source = "class Foo {\n  #secret = 42;\n  get() { return this.#secret; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2303,8 +2216,7 @@ fn test_goto_definition_class_private_field() {
 #[test]
 fn test_goto_definition_interface_extends() {
     let source = "interface Base { x: number; }\ninterface Derived extends Base { y: number; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2320,8 +2232,7 @@ fn test_goto_definition_interface_extends() {
 #[test]
 fn test_goto_definition_try_catch_error_variable() {
     let source = "try {\n  throw new Error('fail');\n} catch (err) {\n  err;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2337,8 +2248,7 @@ fn test_goto_definition_try_catch_error_variable() {
 #[test]
 fn test_goto_definition_nested_function_call() {
     let source = "function outer() {\n  function inner() { return 1; }\n  inner();\n}\nouter();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2355,8 +2265,7 @@ fn test_goto_definition_nested_function_call() {
 #[test]
 fn test_goto_definition_multiline_string_no_crash() {
     let source = "const s = `line1\nline2\nline3`;\ns;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2372,8 +2281,7 @@ fn test_goto_definition_multiline_string_no_crash() {
 #[test]
 fn test_goto_definition_type_assertion() {
     let source = "interface Foo { x: number; }\nconst val = {} as Foo;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2389,8 +2297,7 @@ fn test_goto_definition_type_assertion() {
 #[test]
 fn test_goto_definition_while_loop_variable() {
     let source = "let count = 0;\nwhile (count < 10) {\n  count++;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2407,8 +2314,7 @@ fn test_goto_definition_while_loop_variable() {
 #[test]
 fn test_goto_definition_export_named_variable() {
     let source = "export const exported = 42;\nexported;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2424,8 +2330,7 @@ fn test_goto_definition_export_named_variable() {
 #[test]
 fn test_goto_definition_abstract_class_reference() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}\nclass Circle extends Shape {\n  area() { return 3.14; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2441,8 +2346,7 @@ fn test_goto_definition_abstract_class_reference() {
 #[test]
 fn test_goto_definition_unicode_identifier() {
     let source = "const \u{00e4}\u{00f6}\u{00fc} = 42;\n\u{00e4}\u{00f6}\u{00fc};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2457,8 +2361,7 @@ fn test_goto_definition_unicode_identifier() {
 #[test]
 fn test_goto_definition_void_keyword_returns_none() {
     let source = "void 0;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);

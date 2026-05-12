@@ -23,6 +23,6 @@ pub(crate) mod type_node_helpers;
 mod type_node_lowering;
 mod type_node_query_members;
 mod type_node_resolution;
-mod unique_symbol_arena;
+pub(crate) mod unique_symbol_arena;
 pub(crate) mod utilities;
 pub(crate) mod window_global_this_annotation;

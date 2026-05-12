@@ -2,14 +2,18 @@ use super::*;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_find_references_simple() {
     // const x = 1;
     // x + x;
     let source = "const x = 1;\nx + x;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -37,8 +41,7 @@ fn test_find_references_simple() {
 #[test]
 fn test_find_references_for_symbol() {
     let source = "const x = 1;\nx + x;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -62,8 +65,7 @@ fn test_find_references_for_symbol() {
 #[test]
 fn test_find_references_not_found() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -87,8 +89,7 @@ fn test_find_references_not_found() {
 #[test]
 fn test_find_references_template_expression() {
     let source = "const name = \"Ada\";\nconst msg = `hi ${name}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -142,8 +143,7 @@ fn test_find_references_jsx_expression() {
 #[test]
 fn test_find_references_await_expression() {
     let source = "const value = 1;\nasync function run() {\n  await value;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -169,8 +169,7 @@ fn test_find_references_await_expression() {
 fn test_find_references_tagged_template_expression() {
     let source =
         "const tag = (strings: TemplateStringsArray) => strings[0];\nconst msg = tag`hello`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -198,8 +197,7 @@ fn test_find_references_tagged_template_expression() {
 #[test]
 fn test_find_references_as_expression() {
     let source = "const value = 1;\nconst result = value as number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -227,8 +225,7 @@ fn test_find_references_as_expression() {
 #[test]
 fn test_find_references_binding_pattern() {
     let source = "const { foo } = obj;\nfoo;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -253,8 +250,7 @@ fn test_find_references_binding_pattern() {
 #[test]
 fn test_find_references_binding_pattern_initializer() {
     let source = "const value = 1;\nconst { foo = value } = obj;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -282,8 +278,7 @@ fn test_find_references_binding_pattern_initializer() {
 #[test]
 fn test_find_references_parameter_binding_pattern() {
     let source = "function demo({ foo }: { foo: number }) {\n  return foo;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -311,8 +306,7 @@ fn test_find_references_parameter_binding_pattern() {
 #[test]
 fn test_find_references_parameter_array_binding() {
     let source = "function demo([foo]: number[]) {\n  return foo;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -340,8 +334,7 @@ fn test_find_references_parameter_array_binding() {
 #[test]
 fn test_find_references_nested_arrow_in_switch_case() {
     let source = "switch (state) {\n  case (() => {\n    const value = 1;\n    return value;\n  })():\n    break;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -366,8 +359,7 @@ fn test_find_references_nested_arrow_in_switch_case() {
 #[test]
 fn test_find_references_nested_arrow_in_if_condition() {
     let source = "if ((() => {\n  const value = 1;\n  return value;\n})()) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -392,8 +384,7 @@ fn test_find_references_nested_arrow_in_if_condition() {
 #[test]
 fn test_find_references_export_default_expression() {
     let source = "export default (() => {\n  const value = 1;\n  return value;\n})();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -418,8 +409,7 @@ fn test_find_references_export_default_expression() {
 #[test]
 fn test_find_references_labeled_statement_local() {
     let source = "label: {\n  const value = 1;\n  value;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -444,8 +434,7 @@ fn test_find_references_labeled_statement_local() {
 #[test]
 fn test_find_references_with_statement_local() {
     let source = "with (obj) {\n  const value = 1;\n  value;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -470,8 +459,7 @@ fn test_find_references_with_statement_local() {
 #[test]
 fn test_find_references_var_hoisted_in_nested_block() {
     let source = "function demo() {\n  value;\n  if (cond) {\n    var value = 1;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -496,8 +484,7 @@ fn test_find_references_var_hoisted_in_nested_block() {
 #[test]
 fn test_find_references_decorator_reference() {
     let source = "const deco = () => {};\n@deco\nclass Foo {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -522,8 +509,7 @@ fn test_find_references_decorator_reference() {
 #[test]
 fn test_find_references_class_method_local() {
     let source = "class Foo {\n  method() {\n    const value = 1;\n    return value;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -548,8 +534,7 @@ fn test_find_references_class_method_local() {
 #[test]
 fn test_find_references_class_self_reference() {
     let source = "class Foo {\n  method() {\n    return Foo;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -574,8 +559,7 @@ fn test_find_references_class_self_reference() {
 #[test]
 fn test_find_references_class_expression_name() {
     let source = "const Foo = class Bar {\n  method() {\n    return Bar;\n  }\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -600,8 +584,7 @@ fn test_find_references_class_expression_name() {
 #[test]
 fn test_find_references_class_static_block_local() {
     let source = "class Foo {\n  static {\n    const value = 1;\n    value;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -991,8 +974,7 @@ fn test_detailed_refs_read_in_expression_not_write() {
 #[test]
 fn test_rename_locations_simple() {
     let source = "const x = 1;\nx + x;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1027,8 +1009,7 @@ fn test_rename_locations_simple() {
 #[test]
 fn test_find_references_class_name() {
     let source = "class Animal {}\nlet a = new Animal();\nlet b: Animal;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1049,8 +1030,7 @@ fn test_find_references_class_name() {
 #[test]
 fn test_find_references_interface_name() {
     let source = "interface Foo { x: number; }\nlet a: Foo;\nlet b: Foo;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1071,8 +1051,7 @@ fn test_find_references_interface_name() {
 #[test]
 fn test_find_references_enum_name() {
     let source = "enum Color { Red, Green }\nlet c: Color;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1087,8 +1066,7 @@ fn test_find_references_enum_name() {
 #[test]
 fn test_find_references_no_results_for_unknown_position() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1107,8 +1085,7 @@ fn test_find_references_no_results_for_unknown_position() {
 #[test]
 fn test_find_references_parameter_in_function() {
     let source = "function foo(param: number) {\n  return param * 2;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1132,8 +1109,7 @@ fn test_find_references_parameter_in_function() {
 #[test]
 fn test_find_references_in_nested_scope() {
     let source = "const x = 1;\nfunction foo() {\n  const y = x;\n  return y + x;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1155,8 +1131,7 @@ fn test_find_references_in_nested_scope() {
 #[test]
 fn test_find_references_type_alias() {
     let source = "type ID = string;\nlet userId: ID;\nlet groupId: ID;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1177,8 +1152,7 @@ fn test_find_references_type_alias() {
 #[test]
 fn test_find_references_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1193,8 +1167,7 @@ fn test_find_references_empty_file() {
 #[test]
 fn test_rename_locations_function() {
     let source = "function greet() {}\ngreet();\ngreet();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1220,8 +1193,7 @@ fn test_rename_locations_function() {
 fn test_find_references_type_alias_usage() {
     // Type alias declared once, used in multiple annotation positions
     let source = "type Pair<A, B> = [A, B];\nlet p: Pair<number, string>;\nfunction take(x: Pair<boolean, boolean>) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1244,8 +1216,7 @@ fn test_find_references_type_alias_usage() {
 fn test_find_references_generic_type_parameter() {
     // Generic type parameter T used in parameter and return type
     let source = "function identity<T>(value: T): T {\n  return value;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1271,8 +1242,7 @@ fn test_find_references_generic_type_parameter() {
 fn test_find_references_namespace_member() {
     // Namespace with an exported member used outside
     let source = "namespace Shapes {\n  export const PI = 3.14;\n}\nlet x = Shapes.PI;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1299,8 +1269,7 @@ fn test_find_references_enum_member_access() {
     // Enum member referenced via qualified access
     let source =
         "enum Direction {\n  Up,\n  Down,\n}\nlet d = Direction.Up;\nif (d === Direction.Down) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1323,8 +1292,7 @@ fn test_find_references_enum_member_access() {
 fn test_find_references_destructured_variable() {
     // Destructured variable used in multiple places
     let source = "const { alpha, beta } = obj;\nalpha + beta;\nconsole.log(alpha);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1350,8 +1318,7 @@ fn test_find_references_destructured_variable() {
 fn test_find_references_rest_parameter() {
     // Rest parameter used inside the function body
     let source = "function sum(...nums: number[]) {\n  return nums.reduce((a, b) => a + b, 0);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1378,8 +1345,7 @@ fn test_find_references_catch_clause_parameter() {
     // Catch clause parameter used inside the catch block
     let source =
         "try {\n  throw new Error();\n} catch (err) {\n  console.log(err);\n  throw err;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1447,8 +1413,7 @@ fn test_find_references_same_name_different_scopes() {
     // Same variable name 'x' declared in different scopes should NOT
     // cross-reference between scopes.
     let source = "function a() {\n  const x = 1;\n  return x;\n}\nfunction b() {\n  const x = 2;\n  return x;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1504,8 +1469,7 @@ fn test_find_references_same_name_different_scopes() {
 fn test_find_references_overloaded_function() {
     // Overloaded function: multiple signatures + implementation
     let source = "function process(x: number): number;\nfunction process(x: string): string;\nfunction process(x: any): any {\n  return x;\n}\nprocess(1);\nprocess(\"hello\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1532,8 +1496,7 @@ fn test_find_references_overloaded_function() {
 fn test_find_references_for_in_loop_variable() {
     // for-in loop variable
     let source = "const obj = { a: 1, b: 2 };\nfor (const key in obj) {\n  console.log(key);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1559,8 +1522,7 @@ fn test_find_references_for_in_loop_variable() {
 fn test_find_references_for_of_loop_variable() {
     // for-of loop variable
     let source = "const arr = [1, 2, 3];\nfor (const item of arr) {\n  console.log(item);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1612,8 +1574,7 @@ fn test_detailed_refs_postfix_increment_is_write() {
 fn test_find_references_array_destructured_variable() {
     // Array destructuring
     let source = "const [first, second] = [1, 2];\nconsole.log(first);\nlet x = second + first;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1642,8 +1603,7 @@ fn test_find_references_array_destructured_variable() {
 #[test]
 fn test_find_references_class_name_across_usages() {
     let source = "class Widget {}\nconst w = new Widget();\nlet x: Widget;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1665,8 +1625,7 @@ fn test_find_references_class_name_across_usages() {
 #[test]
 fn test_find_references_interface_name_in_type_position() {
     let source = "interface Config { key: string; }\nfunction init(c: Config) {}\nconst cfg: Config = { key: 'a' };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1688,8 +1647,7 @@ fn test_find_references_interface_name_in_type_position() {
 #[test]
 fn test_find_references_namespace_name() {
     let source = "namespace Utils {\n  export function helper() {}\n}\nUtils.helper();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1711,8 +1669,7 @@ fn test_find_references_namespace_name() {
 #[test]
 fn test_find_references_empty_file_returns_none() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1727,8 +1684,7 @@ fn test_find_references_empty_file_returns_none() {
 #[test]
 fn test_find_references_for_loop_counter() {
     let source = "for (let i = 0; i < 5; i++) {\n  console.log(i);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1753,8 +1709,7 @@ fn test_find_references_for_loop_counter() {
 #[test]
 fn test_find_references_arrow_function_param() {
     let source = "const double = (n: number) => n * 2;\ndouble(3);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1779,8 +1734,7 @@ fn test_find_references_arrow_function_param() {
 #[test]
 fn test_find_references_nested_function_scoping() {
     let source = "function outer() {\n  const x = 1;\n  function inner() {\n    const x = 2;\n    x;\n  }\n  x;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1803,8 +1757,7 @@ fn test_find_references_nested_function_scoping() {
 #[test]
 fn test_find_references_type_alias_in_multiple_annotations() {
     let source = "type ID = string;\nlet a: ID;\nlet b: ID;\nfunction process(id: ID) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1826,8 +1779,7 @@ fn test_find_references_type_alias_in_multiple_annotations() {
 #[test]
 fn test_find_references_const_enum_name() {
     let source = "const enum Fruit { Apple, Banana }\nlet f: Fruit = Fruit.Apple;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1849,8 +1801,7 @@ fn test_find_references_const_enum_name() {
 #[test]
 fn test_find_references_function_used_as_callback() {
     let source = "function handler() {}\nconst arr = [1, 2];\narr.forEach(handler);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1875,8 +1826,7 @@ fn test_find_references_function_used_as_callback() {
 #[test]
 fn test_find_references_default_parameter() {
     let source = "function greet(name = 'world') { return name; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1892,8 +1842,7 @@ fn test_find_references_default_parameter() {
 #[test]
 fn test_find_references_computed_property_name() {
     let source = "const key = 'x';\nconst obj = { [key]: 1 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1908,8 +1857,7 @@ fn test_find_references_computed_property_name() {
 #[test]
 fn test_find_references_switch_case_variable() {
     let source = "const x = 1;\nswitch(x) { case 0: break; default: x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1925,8 +1873,7 @@ fn test_find_references_switch_case_variable() {
 #[test]
 fn test_find_references_class_constructor_param() {
     let source = "class Foo {\n  constructor(public x: number) {}\n  get() { return this.x; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1939,8 +1886,7 @@ fn test_find_references_class_constructor_param() {
 #[test]
 fn test_find_references_spread_element() {
     let source = "const arr = [1, 2];\nconst copy = [...arr];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1956,8 +1902,7 @@ fn test_find_references_spread_element() {
 #[test]
 fn test_find_references_typeof_expression() {
     let source = "const x = 42;\ntype T = typeof x;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1972,8 +1917,7 @@ fn test_find_references_typeof_expression() {
 #[test]
 fn test_find_references_optional_chaining_variable() {
     let source = "const obj = { a: 1 };\nconst val = obj?.a;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1989,8 +1933,7 @@ fn test_find_references_optional_chaining_variable() {
 #[test]
 fn test_find_references_nullish_coalescing_variable() {
     let source = "const x = null;\nconst y = x ?? 'default';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2007,8 +1950,7 @@ fn test_find_references_nullish_coalescing_variable() {
 fn test_find_references_multiple_declarations_same_name() {
     let source =
         "function foo() { const x = 1; return x; }\nfunction bar() { const x = 2; return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2022,8 +1964,7 @@ fn test_find_references_multiple_declarations_same_name() {
 #[test]
 fn test_find_references_export_assignment() {
     let source = "const value = 42;\nexport default value;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2038,8 +1979,7 @@ fn test_find_references_export_assignment() {
 #[test]
 fn test_find_references_shorthand_property() {
     let source = "const x = 1;\nconst obj = { x };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2055,8 +1995,7 @@ fn test_find_references_shorthand_property() {
 #[test]
 fn test_find_references_class_static_property() {
     let source = "class Foo {\n  static count = 0;\n  inc() { Foo.count++; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2088,8 +2027,7 @@ fn test_detailed_refs_delete_expression() {
 #[test]
 fn test_find_references_single_char_identifier() {
     let source = "const a = 1;\na;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2108,8 +2046,7 @@ fn test_find_references_single_char_identifier() {
 #[test]
 fn test_find_references_unicode_identifier() {
     let source = "const \u{00e4}\u{00f6}\u{00fc} = 1;\n\u{00e4}\u{00f6}\u{00fc};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2122,8 +2059,7 @@ fn test_find_references_unicode_identifier() {
 #[test]
 fn test_find_references_let_in_block_scope() {
     let source = "{ let y = 10; y; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2138,8 +2074,7 @@ fn test_find_references_let_in_block_scope() {
 #[test]
 fn test_find_references_var_in_function() {
     let source = "function f() { var v = 1; return v; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2154,8 +2089,7 @@ fn test_find_references_var_in_function() {
 #[test]
 fn test_find_references_ternary_condition() {
     let source = "const flag = true;\nconst result = flag ? 'yes' : 'no';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2174,8 +2108,7 @@ fn test_find_references_ternary_condition() {
 #[test]
 fn test_find_references_while_loop_condition() {
     let source = "let running = true;\nwhile (running) { running = false; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2191,8 +2124,7 @@ fn test_find_references_while_loop_condition() {
 #[test]
 fn test_find_references_do_while_condition() {
     let source = "let count = 0;\ndo { count++; } while (count < 5);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2208,8 +2140,7 @@ fn test_find_references_do_while_condition() {
 #[test]
 fn test_find_references_nested_destructuring() {
     let source = "const { a: { b } } = { a: { b: 42 } };\nb;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2222,8 +2153,7 @@ fn test_find_references_nested_destructuring() {
 #[test]
 fn test_find_references_class_private_field() {
     let source = "class Foo {\n  #secret = 42;\n  get() { return this.#secret; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2236,8 +2166,7 @@ fn test_find_references_class_private_field() {
 #[test]
 fn test_find_references_async_function_name() {
     let source = "async function fetchData() {}\nawait fetchData();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2253,8 +2182,7 @@ fn test_find_references_async_function_name() {
 #[test]
 fn test_find_references_generator_function_name() {
     let source = "function* gen() { yield 1; }\nconst it = gen();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2270,8 +2198,7 @@ fn test_find_references_generator_function_name() {
 #[test]
 fn test_find_references_type_parameter_in_function() {
     let source = "function identity<T>(x: T): T { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2284,8 +2211,7 @@ fn test_find_references_type_parameter_in_function() {
 #[test]
 fn test_find_references_type_parameter_in_class() {
     let source = "class Container<T> {\n  value: T;\n  get(): T { return this.value; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2298,8 +2224,7 @@ fn test_find_references_type_parameter_in_class() {
 #[test]
 fn test_find_references_comma_operator() {
     let source = "let x = 0;\n(x++, x);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2315,8 +2240,7 @@ fn test_find_references_comma_operator() {
 #[test]
 fn test_find_references_logical_assignment() {
     let source = "let x: number | null = null;\nx ??= 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2332,8 +2256,7 @@ fn test_find_references_logical_assignment() {
 #[test]
 fn test_find_references_in_arrow_return_expression() {
     let source = "const val = 10;\nconst fn = () => val;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2349,8 +2272,7 @@ fn test_find_references_in_arrow_return_expression() {
 #[test]
 fn test_find_references_in_object_spread() {
     let source = "const base = { a: 1 };\nconst ext = { ...base, b: 2 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2366,8 +2288,7 @@ fn test_find_references_in_object_spread() {
 #[test]
 fn test_find_references_in_array_index() {
     let source = "const idx = 0;\nconst arr = [1, 2, 3];\narr[idx];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2383,8 +2304,7 @@ fn test_find_references_in_array_index() {
 #[test]
 fn test_find_references_in_if_condition() {
     let source = "const cond = true;\nif (cond) { }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2400,8 +2320,7 @@ fn test_find_references_in_if_condition() {
 #[test]
 fn test_find_references_class_method_name() {
     let source = "class A {\n  run() {}\n}\nnew A().run();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2414,8 +2333,7 @@ fn test_find_references_class_method_name() {
 #[test]
 fn test_find_references_multiline_string_variable() {
     let source = "const msg = `line1\nline2\nline3`;\nconsole.log(msg);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
