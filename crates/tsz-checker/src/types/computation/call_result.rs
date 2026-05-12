@@ -2007,9 +2007,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .symbols
             .find_all_by_name(ident.escaped_text.as_str())
-            .iter()
-            .copied()
-            .collect();
+            .to_vec();
         for sym_id in candidates {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
