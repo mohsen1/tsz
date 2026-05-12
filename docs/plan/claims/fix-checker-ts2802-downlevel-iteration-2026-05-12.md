@@ -4,7 +4,8 @@
 - **Branch**: `fix/checker-ts2802-downlevel-iteration-2026-05-12`
 - **Base**: `main`
 - **Issue**: [#5893](https://github.com/mohsen1/tsz/issues/5893)
-- **Status**: claim
+- **PR**: [#5940](https://github.com/mohsen1/tsz/pull/5940)
+- **Status**: ready (regression-lock; the diagnostic already works on current main)
 - **Labels**: `bug`, `missing-diagnostic`
 
 ## Intent
