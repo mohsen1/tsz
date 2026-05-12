@@ -72,3 +72,53 @@ Derived.x;
         "Expected ordinary static access to use Derived.x, not protected Base.x, got: {diags:#?}"
     );
 }
+
+fn assert_no_ts2339(source: &str) {
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(ts2339.is_empty(), "Expected no TS2339, got: {diags:#?}");
+}
+
+/// A mixin that returns a class with only static members must not lose those
+/// statics when the class is typed as the base type parameter.
+///
+/// tsz was erroneously treating `class extends Base { static x = ... }` as
+/// "transparent" (typed as `TBase`), silently discarding static additions.
+#[test]
+fn mixin_returning_class_with_static_prop_no_ts2339() {
+    assert_no_ts2339(
+        r#"
+type Constructor = new (...args: any[]) => {};
+
+function WithStatic<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        static staticProp = "static";
+    };
+}
+
+class User { name = ""; }
+
+const Enhanced = WithStatic(User);
+Enhanced.staticProp;
+"#,
+    );
+}
+
+#[test]
+fn mixin_returning_class_with_static_method_no_ts2339() {
+    assert_no_ts2339(
+        r#"
+type Constructor = new (...args: any[]) => {};
+
+function WithCreate<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        static create() { return "created"; }
+    };
+}
+
+class Item {}
+const Enhanced = WithCreate(Item);
+Enhanced.create();
+"#,
+    );
+}
