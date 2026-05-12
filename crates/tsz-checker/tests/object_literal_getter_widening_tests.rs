@@ -24,7 +24,7 @@ use tsz_checker::test_utils::check_source_code_messages as get_diagnostics;
 
 /// When the inferred getter return type widens correctly, assigning the
 /// inferred function shape to a contextual type that expects the literal
-/// `1` should produce a TS2345 whose displayed type contains `number`
+/// `2` should produce a TS2345 whose displayed type contains `number`
 /// (widened) — not the literal `1`.
 #[test]
 fn object_literal_getter_returning_number_literal_widens_in_diagnostic() {
