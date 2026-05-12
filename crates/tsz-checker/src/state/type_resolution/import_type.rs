@@ -205,7 +205,11 @@ impl<'a> CheckerState<'a> {
         segments: &[String],
     ) -> String {
         let display_name = self.import_type_display_name(module_specifier);
-        let base = if self.target_module_has_export_equals(module_specifier) {
+        // When segments follow, the `.export=` intermediate is not shown — tsc only
+        // includes it for the zero-segment case where the module's export= symbol itself
+        // is the namespace being diagnosed.
+        let base = if segments.is_empty() && self.target_module_has_export_equals(module_specifier)
+        {
             format!("\"{display_name}\".export=")
         } else {
             format!("\"{display_name}\"")

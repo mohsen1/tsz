@@ -574,6 +574,10 @@ name = "import_attributes_resolution_mode_tests"
 path = "tests/import_attributes_resolution_mode_tests.rs"
 
 [[test]]
+name = "import_type_namespace_export_equals_tests"
+path = "tests/import_type_namespace_export_equals_tests.rs"
+
+[[test]]
 name = "json_namespace_import_tests"
 path = "tests/json_namespace_import_tests.rs"
 
