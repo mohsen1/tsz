@@ -263,23 +263,20 @@ impl<'a> DeclarationEmitter<'a> {
             .as_deref()
             .and_then(Self::parse_jsdoc_type_text)
             .and_then(|type_text| Self::parse_function_type_text(&type_text));
-        let params_text = inner_func
-            .parameters
-            .nodes
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(position, param_idx)| {
-                self.source_function_parameter_text(
-                    param_idx,
-                    position,
-                    &inner_renames,
-                    jsdoc.as_deref(),
-                    jsdoc_function_parts.as_ref(),
-                )
-            })
-            .collect::<Option<Vec<_>>>()?
-            .join(", ");
+        let mut used_param_names = Vec::new();
+        let mut params = Vec::with_capacity(inner_func.parameters.nodes.len());
+        for (position, param_idx) in inner_func.parameters.nodes.iter().copied().enumerate() {
+            let text = self.source_function_parameter_text(
+                param_idx,
+                position,
+                &inner_renames,
+                jsdoc.as_deref(),
+                jsdoc_function_parts.as_ref(),
+                &mut used_param_names,
+            )?;
+            params.push(text);
+        }
+        let params_text = params.join(", ");
         let return_text = self.source_function_initializer_return_type_text(
             outer_func,
             inner_idx,
@@ -482,6 +479,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_param_renames: &[(String, String)],
         function_jsdoc: Option<&str>,
         jsdoc_function_parts: Option<&super::type_inference_function_text::FunctionTypeTextParts>,
+        used_param_names: &mut Vec<String>,
     ) -> Option<String> {
         let param_node = self.arena.get(param_idx)?;
         let param = self.arena.get_parameter(param_node)?;
@@ -508,10 +506,12 @@ impl<'a> DeclarationEmitter<'a> {
                 Self::rename_type_text_identifiers(&raw_type_text, type_param_renames)
             });
         if param.dot_dot_dot_token
-            && let Some(params) = self.expand_rest_tuple_parameter_text(param_idx, &type_text)
+            && let Some(params) =
+                self.expand_rest_tuple_parameter_text(param_idx, &type_text, used_param_names)
         {
             return Some(params);
         }
+        used_param_names.push(name.clone());
         Some(format!("{name}: {type_text}"))
     }
 
@@ -546,18 +546,18 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         from_idx: NodeIndex,
         type_text: &str,
+        used_param_names: &mut Vec<String>,
     ) -> Option<String> {
         let elements = self.expand_tuple_type_elements(from_idx, type_text, 0)?;
         if elements.is_empty() {
             return None;
         }
 
-        let mut seen = Vec::<String>::new();
         Some(
             elements
                 .into_iter()
                 .map(|(name, ty)| {
-                    let unique = Self::unique_parameter_name(&name, &mut seen);
+                    let unique = Self::unique_parameter_name(&name, used_param_names);
                     format!("{unique}: {ty}")
                 })
                 .collect::<Vec<_>>()
@@ -579,16 +579,22 @@ impl<'a> DeclarationEmitter<'a> {
         let params_text = head.get(open_idx + 1..)?.strip_suffix(')')?;
 
         let mut changed = false;
+        let mut used_param_names = Vec::new();
         let params = Self::split_top_level_commas(params_text)
             .into_iter()
             .map(|param_text| {
                 let param_text = param_text.trim();
                 let Some(rest_text) = param_text.strip_prefix("...").map(str::trim) else {
+                    Self::track_existing_parameter_name(param_text, &mut used_param_names);
                     return Some(param_text.to_string());
                 };
                 let colon_idx = Self::find_top_level_byte(rest_text, b':')?;
                 let type_text = rest_text.get(colon_idx + 1..)?.trim();
-                let expanded = self.expand_rest_tuple_parameter_text(scope_idx, type_text)?;
+                let expanded = self.expand_rest_tuple_parameter_text(
+                    scope_idx,
+                    type_text,
+                    &mut used_param_names,
+                )?;
                 changed = true;
                 Some(expanded)
             })
@@ -657,6 +663,18 @@ impl<'a> DeclarationEmitter<'a> {
                 return candidate;
             }
             suffix += 1;
+        }
+    }
+
+    fn track_existing_parameter_name(param_text: &str, seen: &mut Vec<String>) {
+        let Some(colon_idx) = Self::find_top_level_byte(param_text, b':') else {
+            return;
+        };
+        let raw_name = param_text.get(..colon_idx).unwrap_or_default().trim();
+        let raw_name = raw_name.strip_prefix("...").unwrap_or(raw_name).trim();
+        let raw_name = raw_name.strip_suffix('?').unwrap_or(raw_name).trim();
+        if !raw_name.is_empty() {
+            seen.push(raw_name.to_string());
         }
     }
 

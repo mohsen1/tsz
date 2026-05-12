@@ -1,4 +1,4 @@
-# fix(audit): follow up missed-review threads (#5701, #5845, #5867, #5694)
+# fix(audit): follow up missed-review threads (#5701, #5845, #5867, #5694, #5677)
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/audit-followup-dts-20260512`
@@ -8,12 +8,13 @@
 
 ## Intent
 
-Close four declaration-emitter missed-review clusters from the last-500-PR audit:
+Close five declaration-emitter missed-review clusters from the last-500-PR audit:
 
 - `#5701` (JSDoc `@typedef ... default` alias collision with existing type names)
 - `#5845` (`export =` JS files misclassified as native ESM)
 - `#5867` (JS late-bound function namespace alias collisions and scope leakage)
 - `#5694` (JSDoc generic/reference parser edge cases in quotes and same-line tags)
+- `#5677` (rest tuple expansion can collide with pre-existing parameter names)
 
 ## Changes
 
@@ -68,12 +69,25 @@ Close four declaration-emitter missed-review clusters from the last-500-PR audit
   - added a regression for quoted `>` in generic string literal arguments.
   - added a regression for tab-separated same-line `@template` + `@typedef`.
 
+- review comments left on #5677:
+  - thread rest-tuple expansion parameter-name de-dup through the outer returned
+    function parameter list so expanded tuple labels are unique against
+    parameters that already exist in the same signature.
+  - apply the same collision-safe naming in function-type-text rest tuple
+    expansion by seeding existing parameter names before expansion.
+
+- regression coverage:
+  - added a regression proving `return function (a: number, ...args: [a: string, ...])`
+    expands as `a, a_1, ...` rather than emitting duplicate `a` declarations.
+
 ## Files Touched
 
 - `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs`
 - `crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs`
 - `crates/tsz-emitter/src/declaration_emitter/helpers/late_bound_function_analysis.rs`
+- `crates/tsz-emitter/src/declaration_emitter/helpers/returned_function_initializer.rs`
 - `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs`
+- `crates/tsz-emitter/src/declaration_emitter/tests/type_formatting.rs`
 - `docs/plan/claims/codex-review-audit-dts-followup-20260512.md`
 
 ## Verification
@@ -89,6 +103,10 @@ Close four declaration-emitter missed-review clusters from the last-500-PR audit
 - `cargo test -p tsz-emitter test_js_variable_preserves_generic_jsdoc_type_reference_with_gt_in_string_literal -- --nocapture`
   - result: `1 passed; 0 failed`
 - `cargo test -p tsz-emitter test_js_template_same_line_typedef_with_tab_separator_trims_following_tag -- --nocapture`
+  - result: `1 passed; 0 failed`
+- `cargo test -p tsz-emitter test_direct_returned_function_expression_expands_rest_tuple_aliases -- --nocapture`
+  - result: `1 passed; 0 failed`
+- `cargo test -p tsz-emitter test_direct_returned_function_expression_rest_tuple_alias_avoids_existing_param_name_collision -- --nocapture`
   - result: `1 passed; 0 failed`
 - `cargo fmt --all`
   - result: success
