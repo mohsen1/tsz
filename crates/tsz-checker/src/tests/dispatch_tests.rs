@@ -531,6 +531,55 @@ type T41<U extends number> = typeof g2<U>;
 }
 
 #[test]
+fn invalid_instancetype_indexed_access_suppresses_cascading_ts2344() {
+    let diags = check_source_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+
+const Outer = class {
+    Inner = class {
+        value = "inner";
+    };
+
+    createInner(): InstanceType<Outer["Inner"]> {
+        return new this.Inner();
+    }
+};
+"#,
+    );
+
+    let ts2749: Vec<_> = diags.iter().filter(|d| d.code == 2749).collect();
+    assert_eq!(
+        ts2749.len(),
+        1,
+        "Expected one TS2749 for value used as type, got: {diags:?}"
+    );
+
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert!(
+        ts2344.is_empty(),
+        "Invalid value-as-type argument should not also emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
+fn instancetype_constraint_violation_still_emits_ts2344() {
+    let diags = check_source_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+type Bad = InstanceType<string>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert_eq!(
+        ts2344.len(),
+        1,
+        "Expected genuine InstanceType constraint violation to emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2352_array_assertion_anchors_first_excess_property() {
     let source = r#"
 <{ id: number; }[]>[{ foo: "s" }];
