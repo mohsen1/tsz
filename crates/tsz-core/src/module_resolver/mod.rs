@@ -941,9 +941,17 @@ impl ModuleResolver {
         }
     }
 
-    /// Clear the resolution cache
+    /// Clear module resolution caches owned by this resolver.
+    ///
+    /// This also clears the current thread's file-existence cache, which is
+    /// shared by resolver helper functions rather than stored on the resolver.
     pub fn clear_cache(&mut self) {
         self.resolution_cache.clear();
+        self.package_type_cache.borrow_mut().clear();
+        self.package_json_cache.borrow_mut().clear();
+        self.skip_fallback_cache.borrow_mut().clear();
+        self.node_modules_dir_cache.borrow_mut().clear();
+        crate::resolution::helpers::clear_file_exists_cache();
     }
 
     /// Get the current resolution kind
