@@ -125,7 +125,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn correlated_union_arg_surface_is_generic(&self, arg_type: TypeId) -> bool {
-        crate::type_queries::contains_generic_indexed_access_surface(self.interner, arg_type)
+        crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
+            || crate::type_queries::contains_generic_indexed_access_surface(self.interner, arg_type)
     }
 
     /// Resolve a function call: func(args...) -> result
@@ -1207,9 +1208,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         // Phase 3: Result aggregation.
         if let Some(ref combined) = combined
-            && !arg_types.iter().any(|&arg_type| {
-                crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
-            })
+            && !arg_types
+                .iter()
+                .any(|&arg_type| self.is_generic_correlated_union_call_arg(arg_type))
         {
             for (i, &arg_type) in arg_types.iter().enumerate() {
                 if i < combined.param_types.len() {
@@ -1321,7 +1322,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     })
                                     .collect();
                                 let param_union = self.interner.union(member_param_types);
-                                if !self.checker.is_assignable_to(arg_type, param_union) {
+                                let evaluated_arg = self.checker.evaluate_type(arg_type);
+                                let indexed_access_evaluates_to_param_union = matches!(
+                                    self.interner.lookup(arg_type),
+                                    Some(TypeData::IndexAccess(_, index))
+                                            if crate::type_queries::contains_type_parameters_db(
+                                                self.interner,
+                                                index,
+                                            )
+                                ) && evaluated_arg
+                                    != arg_type
+                                    && self.checker.is_assignable_to(evaluated_arg, param_union);
+                                if !self.checker.is_assignable_to(arg_type, param_union)
+                                    && !indexed_access_evaluates_to_param_union
+                                {
                                     param_union_pass = false;
                                     break;
                                 }
