@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::CompatChecker;
-use crate::inference::infer::{InferenceContext, InferenceError};
+use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::intern::TypeInterner;
 use crate::types::{
     FunctionShape, InferencePriority, ParamInfo, PropertyInfo, TupleElement, TypeData,
@@ -26,9 +26,7 @@ use crate::types::{
 /// used by the simple constraint tests below. Tests that also need the
 /// interned `"T"` `Atom` can re-call `interner.intern_string("T")` — the
 /// interner returns the same atom for the same key.
-fn ctx_with_t_var(
-    interner: &TypeInterner,
-) -> (InferenceContext<'_>, crate::inference::infer::InferenceVar) {
+fn ctx_with_t_var(interner: &TypeInterner) -> (InferenceContext<'_>, InferenceVar) {
     let mut ctx = InferenceContext::new(interner);
     let t_name = interner.intern_string("T");
     let var_t = ctx.fresh_type_param(t_name, false);
