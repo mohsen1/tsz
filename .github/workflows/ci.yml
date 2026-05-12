@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, labeled]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]
   merge_group:
   push:
     branches: [main]
@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.gate.outputs.should_run }}
+      full_run: ${{ steps.gate.outputs.full_run }}
       rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
     steps:
       - id: gate
@@ -37,6 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           should_run=true
+          full_run=true
           rust_cache_refresh=false
           cache_key_changed=false
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -50,11 +52,12 @@ jobs:
               should_run=false
             fi
             if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
-              should_run=false
+              # Draft PRs still run the light CI suite (lint, build, unit).
+              # Heavy suites wait until the PR is marked ready for review.
+              full_run=false
             fi
             # Docs-only PRs cannot affect cargo build/test/conformance, so
-            # skip the heavy self-hosted suite (lint, dist-binaries, wasm,
-            # conformance, emit, fourslash) when every changed path matches
+            # skip CI jobs when every changed path matches
             # one of the docs-only patterns. The gate job itself + the
             # ubuntu-latest "CI Summary" job still run, so any
             # required-status-checks for those names are satisfied — unlike
@@ -89,7 +92,7 @@ jobs:
                   | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$' \
                   || true)
                 if [[ -z "$non_docs" ]]; then
-                  echo "PR diff is docs-only — skipping heavy CI:"
+                  echo "PR diff is docs-only — skipping CI jobs:"
                   printf '  %s\n' $(printf '%s\n' "$all_paths" | sort -u)
                   should_run=false
                 fi
@@ -190,7 +193,11 @@ jobs:
               fi
             fi
           fi
+          if [[ "$should_run" != "true" ]]; then
+            full_run=false
+          fi
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+          echo "full_run=${full_run}" >> "$GITHUB_OUTPUT"
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
 
   lint:
@@ -246,7 +253,7 @@ jobs:
   wasm:
     name: wasm
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -270,7 +277,7 @@ jobs:
   wasm-web:
     name: wasm-web
     needs: [gate, wasm]
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.full_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -285,7 +292,7 @@ jobs:
   node-harness-prep:
     name: node-harness-prep
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     env:
@@ -345,7 +352,7 @@ jobs:
     # while returning runner capacity to the slower suites.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
     strategy:
@@ -378,7 +385,7 @@ jobs:
   conformance-aggregate:
     name: conformance-aggregate
     needs: [gate, conformance]
-    if: needs.gate.outputs.should_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -395,6 +402,8 @@ jobs:
 
   conformance-snapshot-gate:
     name: conformance-snapshot-gate
+    needs: gate
+    if: needs.gate.outputs.full_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -415,7 +424,7 @@ jobs:
   emit:
     name: emit
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     env:
@@ -459,7 +468,7 @@ jobs:
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     strategy:
@@ -506,7 +515,7 @@ jobs:
   fourslash-aggregate:
     name: fourslash-aggregate
     needs: [gate, fourslash]
-    if: needs.gate.outputs.should_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -550,23 +559,31 @@ jobs:
           needs = json.loads(os.environ["NEEDS_JSON"])
           gate = needs["gate"]
           should_run = gate.get("outputs", {}).get("should_run") == "true"
+          full_run = gate.get("outputs", {}).get("full_run") == "true"
 
           if gate.get("result") != "success":
               print(f"gate did not pass: {gate.get('result')}")
               sys.exit(1)
 
-          snapshot_gate = needs["conformance-snapshot-gate"]
-          if snapshot_gate.get("result") != "success":
-              print(f"conformance-snapshot-gate did not pass: {snapshot_gate.get('result')}")
-              sys.exit(1)
-
           if not should_run:
-              print("CI gated off; summary passes because heavy jobs were intentionally skipped.")
+              print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
+
+          required = {"lint", "dist-binaries", "unit"}
+          if full_run:
+              required.update({
+                  "wasm",
+                  "wasm-web",
+                  "node-harness-prep",
+                  "conformance-aggregate",
+                  "conformance-snapshot-gate",
+                  "emit",
+                  "fourslash-aggregate",
+              })
 
           failures = []
           for name, data in needs.items():
-              if name in {"gate", "conformance-snapshot-gate"}:
+              if name == "gate" or name not in required:
                   continue
               if data.get("result") != "success":
                   failures.append(f"{name}: {data.get('result')}")
@@ -577,5 +594,8 @@ jobs:
                   print(f"  - {failure}")
               sys.exit(1)
 
-          print("All required CI jobs passed.")
+          if full_run:
+              print("All required CI jobs passed.")
+          else:
+              print("Draft/light CI passed: lint, dist-binaries, and unit.")
           PY
