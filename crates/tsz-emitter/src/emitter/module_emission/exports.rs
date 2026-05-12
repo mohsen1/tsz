@@ -425,6 +425,10 @@ impl<'a> Printer<'a> {
                 }
                 // export class C {} or export default class C {}
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    let class_is_declare = self
+                        .arena
+                        .get_class(clause_node)
+                        .is_some_and(|class| self.arena.is_declare(&class.modifiers));
                     let recovered_anonymous_named_export = if !export.is_default_export
                         && !self.ctx.module_state.has_export_assignment
                     {
@@ -441,6 +445,7 @@ impl<'a> Printer<'a> {
                     let mut named_export_emitted_with_class = false;
                     if !self.ctx.module_state.has_export_assignment
                         && !export.is_default_export
+                        && !class_is_declare
                         && let Some(class) = self.arena.get_class(clause_node)
                         && let Some(name) = self
                             .get_identifier_text_opt(class.name)
