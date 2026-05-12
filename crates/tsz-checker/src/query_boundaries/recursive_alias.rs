@@ -7,6 +7,7 @@
 //! match that policy without pattern-matching solver internals directly.
 
 use rustc_hash::FxHashSet;
+use tsz_common::interner::Atom;
 use tsz_solver::TypeDatabase;
 use tsz_solver::TypeId;
 use tsz_solver::def::{DefId, DefKind, DefinitionStore};
@@ -35,6 +36,15 @@ pub(crate) fn recursive_non_generic_type_alias_body_def(
     // Verify the body recursively references the alias itself.
     let mut visited: FxHashSet<TypeId> = FxHashSet::default();
     type_reaches_alias_def(db, body, def_id, &mut visited).then_some(def_id)
+}
+
+pub(crate) fn recursive_non_generic_type_alias_body_name(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> Option<Atom> {
+    let def_id = recursive_non_generic_type_alias_body_def(db, def_store, type_id)?;
+    def_store.get(def_id).map(|def| def.name)
 }
 
 /// True when `def_id` refers to a non-generic `TypeAlias` whose body recursively
