@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/emit-decorated-auto-accessor-lowering-20260512`
-- **PR**: TBD
+- **PR**: #6042
 - **Status**: claim
 - **Workstream**: 2 (JS Emit And Declaration Emit Pass Rate)
 
