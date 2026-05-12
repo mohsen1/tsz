@@ -16,6 +16,9 @@
   create or update a GitHub issue for the scope, mark it `WIP`, create a
   branch, then open a draft PR with the GitHub label `WIP`. Use a title like
   `[WIP] <scope>: <intent>`.
+- Do not add `[codex]` to PR titles. PR titles should follow the repository
+  convention, e.g. `fix(checker): ...`, `chore(lsp-tests): ...`, or `[WIP]
+  <scope>: <intent>` while the work is still WIP.
 - While working, keep the GitHub issue current with new facts, root-cause
   discoveries, and scope changes. Other agents use those issue updates and
   WIP PRs to decide whether their task duplicates active work.
