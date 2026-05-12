@@ -587,10 +587,10 @@ impl<'a> Printer<'a> {
                 })
                 .is_some_and(|stmt_node| {
                     stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && self
-                            .arena
-                            .get_class(stmt_node)
-                            .is_some_and(|class| self.class_has_auto_accessor_members(class))
+                        && self.arena.get_class(stmt_node).is_some_and(|class| {
+                            self.class_has_auto_accessor_members(class)
+                                && !self.class_has_decorators(class)
+                        })
                 });
 
         let mut deferred_header_comments: Vec<(String, bool)> = Vec::new();
@@ -1734,10 +1734,10 @@ impl<'a> Printer<'a> {
             let skip_auto_accessor_leading_comments =
                 auto_accessor_class_leading_comments_need_deferral
                     && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    && self
-                        .arena
-                        .get_class(stmt_node)
-                        .is_some_and(|class| self.class_has_auto_accessor_members(class));
+                    && self.arena.get_class(stmt_node).is_some_and(|class| {
+                        self.class_has_auto_accessor_members(class)
+                            && !self.class_has_decorators(class)
+                    });
             // Save state before leading comments so we can undo them if the
             // statement produces no output (same pattern as emit_block_body).
             let pre_comment_writer_len = self.writer.len();
