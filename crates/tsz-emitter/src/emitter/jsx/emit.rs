@@ -1018,10 +1018,21 @@ impl<'a> Printer<'a> {
             return false;
         }
         // Check that there are no comments inside the expression range
-        !self
+        let has_tracked_comment = self
             .all_comments
             .iter()
-            .any(|c| c.pos >= node.pos && c.end <= node.end)
+            .any(|c| c.pos >= node.pos && c.end <= node.end);
+        if has_tracked_comment {
+            return false;
+        }
+        if let Some(text) = self.source_text
+            && tsz_common::comments::get_comment_ranges(text)
+                .iter()
+                .any(|c| c.pos >= node.pos && c.end <= node.end)
+        {
+            return false;
+        }
+        true
     }
 
     /// Walk all JSX children in source order, emitting non-empty children and
@@ -1117,13 +1128,7 @@ impl<'a> Printer<'a> {
             if let Some(expr_node) = self.arena.get(expr.expression) {
                 let expr_token_end =
                     self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
-                let (emitted_comment, _, _) =
-                    self.emit_comments_in_range(expr_token_end, node.end, true, false);
-                if !emitted_comment
-                    && matches!(self.ctx.original_module_kind, Some(ModuleKind::System))
-                {
-                    self.emit_comments_in_range_untracked(expr_token_end, node.end, true);
-                }
+                self.emit_comments_in_range(expr_token_end, node.end, true, false);
             }
             return;
         }
@@ -1131,47 +1136,6 @@ impl<'a> Printer<'a> {
         // JSX element, fragment, or self-closing element -- emit recursively
         // This will hit the transform dispatch again for nested JSX.
         self.emit(child);
-    }
-
-    pub(in super::super) fn emit_comments_in_range_untracked(
-        &mut self,
-        start_pos: u32,
-        end_pos: u32,
-        insert_space_for_adjacent_inline: bool,
-    ) -> bool {
-        if self.ctx.options.remove_comments {
-            return false;
-        }
-        let Some(text) = self.source_text else {
-            return false;
-        };
-        let mut emitted = false;
-        let comments: Vec<_> = self
-            .all_comments
-            .iter()
-            .filter(|comment| comment.pos < end_pos && comment.end > start_pos)
-            .map(|comment| {
-                (
-                    comment.pos,
-                    comment.end,
-                    comment.has_trailing_new_line,
-                    self.comment_preceded_by_newline(comment.pos),
-                )
-            })
-            .collect();
-        for (pos, end, has_trailing_new_line, preceded_by_newline) in comments {
-            if insert_space_for_adjacent_inline && !has_trailing_new_line && !preceded_by_newline {
-                self.write_space();
-            }
-            if let Ok(comment_text) = crate::safe_slice::slice(text, pos as usize, end as usize) {
-                self.write_comment_with_reindent(comment_text, Some(pos));
-                emitted = true;
-            }
-            if has_trailing_new_line {
-                self.write_line();
-            }
-        }
-        emitted
     }
 
     /// Strip outer parens and erased type-cast wrappers (`as`, `satisfies`,
