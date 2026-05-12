@@ -1228,6 +1228,48 @@ const send = handlers => Promise.resolve(handlers);
 }
 
 #[test]
+fn test_js_multiline_typedef_before_export_equals_function_variable_is_emitted() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+module.exports = send;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let export_pos = output
+        .find("export = send;")
+        .expect("Expected CommonJS export-equals statement");
+    let function_pos = output
+        .find("declare function send(handlers: ResolveRejectMap): Promise<any>;")
+        .expect("Expected synthetic function declaration for send");
+    assert!(
+        export_pos < function_pos,
+        "Expected export= send to emit before the synthetic declaration in CommonJS mode: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected multiline JSDoc typedef alias to be emitted alongside export= send: {output}"
+    );
+    assert_eq!(
+        output.matches("export = send;").count(),
+        1,
+        "Did not expect duplicate export= send statements: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_signature_types() {
     let source = r#"
 /**
@@ -5471,6 +5513,39 @@ export class C {
             " * @protected\n     * @type {null | string}\n     */\n    protected [key]: null | string;"
         ),
         "Expected backing field JSDoc to stay attached to the deferred field: {output}"
+    );
+}
+
+#[test]
+fn test_js_setter_does_not_lift_nested_nullish_from_array_element_union() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const key = Symbol("key");
+
+export class C {
+    /**
+     * @protected
+     * @type {(null | string)[]}
+     */
+    [key] = [];
+
+    /**
+     * @type {string[]}
+     */
+    set value(v) {
+        this[key] = v;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("set value(v: string[]);"),
+        "Expected nested `(null | string)[]` backing type not to inject top-level null into setter type: {output}"
+    );
+    assert!(
+        !output.contains("set value(v: string[] | null);"),
+        "Did not expect nested element union nullability to be appended at top level: {output}"
     );
 }
 
