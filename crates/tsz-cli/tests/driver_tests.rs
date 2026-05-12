@@ -16,8 +16,12 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -4774,8 +4778,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
     let mut binder = BinderState::new();
@@ -4994,8 +4997,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
 
@@ -5199,8 +5201,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
 
@@ -5334,8 +5335,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
 
@@ -5413,8 +5413,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
 
@@ -5501,8 +5500,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
 
@@ -5587,8 +5585,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
 
@@ -5661,8 +5658,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
 
@@ -5748,8 +5744,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     typeHandlers[p.t]?.(p);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
 
@@ -5980,8 +5975,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         &lib_paths,
     );
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let (arena, _) = parser.into_parts();
     let arena = Arc::new(arena);
     let mut binder = BinderState::new();
@@ -6058,8 +6052,7 @@ createInstance(MenuWorkbenchToolBar, {
 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let lib_files = load_real_default_lib_files(ScriptTarget::ES2015);
     let mut binder = BinderState::new();

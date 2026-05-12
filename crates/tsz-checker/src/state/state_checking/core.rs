@@ -6,10 +6,34 @@
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
+    /// Detect the `const` type node in `expr as const` / `<const>expr`
+    /// assertions. The parser may represent it either as a bare `const`
+    /// keyword or as a legacy type reference named `const` with no type args.
+    pub(crate) fn is_const_assertion_type_node(&self, type_node_idx: NodeIndex) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if type_node.kind == SyntaxKind::ConstKeyword as u16 {
+            return true;
+        }
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+        {
+            return type_ref.type_arguments.is_none()
+                && self
+                    .ctx
+                    .arena
+                    .get_identifier_text(type_ref.type_name)
+                    .is_some_and(|name| name == "const");
+        }
+        false
+    }
+
     pub(crate) fn declaration_symbol_flags(
         &self,
         arena: &tsz_parser::parser::NodeArena,

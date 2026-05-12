@@ -43,6 +43,39 @@ foo(c);
 }
 
 #[test]
+fn correlated_mapped_handler_call_does_not_report_never_parameter() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+type TypeMap = {
+    foo: string,
+    bar: number
+};
+
+type Keys = keyof TypeMap;
+type HandlerMap = { [P in Keys]: (x: TypeMap[P]) => void };
+
+declare const handlers: HandlerMap;
+
+type DataEntry<K extends Keys = Keys> = { [P in K]: {
+    type: P,
+    data: TypeMap[P]
+}}[K];
+
+function process<K extends Keys>(data: DataEntry<K>[]) {
+    data.forEach(block => {
+        handlers[block.type](block.data);
+    });
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2345),
+        "Expected no TS2345 for correlated handler call. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
     let mut parser = tsz_parser::parser::ParserState::new("test.ts".to_string(), String::new());
     let root = parser.parse_source_file();
