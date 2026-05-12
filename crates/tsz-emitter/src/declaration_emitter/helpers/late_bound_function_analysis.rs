@@ -597,6 +597,19 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Returns true when `initializer` is the kind of node
+    /// `emit_function_initializer_call_signature` can synthesize a call
+    /// signature for — that is, a function expression or arrow function.
+    /// Used by the late-bound expando-function path to bail out
+    /// **before** any partial output is written, so non-function
+    /// initializers do not leak a broken `: {` into the .d.ts.
+    fn initializer_is_function_like_for_late_bound(&self, initializer: NodeIndex) -> bool {
+        self.arena.get(initializer).is_some_and(|node| {
+            node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+        })
+    }
+
     pub(in crate::declaration_emitter) fn collect_ts_late_bound_assignment_members(
         &self,
         root_name_idx: NodeIndex,
@@ -689,6 +702,19 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         let members = self.collect_ts_late_bound_assignment_members(decl_name);
         if members.is_empty() {
+            return false;
+        }
+
+        // The `: {` and the call signature were previously written before
+        // checking whether the initializer is actually a function; for
+        // non-function initializers (array literals, object literals, etc.)
+        // `emit_function_initializer_call_signature` then returned false
+        // and the caller fell through to a different branch — but the
+        // partial `: {\n    ` was already in the output, producing invalid
+        // TypeScript like `declare var t: {\n    : number[];`. Probe the
+        // initializer shape first and bail out before any writes when the
+        // late-bound function pattern does not apply.
+        if !self.initializer_is_function_like_for_late_bound(initializer) {
             return false;
         }
 

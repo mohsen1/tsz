@@ -7,6 +7,12 @@ use tsz_checker::diagnostics::diagnostic_codes::{
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
 
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
+
 fn range_for_substring(source: &str, line_map: &LineMap, needle: &str) -> Range {
     let start = source.find(needle).expect("substring not found") as u32;
     let end = start + needle.len() as u32;
@@ -92,8 +98,7 @@ fn test_extract_variable_property_access() {
 #[test]
 fn test_extract_variable_avoids_name_collision() {
     let source = "const extracted = 1;\nconst value = foo.bar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -130,8 +135,7 @@ fn test_extract_variable_avoids_name_collision() {
 #[test]
 fn test_extract_variable_parenthesizes_comma_expression() {
     let source = "const value = (foo(), bar());";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -169,8 +173,7 @@ fn test_extract_variable_parenthesizes_comma_expression() {
 #[test]
 fn test_extract_variable_parenthesizes_comma_expression_with_parens() {
     let source = "const value = (foo(), bar());";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -208,8 +211,7 @@ fn test_extract_variable_parenthesizes_comma_expression_with_parens() {
 #[test]
 fn test_extract_variable_preserves_parenthesized_replacement() {
     let source = "const value = (foo + bar) * baz;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -243,8 +245,7 @@ fn test_extract_variable_preserves_parenthesized_replacement() {
 #[test]
 fn test_extract_variable_preserves_parenthesized_conditional_replacement() {
     let source = "const value = (foo ? bar : baz) + qux;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -282,8 +283,7 @@ fn test_extract_variable_preserves_parenthesized_conditional_replacement() {
 #[test]
 fn test_extract_variable_call_expression_span() {
     let source = "const value = foo() * bar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -317,8 +317,7 @@ fn test_extract_variable_call_expression_span() {
 #[test]
 fn test_extract_variable_array_literal_span() {
     let source = "const value = [foo] + bar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -352,8 +351,7 @@ fn test_extract_variable_array_literal_span() {
 #[test]
 fn test_extract_variable_object_literal_span() {
     let source = "const value = { foo: 1 } + bar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -423,8 +421,7 @@ fn test_extract_variable_jsx_child_wraps_expression() {
 #[test]
 fn test_extract_variable_blocks_tdz_for_loop_initializer() {
     let source = "for (let i = 0; i < limit; i++) { console.log(i); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -555,8 +552,7 @@ fn test_extract_variable_blocks_tdz_in_jsx_child() {
 #[test]
 fn test_extract_variable_no_action_cross_scope() {
     let source = "const result = ((x) => x + 1)(2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -588,8 +584,7 @@ fn test_extract_variable_no_action_cross_scope() {
 #[test]
 fn test_extract_variable_no_action_for_simple_literal() {
     let source = "const x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -625,8 +620,7 @@ fn test_extract_variable_no_action_for_simple_literal() {
 #[test]
 fn test_extract_variable_empty_range() {
     let source = "const x = foo.bar.baz;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -662,8 +656,7 @@ fn test_extract_variable_empty_range() {
 #[test]
 fn test_organize_imports_sort_only() {
     let source = "import { b } from \"b\";\nimport { a } from \"a\";\nconst x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -708,8 +701,7 @@ fn test_organize_imports_sort_only() {
 #[test]
 fn test_quickfix_remove_unused_named_import() {
     let source = "import { foo, bar } from \"mod\";\nbar;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -752,8 +744,7 @@ fn test_quickfix_remove_unused_named_import() {
 #[test]
 fn test_quickfix_remove_unused_named_import_entire_decl() {
     let source = "import { foo } from \"mod\";\nconst x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -796,8 +787,7 @@ fn test_quickfix_remove_unused_named_import_entire_decl() {
 #[test]
 fn test_quickfix_remove_unused_default_import() {
     let source = "import foo, { bar } from \"mod\";\nbar;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -840,8 +830,7 @@ fn test_quickfix_remove_unused_default_import() {
 #[test]
 fn test_quickfix_preserves_type_only_named_import() {
     let source = "import { type Foo, Bar } from \"mod\";\nlet x: Foo;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -884,8 +873,7 @@ fn test_quickfix_preserves_type_only_named_import() {
 #[test]
 fn test_quickfix_add_missing_property_object_literal_single_line() {
     let source = "const foo = { a: 1 }; foo.b;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -931,8 +919,7 @@ fn test_quickfix_add_missing_property_object_literal_single_line() {
 #[test]
 fn test_quickfix_add_missing_property_object_literal_single_line_trailing_comma() {
     let source = "const foo = { a: 1, }; foo.b;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -978,8 +965,7 @@ fn test_quickfix_add_missing_property_object_literal_single_line_trailing_comma(
 #[test]
 fn test_quickfix_add_missing_property_object_literal_element_access() {
     let source = "const foo = { a: 1 }; foo[\"b\"];\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1026,8 +1012,7 @@ fn test_quickfix_add_missing_property_object_literal_element_access() {
 #[test]
 fn test_quickfix_add_missing_property_object_literal_multiline() {
     let source = "const foo = {\n  a: 1\n};\nfoo.b;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1076,8 +1061,7 @@ fn test_quickfix_add_missing_property_object_literal_multiline() {
 #[test]
 fn test_quickfix_add_missing_property_to_class() {
     let source = "class Foo {\n  method() {\n    this.bar;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1126,8 +1110,7 @@ fn test_quickfix_add_missing_property_to_class() {
 #[test]
 fn test_quickfix_add_missing_property_to_class_element_access() {
     let source = "class Foo {\n  method() {\n    this[\"bar\"];\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1174,8 +1157,7 @@ fn test_quickfix_add_missing_property_to_class_element_access() {
 #[test]
 fn test_quickfix_add_missing_import_named() {
     let source = "foo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1223,8 +1205,7 @@ fn test_quickfix_add_missing_import_named() {
 #[test]
 fn test_quickfix_add_missing_import_after_existing_import() {
     let source = "import { bar } from \"./bar\";\nfoo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1275,8 +1256,7 @@ fn test_quickfix_add_missing_import_after_existing_import() {
 #[test]
 fn test_quickfix_add_missing_import_merge_named_same_module() {
     let source = "import { bar } from \"./foo\";\nfoo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1324,8 +1304,7 @@ fn test_quickfix_add_missing_import_merge_named_same_module() {
 #[test]
 fn test_quickfix_add_missing_import_merge_named_ignore_case_true() {
     let source = "import { A, B, C } from \"./exports1\";\na;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1370,8 +1349,7 @@ fn test_quickfix_add_missing_import_merge_named_ignore_case_true() {
 #[test]
 fn test_quickfix_add_missing_import_merge_named_ignore_case_false() {
     let source = "import { E } from \"./exports2\";\nd;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1417,8 +1395,7 @@ fn test_quickfix_add_missing_import_merge_named_ignore_case_false() {
 #[test]
 fn test_quickfix_add_missing_import_merge_named_multiline() {
     let source = "import {\n  bar\n} from \"./foo\";\nfoo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1469,8 +1446,7 @@ fn test_quickfix_add_missing_import_merge_named_multiline() {
 #[test]
 fn test_quickfix_add_missing_import_merge_named_with_default() {
     let source = "import Foo from \"./foo\";\nbar();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1518,8 +1494,7 @@ fn test_quickfix_add_missing_import_merge_named_with_default() {
 #[test]
 fn test_quickfix_add_missing_import_merge_default_with_named() {
     let source = "import { bar } from \"./foo\";\nFoo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1566,8 +1541,7 @@ fn test_quickfix_add_missing_import_merge_default_with_named() {
 #[test]
 fn test_quickfix_add_missing_import_merge_default_with_namespace() {
     let source = "import * as ns from \"./foo\";\nFoo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1614,8 +1588,7 @@ fn test_quickfix_add_missing_import_merge_default_with_namespace() {
 #[test]
 fn test_quickfix_add_missing_import_default() {
     let source = "Foo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1662,8 +1635,7 @@ fn test_quickfix_add_missing_import_default() {
 #[test]
 fn test_quickfix_add_missing_import_namespace() {
     let source = "ns.foo;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1710,8 +1682,7 @@ fn test_quickfix_add_missing_import_namespace() {
 #[test]
 fn test_quickfix_add_missing_import_type_position_uses_import_type() {
     let source = "let x: Foo;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1762,8 +1733,7 @@ fn test_quickfix_add_missing_import_type_position_uses_import_type() {
 #[test]
 fn test_quickfix_add_missing_import_value_skips_type_only_candidate() {
     let source = "Foo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1812,8 +1782,7 @@ fn test_quickfix_add_missing_import_value_skips_type_only_candidate() {
 #[test]
 fn test_quickfix_add_missing_import_type_query_uses_value_import() {
     let source = "type T = typeof Foo;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1864,8 +1833,7 @@ fn test_quickfix_add_missing_import_type_query_uses_value_import() {
 #[test]
 fn test_quickfix_add_missing_import_class_extends_uses_value_import() {
     let source = "class Bar extends Foo {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1916,8 +1884,7 @@ fn test_quickfix_add_missing_import_class_extends_uses_value_import() {
 #[test]
 fn test_quickfix_add_missing_import_class_implements_uses_import_type() {
     let source = "class Bar implements Foo {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -1968,8 +1935,7 @@ fn test_quickfix_add_missing_import_class_implements_uses_import_type() {
 #[test]
 fn test_quickfix_remove_unused_variable_let() {
     let source = "let x = 1;\nlet y = 2;\nconsole.log(y);\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2012,8 +1978,7 @@ fn test_quickfix_remove_unused_variable_let() {
 #[test]
 fn test_quickfix_remove_unused_variable_const() {
     let source = "const unused = 1;\nconst used = 2;\nconsole.log(used);\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2056,8 +2021,7 @@ fn test_quickfix_remove_unused_variable_const() {
 #[test]
 fn test_quickfix_remove_unused_function() {
     let source = "function unused() {}\nfunction used() {}\nused();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2101,8 +2065,7 @@ fn test_quickfix_remove_unused_function() {
 #[test]
 fn test_quickfix_remove_unused_class() {
     let source = "class Unused {}\nclass Used {}\nnew Used();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2314,8 +2277,7 @@ fn test_codefix_registry_strict_class_init_2564() {
 fn test_extract_variable_call_expression() {
     // Extract a function call expression
     let source = "const x = getValue() + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2353,8 +2315,7 @@ fn test_extract_variable_call_expression() {
 fn test_extract_variable_conditional_expression() {
     // Extract a conditional (ternary) expression
     let source = "const x = a ? b() : c();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2389,8 +2350,7 @@ fn test_extract_variable_conditional_expression() {
 fn test_extract_variable_nested_in_function() {
     // Extract an expression inside a function body
     let source = "function foo() {\n  const x = a.b + c.d;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2426,8 +2386,7 @@ fn test_extract_variable_nested_in_function() {
 fn test_code_actions_empty_file() {
     // An empty file should produce no code actions for any request
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2460,8 +2419,7 @@ fn test_code_actions_empty_file() {
 fn test_code_actions_at_file_start() {
     // Code actions at the very start of the file (offset 0)
     let source = "import { foo } from \"mod\";\nfoo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2495,8 +2453,7 @@ fn test_code_actions_at_file_start() {
 fn test_code_actions_at_file_end() {
     // Code actions at the very end of the file
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2526,8 +2483,7 @@ fn test_code_actions_at_file_end() {
 fn test_quickfix_add_missing_const() {
     // Trigger add_missing_const_quickfix with error code 2304
     let source = "x = 42;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2576,8 +2532,7 @@ fn test_quickfix_add_missing_const() {
 fn test_quickfix_add_missing_const_skips_existing_declaration() {
     // Should NOT produce add_missing_const when line already starts with const/let/var
     let source = "const x = unknownVar;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2622,8 +2577,7 @@ fn test_quickfix_add_missing_const_skips_existing_declaration() {
 fn test_quickfix_remove_unused_type_alias() {
     // Test removal of an unused type alias declaration
     let source = "type Unused = string;\ntype Used = number;\nconst x: Used = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2668,8 +2622,7 @@ fn test_quickfix_remove_unused_type_alias() {
 fn test_quickfix_remove_unused_interface() {
     // Test removal of an unused interface declaration
     let source = "interface Unused { x: number; }\nconst y = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2710,8 +2663,7 @@ fn test_quickfix_remove_unused_interface() {
 fn test_multiple_overlapping_diagnostics() {
     // Multiple diagnostics at the same location should produce multiple quick fixes
     let source = "import { foo } from \"mod\";\nlet unused = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2779,8 +2731,7 @@ fn test_multiple_overlapping_diagnostics() {
 fn test_quickfix_add_missing_import_with_type_only_candidate() {
     // Import a type-only candidate in a type position
     let source = "const x: MyType = {};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2841,8 +2792,7 @@ fn test_quickfix_add_missing_import_with_type_only_candidate() {
 fn test_code_action_only_filter_quickfix() {
     // When `only` is set to QuickFix, no refactoring actions should appear
     let source = "const x = foo.bar.baz + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2878,8 +2828,7 @@ fn test_code_action_only_filter_quickfix() {
 fn test_code_action_only_filter_refactor() {
     // When `only` is set to Refactor, no quickfix actions should appear
     let source = "import { foo } from \"mod\";\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2927,8 +2876,7 @@ fn test_code_action_only_filter_refactor() {
 fn test_quickfix_no_action_for_irrelevant_diagnostic_code() {
     // A diagnostic with an unrecognized code should not produce any quick fix
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -2971,8 +2919,7 @@ fn test_quickfix_no_action_for_irrelevant_diagnostic_code() {
 fn test_quickfix_diagnostic_without_code() {
     // A diagnostic with no error code should produce no quick fixes
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3016,8 +2963,7 @@ fn test_organize_imports_no_action_single_import() {
     // A single import should not produce an organize imports action
     // (nothing to sort)
     let source = "import { foo } from \"mod\";\nfoo();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3051,8 +2997,7 @@ fn test_organize_imports_no_action_single_import() {
 fn test_organize_imports_sorts_multiple_imports() {
     // Multiple imports out of order should produce an organize imports action
     let source = "import { z } from \"z-mod\";\nimport { a } from \"a-mod\";\na();\nz();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3094,8 +3039,7 @@ fn test_organize_imports_sorts_multiple_imports() {
 fn test_quickfix_add_missing_property_empty_object_multiline() {
     // Add a missing property to an empty multi-line object literal
     let source = "const obj = {\n};\nobj.newProp;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -3150,8 +3094,7 @@ fn test_quickfix_add_missing_property_empty_object_multiline() {
 #[test]
 fn test_extract_variable_from_binary_expression() {
     let source = "const result = a + b * c;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3179,8 +3122,7 @@ fn test_extract_variable_from_binary_expression() {
 #[test]
 fn test_extract_variable_from_template_literal() {
     let source = "const msg = `hello ${name}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3207,8 +3149,7 @@ fn test_extract_variable_from_template_literal() {
 #[test]
 fn test_code_actions_empty_range_no_diagnostics() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3235,8 +3176,7 @@ fn test_code_actions_empty_range_no_diagnostics() {
 #[test]
 fn test_code_actions_only_filter_extract() {
     let source = "const x = foo.bar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3276,8 +3216,7 @@ fn test_code_actions_only_filter_extract() {
 #[test]
 fn test_code_actions_only_filter_quickfix() {
     let source = "const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3305,8 +3244,7 @@ fn test_code_actions_only_filter_quickfix() {
 #[test]
 fn test_extract_variable_in_function_body() {
     let source = "function f() {\n  const result = a.b + c.d;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3340,8 +3278,7 @@ fn test_extract_variable_in_function_body() {
 #[test]
 fn test_extract_variable_array_expression() {
     let source = "const x = [1, 2, 3].map(n => n * 2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3369,8 +3306,7 @@ fn test_extract_variable_array_expression() {
 #[test]
 fn test_quickfix_unused_import_remove() {
     let source = "import { foo } from './mod';\nconst x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3463,8 +3399,7 @@ fn test_quickfix_unused_import_remove_diag_at_decl_start() {
 #[test]
 fn test_quickfix_unused_variable_prefix() {
     let source = "const unused = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3502,8 +3437,7 @@ fn test_quickfix_unused_variable_prefix() {
 #[test]
 fn test_code_actions_on_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3533,8 +3467,7 @@ fn test_code_actions_on_empty_file() {
 #[test]
 fn test_extract_variable_ternary_full() {
     let source = "const x = a > b ? a : b;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3562,8 +3495,7 @@ fn test_extract_variable_ternary_full() {
 #[test]
 fn test_extract_variable_object_literal() {
     let source = "const x = { a: 1, b: 2 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3589,8 +3521,7 @@ fn test_extract_variable_object_literal() {
 #[test]
 fn test_extract_variable_math_max_call() {
     let source = "const result = Math.max(a, b);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3618,8 +3549,7 @@ fn test_extract_variable_math_max_call() {
 #[test]
 fn test_code_actions_empty_range() {
     let source = "const x = 1;\nconst y = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3642,8 +3572,7 @@ fn test_code_actions_empty_range() {
 #[test]
 fn test_code_actions_on_class_declaration() {
     let source = "class Foo {\n  x: number = 0;\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3666,8 +3595,7 @@ fn test_code_actions_on_class_declaration() {
 #[test]
 fn test_code_actions_on_interface() {
     let source = "interface Bar {\n  x: number;\n  y: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3690,8 +3618,7 @@ fn test_code_actions_on_interface() {
 #[test]
 fn test_code_actions_on_arrow_function_body() {
     let source = "const add = (a: number, b: number) => a + b;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3714,8 +3641,7 @@ fn test_code_actions_on_arrow_function_body() {
 #[test]
 fn test_code_actions_on_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -3743,8 +3669,7 @@ fn test_code_actions_on_empty_source() {
 #[test]
 fn test_code_actions_on_enum_declaration() {
     let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
