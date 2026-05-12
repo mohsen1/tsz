@@ -2224,6 +2224,21 @@ impl<'a> DeclarationEmitter<'a> {
         Some((module_name, export_name))
     }
 
+    pub(in crate::declaration_emitter) fn js_local_bare_require_alias_without_export_surface(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file
+            || !self.js_named_export_names.is_empty()
+            || !self.js_export_equals_names.is_empty()
+            || !self.js_namespace_export_aliases.is_empty()
+        {
+            return false;
+        }
+
+        self.initializer_is_bare_require_call(initializer)
+    }
+
     pub(in crate::declaration_emitter) fn emit_js_require_property_import_aliases(&mut self) {
         let aliases = std::mem::take(&mut self.js_require_property_import_aliases);
         for (local_name, module_name, export_name) in &aliases {
