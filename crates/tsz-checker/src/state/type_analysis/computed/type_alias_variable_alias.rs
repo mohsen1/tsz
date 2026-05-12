@@ -10,6 +10,7 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
@@ -121,19 +122,20 @@ impl<'a> CheckerState<'a> {
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
-                // Previously this branch eagerly invoked
-                // `compute_value_type_for_merged_alias` here. That eager call
-                // recursed into the value's initializer; for a merged
-                // `type X = ...; const X = { ... as X };` pair the
-                // initializer contains `as X`, which feeds a `Lazy(DefId for
-                // X)` back into the TS2352 overlap check while the alias body
-                // has not yet been registered to the DefId. The Lazy stayed
-                // unresolved and TS2352 fired as a false positive (#6014).
-                // The eager population is no longer needed for the AS
-                // dispatch to work, so we drop it here; the alias body is
-                // explicitly registered to the DefId below before this
-                // function returns so any future `as X` lookups resolve
-                // correctly.
+                // Populate the value-side cache for merged type/value aliases
+                // so `typeof X` inside `type X = typeof X[...]` reads the
+                // const's value type instead of recursing through the alias.
+                // Skip declarations that mention the same alias from a type
+                // position (for example `const X = { ... as X }`), since that
+                // re-enters alias resolution before this body is registered
+                // and regresses #6014.
+                if (flags & symbol_flags::VALUE != 0)
+                    && !self.ctx.merged_value_types.contains_key(&sym_id)
+                    && !self.merged_alias_value_decl_refs_type_alias(sym_id)
+                    && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
+                {
+                    self.ctx.merged_value_types.insert(sym_id, val_type);
+                }
 
                 let enclosing_tp_updates = if type_alias.type_parameters.is_none() {
                     self.push_enclosing_type_params_for_node(decl_arena, decl_idx)
@@ -1963,6 +1965,92 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    fn compute_value_type_for_merged_alias(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl = symbol.value_declaration;
+
+        if let Some(decl_node) = self.ctx.arena.get(decl)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+        {
+            decl = self.ctx.arena.get_extended(decl)?.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl)?;
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+
+        if var_decl.type_annotation.is_some() {
+            let ann_type = self.get_type_from_type_node(var_decl.type_annotation);
+            if ann_type != TypeId::ERROR && ann_type != TypeId::ANY {
+                return Some(ann_type);
+            }
+        }
+
+        if var_decl.initializer.is_some() {
+            let init_type = self.get_type_of_node(var_decl.initializer);
+            if init_type != TypeId::ERROR && init_type != TypeId::UNKNOWN {
+                return Some(init_type);
+            }
+        }
+
+        None
+    }
+
+    fn merged_alias_value_decl_refs_type_alias(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let mut decl = symbol.value_declaration;
+
+        if let Some(decl_node) = self.ctx.arena.get(decl)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl)
+        {
+            decl = ext.parent;
+        }
+
+        let Some(decl_node) = self.ctx.arena.get(decl) else {
+            return false;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+
+        (var_decl.type_annotation.is_some()
+            && self.type_position_subtree_refs_symbol(var_decl.type_annotation, sym_id))
+            || (var_decl.initializer.is_some()
+                && self.type_position_subtree_refs_symbol(var_decl.initializer, sym_id))
+    }
+
+    fn type_position_subtree_refs_symbol(&self, root: NodeIndex, sym_id: SymbolId) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+
+            let lookup_target = match node.kind {
+                k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                    self.ctx.arena.get_type_ref(node).map(|tr| tr.type_name)
+                }
+                k if k == syntax_kind_ext::TYPE_QUERY => {
+                    self.ctx.arena.get_type_query(node).map(|tq| tq.expr_name)
+                }
+                _ => None,
+            };
+            if let Some(target) = lookup_target
+                && self.resolve_type_symbol_for_lowering(target) == Some(sym_id.0)
+            {
+                return true;
+            }
+
+            stack.extend(self.ctx.arena.get_children(idx));
+        }
+        false
     }
 
     fn type_node_contains_kind(&self, root: NodeIndex, kind: u16) -> bool {
