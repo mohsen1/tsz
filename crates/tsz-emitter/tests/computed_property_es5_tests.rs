@@ -71,6 +71,38 @@ fn computed_property_format_structure() {
     );
 }
 
+/// Plain object-literal methods need only method-shorthand lowering, not the
+/// computed-property temp/comma-expression transform.
+#[test]
+fn ordinary_method_lowers_inline_without_computed_temp() {
+    let source = r#"var o = { x: 1, method() { return 2; } };"#;
+    let output = emit_es5(source);
+
+    assert!(
+        output.contains("method: function () { return 2; }"),
+        "Ordinary method shorthand should lower inline to a function value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a.method = function"),
+        "Ordinary methods should not start the computed-property temp path.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(_a = { x: 1 },"),
+        "Object literal should remain a normal literal when no computed property exists.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_method_still_uses_computed_temp() {
+    let source = r#"var k = "method"; var o = { [k]() { return 2; } };"#;
+    let output = emit_es5(source);
+
+    assert!(
+        output.contains("_a[k] = function () { return 2; }"),
+        "Computed method must still use the ES5 computed-property temp path.\nOutput:\n{output}"
+    );
+}
+
 /// Issue #3968: An object literal spread whose leading element segment
 /// contains a computed property must lower the elements via the
 /// `(_a = {}, _a[k] = 1, _a)` pattern, not as an ES2015 `{ [k]: 1 }`
