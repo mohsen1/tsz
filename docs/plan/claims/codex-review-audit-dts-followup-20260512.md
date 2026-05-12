@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/audit-followup-dts-20260512`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/6073
 - **Status**: ready
 - **Workstream**: review audit follow-ups
 
