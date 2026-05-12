@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-tsserver-completion-presence-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5695
+- **Status**: ready
 - **Workstream**: 8.4 (DRY emitter helpers)
 
 ## Intent
@@ -20,4 +20,7 @@ directly in the completion and snippet flows.
 
 ## Verification
 
-- Pending implementation.
+- `cargo fmt --check` passed.
+- `cargo nextest run -p tsz-cli completion` passed: 90 passed, 1515 skipped.
+- `cargo clippy -p tsz-cli --all-targets -- -D warnings` passed.
+- `cargo nextest run -p tsz-cli` ran the full local `tsz-cli` suite: 1506 passed, 85 failed, 14 skipped. Failures match the existing local baseline families around driver compile snapshots, unsupported `es2025.iterator`, showConfig path rendering, and help-all parity.
