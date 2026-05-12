@@ -102,6 +102,92 @@ pub(super) fn indexed_access_object_alias_application_exceeds_depth(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn type_literal_keyof_from_node(
+        &mut self,
+        type_node_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let obj_node = self.ctx.arena.get(type_node_idx)?;
+        if obj_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+        let type_lit = self.ctx.arena.get_type_literal(obj_node)?;
+        let mut key_types = Vec::new();
+        for &member_idx in &type_lit.members.nodes {
+            if let Some(member_node) = self.ctx.arena.get(member_idx)
+                && let Some(sig) = self.ctx.arena.get_signature(member_node)
+                && let Some(name) = self.get_property_name(sig.name)
+            {
+                let key_type = self
+                    .ctx
+                    .arena
+                    .get(sig.name)
+                    .filter(|name_node| name_node.kind == SyntaxKind::NumericLiteral as u16)
+                    .and_then(|name_node| self.ctx.arena.get_literal(name_node))
+                    .and_then(|lit| {
+                        lit.value
+                            .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
+                    })
+                    .map(|value| self.ctx.types.factory().literal_number(value))
+                    .unwrap_or_else(|| {
+                        let atom = self.ctx.types.intern_string(&name);
+                        self.ctx.types.factory().literal_string_atom(atom)
+                    });
+                key_types.push(key_type);
+            }
+        }
+
+        if key_types.is_empty() {
+            None
+        } else {
+            Some(self.ctx.types.factory().union(key_types))
+        }
+    }
+
+    pub(super) fn type_literal_member_values_accept_index(
+        &mut self,
+        type_node_idx: NodeIndex,
+        index_type: TypeId,
+        index_constraint: Option<TypeId>,
+    ) -> bool {
+        let Some(obj_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if obj_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return false;
+        }
+        let Some(type_lit) = self.ctx.arena.get_type_literal(obj_node) else {
+            return false;
+        };
+        let index_for_check = self.evaluate_type_with_env(index_type);
+        let constraint_for_check =
+            index_constraint.map(|constraint| self.evaluate_type_with_env(constraint));
+        let mut saw_value = false;
+
+        for &member_idx in &type_lit.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                continue;
+            };
+            if sig.type_annotation == NodeIndex::NONE {
+                return false;
+            }
+            let Some(value_keyof) = self.type_literal_keyof_from_node(sig.type_annotation) else {
+                return false;
+            };
+            if !self.is_assignable_to(index_for_check, value_keyof)
+                && !constraint_for_check
+                    .is_some_and(|constraint| self.is_assignable_to(constraint, value_keyof))
+            {
+                return false;
+            }
+            saw_value = true;
+        }
+
+        saw_value
+    }
+
     fn array_like_kind_has_length(
         &self,
         kind: crate::query_boundaries::type_checking_utilities::ArrayLikeKind,

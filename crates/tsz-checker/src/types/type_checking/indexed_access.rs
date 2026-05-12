@@ -741,14 +741,11 @@ impl<'a> CheckerState<'a> {
 
         let mut index_constraint =
             crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, index_type);
-        // Fallback: when the index type is a type parameter but its TypeId doesn't carry a
-        // constraint (happens when T[K] appears inside type application arguments like
-        // `Id<T[K]>`), resolve the constraint from the AST declaration.
-        if index_constraint.is_none()
-            && crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
+            && let Some(ast_constraint) =
+                self.resolve_index_constraint_from_declaration(data.index_type, data.object_type)
         {
-            index_constraint =
-                self.resolve_index_constraint_from_declaration(data.index_type, data.object_type);
+            index_constraint = Some(ast_constraint);
         }
         let error_anchor = node_idx;
         let concrete_error_anchor = data.index_type;
@@ -794,27 +791,12 @@ impl<'a> CheckerState<'a> {
         // value-type evaluation needed). This avoids eagerly resolving complex
         // member types (e.g., generic type applications) just to check key validity.
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
-            && let Some(obj_node) = self.ctx.arena.get(data.object_type)
-            && obj_node.kind == syntax_kind_ext::TYPE_LITERAL
-            && let Some(type_lit) = self.ctx.arena.get_type_literal(obj_node)
+            && let Some(keyof_type) = self.type_literal_keyof_from_node(data.object_type)
         {
-            let mut key_types = Vec::new();
-            for &member_idx in &type_lit.members.nodes {
-                if let Some(member_node) = self.ctx.arena.get(member_idx)
-                    && let Some(sig) = self.ctx.arena.get_signature(member_node)
-                    && let Some(name) = self.get_property_name(sig.name)
-                {
-                    let atom = self.ctx.types.intern_string(&name);
-                    key_types.push(self.ctx.types.factory().literal_string_atom(atom));
-                }
-            }
-            if !key_types.is_empty() {
-                let keyof_type = self.ctx.types.factory().union(key_types);
-                let check_index = index_constraint.unwrap_or(index_type);
-                let check_index_eval = self.evaluate_type_with_env(check_index);
-                if self.is_assignable_to(check_index_eval, keyof_type) {
-                    return;
-                }
+            let check_index = index_constraint.unwrap_or(index_type);
+            let check_index_eval = self.evaluate_type_with_env(check_index);
+            if self.is_assignable_to(check_index_eval, keyof_type) {
+                return;
             }
         }
 
@@ -1156,7 +1138,9 @@ impl<'a> CheckerState<'a> {
 
                 let nested_index_type =
                     self.get_type_from_type_node(nested_indexed_access.index_type);
-                let constrained_base_keyof = self.ctx.types.evaluate_keyof(constrained_base_type);
+                let constrained_base_keyof = self
+                    .type_literal_keyof_from_node(nested_indexed_access.object_type)
+                    .unwrap_or_else(|| self.ctx.types.evaluate_keyof(constrained_base_type));
                 let nested_index_for_check = self.evaluate_type_with_env(nested_index_type);
                 let nested_index_constraint_matches =
                     crate::query_boundaries::common::type_parameter_constraint(
@@ -1181,6 +1165,13 @@ impl<'a> CheckerState<'a> {
                         constrained_base_type,
                     );
                 if nested_index_matches_constrained_base {
+                    if self.type_literal_member_values_accept_index(
+                        nested_indexed_access.object_type,
+                        index_type_for_check,
+                        index_constraint,
+                    ) {
+                        return;
+                    }
                     let constrained_object_type = if let Some(prop_atom) =
                         crate::query_boundaries::common::string_literal_value(
                             self.ctx.types,
