@@ -4,7 +4,8 @@
 - **Branch**: `fix/checker-parameter-decorator-ts1239-2026-05-12`
 - **Base**: `main`
 - **Issue**: [#5890](https://github.com/mohsen1/tsz/issues/5890)
-- **Status**: claim
+- **PR**: [#5939](https://github.com/mohsen1/tsz/pull/5939)
+- **Status**: ready
 - **Labels**: `bug`, `missing-diagnostic`
 
 ## Intent
