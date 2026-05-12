@@ -1494,7 +1494,12 @@ impl<'a> DeclarationEmitter<'a> {
                     // For non-private parameter properties with `?`, tsc appends
                     // `| undefined` to both the property declaration and the constructor
                     // parameter type. For private params, the type is hidden so skip.
-                    if is_parameter_property && !is_private_param_property && param.question_token {
+                    if is_parameter_property
+                        && !is_private_param_property
+                        && param.question_token
+                        && !self
+                            .type_annotation_semantically_includes_undefined(param.type_annotation)
+                    {
                         let output = self.writer.get_output();
                         let type_text = &output[before_type..];
                         if !output.ends_with("| undefined")
@@ -1596,7 +1601,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // initializer before the last required parameter, tsc appends
                 // `| undefined` — but only when the type doesn't already
                 // include undefined (to avoid `T | undefined | undefined`).
-                if self.strict_null_checks && has_initializer_before_required {
+                if self.strict_null_checks
+                    && has_initializer_before_required
+                    && !self.type_annotation_semantically_includes_undefined(param.type_annotation)
+                {
                     let output = self.writer.get_output();
                     if !output.ends_with("| undefined") {
                         self.write(" | undefined");

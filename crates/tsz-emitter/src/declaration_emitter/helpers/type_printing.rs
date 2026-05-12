@@ -1194,6 +1194,150 @@ impl<'a> DeclarationEmitter<'a> {
         Self::type_text_has_undefined_branch(&text[start..])
     }
 
+    pub(in crate::declaration_emitter) fn type_annotation_semantically_includes_undefined(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        type_annotation.is_some()
+            && (self
+                .emit_type_node_text(type_annotation)
+                .is_some_and(|type_text| {
+                    Self::type_text_has_undefined_branch(&type_text)
+                        || self.type_text_or_alias_includes_undefined(&type_text, 0)
+                })
+                || self.type_node_semantically_includes_undefined(type_annotation, 0))
+    }
+
+    fn type_text_or_alias_includes_undefined(&self, type_text: &str, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let text = type_text.trim();
+        if Self::type_text_has_undefined_branch(text) {
+            return true;
+        }
+        if let Some((name, args)) = Self::parse_utility_type_text(text) {
+            return match name {
+                "Exclude" => {
+                    let first_includes_undefined = args.first().is_some_and(|arg| {
+                        self.type_text_or_alias_includes_undefined(arg, depth + 1)
+                    });
+                    let excluded_includes_undefined = args.get(1).is_some_and(|arg| {
+                        self.type_text_or_alias_includes_undefined(arg, depth + 1)
+                    });
+                    first_includes_undefined && !excluded_includes_undefined
+                }
+                "Extract" => {
+                    args.first().is_some_and(|arg| {
+                        self.type_text_or_alias_includes_undefined(arg, depth + 1)
+                    }) && args.get(1).is_some_and(|arg| {
+                        self.type_text_or_alias_includes_undefined(arg, depth + 1)
+                    })
+                }
+                _ => false,
+            };
+        }
+        if Self::is_simple_identifier_text(text) {
+            return self
+                .find_local_type_alias_type_node(text)
+                .or_else(|| self.current_file_type_alias_type_node_by_name(text))
+                .and_then(|alias_type| self.emit_type_node_text(alias_type))
+                .is_some_and(|alias_text| {
+                    self.type_text_or_alias_includes_undefined(&alias_text, depth + 1)
+                });
+        }
+        false
+    }
+
+    fn parse_utility_type_text(text: &str) -> Option<(&str, Vec<&str>)> {
+        let lt = text.find('<')?;
+        if !text.ends_with('>') {
+            return None;
+        }
+        let name = text[..lt].trim();
+        if !matches!(name, "Exclude" | "Extract") {
+            return None;
+        }
+        let inner = &text[lt + 1..text.len() - 1];
+        Some((name, Self::split_top_level_commas(inner)))
+    }
+
+    fn type_node_semantically_includes_undefined(&self, type_idx: NodeIndex, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.arena.get_type_ref(type_node) else {
+            return false;
+        };
+        let Some(name) = self.identifier_text_from_arena(self.arena, type_ref.type_name) else {
+            return false;
+        };
+
+        match name.as_str() {
+            "NonNullable" => false,
+            "Exclude" => {
+                let Some(args) = type_ref.type_arguments.as_ref() else {
+                    return false;
+                };
+                let first_includes_undefined =
+                    args.nodes.first().copied().is_some_and(|arg| {
+                        self.type_node_or_alias_includes_undefined(arg, depth + 1)
+                    });
+                let excluded_includes_undefined =
+                    args.nodes.get(1).copied().is_some_and(|arg| {
+                        self.type_node_or_alias_includes_undefined(arg, depth + 1)
+                    });
+                first_includes_undefined && !excluded_includes_undefined
+            }
+            "Extract" => {
+                let Some(args) = type_ref.type_arguments.as_ref() else {
+                    return false;
+                };
+                args.nodes
+                    .first()
+                    .copied()
+                    .is_some_and(|arg| self.type_node_or_alias_includes_undefined(arg, depth + 1))
+                    && args.nodes.get(1).copied().is_some_and(|arg| {
+                        self.type_node_or_alias_includes_undefined(arg, depth + 1)
+                    })
+            }
+            _ => self
+                .find_local_type_alias_type_node(&name)
+                .or_else(|| self.current_file_type_alias_type_node_by_name(&name))
+                .is_some_and(|alias_type| {
+                    self.type_node_or_alias_includes_undefined(alias_type, depth + 1)
+                }),
+        }
+    }
+
+    fn current_file_type_alias_type_node_by_name(&self, name: &str) -> Option<NodeIndex> {
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|idx| self.arena.get(idx))
+            .and_then(|node| self.arena.get_source_file(node))?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            let alias = self.arena.get_type_alias(stmt_node)?;
+            if self.get_identifier_text(alias.name).as_deref() == Some(name) {
+                return Some(alias.type_node);
+            }
+        }
+        None
+    }
+
+    fn type_node_or_alias_includes_undefined(&self, type_idx: NodeIndex, depth: usize) -> bool {
+        self.emit_type_node_text(type_idx)
+            .is_some_and(|type_text| Self::type_text_has_undefined_branch(&type_text))
+            || self.type_node_semantically_includes_undefined(type_idx, depth)
+    }
+
     fn strip_balanced_outer_parens(text: &str) -> Option<&str> {
         let bytes = text.as_bytes();
         if bytes.first() != Some(&b'(') || bytes.last() != Some(&b')') {

@@ -884,7 +884,11 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         let before_type = self.writer.len();
                         self.emit_type(param.type_annotation);
-                        if param.question_token {
+                        if param.question_token
+                            && !self.type_annotation_semantically_includes_undefined(
+                                param.type_annotation,
+                            )
+                        {
                             // Only append `| undefined` if the type doesn't already
                             // include it (avoid `Type | undefined | undefined`).
                             let full = self.writer.get_output();
