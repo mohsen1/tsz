@@ -102,6 +102,22 @@ impl<'a> CheckerState<'a> {
     // Export Assignment Validation
     // =========================================================================
 
+    fn export_declaration_has_exported_elements(
+        &self,
+        export_data: &tsz_parser::parser::node::ExportDeclData,
+    ) -> bool {
+        let Some(clause_node) = self.ctx.arena.get(export_data.export_clause) else {
+            return true;
+        };
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get_named_imports(clause_node)
+            .is_none_or(|named| !named.elements.nodes.is_empty())
+    }
+
     /// Check for export assignment conflicts with other exported elements.
     ///
     /// Validates that:
@@ -294,7 +310,7 @@ impl<'a> CheckerState<'a> {
                                     );
                                 }
                             }
-                        } else {
+                        } else if self.export_declaration_has_exported_elements(export_data) {
                             has_other_exports = true;
                         }
                     } else {
