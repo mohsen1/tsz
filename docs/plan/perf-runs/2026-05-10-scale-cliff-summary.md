@@ -29,6 +29,9 @@ TSZ_PERF_COUNTERS=1 /usr/bin/time -l tsz \
 Raw JSON (T0.2 + T0.3 schema) is checked in under
 `docs/plan/perf-runs/raw/monorepo-{001..006}-{diag,pc}.json`. The
 files are small (~48 KB total); GCS is not used for this round.
+The committed diag JSON command-lines are sanitized to portable forms
+(`tsz`, fixture-local output file names) and include fixture metadata
+(`fixture.name`/`fixture.path`) for stable attribution.
 
 ## Results
 
