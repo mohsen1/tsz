@@ -317,6 +317,7 @@ pub fn prepare_test_dir_with_lib_dir(
     // files. This preserves the "no inputs" condition for tests whose fixture files
     // should remain undiscoverable under the harness defaults.
     let tsc_expects_no_inputs = expected_error_codes.is_some_and(|codes| codes.contains(&18003));
+    let tsc_expects_ts2883 = expected_error_codes.is_some_and(|codes| codes.contains(&2883));
     let needs_explicit_root_files = !filenames.is_empty()
         && filenames.iter().any(|(name, _)| {
             let lower = name.to_lowercase().replace('\\', "/");
@@ -361,7 +362,8 @@ pub fn prepare_test_dir_with_lib_dir(
                     // TypeScript harness resolves these through the importing
                     // source; listing nested package declarations as roots can
                     // change declaration-portability diagnostics such as TS2883.
-                    if (lower.contains("/node_modules/") || lower.starts_with("node_modules/"))
+                    if tsc_expects_ts2883
+                        && (lower.contains("/node_modules/") || lower.starts_with("node_modules/"))
                         && lower.ends_with(".d.ts")
                     {
                         return None;

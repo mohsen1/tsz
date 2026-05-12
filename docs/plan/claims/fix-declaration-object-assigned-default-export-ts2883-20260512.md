@@ -20,3 +20,5 @@ Restore the missing TS2883 diagnostic in `TypeScript/tests/cases/compiler/declar
 - `.target/dist-fast/tsz-conformance --test-dir TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary /Users/mohsen/code/tsz/.target/dist-fast/tsz --workers 1 --print-test --print-test-files --print-fingerprints --verbose --no-batch --filter declarationEmitObjectAssignedDefaultExport` -> 1/1 passed.
 - `./scripts/conformance/conformance.sh run --filter "declarationEmitObjectAssignedDefaultExport" --verbose` -> 1/1 passed.
 - `cargo test -p tsz-conformance test_prepare_test_dir_implicit_include_matches_tsc_harness -- --nocapture` -> passed.
+- `cargo test -p tsz-conformance test_prepare_test_dir_ts2883_keeps_node_modules_declarations_resolution_only -- --nocapture` -> passed.
+- `.target/dist-fast/tsz-conformance ... --no-batch --filter augmentExportEquals7` -> 1/1 passed, guarding node_modules declaration root-file behavior outside TS2883 portability cases.

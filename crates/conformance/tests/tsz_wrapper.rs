@@ -822,8 +822,40 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
         "plain .ts roots should stay in files when module-extension inputs are explicit"
     );
     assert!(
+        file_values.contains(&"node_modules/pkg/index.d.ts"),
+        "authored node_modules fixtures should stay in files when explicit roots are used"
+    );
+    assert!(
+        parsed.get("exclude").is_none(),
+        "explicit root-file tests should not exclude node_modules"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_ts2883_keeps_node_modules_declarations_resolution_only() {
+    let filenames = vec![
+        (
+            "node_modules/pkg/index.d.ts".to_string(),
+            "export declare const x: number;".to_string(),
+        ),
+        (
+            "index.ts".to_string(),
+            "import { x } from 'pkg'; x;".to_string(),
+        ),
+    ];
+
+    let prepared =
+        prepare_test_dir("", &filenames, &HashMap::new(), None, &[], Some(&[2883])).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
+    let files = parsed["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|v| v.as_str()).collect();
+
+    assert!(file_values.contains(&"index.ts"));
+    assert!(
         !file_values.contains(&"node_modules/pkg/index.d.ts"),
-        "authored node_modules declarations should stay on disk for module resolution, not become root files"
+        "TS2883 portability fixtures should resolve package declarations through imports, not root files"
     );
     assert!(
         prepared
@@ -831,11 +863,7 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
             .path()
             .join("node_modules/pkg/index.d.ts")
             .exists(),
-        "authored node_modules declarations should still be written to disk"
-    );
-    assert!(
-        parsed.get("exclude").is_none(),
-        "explicit root-file tests should not exclude node_modules"
+        "node_modules declaration should still be available on disk"
     );
 }
 
