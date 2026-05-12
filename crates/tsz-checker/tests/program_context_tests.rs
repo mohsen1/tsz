@@ -130,6 +130,19 @@ fn global_declared_modules_matches_vite_style_asset_patterns() {
 }
 
 #[test]
+fn global_declared_modules_insert_normalizes_and_deduplicates() {
+    let mut dm = GlobalDeclaredModules::default();
+    dm.insert_module_name("\"my-module\"");
+    dm.insert_module_name("'*.css'");
+    dm.insert_module_name("*.css");
+    dm.finish();
+
+    assert!(dm.exact.contains("my-module"));
+    assert_eq!(dm.patterns, vec!["*.css"]);
+    assert!(dm.matches_wildcard("./style.css"));
+}
+
+#[test]
 fn apply_to_populates_symbol_file_targets_fallback() {
     // Without global_symbol_file_index, entries go into the local overlay.
     let interner = TypeInterner::new();
