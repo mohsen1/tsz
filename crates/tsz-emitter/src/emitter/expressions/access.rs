@@ -208,10 +208,15 @@ impl<'a> Printer<'a> {
             }
         }
 
-        let dot_pos = self
-            .arena
-            .get(access.expression)
-            .and_then(|expr_node| self.find_char_after(expr_node.end, node.end, b'.'));
+        let dot_pos = if let Some(expr_node) = self.arena.get(access.expression) {
+            if let Some(name_node) = self.arena.get(access.name_or_argument) {
+                self.find_char_after_skipping_comments(expr_node.end, name_node.pos, b'.')
+            } else {
+                self.find_char_after(expr_node.end, node.end, b'.')
+            }
+        } else {
+            None
+        };
 
         if let Some(expr_node) = self.arena.get(access.expression)
             && let Some(name_node) = self.arena.get(access.name_or_argument)
@@ -316,6 +321,35 @@ impl<'a> Printer<'a> {
         } else {
             None
         }
+    }
+
+    fn find_char_after_skipping_comments(&self, from: u32, to: u32, ch: u8) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let end = std::cmp::min(to as usize, bytes.len());
+        let mut i = std::cmp::min(from as usize, end);
+
+        while i < end {
+            match bytes[i] {
+                b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                    i += 2;
+                    while i < end && !matches!(bytes[i], b'\r' | b'\n') {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    i = std::cmp::min(i + 2, end);
+                }
+                byte if byte == ch => return Some(i as u32),
+                _ => i += 1,
+            }
+        }
+
+        None
     }
 
     /// Write the `.` token for property access, adding an extra `.` when the
@@ -1196,6 +1230,21 @@ mod tests {
                 r#"this.then(x => result) /*S*/.then(x => "abc") /*string*/.then(x => x.length) /*number*/"#
             ),
             "Comments between a property-access base and dot must stay before the dot.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn property_access_dot_locator_skips_comment_dots() {
+        let output = emit_es6(r#"const y = point/* has . in comment */.x;"#);
+
+        assert!(
+            output.contains("/* has . in comment */.x")
+                || output.contains("/* has . in comment */ .x"),
+            "Dot lookup should skip dots inside comments and keep the member-access dot after the comment.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains(". /* has . in comment */x"),
+            "Dot lookup must not treat comment text as the member-access dot.\nOutput:\n{output}"
         );
     }
 

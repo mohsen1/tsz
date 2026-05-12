@@ -295,6 +295,68 @@ fn system_exported_legacy_decorated_class_exports_decorator_assignment() {
 }
 
 #[test]
+fn system_legacy_constructor_param_decorators_emit_param_helper() {
+    let source = "declare var dec: any;\n@dec\nclass A {\n    constructor(@dec x: string) {}\n}\nexport { A };\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            legacy_decorators: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __param = (this && this.__param) || function"),
+        "System wrapper should emit __param when legacy constructor parameter decorators are present.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__param(0, dec)"),
+        "System wrapper should preserve constructor parameter decorator calls.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_legacy_decorator_metadata_emits_metadata_helper() {
+    let source =
+        "declare var dec: any;\n@dec\nclass A {\n    constructor(x: string) {}\n}\nexport { A };\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            legacy_decorators: true,
+            emit_decorator_metadata: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __metadata = (this && this.__metadata) || function"),
+        "System wrapper should emit __metadata when decorator metadata is enabled.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:paramtypes\""),
+        "System wrapper should emit design:paramtypes metadata for decorated classes with constructors.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_top_level_using_env_hoists_before_later_nested_var() {
     let source = "export { y };\nusing z = null;\nif (false) {\n    var y = 1;\n}\n";
 
