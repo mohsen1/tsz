@@ -12,7 +12,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
-use tsz_solver::{TypeId, Visibility};
+use tsz_solver::{SymbolRef, TypeId, Visibility};
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -1774,23 +1774,47 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, name_idx)
     }
 
+    fn register_well_known_symbol_name_mapping(&mut self, name: &str, sym_id: SymbolId) {
+        if !name.starts_with("[Symbol.") {
+            return;
+        }
+
+        let symbol_ref = SymbolRef(sym_id.0);
+        let name_key = name.to_string();
+
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            env.register_well_known_symbol_name(name_key.clone(), symbol_ref);
+        }
+        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+            env.register_well_known_symbol_name(name_key, symbol_ref);
+        }
+    }
+
     /// Resolve a property name, including computed names backed by unique symbols.
-    fn get_property_name_resolved(&self, name_idx: NodeIndex) -> Option<String> {
+    fn get_property_name_resolved(&mut self, name_idx: NodeIndex) -> Option<String> {
         let name_node = self.ctx.arena.get(name_idx)?;
 
         if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return self.get_property_name(name_idx);
         }
 
+        let computed = self.ctx.arena.get_computed_property(name_node)?;
+
         if let Some(name) = self.get_property_name(name_idx)
             && (name.starts_with("[Symbol.") || name.starts_with("__unique_"))
         {
+            if name.starts_with("[Symbol.")
+                && let Some(sym_id) = self.resolve_computed_property_symbol(computed.expression)
+            {
+                self.register_well_known_symbol_name_mapping(&name, sym_id);
+            }
             return Some(name);
         }
 
-        let computed = self.ctx.arena.get_computed_property(name_node)?;
-
         if let Some(symbol_name) = self.get_well_known_symbol_property_name(computed.expression) {
+            if let Some(sym_id) = self.resolve_computed_property_symbol(computed.expression) {
+                self.register_well_known_symbol_name_mapping(&symbol_name, sym_id);
+            }
             return Some(symbol_name);
         }
 
@@ -1802,7 +1826,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         self.get_property_name(name_idx)
     }
 
-    fn is_symbol_property_name(&self, name_idx: NodeIndex) -> bool {
+    fn is_symbol_property_name(&mut self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return false;
         };

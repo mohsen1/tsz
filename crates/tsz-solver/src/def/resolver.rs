@@ -143,6 +143,16 @@ pub trait TypeResolver {
         None
     }
 
+    /// Resolve a canonical well-known symbol property name (for example
+    /// `"[Symbol.iterator]"`) to its `SymbolRef` when available.
+    ///
+    /// This allows solver-only passes (like `keyof` evaluation) to recover
+    /// unique-symbol key identity even when property names are carried as
+    /// canonical string keys in object shapes.
+    fn resolve_well_known_symbol_name(&self, _name: &str) -> Option<SymbolRef> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic (Rule #33).
     /// For example, `IntrinsicKind::Number` -> `TypeId` of the Number interface.
     /// This enables primitives to be subtypes of their boxed interfaces.
@@ -431,6 +441,11 @@ pub struct TypeEnvironment {
     /// (e.g. `Application(UnresolvedTypeName("util.OmitKeys"), args)`) without
     /// needing access to the full checker context.
     unresolved_name_resolutions: FxHashMap<String, DefId>,
+    /// Canonical `[Symbol.xxx]` property name -> `SymbolRef` mapping.
+    ///
+    /// Populated by checker-side computed-property resolution and consumed by
+    /// solver-side `keyof` evaluation to preserve unique-symbol key identity.
+    well_known_symbol_name_to_ref: FxHashMap<String, SymbolRef>,
 }
 
 impl TypeEnvironment {
@@ -457,6 +472,7 @@ impl TypeEnvironment {
             definition_store: None,
             this_type: None,
             unresolved_name_resolutions: FxHashMap::default(),
+            well_known_symbol_name_to_ref: FxHashMap::default(),
         }
     }
 
@@ -471,6 +487,17 @@ impl TypeEnvironment {
     /// name. Returns `None` when no mapping has been recorded yet.
     pub fn unresolved_resolution(&self, name: &str) -> Option<DefId> {
         self.unresolved_name_resolutions.get(name).copied()
+    }
+
+    /// Register the `SymbolRef` behind a canonical well-known symbol key name
+    /// (e.g. `"[Symbol.iterator]"`).
+    pub fn register_well_known_symbol_name(&mut self, name: String, symbol_ref: SymbolRef) {
+        self.well_known_symbol_name_to_ref.insert(name, symbol_ref);
+    }
+
+    /// Look up a registered well-known symbol key name.
+    pub fn get_well_known_symbol_ref(&self, name: &str) -> Option<SymbolRef> {
+        self.well_known_symbol_name_to_ref.get(name).copied()
     }
 
     /// Set the concrete type that `ThisType` should resolve to.
@@ -812,6 +839,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn resolve_unresolved_type_name(&self, name: &str) -> Option<DefId> {
         self.unresolved_resolution(name)
+    }
+
+    fn resolve_well_known_symbol_name(&self, name: &str) -> Option<SymbolRef> {
+        self.get_well_known_symbol_ref(name)
     }
 
     fn resolve_type_query(
