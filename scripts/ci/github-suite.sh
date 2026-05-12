@@ -3,8 +3,14 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source scripts/ci/suite-metadata.sh
 
-suite="${1:?usage: $0 <build|dist-binaries|unit-archive|node-harness-prep|lint|unit|unit-shard|wasm|wasm-web|wasm-all|conformance|conformance-aggregate|emit|emit-shard|emit-aggregate|fourslash|fourslash-shard|fourslash-aggregate>}"
+suite="${1:?usage: $0 $(ci_suite_usage github)}"
+if ! ci_suite_is_known github "$suite"; then
+  echo "error: unknown GitHub CI suite '${suite}'" >&2
+  echo "valid suites: $(ci_suite_list github ', ')" >&2
+  exit 2
+fi
 export _TSZ_CI_SUITE="$suite"
 export TSZ_CI_SUITE="$suite"
 export _TSZ_CI_CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache}}"

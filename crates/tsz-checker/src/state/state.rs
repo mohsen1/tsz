@@ -1792,7 +1792,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Loop labels, switch clauses, and calls always block
-            if (flow.flags & HARD_STOP_FLAGS) != 0 {
+            if flow.has_any_flags(HARD_STOP_FLAGS) {
                 return false;
             }
 

@@ -1055,15 +1055,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // TS2693: typeof requires a value binding. If the resolved symbol is
             // type-only (e.g., an interface or type alias without a value component),
             // emit an error instead of creating a TypeQuery.
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                let flags = symbol.flags;
-                let has_value = flags & tsz_binder::symbol_flags::VALUE != 0;
-                let is_type_only = (flags & tsz_binder::symbol_flags::TYPE != 0) && !has_value;
-                if is_type_only {
-                    let escaped_name = symbol.escaped_name.clone();
-                    self.emit_type_query_type_only_error(&escaped_name, type_query.expr_name);
-                    return TypeId::ERROR;
-                }
+            let (sym_flags, type_only_name) =
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map_or((0 /* no symbol */, None), |s| {
+                        let has_value = s.has_any_flags(tsz_binder::symbol_flags::VALUE);
+                        let is_type_only =
+                            s.has_any_flags(tsz_binder::symbol_flags::TYPE) && !has_value;
+                        (s.flags, is_type_only.then(|| s.escaped_name.clone()))
+                    });
+            if let Some(escaped_name) = type_only_name {
+                self.emit_type_query_type_only_error(&escaped_name, type_query.expr_name);
+                return TypeId::ERROR;
             }
 
             // For simple identifiers, try flow-sensitive narrowing. When `typeof c`
@@ -1073,12 +1077,23 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             //
             // First try the symbol_types cache, then fall back to resolving
             // the type annotation from the variable declaration.
-            let mut declared_type: Option<TypeId> = self
-                .ctx
-                .symbol_types
-                .get(&sym_id)
-                .copied()
-                .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR);
+            //
+            // Exception: a merged VALUE+TYPE_ALIAS symbol (e.g. `const X` + `type X`)
+            // has `Lazy(own_def_id)` in `symbol_types` while the type alias is being
+            // resolved. For `typeof X` inside that body, `typeof` refers to the VALUE
+            // namespace — returning the circular placeholder would cause a false TS2456.
+            let mut declared_type: Option<TypeId> =
+                if sym_flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                    && self.ctx.symbol_resolution_set.contains(&sym_id)
+                {
+                    None
+                } else {
+                    self.ctx
+                        .symbol_types
+                        .get(&sym_id)
+                        .copied()
+                        .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
+                };
 
             if declared_type.is_none() {
                 // symbol_types may not be populated yet (early phase).
