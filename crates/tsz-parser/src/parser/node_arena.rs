@@ -2301,6 +2301,15 @@ mod tests {
         );
     }
 
+    #[test]
+    #[should_panic(
+        expected = "node arena length exceeds u32::MAX; large AST support requires a larger span type"
+    )]
+    fn len_u32_overflow_panics_with_expected_message() {
+        let arena = NodeArena::new();
+        let _ = arena.len_u32(usize::MAX);
+    }
+
     /// Workstream-7 deliverable 3 ("Add a defensive identifier text
     /// resolution path only if it is consistent with the parser identity
     /// model"): when an `IdentifierData.atom` is set but the arena's

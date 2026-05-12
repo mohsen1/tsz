@@ -69,6 +69,10 @@ type x = Wrapped<1>
         codes.contains(&2315),
         "expected TS2315 through parenthesized explicit-any alias body. got: {codes:?}"
     );
+    assert!(
+        !codes.contains(&2344),
+        "parenthesized explicit-any aliases must not cascade into TS2344. got: {codes:?}"
+    );
 }
 
 /// Negative cover: a generic alias whose body is `any` is still a
