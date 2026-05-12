@@ -1,4 +1,4 @@
-# fix(checker): emit TS2802 for non-array for-of without downlevelIteration
+# test(checker): regression-lock TS2802 for non-array for-of without downlevelIteration
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/checker-ts2802-downlevel-iteration-2026-05-12`
@@ -6,15 +6,17 @@
 - **Issue**: [#5893](https://github.com/mohsen1/tsz/issues/5893)
 - **PR**: [#5940](https://github.com/mohsen1/tsz/pull/5940)
 - **Status**: ready (regression-lock; the diagnostic already works on current main)
-- **Labels**: `bug`, `missing-diagnostic`
+- **Labels**: `regression-lock`, `checker-tests`
 
 ## Intent
 
-Closes #5893. When targeting ES5/ES3 and `downlevelIteration` is OFF,
+Regression-lock for #5893. Current `main` already emits TS2802 for this
+scenario; this PR keeps that behavior covered by focused tests. When
+targeting ES5/ES3 and `downlevelIteration` is OFF,
 tsc emits TS2802 ("Type 'X' can only be iterated through when using
 the '--downlevelIteration' flag or with a '--target' of 'es2015' or
 higher.") for `for-of` over any iterable other than a plain
-array/string/argument-list. tsz does not currently emit this.
+array/string/argument-list.
 
 ## Structural rule
 
@@ -28,11 +30,12 @@ array/string/argument-list. tsz does not currently emit this.
 names — `Range` and a renamed variant — to lock the rule against
 identifier-dependent fixes.)
 
-## Files Touched (estimated)
+## Files Touched
 
-- `crates/tsz-checker/src/state/state_checking/` (the for-of /
-  statement-checking site) — add the diagnostic gate.
-- New test in `crates/tsz-checker/tests/ts2802_downlevel_iteration_tests.rs`.
+- `crates/tsz-checker/tests/ts2802_downlevel_iteration_tests.rs` — add
+  regression tests and cache default libs for the file.
+- `docs/plan/claims/fix-checker-ts2802-downlevel-iteration-2026-05-12.md`
+  — keep claim metadata aligned with the tests-only PR.
 
 ## Out of scope
 
@@ -49,6 +52,4 @@ identifier-dependent fixes.)
 
 ## Risk
 
-Low. Pure additive diagnostic gated by compiler options
-(`target < ES2015` && `!downlevelIteration`). No semantic change
-for the supported configs.
+Low. Pure additive regression coverage for existing diagnostic behavior.

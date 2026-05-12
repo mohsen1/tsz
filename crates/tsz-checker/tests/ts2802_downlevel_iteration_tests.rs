@@ -6,12 +6,15 @@
 //! `compiler_options.target.is_es5()`); this test file pins the
 //! behavior end-to-end and serves as the regression surface.
 
+use std::sync::{Arc, OnceLock};
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::CheckerOptions;
 use tsz_checker::test_utils::{check_source_with_libs, load_default_lib_files};
 use tsz_common::common::ScriptTarget;
 
 fn check_with_target(source: &str, target: ScriptTarget) -> Vec<u32> {
-    let libs = load_default_lib_files();
+    static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+    let libs = LIBS.get_or_init(load_default_lib_files);
     check_source_with_libs(
         source,
         "test.ts",
@@ -19,7 +22,7 @@ fn check_with_target(source: &str, target: ScriptTarget) -> Vec<u32> {
             target,
             ..CheckerOptions::default()
         },
-        &libs,
+        libs,
     )
     .iter()
     .map(|d| d.code)
