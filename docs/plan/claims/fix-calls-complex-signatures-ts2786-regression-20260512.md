@@ -3,7 +3,7 @@
 - **Date**: 2026-05-12
 - **Branch**: `fix/calls-complex-signatures-ts2786-regression-20260512`
 - **Base**: `main`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/5780
 - **Status**: claim
 - **Workstream**: conformance
 
