@@ -1503,6 +1503,11 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" | undefined");
                         }
                     }
+                } else if let Some(type_text) =
+                    self.jsdoc_object_binding_param_type_literal(param_idx, i)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some(jsdoc_param) = effective_jsdoc_param
                     && !Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                 {

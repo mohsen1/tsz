@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from lib.results import parse_runner_output, compute_diff
+from lib.results import compute_diff, normalize_harness_path, parse_runner_output
 
 
 def _write_tmp(content):
@@ -65,6 +65,30 @@ class TestComputeDiff(unittest.TestCase):
         missing, extra = compute_diff(["TS2345", "TS2322"], ["TS2339"])
         self.assertEqual(missing, ["TS2322", "TS2345"])
         self.assertEqual(extra, ["TS2339"])
+
+
+class TestNormalizeHarnessPath(unittest.TestCase):
+    def test_relative_path_is_unchanged(self):
+        self.assertEqual(
+            normalize_harness_path("TypeScript/tests/cases/compiler/foo.ts"),
+            "TypeScript/tests/cases/compiler/foo.ts",
+        )
+
+    def test_absolute_path_strips_to_typescript_root(self):
+        self.assertEqual(
+            normalize_harness_path(
+                "/tmp/workspace/tsz/TypeScript/tests/cases/compiler/foo.ts"
+            ),
+            "TypeScript/tests/cases/compiler/foo.ts",
+        )
+
+    def test_uses_last_typescript_segment(self):
+        self.assertEqual(
+            normalize_harness_path(
+                "/tmp/TypeScript/workspace/tsz/TypeScript/tests/cases/compiler/foo.ts"
+            ),
+            "TypeScript/tests/cases/compiler/foo.ts",
+        )
 
 
 class TestParseRunnerOutput(unittest.TestCase):

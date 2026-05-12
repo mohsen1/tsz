@@ -10,6 +10,20 @@ import re
 from collections import Counter
 
 
+_ABS_HARNESS_PREFIX_RE = re.compile(r"^.*(TypeScript/)")
+
+
+def normalize_harness_path(path):
+    """Normalize absolute harness paths to start at the in-repo TypeScript/ root.
+
+    The match is intentionally greedy: if a checkout path itself contains
+    ``TypeScript/`` (for example
+    ``/workspace/TypeScript/tsz/TypeScript/tests/cases/foo.ts``), the final
+    occurrence is the in-repo harness path.
+    """
+    return _ABS_HARNESS_PREFIX_RE.sub(r"\1", path, count=1)
+
+
 def parse_runner_output(path):
     """Parse raw conformance runner output into per-test records.
 

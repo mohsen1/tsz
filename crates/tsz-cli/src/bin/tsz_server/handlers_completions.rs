@@ -2852,8 +2852,7 @@ impl Server {
             } else {
                 completion_result
                     .as_ref()
-                    .map(|r| r.is_new_identifier_location)
-                    .unwrap_or(false)
+                    .is_some_and(|r| r.is_new_identifier_location)
             };
             let default_commit_characters =
                 (!is_new_identifier_location).then_some(serde_json::json!([".", ",", ";"]));
@@ -2863,8 +2862,8 @@ impl Server {
             }
 
             let mut response = serde_json::json!({
-                "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
-                "isMemberCompletion": completion_result.as_ref().map(|r| r.is_member_completion).unwrap_or(false),
+                "isGlobalCompletion": completion_result.as_ref().is_some_and(|r| r.is_global_completion),
+                "isMemberCompletion": completion_result.as_ref().is_some_and(|r| r.is_member_completion),
                 "isNewIdentifierLocation": is_new_identifier_location,
                 "entries": entries,
             });

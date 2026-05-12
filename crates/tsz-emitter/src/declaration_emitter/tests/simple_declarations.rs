@@ -505,6 +505,23 @@ module.exports.j = function j() {}
 }
 
 #[test]
+fn test_js_cjs_export_aliases_emit_at_first_alias_statement() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.apply = undefined;
+function a() {}
+exports.apply = a;
+"#,
+    );
+
+    let expected = "export { a as apply };\ndeclare function a(): void;\n";
+    assert_eq!(
+        output, expected,
+        "Expected CJS alias group to keep the first alias statement position"
+    );
+}
+
+#[test]
 fn test_private_set_accessor_omits_type_and_uses_value_param_name() {
     let source = r#"
 declare class C {
@@ -1959,6 +1976,7 @@ fn test_js_commonjs_element_access_invalid_export_alias() {
         r#"
 function D() {}
 exports["D"] = D;
+/** alias comment should stay attached to the skipped source statement */
 exports["Does not work yet"] = D;
 "#,
     );
@@ -1970,6 +1988,34 @@ exports["Does not work yet"] = D;
     assert!(
         output.contains("export { D as _Does_not_work_yet };"),
         "Expected invalid element access export name to emit a sanitized alias: {output}"
+    );
+    assert!(
+        !output.contains("alias comment should stay attached"),
+        "Did not expect skipped alias statement comments to leak into output: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_object_param_properties_type_destructured_parameter() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {object} opts
+ * @param {number} opts.a
+ * @param {number} [opts.b]
+ * @returns {number}
+ */
+function foo({ a, b }) {
+    return a + (b ?? 0);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function foo({ a, b }: {\n    a: number;\n    b?: number | undefined;\n}): number;"
+        ),
+        "Expected JSDoc object property tags to type the destructured parameter: {output}"
     );
 }
 
@@ -2037,6 +2083,25 @@ var local = 123;
     assert!(
         !output.contains("declare var local:"),
         "Did not expect local declarations to leak from a defineProperty-only module: {output}"
+    );
+}
+
+#[test]
+fn test_js_esm_syntax_ignores_commonjs_named_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const x = 0;
+module.exports.y = 0;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 0;"),
+        "Expected native ESM export to remain: {output}"
+    );
+    assert!(
+        !output.contains("export const y:"),
+        "Did not expect CommonJS assignment to become a named export in an ESM JS file: {output}"
     );
 }
 
@@ -5193,7 +5258,7 @@ export class Aleph {
 
     assert!(
         output.contains(
-            "/**\n     * Field is always null\n     */\n    field: null;\n    /**\n     * Explicitly typed count.\n     * @type {number}\n     */\n    count: number;\n    /**\n     * Doesn't actually do anything"
+            "/**\n     * Field is always null\n     */\n    field: any;\n    /**\n     * Explicitly typed count.\n     * @type {number}\n     */\n    count: number;\n    /**\n     * Doesn't actually do anything"
         ),
         "Expected documented constructor assignment field before method declaration: {output}"
     );
