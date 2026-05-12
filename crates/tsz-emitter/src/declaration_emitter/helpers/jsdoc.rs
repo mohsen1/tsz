@@ -1451,7 +1451,7 @@ impl<'a> DeclarationEmitter<'a> {
                     name,
                     type_params,
                     type_text,
-                    description_lines: Vec::new(),
+                    description_lines,
                     render_verbatim: true,
                 });
             }
@@ -1459,7 +1459,7 @@ impl<'a> DeclarationEmitter<'a> {
                 name,
                 type_params,
                 type_text,
-                description_lines: Vec::new(),
+                description_lines,
                 render_verbatim: false,
             });
         }
