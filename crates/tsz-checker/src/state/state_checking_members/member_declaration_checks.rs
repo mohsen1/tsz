@@ -2,6 +2,9 @@
 
 use crate::context::TypingRequest;
 use crate::state::{CheckerState, MemberAccessLevel, MemberLookup};
+use crate::types_domain::unique_symbol_arena::{
+    is_unique_symbol_type_annotation_unwrapped, unwrap_parenthesized_type,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -1742,33 +1745,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn check_unique_symbol_in_conditional_extends(&mut self, extends_type: NodeIndex) {
-        let mut type_idx = extends_type;
-        while let Some(node) = self.ctx.arena.get(type_idx)
-            && node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
-            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
-        {
-            type_idx = wrapped.type_node;
-        }
-        let Some(node) = self.ctx.arena.get(type_idx) else {
-            return;
-        };
-        if node.kind != syntax_kind_ext::TYPE_OPERATOR {
-            return;
-        }
-        let Some(op) = self.ctx.arena.get_type_operator(node) else {
-            return;
-        };
-        if op.operator == SyntaxKind::UniqueKeyword as u16
-            && self
-                .ctx
-                .arena
-                .get(op.type_node)
-                .and_then(|n| self.ctx.arena.get_type_ref(n))
-                .and_then(|r| self.ctx.arena.get(r.type_name))
-                .and_then(|n| self.ctx.arena.get_identifier(n))
-                .is_some_and(|ident| ident.escaped_text == "symbol")
-        {
+        if is_unique_symbol_type_annotation_unwrapped(self.ctx.arena, extends_type) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let type_idx = unwrap_parenthesized_type(self.ctx.arena, extends_type);
             self.error_at_node(
                 type_idx,
                 diagnostic_messages::UNIQUE_SYMBOL_TYPES_ARE_NOT_ALLOWED_HERE,

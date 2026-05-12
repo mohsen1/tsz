@@ -1,9 +1,9 @@
-//! Tests for TS1338: 'infer' declarations are only permitted in the 'extends'
-//! clause of a conditional type.
+//! Tests for conditional-type grammar diagnostics.
 //!
 //! `infer T` is only valid inside the `extends` portion of a conditional type.
 //! Anywhere else (standalone type alias, `check_type`, `true_type`, `false_type`, etc.)
 //! must emit TS1338.
+//! `unique symbol` is not valid as the `extends` type and must emit TS1335.
 
 use crate::test_utils::check_source_code_messages as get_diagnostics;
 
