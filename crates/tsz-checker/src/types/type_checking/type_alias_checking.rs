@@ -309,8 +309,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 Vec::new()
             };
-            let has_stable_recursive_ref =
-                self.conditional_body_has_definite_recursive_alias_ref(alias.type_node, alias_sid);
+            let has_stable_recursive_ref = body_is_conditional
+                && self
+                    .conditional_body_has_definite_recursive_alias_ref(alias.type_node, alias_sid);
             let has_unresolved_computed_recursive_ref = body_is_conditional
                 && self.conditional_body_has_unresolved_computed_recursive_alias_ref(
                     alias.type_node,
