@@ -91,7 +91,7 @@ fn concise_arrow_optional_method_call_gets_temp_prologue() {
 /// semantically equivalent:
 ///   `(foo?.m).length` — chain ends at `)`, then `.length` accesses
 ///     the result. If foo is nullish, accesses `.length` on `undefined`
-///     → TypeError.
+///     and throws a `TypeError`.
 ///   `foo?.m.length` — chain continues through `.length`. If foo is
 ///     nullish, the whole chain short-circuits to `undefined`.
 /// The fix in `emit_parenthesized` preserves the parens when the
