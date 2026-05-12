@@ -116,6 +116,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
+    fn is_generic_correlated_union_call_arg(&self, arg_type: TypeId) -> bool {
+        self.correlated_union_arg_surface_is_generic(arg_type)
+            || self
+                .interner
+                .get_display_alias(arg_type)
+                .is_some_and(|alias| self.correlated_union_arg_surface_is_generic(alias))
+    }
+
+    fn correlated_union_arg_surface_is_generic(&self, arg_type: TypeId) -> bool {
+        crate::type_queries::contains_generic_indexed_access_surface(self.interner, arg_type)
+    }
+
     /// Resolve a function call: func(args...) -> result
     ///
     /// This is pure type logic - no AST nodes, just types in and types out.
@@ -793,7 +805,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn build_union_call_result(
-        &self,
+        &mut self,
         union_type: TypeId,
         failures: &mut Vec<CallResult>,
         return_types: Vec<TypeId>,
@@ -850,6 +862,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } else {
                     TypeId::ERROR
                 };
+
+                if intersected_param == TypeId::NEVER
+                    && self.is_generic_correlated_union_call_arg(actual_arg_type)
+                {
+                    let param_union = self.interner.union(param_types);
+                    if self.checker.is_assignable_to(actual_arg_type, param_union) {
+                        return CallResult::Success(
+                            combined_return_override.unwrap_or(TypeId::UNKNOWN),
+                        );
+                    }
+                }
 
                 return CallResult::ArgumentTypeMismatch {
                     index: 0,
@@ -1270,9 +1293,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // actually reached. When all arguments are fully concrete (e.g.,
                 // `string | number` passed to `((a: string) => void) | ((a: number) => void)`),
                 // tsc correctly rejects the call (TS2345).
-                let has_generic_args = arg_types.iter().any(|&arg_type| {
-                    crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
-                });
+                let has_generic_args = arg_types
+                    .iter()
+                    .any(|&arg_type| self.is_generic_correlated_union_call_arg(arg_type));
                 if has_generic_args && combined.param_types.contains(&TypeId::NEVER) {
                     let all_arg_mismatch = failures
                         .iter()
