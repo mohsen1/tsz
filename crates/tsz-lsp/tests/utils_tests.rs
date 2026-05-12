@@ -2,13 +2,24 @@ use super::*;
 use std::path::Path;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
+use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
+
+/// Parse a source string with the default test file name (`"test.ts"`).
+/// Returns the parser (so tests can inspect the arena, diagnostics, etc.)
+/// and the source-file `NodeIndex`. Captures the 3-line
+/// `ParserState::new(...).parse_source_file()` opener that this file
+/// repeats roughly 68 times.
+fn parse_test_source(source: &str) -> (ParserState, NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_find_node_at_offset_simple() {
     // const x = 1;
-    let mut parser = ParserState::new("test.ts".to_string(), "const x = 1;".to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("const x = 1;");
     let arena = parser.get_arena();
 
     // Offset 6 should be at 'x'
@@ -26,8 +37,7 @@ fn test_find_node_at_offset_simple() {
 
 #[test]
 fn test_find_node_at_offset_none() {
-    let mut parser = ParserState::new("test.ts".to_string(), "const x = 1;".to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("const x = 1;");
     let arena = parser.get_arena();
 
     // Offset beyond the file
@@ -37,11 +47,7 @@ fn test_find_node_at_offset_none() {
 
 #[test]
 fn test_find_nodes_in_range() {
-    let mut parser = ParserState::new(
-        "test.ts".to_string(),
-        "const x = 1;\nlet y = 2;".to_string(),
-    );
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("const x = 1;\nlet y = 2;");
     let arena = parser.get_arena();
 
     // Find nodes in the first line
@@ -52,8 +58,7 @@ fn test_find_nodes_in_range() {
 #[test]
 fn test_is_symbol_query_node_for_module_namespace_string_literal() {
     let source = "const foo = \"foo\";\nexport { foo as \"__alias\" };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let target = arena
@@ -80,8 +85,7 @@ fn test_is_symbol_query_node_for_module_namespace_string_literal() {
 #[test]
 fn test_find_node_at_or_before_offset_exact_hit() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Offset 6 is inside 'x', should return the same as find_node_at_offset
@@ -93,8 +97,7 @@ fn test_find_node_at_or_before_offset_exact_hit() {
 fn test_find_node_at_or_before_offset_after_whitespace() {
     // After the semicolon there's nothing, but just past the identifier with trailing space
     let source = "const x = 1;  ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Offset 14 is in trailing whitespace, should backtrack to find the last node
@@ -108,8 +111,7 @@ fn test_find_node_at_or_before_offset_after_whitespace() {
 #[test]
 fn test_find_node_at_or_before_offset_after_dot() {
     let source = "foo.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Offset 4 is right after the dot, should backtrack past the dot
@@ -120,8 +122,7 @@ fn test_find_node_at_or_before_offset_after_dot() {
 #[test]
 fn test_find_node_at_or_before_offset_optional_chaining() {
     let source = "foo?.";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Offset 5 is right after '?.', should backtrack past '?.'
@@ -135,8 +136,7 @@ fn test_find_node_at_or_before_offset_optional_chaining() {
 #[test]
 fn test_find_node_at_or_before_offset_at_zero() {
     let source = "  ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Offset 0 in an empty/whitespace-only file should not panic
@@ -150,8 +150,7 @@ fn test_find_node_at_or_before_offset_at_zero() {
 #[test]
 fn test_node_range_valid_node() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -170,8 +169,7 @@ fn test_node_range_valid_node() {
 #[test]
 fn test_node_range_invalid_node() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -187,8 +185,7 @@ fn test_node_range_invalid_node() {
 #[test]
 fn test_identifier_text_for_identifier_node() {
     let source = "const myVar = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Find the identifier node for 'myVar' at offset 6
@@ -201,8 +198,7 @@ fn test_identifier_text_for_identifier_node() {
 #[test]
 fn test_identifier_text_for_none_node() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let text = identifier_text(arena, tsz_parser::NodeIndex::NONE);
@@ -212,8 +208,7 @@ fn test_identifier_text_for_none_node() {
 #[test]
 fn test_identifier_text_for_non_identifier_node() {
     let source = "const x = 123;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Find the numeric literal node at offset 10 ('123')
@@ -228,8 +223,7 @@ fn test_identifier_text_for_non_identifier_node() {
 #[test]
 fn test_is_symbol_query_node_for_identifier() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Find the identifier 'x' at offset 6
@@ -244,8 +238,7 @@ fn test_is_symbol_query_node_for_identifier() {
 #[test]
 fn test_is_symbol_query_node_for_keyword() {
     let source = "break;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Find the 'break' keyword node
@@ -268,8 +261,7 @@ fn test_is_symbol_query_node_for_keyword() {
 #[test]
 fn test_is_symbol_query_node_for_none() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     assert!(
@@ -281,8 +273,7 @@ fn test_is_symbol_query_node_for_none() {
 #[test]
 fn test_is_symbol_query_node_for_template_literal() {
     let source = "const x = `hello`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let template_node = arena.nodes.iter().enumerate().find_map(|(idx, node)| {
@@ -413,8 +404,7 @@ fn test_should_backtrack_at_end_of_file() {
 #[test]
 fn test_is_import_keyword_true() {
     let source = "import('foo');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let import_node = arena.nodes.iter().enumerate().find_map(|(idx, node)| {
@@ -433,8 +423,7 @@ fn test_is_import_keyword_true() {
 #[test]
 fn test_is_import_keyword_false_for_none() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     assert!(!is_import_keyword(arena, tsz_parser::NodeIndex::NONE));
@@ -443,8 +432,7 @@ fn test_is_import_keyword_false_for_none() {
 #[test]
 fn test_is_require_identifier_false_for_none() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     assert!(!is_require_identifier(arena, tsz_parser::NodeIndex::NONE));
@@ -453,8 +441,7 @@ fn test_is_require_identifier_false_for_none() {
 #[test]
 fn test_is_require_identifier_false_for_other_identifier() {
     let source = "const foo = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // 'foo' is an identifier but not 'require'
@@ -503,8 +490,7 @@ fn test_calculate_new_relative_path_parent_reference() {
 
 #[test]
 fn test_find_nodes_in_range_empty() {
-    let mut parser = ParserState::new("test.ts".to_string(), "const x = 1;".to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("const x = 1;");
     let arena = parser.get_arena();
 
     // Range that doesn't overlap with any nodes (way past end)
@@ -518,8 +504,7 @@ fn test_find_nodes_in_range_empty() {
 #[test]
 fn test_find_node_at_offset_multiline() {
     let source = "const a = 1;\nconst b = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Offset 19 should be at 'b' on the second line
@@ -533,8 +518,7 @@ fn test_find_node_at_offset_multiline() {
 #[test]
 fn test_find_node_at_offset_at_zero() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Offset 0 should find the first node (likely SourceFile or const keyword)
@@ -545,8 +529,7 @@ fn test_find_node_at_offset_at_zero() {
 #[test]
 fn test_find_nodes_in_range_full_file() {
     let source = "let x = 1;\nlet y = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Range covering the entire file
@@ -561,8 +544,7 @@ fn test_find_nodes_in_range_full_file() {
 #[test]
 fn test_node_range_multiline() {
     let source = "const x = 1;\nconst y = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -650,8 +632,7 @@ fn test_calculate_new_relative_path_no_extension_style() {
 #[test]
 fn test_find_symbol_query_node_at_or_before_in_code() {
     let source = "const myVar = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Position after 'myVar' (offset 11 = after 'myVar ')
@@ -667,8 +648,7 @@ fn test_find_symbol_query_node_at_or_before_in_code() {
 #[test]
 fn test_is_require_identifier_for_require() {
     let source = "const x = require('foo');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Find the 'require' identifier
@@ -693,8 +673,7 @@ fn test_is_require_identifier_for_require() {
 #[test]
 fn test_find_node_at_offset_end_of_file() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let node = find_node_at_offset(arena, source.len() as u32);
     // At end of file, may or may not find a node
@@ -704,8 +683,7 @@ fn test_find_node_at_offset_end_of_file() {
 #[test]
 fn test_find_node_at_offset_zero() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let node = find_node_at_offset(arena, 0);
     assert!(node.is_some(), "Should find node at offset 0");
@@ -714,8 +692,7 @@ fn test_find_node_at_offset_zero() {
 #[test]
 fn test_find_node_at_offset_in_string_literal() {
     let source = "const s = 'hello world';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let node = find_node_at_offset(arena, 14);
     assert!(node.is_some(), "Should find node inside string literal");
@@ -724,8 +701,7 @@ fn test_find_node_at_offset_in_string_literal() {
 #[test]
 fn test_find_node_at_offset_in_number() {
     let source = "const n = 12345;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let node = find_node_at_offset(arena, 12);
     assert!(node.is_some(), "Should find node in number literal");
@@ -734,8 +710,7 @@ fn test_find_node_at_offset_in_number() {
 #[test]
 fn test_find_node_at_offset_multiline_return() {
     let source = "function foo() {\n  return 42;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // "return" keyword at offset 19
     let node = find_node_at_offset(arena, 19);
@@ -745,8 +720,7 @@ fn test_find_node_at_offset_multiline_return() {
 #[test]
 fn test_find_node_at_offset_beyond_source() {
     let source = "x";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let node = find_node_at_offset(arena, 100);
     // Beyond source should return None or last node
@@ -756,8 +730,7 @@ fn test_find_node_at_offset_beyond_source() {
 #[test]
 fn test_is_require_identifier_non_require() {
     let source = "const notRequire = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let ident_node = arena.nodes.iter().enumerate().find_map(|(idx, node)| {
@@ -781,8 +754,7 @@ fn test_is_require_identifier_non_require() {
 #[test]
 fn test_find_node_at_offset_in_template_literal() {
     let source = "const s = `hello ${name}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let node = find_node_at_offset(arena, 19);
     assert!(
@@ -798,8 +770,7 @@ fn test_find_node_at_offset_in_template_literal() {
 #[test]
 fn test_find_node_at_offset_in_function_body() {
     let source = "function add(a: number, b: number) { return a + b; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 44 should be inside 'a + b'
     let node = find_node_at_offset(arena, 44);
@@ -809,8 +780,7 @@ fn test_find_node_at_offset_in_function_body() {
 #[test]
 fn test_find_node_at_offset_at_arrow_function() {
     let source = "const f = (x: number) => x * 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let node = find_node_at_offset(arena, 25);
     assert!(node.is_some(), "Should find node in arrow function body");
@@ -819,8 +789,7 @@ fn test_find_node_at_offset_at_arrow_function() {
 #[test]
 fn test_find_nodes_in_range_single_line() {
     let source = "const x = 1; const y = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let nodes = find_nodes_in_range(arena, 0, 12);
     assert!(!nodes.is_empty(), "Should find nodes in first statement");
@@ -829,8 +798,7 @@ fn test_find_nodes_in_range_single_line() {
 #[test]
 fn test_find_nodes_in_range_middle_of_file() {
     let source = "const a = 1;\nconst b = 2;\nconst c = 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Range covering second line only
     let nodes = find_nodes_in_range(arena, 13, 25);
@@ -840,8 +808,7 @@ fn test_find_nodes_in_range_middle_of_file() {
 #[test]
 fn test_identifier_text_for_function_name() {
     let source = "function myFunc() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let node_idx = find_node_at_offset(arena, 9);
@@ -853,8 +820,7 @@ fn test_identifier_text_for_function_name() {
 #[test]
 fn test_identifier_text_for_class_name() {
     let source = "class MyClass {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let node_idx = find_node_at_offset(arena, 6);
@@ -908,8 +874,7 @@ fn test_should_backtrack_after_close_paren() {
 #[test]
 fn test_node_range_for_multiline_function() {
     let source = "function foo(\n  a: number,\n  b: string\n) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -950,8 +915,7 @@ fn test_calculate_new_relative_path_across_directories() {
 #[test]
 fn test_find_node_at_offset_in_class_method() {
     let source = "class Foo { bar() { return 42; } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 12 should be at 'bar'
     let node = find_node_at_offset(arena, 12);
@@ -961,8 +925,7 @@ fn test_find_node_at_offset_in_class_method() {
 #[test]
 fn test_find_node_at_offset_in_type_annotation() {
     let source = "const x: number = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 9 should be at 'number'
     let node = find_node_at_offset(arena, 9);
@@ -972,8 +935,7 @@ fn test_find_node_at_offset_in_type_annotation() {
 #[test]
 fn test_find_node_at_offset_in_interface() {
     let source = "interface Foo { bar: string; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 10 should be near 'Foo'
     let node = find_node_at_offset(arena, 10);
@@ -983,8 +945,7 @@ fn test_find_node_at_offset_in_interface() {
 #[test]
 fn test_find_node_at_offset_in_enum() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 13 should be at 'Red'
     let node = find_node_at_offset(arena, 13);
@@ -994,8 +955,7 @@ fn test_find_node_at_offset_in_enum() {
 #[test]
 fn test_find_nodes_in_range_multiline() {
     let source = "const a = 1;\nconst b = 2;\nconst c = 3;\nconst d = 4;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Range covering lines 2-3
     let nodes = find_nodes_in_range(arena, 13, 38);
@@ -1005,8 +965,7 @@ fn test_find_nodes_in_range_multiline() {
 #[test]
 fn test_find_nodes_in_range_zero_width() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Zero-width range at offset 6
     let nodes = find_nodes_in_range(arena, 6, 6);
@@ -1017,8 +976,7 @@ fn test_find_nodes_in_range_zero_width() {
 #[test]
 fn test_node_range_for_string_literal() {
     let source = "const s = 'hello';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1033,8 +991,7 @@ fn test_node_range_for_string_literal() {
 #[test]
 fn test_identifier_text_for_interface_name() {
     let source = "interface MyInterface {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let node_idx = find_node_at_offset(arena, 10);
@@ -1046,8 +1003,7 @@ fn test_identifier_text_for_interface_name() {
 #[test]
 fn test_identifier_text_for_enum_name() {
     let source = "enum Direction { Up, Down }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let node_idx = find_node_at_offset(arena, 5);
@@ -1059,8 +1015,7 @@ fn test_identifier_text_for_enum_name() {
 #[test]
 fn test_is_symbol_query_node_for_string_literal() {
     let source = "const x = 'hello';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let str_node = arena.nodes.iter().enumerate().find_map(|(idx, node)| {
@@ -1119,8 +1074,7 @@ fn test_should_backtrack_at_end_of_keyword() {
 #[test]
 fn test_find_symbol_query_node_at_or_before_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let result = find_symbol_query_node_at_or_before(arena, source, 0);
@@ -1131,8 +1085,7 @@ fn test_find_symbol_query_node_at_or_before_empty_file() {
 #[test]
 fn test_find_symbol_query_node_at_or_before_in_function_call() {
     let source = "console.log('hello');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // After 'console' at offset 7 (at the dot)
@@ -1172,8 +1125,7 @@ fn test_calculate_new_relative_path_up_two_levels() {
 #[test]
 fn test_is_import_keyword_for_non_import() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Find the 'const' keyword
@@ -1200,8 +1152,7 @@ fn test_is_import_keyword_for_non_import() {
 #[test]
 fn test_find_node_at_offset_in_generic_type() {
     let source = "const x: Array<number> = [];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 9 should be at 'Array'
     let node = find_node_at_offset(arena, 9);
@@ -1211,8 +1162,7 @@ fn test_find_node_at_offset_in_generic_type() {
 #[test]
 fn test_find_node_at_offset_in_async_function() {
     let source = "async function fetchData() { return await fetch('/api'); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 15 should be at 'fetchData'
     let node = find_node_at_offset(arena, 15);
@@ -1222,8 +1172,7 @@ fn test_find_node_at_offset_in_async_function() {
 #[test]
 fn test_find_node_at_offset_in_decorator() {
     let source = "@Component\nclass MyComponent {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 1 should be at 'Component' (after @)
     let node = find_node_at_offset(arena, 1);
@@ -1233,8 +1182,7 @@ fn test_find_node_at_offset_in_decorator() {
 #[test]
 fn test_find_node_at_offset_in_conditional_type() {
     let source = "type IsString<T> = T extends string ? true : false;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 5 should be at 'IsString'
     let node = find_node_at_offset(arena, 5);
@@ -1244,8 +1192,7 @@ fn test_find_node_at_offset_in_conditional_type() {
 #[test]
 fn test_find_node_at_offset_in_mapped_type() {
     let source = "type Readonly<T> = { readonly [K in keyof T]: T[K] };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 5 should be at 'Readonly'
     let node = find_node_at_offset(arena, 5);
@@ -1255,8 +1202,7 @@ fn test_find_node_at_offset_in_mapped_type() {
 #[test]
 fn test_find_node_at_offset_in_rest_params() {
     let source = "function sum(...args: number[]) { return args.reduce((a, b) => a + b); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 17 should be near 'args'
     let node = find_node_at_offset(arena, 17);
@@ -1266,8 +1212,7 @@ fn test_find_node_at_offset_in_rest_params() {
 #[test]
 fn test_find_node_at_offset_in_optional_param() {
     let source = "function greet(name?: string) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Offset 15 should be at 'name'
     let node = find_node_at_offset(arena, 15);
@@ -1277,8 +1222,7 @@ fn test_find_node_at_offset_in_optional_param() {
 #[test]
 fn test_identifier_text_for_type_alias_name() {
     let source = "type UserID = string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let node_idx = find_node_at_offset(arena, 5);
@@ -1290,8 +1234,7 @@ fn test_identifier_text_for_type_alias_name() {
 #[test]
 fn test_identifier_text_for_arrow_function_param() {
     let source = "const f = (value: number) => value * 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let node_idx = find_node_at_offset(arena, 11);
@@ -1333,8 +1276,7 @@ fn test_should_backtrack_after_closing_brace() {
 #[test]
 fn test_find_nodes_in_range_in_class_body() {
     let source = "class Foo {\n  x = 1;\n  y = 2;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     // Range covering the class body
     let nodes = find_nodes_in_range(arena, 12, 29);
@@ -1344,8 +1286,7 @@ fn test_find_nodes_in_range_in_class_body() {
 #[test]
 fn test_node_range_for_multiline_class() {
     let source = "class MyClass {\n  method() {\n    return 1;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let line_map = LineMap::build(source);
 
@@ -1376,8 +1317,7 @@ fn test_calculate_new_relative_path_index_file() {
 #[test]
 fn test_find_node_at_or_before_offset_in_multiline() {
     let source = "const a = 1;\n\nconst b = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Offset 13 is the blank line between statements
