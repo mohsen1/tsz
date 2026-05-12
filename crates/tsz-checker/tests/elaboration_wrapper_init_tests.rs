@@ -9,12 +9,7 @@
 //! of drilling to `d: 42` and reporting `Type 'number' is not assignable to
 //! type 'string'.`.
 
-fn diagnostics(source: &str) -> Vec<(u32, String)> {
-    diagnostics_with_pos(source)
-        .into_iter()
-        .map(|(code, _, msg)| (code, msg))
-        .collect()
-}
+use tsz_checker::test_utils::check_source_code_messages as diagnostics;
 
 fn diagnostics_with_pos(source: &str) -> Vec<(u32, u32, String)> {
     tsz_checker::test_utils::check_source_diagnostics(source)

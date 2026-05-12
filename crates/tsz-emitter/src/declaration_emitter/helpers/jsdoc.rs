@@ -637,8 +637,14 @@ impl<'a> DeclarationEmitter<'a> {
         let s = s.trim();
         match s {
             "*" | "?" => "any".to_string(),
-            "Array" | "Array.<>" => "any[]".to_string(),
-            "Promise" => "Promise<any>".to_string(),
+            // `Array<>` is the form after `normalize_jsdoc_type_expr` strips
+            // the legacy `.<` → `<` so both `Array` and `Array.<>` reach this
+            // arm. tsc treats empty-args generic JSDoc references as
+            // implicit-any (`Array.<>` → `any[]`); without the `Array<>` arm
+            // the DTS surfaces a literal `Array<>` token that is not valid
+            // TypeScript.
+            "Array" | "Array.<>" | "Array<>" => "any[]".to_string(),
+            "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
         }
     }

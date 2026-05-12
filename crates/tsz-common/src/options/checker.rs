@@ -60,14 +60,13 @@ pub struct CheckerOptions {
     pub allow_unused_labels: Option<bool>,
     /// When true, require bracket notation for index signature property access (TS4111).
     pub no_property_access_from_index_signature: bool,
-    /// When true, enable Sound Mode for stricter type checking beyond TypeScript's defaults.
-    /// Sound Mode catches common unsoundness issues like:
-    /// - Mutable array covariance (TS9002)
-    /// - Method parameter bivariance (TS9003)
-    /// - `any` escapes (TS9004)
-    /// - Excess properties via sticky freshness (TS9001)
+    /// When true, enable experimental Sound Mode checks beyond TypeScript's defaults.
     ///
-    /// Activated via: `--sound` CLI flag or `// @tsz-sound` pragma
+    /// Current production behavior is intentionally narrow: the checker tightens
+    /// relation policy for method bivariance and partial `any` propagation, and
+    /// preserves object-literal freshness in a few value-flow paths. Public TSZ
+    /// sound diagnostics, per-file pragmas, report-only mode, and the final
+    /// config surface are not wired yet.
     pub sound_mode: bool,
     /// When true, enables experimental support for decorators (legacy decorators).
     /// This is required for the @experimentalDecorators flag.

@@ -1025,9 +1025,7 @@ impl<'a> CheckerState<'a> {
                         if is_unresolved(ret) || is_valid_null_like_return(ret) {
                             return true;
                         }
-                        // For construct sigs, skip if the return type still
-                        // contains type parameters (from outer scopes). The
-                        // instance type is incomplete until instantiation.
+                        // For construct sigs, skip unresolved outer-scope type parameters.
                         if !is_call_sig
                             && crate::query_boundaries::common::contains_type_parameters(
                                 self.ctx.types,
@@ -1059,6 +1057,9 @@ impl<'a> CheckerState<'a> {
                             };
                             self.is_assignable_to(check_ret, t)
                                 || (!is_call_sig
+                                    && self
+                                        .jsx_property_type_for_return_check(t, "props")
+                                        .is_none()
                                     && self.jsx_construct_return_satisfies_element_class_render(
                                         check_ret, t,
                                     ))
