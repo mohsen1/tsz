@@ -59,6 +59,10 @@ initializer relation path performs an additional raw initializer re-check.
     `generic_application_literal_expected_for_mismatch` with `FxHashSet`-based
     seen tracking while preserving output order in `candidates`.
   - behavior remains unchanged; this is a hot-path complexity reduction only.
+- review comments left on #4991:
+  - strengthened wasm regression assertion to require zero semantic diagnostics
+    for the nested anonymous object-literal assignment case, instead of only
+    checking TS2322 absence.
 
 ## Files Touched
 
@@ -70,6 +74,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `crates/tsz-emitter/src/emitter/literals/core.rs`
 - `docs/plan/claims/codex-review-audit-batch17-20260512.md`
 - `crates/tsz-checker/src/types/computation/call_result.rs`
+- `crates/tsz-wasm/src/wasm_tests.rs`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -82,5 +87,6 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-checker --lib ts2589_tests -- --nocapture`
 - `cargo test -p tsz-emitter regex_literal_preserves_non_ascii_flags -- --nocapture`
 - `cargo test -p tsz-emitter decimal_numeric_separators_with_exponents_downlevel_to_number_text -- --nocapture`
+- `cargo test -p tsz-wasm ts_program_accepts_nested_anonymous_object_literal_assignment -- --nocapture`
 - `cargo fmt --all --check`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500`
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (last successful run: `candidate_count=56`; subsequent attempts blocked by GitHub GraphQL rate limit)
