@@ -5263,3 +5263,18 @@ export class Aleph {
         "Expected documented constructor assignment field before method declaration: {output}"
     );
 }
+
+#[test]
+fn test_js_local_bare_require_alias_without_exports_is_elided() {
+    let source = r#"
+const u = require("untyped");
+u.assignment.nested = true;
+u.noError();
+"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        !output.contains("declare const u"),
+        "Expected local bare require alias in a non-exporting JS module to be elided: {output}"
+    );
+}
