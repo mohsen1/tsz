@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `chore/conformance-snapshot-refresh-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5782
+- **Status**: ready
 - **Workstream**: conformance snapshot accuracy
 
 ## Intent
@@ -22,4 +22,4 @@ checker behavior.
 
 ## Verification
 
-- Pending: `scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot`
+- `scripts/safe-run.sh --limit 75% -- ./scripts/conformance/conformance.sh snapshot --workers 16` (12580/12582 passed; 2 known failures)
