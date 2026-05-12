@@ -1,15 +1,14 @@
 use super::*;
 use std::path::Path;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::{NodeIndex, ParserState};
 use tsz_scanner::SyntaxKind;
 
 /// Parse a source string with the default test file name (`"test.ts"`).
 /// Returns the parser (so tests can inspect the arena, diagnostics, etc.)
 /// and the source-file `NodeIndex`. Captures the 3-line
-/// `ParserState::new(...).parse_source_file()` opener that this file
-/// repeats roughly 68 times.
+/// `ParserState::new(...).parse_source_file()` opener repeated throughout
+/// this file.
 fn parse_test_source(source: &str) -> (ParserState, NodeIndex) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
