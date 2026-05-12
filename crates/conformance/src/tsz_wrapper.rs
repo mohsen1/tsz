@@ -28,46 +28,6 @@ pub struct PreparedTest {
     pub project_dir: std::path::PathBuf,
 }
 
-#[allow(dead_code)]
-fn header_comment_lines(text: &str) -> impl Iterator<Item = &str> {
-    text.lines().take(32).map(str::trim).take_while(|trimmed| {
-        trimmed.is_empty()
-            || trimmed.starts_with("//")
-            || trimmed.starts_with("/*")
-            || trimmed.starts_with('*')
-    })
-}
-
-#[allow(dead_code)]
-fn has_test_option_pragma(text: &str, key: &str) -> bool {
-    header_comment_lines(text).any(|trimmed| trimmed.to_ascii_lowercase().contains(key))
-}
-
-#[allow(dead_code)]
-fn has_source_strictness_pragmas_without_strict(text: &str) -> bool {
-    const STRICTNESS_PRAGMAS: &[&str] = &[
-        "@noimplicitany",
-        "@useunknownincatchvariables",
-        "@noimplicitthis",
-        "@strictpropertyinitialization",
-        "@strictnullchecks",
-        "@strictfunctiontypes",
-        "@strictbindcallapply",
-        "@noimplicitreturns",
-        "@noimplicitoverride",
-        "@nopropertyaccessfromindexsignature",
-        "@nounusedlocals",
-        "@nounusedparameters",
-        "@alwaysstrict",
-        "@noimplicitusestrict",
-    ];
-
-    !has_test_option_pragma(text, "@strict")
-        && STRICTNESS_PRAGMAS
-            .iter()
-            .any(|pragma| has_test_option_pragma(text, pragma))
-}
-
 /// Prepare a test directory with files and tsconfig.json for compilation.
 ///
 /// Returns a `PreparedTest` whose temp directory must be kept alive during compilation.
