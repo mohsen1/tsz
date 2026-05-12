@@ -1,4 +1,4 @@
-# fix(audit): scope unresolved computed recursive-alias TS2589 checks to conditional aliases
+# fix(checker): gate unresolved recursive-alias depth checks to conditionals
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/review-audit-batch5-20260512`
