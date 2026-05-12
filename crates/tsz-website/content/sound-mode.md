@@ -10,9 +10,9 @@
 
 Today, Sound Mode is deliberately small:
 
-1. **Current entrypoint:** CLI `--sound`
-2. **Current target:** user-authored TypeScript implementation code first
-3. **Current behavior:** tighter checking in a few high-value areas such as method bivariance, `any` propagation, and sticky freshness
+1. **Current entrypoint:** hidden CLI flag `--sound`, plus the playground / WASM `soundMode` input
+2. **Current scoping:** project-wide checker boolean today; the design target is user-authored TypeScript implementation code first
+3. **Current behavior:** tighter checking in a few high-value areas such as method bivariance, partial `any` propagation, and sticky freshness
 4. **Current diagnostics:** standard TypeScript codes like `TS2322` / `TS2345`, not the final public TSZ diagnostic surface
 
 ```bash
@@ -48,7 +48,7 @@ The first stable target is roughly:
 
 ## Planned Flags
 
-These names reflect the intended rollout shape, but most of them are still planned rather than fully wired today:
+These names reflect the intended rollout shape, but they are still planned rather than fully wired today. Do not put these in `compilerOptions` yet if you need tsc-compatible config parsing; today the normal tsconfig path rejects `compilerOptions.sound` as an unknown option.
 
 ```json
 {
@@ -60,6 +60,8 @@ These names reflect the intended rollout shape, but most of them are still plann
   }
 }
 ```
+
+The owning config object is still an implementation decision. The project may keep Sound Mode CLI-only for longer, use a `tszOptions`-style object, or later accept a `compilerOptions.sound` family if coexistence with vanilla `tsc` is acceptable.
 
 Intended meaning:
 

@@ -1352,8 +1352,22 @@ impl<'a> CheckerState<'a> {
     // --------------------------------------------
 
     /// Infer the return type of a getter from its body.
+    ///
+    /// Clears `preserve_literal_types` for the body walk so that the
+    /// getter's own literal-widening decision is independent of the outer
+    /// `return_expression_type` scope. When an object literal is itself a
+    /// function's return expression, the outer scope sets the flag to
+    /// preserve the obj literal's own literal property types, but the
+    /// getter body must make its own widening decision (mirrors the
+    /// function-expression branch in `return_expression_type`, where nested
+    /// function-like inference does the same).
     pub(crate) fn infer_getter_return_type(&mut self, body_idx: NodeIndex) -> TypeId {
-        self.infer_return_type_from_body(tsz_parser::parser::NodeIndex::NONE, body_idx, None)
+        let prev = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = false;
+        let r =
+            self.infer_return_type_from_body(tsz_parser::parser::NodeIndex::NONE, body_idx, None);
+        self.ctx.preserve_literal_types = prev;
+        r
     }
 
     /// Check that all top-level function overload signatures have implementations.

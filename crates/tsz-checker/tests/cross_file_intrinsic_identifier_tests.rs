@@ -79,3 +79,43 @@ export type And<B1 extends Boolean, B2 extends Boolean> = {
         "imported numeric Boolean alias should index Boolean maps without TS2536: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn imported_string_aliases_index_nested_type_literal_maps() {
+    let diagnostics = compile_entry_file(
+        &[
+            (
+                "Function/_Internal.ts",
+                "export type Mode = 'sync' | 'async';\nexport type Input = 'multi' | 'list';\n",
+            ),
+            (
+                "Function/Compose.ts",
+                r#"
+import {Input, Mode} from './_Internal';
+
+type ComposeMultiSync = { syncMulti: true };
+type ComposeListSync = { syncList: true };
+type ComposeMultiAsync = { asyncMulti: true };
+type ComposeListAsync = { asyncList: true };
+
+export type Compose<mode extends Mode = 'sync', input extends Input = 'multi'> = {
+    'sync' : {
+        'multi': ComposeMultiSync
+        'list' : ComposeListSync
+    }
+    'async': {
+        'multi': ComposeMultiAsync
+        'list' : ComposeListAsync
+    }
+}[mode][input];
+"#,
+            ),
+        ],
+        1,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2536),
+        "imported string aliases should index nested maps without TS2536: {diagnostics:#?}"
+    );
+}
