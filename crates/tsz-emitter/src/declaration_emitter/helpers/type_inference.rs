@@ -6596,205 +6596,6 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn short_circuit_expression_type_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_node = self.arena.get(expr_idx)?;
-        let binary = self.arena.get_binary_expr(expr_node)?;
-
-        if binary.operator_token == SyntaxKind::BarBarToken as u16
-            || binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
-        {
-            if let (Some(left_text), Some(right_text)) = (
-                self.short_circuit_operand_type_text(binary.left),
-                self.short_circuit_operand_type_text(binary.right),
-            ) {
-                if Self::remove_undefined_from_union_text(&left_text)
-                    .as_deref()
-                    .is_some_and(|left_without_undefined| {
-                        Self::type_texts_match_ignoring_redundant_parens(
-                            left_without_undefined,
-                            &right_text,
-                        )
-                    })
-                {
-                    return Some(right_text);
-                }
-            }
-        }
-
-        if binary.operator_token == SyntaxKind::BarBarToken as u16 {
-            if !self.expression_is_always_truthy_for_decl_emit(binary.left) {
-                return None;
-            }
-
-            return self
-                .preferred_expression_type_text(binary.left)
-                .or_else(|| {
-                    self.get_node_type_or_names(&[binary.left])
-                        .map(|type_id| self.print_type_id(type_id))
-                });
-        }
-
-        None
-    }
-
-    fn short_circuit_operand_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        self.preferred_expression_type_text(expr_idx)
-            .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
-            .or_else(|| {
-                let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
-                self.preferred_expression_type_text(expr_idx)
-                    .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
-            })
-    }
-
-    fn skip_parenthesized_expression_via_parent_node(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let mut current = expr_idx;
-        loop {
-            let node = self.arena.get(current)?;
-            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                return Some(current);
-            }
-            current = self.arena.get_parenthesized(node)?.expression;
-        }
-    }
-
-    fn instantiation_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_node = self.arena.get(expr_idx)?;
-        let expr = self.arena.get_expr_type_args(expr_node)?;
-        let type_args = self.type_argument_list_source_text(expr.type_arguments.as_ref());
-        let [type_arg] = type_args.as_slice() else {
-            return None;
-        };
-        let base_text = self
-            .preferred_expression_type_text(expr.expression)
-            .or_else(|| self.reference_declared_type_annotation_text(expr.expression))
-            .or_else(|| {
-                self.get_node_type_or_names(&[expr.expression])
-                    .map(|type_id| self.print_type_id(type_id))
-            })?;
-        Self::instantiate_type_text_with_single_type_arg(&base_text, type_arg)
-    }
-
-    fn instantiate_type_text_with_single_type_arg(
-        type_text: &str,
-        type_arg: &str,
-    ) -> Option<String> {
-        let trimmed = type_text.trim();
-        if trimmed.starts_with('{') {
-            return Self::instantiate_object_type_text_with_single_type_arg(trimmed, type_arg);
-        }
-
-        let parts = Self::split_top_level_union_type_parts(trimmed);
-        if parts.len() > 1 {
-            let instantiated_parts: Vec<String> = parts
-                .iter()
-                .map(|part| {
-                    Self::instantiate_generic_function_type_text(part, type_arg)
-                        .unwrap_or_else(|| part.to_string())
-                })
-                .map(|part| Self::parenthesize_type_text_in_union_position(&part))
-                .collect();
-            return Some(instantiated_parts.join(" | "));
-        }
-
-        Self::instantiate_generic_function_type_text(trimmed, type_arg)
-    }
-
-    fn instantiate_object_type_text_with_single_type_arg(
-        type_text: &str,
-        type_arg: &str,
-    ) -> Option<String> {
-        let mut changed = false;
-        let mut removed_non_generic_call = false;
-        let lines: Vec<String> = type_text
-            .lines()
-            .filter_map(|line| {
-                let trimmed = line.trim_start();
-                if trimmed.starts_with('<')
-                    && (trimmed.contains("():") || trimmed.contains("=>"))
-                    && let Some(instantiated) =
-                        Self::instantiate_generic_function_type_text(trimmed, type_arg)
-                {
-                    changed = true;
-                    let indent = &line[..line.len() - trimmed.len()];
-                    return Some(format!("{indent}{instantiated}"));
-                }
-                if !changed && (trimmed.starts_with("():") || trimmed.starts_with("new (")) {
-                    removed_non_generic_call = true;
-                    return None;
-                }
-                Some(line.to_string())
-            })
-            .collect();
-
-        if changed || removed_non_generic_call {
-            Some(lines.join("\n"))
-        } else {
-            None
-        }
-    }
-
-    fn instantiate_generic_function_type_text(type_text: &str, type_arg: &str) -> Option<String> {
-        let trimmed = type_text.trim();
-        let (prefix, body, suffix) = if trimmed.starts_with('(') && trimmed.ends_with(')') {
-            ("(", &trimmed[1..trimmed.len() - 1], ")")
-        } else {
-            ("", trimmed, "")
-        };
-        let generic_start = body.find('<')?;
-        let after_start = generic_start + 1;
-        let generic_end = body[after_start..].find('>')? + after_start;
-        let type_param = body[after_start..generic_end].trim();
-        if !Self::is_simple_identifier_text(type_param) {
-            return None;
-        }
-
-        let mut instantiated = String::new();
-        instantiated.push_str(&body[..generic_start]);
-        instantiated.push_str(&body[generic_end + 1..]);
-        instantiated = Self::replace_whole_words_in_text(
-            &instantiated,
-            &[(type_param.to_string(), type_arg.to_string())],
-        );
-        Some(format!("{prefix}{instantiated}{suffix}"))
-    }
-
-    fn remove_undefined_from_union_text(type_text: &str) -> Option<String> {
-        let parts = Self::split_top_level_union_type_parts(type_text);
-        if parts.len() <= 1 || !parts.iter().any(|part| part == "undefined") {
-            return None;
-        }
-        let remaining: Vec<String> = parts
-            .into_iter()
-            .filter(|part| part != "undefined")
-            .map(|part| Self::parenthesize_type_text_in_union_position(&part))
-            .collect();
-        if let [single] = remaining.as_slice() {
-            return Some(Self::strip_redundant_function_wrapper_parens(single).to_string());
-        }
-        Some(remaining.join(" | "))
-    }
-
-    fn type_texts_match_ignoring_redundant_parens(left: &str, right: &str) -> bool {
-        Self::strip_redundant_function_wrapper_parens(left)
-            == Self::strip_redundant_function_wrapper_parens(right)
-    }
-
-    fn strip_redundant_function_wrapper_parens(type_text: &str) -> &str {
-        let trimmed = type_text.trim();
-        if trimmed.starts_with("((") && trimmed.ends_with(')') && trimmed.contains("=>") {
-            &trimmed[1..trimmed.len() - 1]
-        } else {
-            trimmed
-        }
-    }
-
     pub(in crate::declaration_emitter) fn emit_type_node_text(
         &self,
         type_idx: NodeIndex,
@@ -8681,7 +8482,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.infer_fallback_type_text_at(initializer, self.indent_level + 1))
     }
 
-    fn parenthesize_type_text_in_union_position(type_text: &str) -> String {
+    pub(super) fn parenthesize_type_text_in_union_position(type_text: &str) -> String {
         let trimmed = type_text.trim();
         if (trimmed.contains("=>") || trimmed.starts_with("new "))
             && !(trimmed.starts_with('(') && trimmed.ends_with(')'))
@@ -8716,7 +8517,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn split_top_level_union_type_parts(type_text: &str) -> Vec<String> {
+    pub(super) fn split_top_level_union_type_parts(type_text: &str) -> Vec<String> {
         let bytes = type_text.as_bytes();
         let mut parts = Vec::new();
         let mut paren_depth = 0usize;

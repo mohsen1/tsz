@@ -222,6 +222,7 @@ mod type_inference_foreign_names;
 mod type_inference_function_text;
 mod type_inference_imported_calls;
 mod type_inference_imported_indexed_access;
+mod type_inference_instantiation;
 mod type_inference_package_matching;
 mod type_inference_return_unions;
 mod type_inference_type_nodes;
