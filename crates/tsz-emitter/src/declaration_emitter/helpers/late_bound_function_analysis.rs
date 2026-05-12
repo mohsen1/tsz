@@ -107,6 +107,12 @@ impl<'a> DeclarationEmitter<'a> {
         )
     }
 
+    fn should_emit_late_bound_export_alias(property_name_text: &str) -> bool {
+        Self::is_unquoted_property_name(property_name_text)
+            && !tsz_solver::utils::is_numeric_literal_name(property_name_text)
+            && Self::is_late_bound_reserved_binding_name(property_name_text)
+    }
+
     fn late_bound_synthetic_member_name(index: usize) -> String {
         let mut counter = index;
         if counter >= 8 {
@@ -123,10 +129,23 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn should_emit_late_bound_export_alias(property_name_text: &str) -> bool {
-        Self::is_unquoted_property_name(property_name_text)
-            && !tsz_solver::utils::is_numeric_literal_name(property_name_text)
-            && Self::is_late_bound_reserved_binding_name(property_name_text)
+    fn js_late_bound_synthetic_member_name(
+        property_name_text: &str,
+        reserved_member_names: &mut FxHashSet<String>,
+    ) -> String {
+        let base = format!("_{property_name_text}");
+        if reserved_member_names.insert(base.clone()) {
+            return base;
+        }
+
+        let mut suffix = 1usize;
+        loop {
+            let candidate = format!("{base}_{suffix}");
+            if reserved_member_names.insert(candidate.clone()) {
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     fn resolved_const_late_bound_assignment_key(
@@ -812,23 +831,50 @@ impl<'a> DeclarationEmitter<'a> {
             .collect();
         let mut synthetic_member_count = 0usize;
         for member in namespace_members {
+            let mut export_alias = None;
             let namespace_member_name = if let Some(namespace_member_name) =
                 member.namespace_member_name.as_deref()
             {
-                namespace_member_name.to_string()
+                if self.source_is_js_file && self.reserved_names.contains(namespace_member_name) {
+                    let synthetic_name = self.generate_unique_name(namespace_member_name);
+                    self.reserved_names.insert(synthetic_name.clone());
+                    export_alias =
+                        Some((synthetic_name.clone(), namespace_member_name.to_string()));
+                    synthetic_name
+                } else {
+                    if self.source_is_js_file {
+                        self.reserved_names
+                            .insert(namespace_member_name.to_string());
+                    }
+                    namespace_member_name.to_string()
+                }
             } else {
-                let synthetic_name = loop {
-                    let candidate = Self::late_bound_synthetic_member_name(synthetic_member_count);
-                    synthetic_member_count += 1;
-                    if reserved_member_names.insert(candidate.clone()) {
-                        break candidate;
+                let synthetic_name = if self.source_is_js_file {
+                    Self::js_late_bound_synthetic_member_name(
+                        &member.property_name_text,
+                        &mut reserved_member_names,
+                    )
+                } else {
+                    loop {
+                        let candidate =
+                            Self::late_bound_synthetic_member_name(synthetic_member_count);
+                        synthetic_member_count += 1;
+                        if reserved_member_names.insert(candidate.clone()) {
+                            break candidate;
+                        }
                     }
                 };
-                export_aliases.push((synthetic_name.clone(), member.property_name_text.clone()));
+                if self.source_is_js_file {
+                    self.reserved_names.insert(synthetic_name.clone());
+                }
+                export_alias = Some((synthetic_name.clone(), member.property_name_text.clone()));
                 synthetic_name
             };
             self.write_indent();
-            if has_export_aliases && member.namespace_member_name.is_some() {
+            if export_alias.is_none()
+                && has_export_aliases
+                && member.namespace_member_name.is_some()
+            {
                 self.write("export ");
             }
             if self.source_is_js_file {
@@ -841,6 +887,19 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(&member.type_text);
             self.write(";");
             self.write_line();
+            if let Some((local_name, exported_name)) = export_alias {
+                if self.source_is_js_file {
+                    self.write_indent();
+                    self.write("export { ");
+                    self.write(&local_name);
+                    self.write(" as ");
+                    self.write(&exported_name);
+                    self.write(" };");
+                    self.write_line();
+                } else {
+                    export_aliases.push((local_name, exported_name));
+                }
+            }
         }
         if !export_aliases.is_empty() {
             self.write_indent();
