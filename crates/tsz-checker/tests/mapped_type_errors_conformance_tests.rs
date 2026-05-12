@@ -20,7 +20,18 @@ fn line_and_column_for_offset(source: &str, offset: u32) -> (u32, u32) {
 }
 
 fn diagnostic_anchor_text<'a>(source: &'a str, diagnostic: &Diagnostic) -> &'a str {
-    &source[diagnostic.start as usize..(diagnostic.start + diagnostic.length) as usize]
+    assert_eq!(
+        diagnostic.file, "test.ts",
+        "expected mapped-type conformance diagnostics to stay in test.ts, got: {diagnostic:#?}"
+    );
+    let start = diagnostic.start as usize;
+    let end = start.saturating_add(diagnostic.length as usize);
+    source.get(start..end).unwrap_or_else(|| {
+        panic!(
+            "diagnostic span [{start}..{end}) is out of bounds or not on char boundaries for source length {}: {diagnostic:#?}",
+            source.len()
+        )
+    })
 }
 
 #[test]
