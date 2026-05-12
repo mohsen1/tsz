@@ -116,13 +116,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
-    fn union_call_arg_contains_correlated_type_param(&self, arg_type: TypeId) -> bool {
+    fn is_generic_correlated_union_call_arg(&self, arg_type: TypeId) -> bool {
+        self.correlated_union_arg_surface_is_generic(arg_type)
+            || self
+                .interner
+                .get_display_alias(arg_type)
+                .is_some_and(|alias| self.correlated_union_arg_surface_is_generic(alias))
+    }
+
+    fn correlated_union_arg_surface_is_generic(&self, arg_type: TypeId) -> bool {
         crate::type_queries::contains_type_parameters_db(self.interner, arg_type)
-            || matches!(
-                self.interner.lookup(arg_type),
-                Some(TypeData::IndexAccess(_, index))
-                    if crate::type_queries::contains_type_parameters_db(self.interner, index)
-            )
+            || crate::type_queries::contains_generic_indexed_access_surface(self.interner, arg_type)
     }
 
     /// Resolve a function call: func(args...) -> result
@@ -802,7 +806,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn build_union_call_result(
-        &self,
+        &mut self,
         union_type: TypeId,
         failures: &mut Vec<CallResult>,
         return_types: Vec<TypeId>,
@@ -859,6 +863,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } else {
                     TypeId::ERROR
                 };
+
+                if intersected_param == TypeId::NEVER
+                    && self.is_generic_correlated_union_call_arg(actual_arg_type)
+                {
+                    let param_union = self.interner.union(param_types);
+                    if self.checker.is_assignable_to(actual_arg_type, param_union) {
+                        return CallResult::Success(
+                            combined_return_override.unwrap_or(TypeId::UNKNOWN),
+                        );
+                    }
+                }
 
                 return CallResult::ArgumentTypeMismatch {
                     index: 0,
@@ -1195,7 +1210,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let Some(ref combined) = combined
             && !arg_types
                 .iter()
-                .any(|&arg_type| self.union_call_arg_contains_correlated_type_param(arg_type))
+                .any(|&arg_type| self.is_generic_correlated_union_call_arg(arg_type))
         {
             for (i, &arg_type) in arg_types.iter().enumerate() {
                 if i < combined.param_types.len() {
@@ -1281,7 +1296,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // tsc correctly rejects the call (TS2345).
                 let has_generic_args = arg_types
                     .iter()
-                    .any(|&arg_type| self.union_call_arg_contains_correlated_type_param(arg_type));
+                    .any(|&arg_type| self.is_generic_correlated_union_call_arg(arg_type));
                 if has_generic_args && combined.param_types.contains(&TypeId::NEVER) {
                     let all_arg_mismatch = failures
                         .iter()

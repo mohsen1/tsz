@@ -72,10 +72,10 @@ impl<'a> CheckerState<'a> {
             literal_len,
         );
 
-        // Boolean literals are preserved only for positions contextually tied
-        // to a boolean-like tuple element or boolean rest segment. Extra
-        // elements past a fixed target tuple, or mismatches in non-boolean
-        // rest/suffix shapes, use the normal widened fallback.
+        // Boolean literals are preserved for boolean-like tuple positions,
+        // including optional elements and fixed suffix elements after a
+        // variadic rest. Other primitive tuple targets use the widened
+        // fallback.
         if target_element
             .is_some_and(|element| self.tuple_target_element_preserves_boolean_literal(element))
             || self.tuple_boolean_rest_before_position_preserves_literal(
@@ -124,28 +124,13 @@ impl<'a> CheckerState<'a> {
         &self,
         element: &tsz_solver::TupleElement,
     ) -> bool {
-        self.type_preserves_boolean_literal_display(element.type_id)
+        self.type_preserves_boolean_literal(element.type_id)
             || (element.rest
                 && crate::query_boundaries::common::array_element_type(
                     self.ctx.types,
                     element.type_id,
                 )
-                .is_some_and(|element_type| {
-                    self.type_preserves_boolean_literal_display(element_type)
-                }))
-    }
-
-    fn type_preserves_boolean_literal_display(&self, type_id: TypeId) -> bool {
-        matches!(
-            type_id,
-            TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE
-        ) || crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_some_and(
-            |members| {
-                members
-                    .iter()
-                    .any(|&member| self.type_preserves_boolean_literal_display(member))
-            },
-        )
+                .is_some_and(|element_type| self.type_preserves_boolean_literal(element_type)))
     }
 
     fn tuple_boolean_rest_before_position_preserves_literal(
@@ -171,5 +156,12 @@ impl<'a> CheckerState<'a> {
                     })
                 },
             )
+    }
+
+    fn type_preserves_boolean_literal(&self, type_id: TypeId) -> bool {
+        type_id == TypeId::BOOLEAN
+            || crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+                .is_some_and(|members| members.contains(&TypeId::BOOLEAN))
+            || self.type_includes_literal_type(type_id)
     }
 }

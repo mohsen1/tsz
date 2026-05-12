@@ -497,7 +497,7 @@ function assign(single: Single, count: Count, offset: Offset) {
 }
 
 #[test]
-fn test_ts2322_same_enum_member_union_source_display_preserved() {
+fn test_ts2322_same_enum_member_union_source_display_collapses_to_enum() {
     let diagnostics = get_all_diagnostics(
         r#"
 enum E {
@@ -519,13 +519,8 @@ let onlyA: E.A = both;
 
     let message = ts2322.1.as_str();
     assert!(
-        message.contains("Type 'E.A | E.B' is not assignable to type 'E.A'.")
-            || message.contains("Type 'E.B | E.A' is not assignable to type 'E.A'."),
-        "expected enum member union source display in TS2322, got: {message}"
-    );
-    assert!(
-        !message.contains("Type 'E' is not assignable to type 'E.A'."),
-        "enum-member union source should not collapse to parent enum in TS2322, got: {message}"
+        message.contains("Type 'E' is not assignable to type 'E.A'."),
+        "expected same-enum member union source to collapse to parent enum, got: {message}"
     );
 }
 
@@ -5686,7 +5681,7 @@ target = [1, "x", (false)];
 }
 
 #[test]
-fn exact_optional_tuple_source_display_preserves_boolean_literal_elements() {
+fn exact_optional_tuple_source_display_uses_boolean_literal_policy() {
     let source = r#"
 declare let t: [number, string?, boolean?];
 declare let u: [number, string?, false?];
@@ -5731,8 +5726,8 @@ a = [42, undefined, true as boolean];
             .iter()
             .filter(|message| message.contains("Type '[number, undefined, true]'"))
             .count()
-            >= 4,
-        "Expected direct, parenthesized, const-asserted, and satisfies true literals to display as true, got: {diagnostics:#?}"
+            == 2,
+        "Only const-asserted and satisfies true literals should display as true, got: {diagnostics:#?}"
     );
     assert!(
         ts2322_messages
@@ -5745,8 +5740,8 @@ a = [42, undefined, true as boolean];
             .iter()
             .filter(|message| message.contains("[number, undefined, boolean]"))
             .count()
-            == 1,
-        "Only explicit boolean assertions should widen boolean literal elements, got: {diagnostics:#?}"
+            == 3,
+        "Direct, parenthesized, and explicit boolean assertions should widen boolean literal elements, got: {diagnostics:#?}"
     );
 }
 
@@ -5814,7 +5809,7 @@ target = [1, true, false, true, false];
     assert!(
         ts2322_messages
             .iter()
-            .any(|message| message.contains("Type '[number, true, false, true, false]'")),
+            .any(|message| message.contains("Type '[number, boolean, boolean, boolean, boolean]'")),
         "Expected variadic and trailing tuple slots to remain contextually mapped in source display, got: {diagnostics:#?}"
     );
     assert!(

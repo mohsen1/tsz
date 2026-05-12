@@ -241,15 +241,6 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.resolve_atom_ref(info.name).to_string();
         }
 
-        // For non-generic type alias references (Lazy(DefId)), format the alias name
-        // directly before evaluation resolves it to its body (which loses the alias
-        // identity). tsc preserves alias names like "ExoticAnimal" in error messages
-        // instead of expanding to "CatDog | ManBearPig | Platypus".
-        //
-        // Exceptions:
-        // 1. Computed bodies (intersection reduction, conditional evaluation) → expand.
-        // 2. Aliases wrapping a generic application (e.g. `type Foo = Id<{...}>`) →
-        //    show the inner application.  Detected via display_alias on the evaluated result.
         if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind == tsz_solver::def::DefKind::TypeAlias
@@ -267,17 +258,11 @@ impl<'a> CheckerState<'a> {
                             );
                     }
                 }
-                // Only expand computed bodies. For generic function type aliases like
-                // `type bar = <U>(source: ...) => void`, tsc shows the alias name.
                 if self.ctx.definition_store.is_computed_body(body) {
                     let evaluated = self.evaluate_type_with_env(ty);
                     return self.format_type_diagnostic_for_assignability_display(evaluated);
                 }
             }
-            // Evaluate and check if the result wraps a generic application.
-            // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
-            // Exception: recursive non-generic aliases (e.g. `type Box2 = Box<Box2 | number>`)
-            // must show the alias name, not the expanded body. tsc preserves "Box2" in TS2322.
             let evaluated = self.evaluate_type_with_env(ty);
             if evaluated != ty
                 && self.ctx.types.get_display_alias(evaluated).is_some()
@@ -317,9 +302,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if self.is_enum_member_union(ty)
-            && let Some(alias_name) = self.lookup_type_alias_name_for_display(ty)
-        {
+        if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
             return alias_name;
         }
 
@@ -401,14 +384,6 @@ impl<'a> CheckerState<'a> {
 
         if let Some(extract_display) = self.format_extract_keyof_string_type(ty) {
             return extract_display;
-        }
-
-        // Check for type alias names BEFORE normalization, which transforms the
-        // TypeId and breaks the body_to_alias lookup.  tsc preserves alias names
-        // in assignability messages (e.g. "not assignable to type 'FuncType'"
-        // instead of expanding to the function signature).
-        if let Some(alias_name) = self.lookup_type_alias_name_for_display(ty) {
-            return alias_name;
         }
 
         let display_ty = self.normalize_assignability_display_type(ty);
@@ -1194,17 +1169,6 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::union_members(self.ctx.types, target).is_some()
             || crate::query_boundaries::common::intersection_members(self.ctx.types, target)
                 .is_some()
-    }
-
-    fn is_enum_member_union(&mut self, ty: TypeId) -> bool {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty)
-        else {
-            return false;
-        };
-        !members.is_empty()
-            && members
-                .iter()
-                .all(|&member| self.format_enum_member_name_for_message(member).is_some())
     }
 
     pub(super) fn format_enum_member_name_for_message(&mut self, ty: TypeId) -> Option<String> {
