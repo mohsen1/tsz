@@ -1,6 +1,7 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives
 
 use crate::parser::ParserState;
+use crate::parser::test_fixture::parse_source_with_language_version;
 use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
@@ -3152,12 +3153,7 @@ fn invalid_surrogate_unicode_escapes_in_import_alias_emit_ts1127_without_cascade
 #[test]
 fn es5_import_specifier_identifier_tail_reports_invalid_astral_without_comma_cascade() {
     let source = r#"import { _𐊧 as \uD800\uDEA7 } from "mod";"#;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let raw_astral = source.find('𐊧').expect("raw astral") as u32;
@@ -3186,12 +3182,7 @@ fn es5_astral_identifier_chars_recover_as_invalid_declaration_tail() {
     let equals_pos = source.find('=').expect("equals") as u32;
     let new_pos = source.find("new").expect("new keyword") as u32;
 
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -3217,12 +3208,7 @@ fn es5_astral_identifier_chars_recover_as_invalid_declaration_tail() {
 #[test]
 fn es2015_astral_identifier_chars_remain_valid_identifier_parts() {
     let source = "export var _𐊧 = new Foo();";
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES2015,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES2015);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -3236,12 +3222,7 @@ fn es2015_astral_identifier_chars_remain_valid_identifier_parts() {
 #[test]
 fn es2015_braced_astral_escape_remains_valid_identifier_start() {
     let source = r"export var \u{102A7} = new Foo();";
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES2015,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES2015);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -3256,12 +3237,7 @@ fn es2015_braced_astral_escape_remains_valid_identifier_start() {
 fn es5_braced_astral_escape_remains_invalid_identifier_start() {
     let source = r"export var \u{102A7} = new Foo();";
     let escape_pos = source.find(r"\u{102A7}").expect("unicode escape") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -3278,12 +3254,7 @@ fn es5_braced_astral_escape_after_identifier_recovers_inside_variable_list() {
     let escape_pos = source.find('\\').expect("unicode escape") as u32;
     let open_brace_pos = source.find('{').expect("open brace") as u32;
     let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -3311,12 +3282,7 @@ fn es5_braced_astral_escape_after_identifier_recovers_across_same_line_trivia() 
     let escape_pos = source.find('\\').expect("unicode escape") as u32;
     let open_brace_pos = source.find('{').expect("open brace") as u32;
     let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -3346,12 +3312,7 @@ fn es5_braced_astral_escape_after_import_alias_recovers_as_specifier_tail() {
     let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
     let close_brace_pos = source.find("} from").expect("specifier close brace") as u32;
     let from_pos = source.find("from").expect("from keyword") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -3389,12 +3350,7 @@ fn es5_braced_astral_escape_after_export_alias_recovers_as_specifier_tail() {
     let numeric_tail_pos = source.find("A7").expect("numeric literal tail") as u32;
     let close_brace_pos = source.find("} from").expect("specifier close brace") as u32;
     let from_pos = source.find("from").expect("from keyword") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -3427,12 +3383,7 @@ fn es5_braced_astral_escape_after_export_alias_recovers_as_specifier_tail() {
 #[test]
 fn reset_clears_braced_unicode_specifier_tail_recovery_state() {
     let source = r#"import { _x as _\u{102A7} } from "mod";"#;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (mut parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
     assert!(
         parser.current_specifier_recovered_braced_unicode_escape_debris,
         "sanity check: first parse should exercise braced unicode specifier recovery"
@@ -3454,12 +3405,7 @@ fn es5_raw_astral_variable_name_reports_declaration_expected_at_type_tail() {
     let source = "declare var 𐊧: string;";
     let raw_astral = source.find('𐊧').expect("raw astral") as u32;
     let colon_pos = source.find(':').expect("colon") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -3489,12 +3435,7 @@ fn es5_braced_astral_variable_name_reports_missing_comma_before_recovered_identi
     let source = r"declare var \u{102A7}: string;";
     let escape_pos = source.find('\\').expect("unicode escape") as u32;
     let recovered_open_brace = source.find('{').expect("recovered open brace") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -3521,12 +3462,7 @@ fn es5_raw_astral_statement_assignment_reports_statement_expected_at_equals() {
     let source = "if (true) { 𐊧 = \"hello\"; }";
     let raw_astral = source.find('𐊧').expect("raw astral") as u32;
     let equals_pos = source.find('=').expect("equals") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -3553,12 +3489,7 @@ fn es5_braced_astral_statement_assignment_recovers_block_followed_by_equals() {
     let escape_pos = source.find('\\').expect("unicode escape") as u32;
     let recovered_identifier = escape_pos + 1;
     let equals_pos = source.find('=').expect("equals") as u32;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -3600,12 +3531,7 @@ class Foo {
 }
 export var _\u{102A7} = new Foo().\u{102A7};
 "#;
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES2015,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES2015);
 
     let diagnostics = parser.get_diagnostics();
     assert!(
@@ -3631,12 +3557,7 @@ export var _\u{102A7} = new Foo().\u{102A7};
         .match_indices(r"\u{102A7}")
         .map(|(pos, _)| pos as u32)
         .collect();
-    let mut parser = ParserState::new_with_language_version(
-        "test.ts".to_string(),
-        source.to_string(),
-        ScriptTarget::ES5,
-    );
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
 
     let diagnostics = parser.get_diagnostics();
     for escape_pos in expected_escape_positions {
