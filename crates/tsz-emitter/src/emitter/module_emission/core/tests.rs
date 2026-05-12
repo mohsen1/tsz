@@ -3,6 +3,11 @@ use crate::emitter::{JsxEmit, ModuleKind, Printer, PrinterOptions};
 use crate::lowering::LoweringPass;
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 /// When moduleDetection=force, a file without any import/export syntax
 /// should still be treated as a module and get the CJS __esModule preamble.
@@ -10,8 +15,7 @@ use tsz_parser::ParserState;
 fn module_detection_force_emits_esmodule_marker() {
     let source = r#"console.log("hello");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -64,8 +68,7 @@ import("./foo.ts");
 fn no_module_detection_force_skips_esmodule_marker() {
     let source = r#"console.log("hello");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -87,8 +90,7 @@ fn no_module_detection_force_skips_esmodule_marker() {
 fn commonjs_type_only_reexport_skips_void_zero_preamble() {
     let source = r#"export { I, I as II } from "./ambient";"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let source_file = parser
         .arena
         .get_source_file(parser.arena.get(root).expect("root node must exist"))
@@ -133,8 +135,7 @@ fn commonjs_type_only_reexport_skips_void_zero_preamble() {
 fn module_detection_force_emits_use_strict_for_cjs() {
     let source = r#"console.log("hello");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -160,8 +161,7 @@ export function f(obj: { value: number }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -186,8 +186,7 @@ export function f(obj: { value: number }) {
 fn malformed_import_numeric_operand_emits_recovered_expression() {
     let source = "import 10;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -223,8 +222,7 @@ namespace Foo {
 export = Foo;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -259,8 +257,7 @@ for ({ x: xx, ...rrestOff } of array ) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -298,8 +295,7 @@ fn es5_arrow_this_capture_skips_multiple_user_bindings() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -340,8 +336,7 @@ class C {
 export const result = [new C().getX(), _C_x];
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::ESNext,
@@ -386,8 +381,7 @@ fn nested_classes_preserve_outer_private_name_scope() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -421,8 +415,7 @@ for (let i = 0; i < 10; ++i) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -458,8 +451,7 @@ fn reserved_private_constructor_method_is_not_extracted() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::None,
@@ -499,8 +491,7 @@ class A {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -539,8 +530,7 @@ class C {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -600,8 +590,7 @@ export class Derived extends Base {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -640,8 +629,7 @@ const foo_1 = "user binding";
 export const result = value + ":" + foo_1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -676,8 +664,7 @@ const local = { value: "local property" };
 export const result = value + ":" + local.value;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -712,8 +699,7 @@ fn async_arguments_capture_skips_user_binding() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -748,8 +734,7 @@ export async function f() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -827,8 +812,7 @@ fn async_arguments_capture_skips_parameter_and_pattern_bindings() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -860,8 +844,7 @@ fn async_arguments_capture_skips_parameter_and_pattern_bindings() {
 fn default_export_function_hoists_export_assignment() {
     let source = "export default function f() { return 1; }\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -903,8 +886,7 @@ export namespace Decl {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -949,8 +931,7 @@ return func;
 var after: typeof func = func();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -993,8 +974,7 @@ var after: typeof func = func();
 fn anonymous_default_export_function_hoists_export_assignment() {
     let source = "export default 0;\nexport default function() {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1034,8 +1014,7 @@ export default class {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1061,8 +1040,7 @@ export default class {
 fn recovered_anonymous_named_class_export_gets_synthetic_binding() {
     let source = "export class {\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1098,8 +1076,7 @@ fn recovered_anonymous_named_class_export_gets_synthetic_binding() {
 fn commonjs_declare_class_export_does_not_leave_pending_export_name() {
     let source = "export declare class Declared {}\nexport class Live {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1135,8 +1112,7 @@ export default function () {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1168,8 +1144,7 @@ export default function () {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1197,8 +1172,7 @@ export default function () {
 fn named_export_function_not_hoisted() {
     let source = "export function g() { return 2; }\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1233,8 +1207,7 @@ return typeof x === "string";
 }
 export { isValid };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1273,8 +1246,7 @@ export { isValid };
 #[test]
 fn named_export_specifier_for_undefined_only_uses_preamble() {
     let source = "var undefined;\nexport { undefined };\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1302,8 +1274,7 @@ fn named_export_specifier_for_undefined_only_uses_preamble() {
 #[test]
 fn repeated_named_export_specifiers_defer_all_aliases_until_const_declaration() {
     let source = "export { x };\nexport { x as xx };\nexport default x;\nconst x = 'x';\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1337,8 +1308,7 @@ fn named_export_specifier_aliased_function_hoisted() {
     let source = r#"function impl() { return 42; }
 export { impl as myFunc };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1364,8 +1334,7 @@ export { impl as myFunc };
 #[test]
 fn named_export_specifier_for_ambient_const_skips_runtime_assignment() {
     let source = "declare const _await: any;\nexport { _await as await };\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1389,8 +1358,7 @@ fn named_export_specifier_for_ambient_const_skips_runtime_assignment() {
 #[test]
 fn inline_cjs_export_skips_initializerless_vars() {
     let source = "export var eVar1, eVar2 = 10;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1422,8 +1390,7 @@ fn inline_cjs_export_skips_initializerless_vars() {
 #[test]
 fn transformed_class_expression_var_export_emits_inline_assignment() {
     let source = "export var noPrivates = class {\n    static getTags() { }\n    tags() { }\n    private static ps = -1;\n    private p = 12;\n};\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1460,8 +1427,7 @@ export enum Animals {
 Dog = 2
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::ESNext,
@@ -1496,8 +1462,7 @@ export namespace F {
 export var x = 1;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::ESNext,
@@ -1524,8 +1489,7 @@ export var x = 1;
 fn decorated_class_export_no_duplicate_exports() {
     let source = "declare var dec: any;\n@dec export class A {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1560,8 +1524,7 @@ enum E {
 export { C, E };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1617,8 +1580,7 @@ export default x;
 const x = 'x'
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1658,8 +1620,7 @@ export class XmlElement2 extends Mixin(
     }) { }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1698,8 +1659,7 @@ export class XmlElement2 extends Mixin(
 fn export_assignment_suppresses_hoisted_func_export() {
     let source = "export function f() { }\nexport = f;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1729,8 +1689,7 @@ fn export_assignment_preserves_declared_namespace_runtime_value() {
 export = M1;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1758,8 +1717,7 @@ export = M1;
 fn export_assignment_keeps_void_zero_init_for_classes() {
     let source = "export class C {}\nexport = B;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1789,8 +1747,7 @@ fn import_meta_triggers_esmodule_marker() {
 console.log(url);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1814,8 +1771,7 @@ fn no_import_meta_no_esmodule_marker() {
 console.log(x);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1838,8 +1794,7 @@ fn system_reexport_setter_uses_bracket_access() {
 export { default as Foo } from "./b";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::System,
@@ -1864,8 +1819,7 @@ export { default as Foo } from "./b";
 fn interface_var_member_recovery_emits_var_statement() {
     let source = "interface Foo<T> {\n    var x: T<>;\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -1897,8 +1851,7 @@ export var x: b.I;
 x.foo();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::AMD,
@@ -1931,8 +1884,7 @@ class Test {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
@@ -1966,8 +1918,7 @@ class Test {
 fn script_import_equals_to_interface_preserves_alias_emit() {
     let source = "interface I { id: number; }\nimport i = I;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,

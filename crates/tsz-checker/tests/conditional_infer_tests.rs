@@ -487,6 +487,39 @@ function f22<N extends number, M extends N>(tn: TupleOf<number, N>, tm: TupleOf<
 }
 
 #[test]
+fn interface_tupleof_assignment_uses_constraint_directionality() {
+    let source = r#"
+interface TupleOf<T, N extends number> {
+    value: T;
+    size: N;
+}
+
+function f22<N extends number, M extends N>(tn: TupleOf<number, N>, tm: TupleOf<number, M>) {
+    tn = tm;
+    tm = tn;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "interface TupleOf should only reject the N -> M assignment direction, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .message_text
+            .contains("Type 'TupleOf<number, N>' is not assignable to type 'TupleOf<number, M>'"),
+        "expected only the N -> M assignment error for interface TupleOf, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn recursive_conditional_call_parameter_keeps_alias_display() {
     let source = r#"
 type Grow1<T extends unknown[], N extends number> =

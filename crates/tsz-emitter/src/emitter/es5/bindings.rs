@@ -1881,14 +1881,17 @@ impl<'a> Printer<'a> {
 #[cfg(test)]
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
-    use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     #[test]
     fn emit_using_declaration_es5() {
         let source = "using d = { [Symbol.dispose]() {} };\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.set_source_text(source);
@@ -1918,8 +1921,7 @@ mod tests {
         // var { x } = <any>new Foo; → var x = (new Foo).x;
         let source = "var { x } = <any>new Foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.set_source_text(source);
@@ -1941,8 +1943,7 @@ mod tests {
         // var { x } = <any>new Foo(); → var x = new Foo().x; (no extra parens needed)
         let source = "var { x } = <any>new Foo();\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.set_source_text(source);
@@ -1959,8 +1960,7 @@ mod tests {
     fn empty_binding_patterns_with_identifier_rhs_emit_temp() {
         let source = "let {} = undefined;\nlet {} = maybe;\nlet [] = xs;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.set_source_text(source);

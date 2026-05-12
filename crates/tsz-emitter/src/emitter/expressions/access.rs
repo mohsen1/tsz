@@ -1177,11 +1177,14 @@ impl<'a> Printer<'a> {
 mod tests {
     use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
     use crate::output::printer::{PrintOptions, Printer};
-    use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     fn emit_es6(source: &str) -> String {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -1190,8 +1193,7 @@ mod tests {
     }
 
     fn emit_js(source: &str) -> String {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = EmitterPrinter::with_options(&parser.arena, PrinterOptions::default());
         printer.set_source_text(source);
@@ -1271,8 +1273,7 @@ mod tests {
         // Multi-line function body to exercise the function-scoped hoisting path
         let source = "function h() {\n    let x = getObj()?.value;\n    return x;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
         printer.set_source_text(source);
@@ -1295,8 +1296,7 @@ mod tests {
     fn optional_method_call_simple_identifier_no_temp() {
         let source = "declare const o: any;\no?.b();\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let opts = PrintOptions {
             target: tsz_common::common::ScriptTarget::ES2019,
@@ -1324,8 +1324,7 @@ mod tests {
     fn optional_call_simple_receiver_uses_identifier_in_call() {
         let source = "declare const o: any;\no.b?.();\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let opts = PrintOptions {
             target: tsz_common::common::ScriptTarget::ES2019,
@@ -1353,8 +1352,7 @@ mod tests {
     fn optional_method_call_complex_expr_uses_temp() {
         let source = "declare function f(): any;\nf()?.b();\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let opts = PrintOptions {
             target: tsz_common::common::ScriptTarget::ES2019,
@@ -1384,8 +1382,7 @@ mod tests {
     fn optional_chain_in_ternary_condition_gets_parens() {
         let source = "declare const o: any;\no?.b ? 1 : 0;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let opts = PrintOptions {
             target: tsz_common::common::ScriptTarget::ES2019,
@@ -1409,8 +1406,7 @@ mod tests {
     fn optional_chain_in_binary_equals_gets_parens() {
         let source = "declare const o: any;\no?.x === 1;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let opts = PrintOptions {
             target: tsz_common::common::ScriptTarget::ES2019,
@@ -1434,8 +1430,7 @@ mod tests {
     fn optional_chain_in_postfix_increment_gets_parens() {
         let source = "declare const o: any;\no?.a++;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let opts = PrintOptions {
             target: tsz_common::common::ScriptTarget::ES2019,
@@ -1462,8 +1457,7 @@ mod tests {
     fn numeric_literal_property_access_plain_integer() {
         let source = "1 .foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1481,8 +1475,7 @@ mod tests {
     fn numeric_literal_property_access_float() {
         let source = "1.0 .foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1505,8 +1498,7 @@ mod tests {
     fn numeric_literal_property_access_exponent() {
         let source = "1e0 .foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1526,8 +1518,7 @@ mod tests {
     fn downleveled_numeric_literal_property_access_plain_integer() {
         let source = "08.8e5 .foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let opts = PrintOptions {
             target: tsz_common::common::ScriptTarget::ES2015,
@@ -1549,8 +1540,7 @@ mod tests {
     fn numeric_literal_property_access_hex() {
         let source = "0xff .foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1569,8 +1559,7 @@ mod tests {
     fn numeric_literal_property_access_through_type_assertion() {
         let source = "(<any>1).foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1588,8 +1577,7 @@ mod tests {
     fn numeric_literal_property_access_through_as_expression() {
         let source = "(1 as any).foo;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1611,8 +1599,7 @@ mod tests {
     fn const_enum_property_access_inlined() {
         let source = "const enum G { A = 1, B = 2, C = A + B }\nvar a = G.A;\nvar c = G.C;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1638,8 +1625,7 @@ mod tests {
     fn const_enum_element_access_inlined() {
         let source = "const enum G { A = 1, B = 2 }\nvar a = G[\"A\"];\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1657,8 +1643,7 @@ mod tests {
     fn const_enum_declaration_erased() {
         let source = "const enum Direction { Up = 1, Down = 2 }\nvar x = Direction.Up;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1679,8 +1664,7 @@ mod tests {
     fn const_enum_access_through_namespace_import_alias_inlined() {
         let source = "namespace Outer {\n    export var x = 1;\n}\n\nnamespace Outer {\n    export const enum A { X }\n}\n\nnamespace B {\n    import O = Outer;\n    var x = O.A.X;\n    var y = O.x;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1702,8 +1686,7 @@ mod tests {
         let source =
             "namespace N {\n    export const enum E { A }\n    var x = E.A;\n}\nvar y = N.E.A;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -1725,8 +1708,7 @@ mod tests {
     fn const_enum_string_values_inlined() {
         let source = "const enum S { Hello = \"hello\", World = \"world\" }\nvar x = S.Hello;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);

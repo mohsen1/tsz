@@ -15,6 +15,12 @@ use tsz_parser::parser::node::{CallExprData, NodeAccess};
 use tsz_parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{FunctionShape, TypeData, TypeId, TypePredicateTarget, visitor};
+#[cfg(test)]
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -4375,6 +4381,7 @@ const fn is_ident_char(b: u8) -> bool {
 #[cfg(test)]
 mod signature_help_internal_tests {
     use super::SignatureHelpProvider;
+    use super::parse_test_source;
     use tsz_binder::BinderState;
     use tsz_common::position::{LineMap, Position};
     use tsz_parser::ParserState;
@@ -4409,8 +4416,7 @@ mod signature_help_internal_tests {
     #[test]
     fn textual_nested_incomplete_call_prefers_inner_callee() {
         let source = "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar(";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4451,8 +4457,7 @@ mod signature_help_internal_tests {
     #[test]
     fn nested_call_with_outer_unclosed_context_still_has_inner_signature_help() {
         let source = "declare function foo<T>(x: T, y: T): T;\ndeclare function bar<U>(x: U, y: U): U;\nfoo(bar()";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4537,8 +4542,7 @@ mod signature_help_internal_tests {
     #[test]
     fn contextual_object_member_signature_preferred_over_outer_call() {
         let source = "interface I { m(n: number, s: string): void; }\ndeclare function takesObj(i: I): void;\ntakesObj({ m: () });";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4564,8 +4568,7 @@ mod signature_help_internal_tests {
     #[test]
     fn contextual_variable_initializer_type_alias_and_function_type() {
         let source = "type Cb = () => void;\nconst cb: Cb = ();\nconst cb2: () => void = ();";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4605,8 +4608,7 @@ mod signature_help_internal_tests {
         // is the initializer of a variable with a contextual function type.
         let source = "const cb2: () => void = ()";
         let cursor_offset = (source.rfind('(').expect("open paren") + 1) as u32;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4639,8 +4641,7 @@ mod signature_help_internal_tests {
         // parameter, which must not trigger signature help.
         let source = "function f<\nx";
         let cursor_offset = (source.find('<').expect("less than") + 1) as u32;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4672,8 +4673,7 @@ mod signature_help_internal_tests {
         let source = "interface Obj { optionalMethod?: (current: any) => any; }\nconst o: Obj = {\n  optionalMethod() { return {}; }\n};";
         let cursor_offset =
             (source.find("optionalMethod()").expect("call") + "optionalMethod(".len()) as u32;
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4704,8 +4704,7 @@ mod signature_help_internal_tests {
     #[test]
     fn overload_selection_prefers_matching_string_literal_signatures() {
         let source = "function x1(x: \"hi\");\nfunction x1(y: \"bye\");\nfunction x1(z: string);\nfunction x1(a: any) {}\nx1('');\nx1('hi');\nx1('bye');";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4751,8 +4750,7 @@ mod signature_help_internal_tests {
     #[test]
     fn generic_inference_uses_argument_literal_for_signature_display() {
         let source = "declare function f<T extends string>(a: T, b: T, c: T): void;\nf(\"x\", );";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4781,8 +4779,7 @@ mod signature_help_internal_tests {
     #[test]
     fn no_signature_help_while_editing_identifier_before_call_open_paren() {
         let source = "/**\n * @param start The start\n * @param end The end\n * More text\n */\ndeclare function foo(start: number, end?: number);\n\nfo";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4812,8 +4809,7 @@ mod signature_help_internal_tests {
     #[test]
     fn no_signature_help_after_closing_paren() {
         let source = "declare function foo(start: number, end?: number): void;\nfoo(10)";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4843,8 +4839,7 @@ mod signature_help_internal_tests {
     #[test]
     fn no_signature_help_for_private_constructor_new_call() {
         let source = "class A { private constructor() {} }\nnew A(";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -4874,8 +4869,7 @@ mod signature_help_internal_tests {
     #[test]
     fn no_signature_help_for_protected_constructor_new_call() {
         let source = "class A { protected constructor() {} }\nnew A(";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);

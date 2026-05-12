@@ -36,6 +36,27 @@ impl GlobalDeclaredModules {
         me
     }
 
+    /// Add a module name or wildcard pattern from binder state.
+    ///
+    /// Binder maps may carry quoted module specifiers; the global lookup index
+    /// stores the quote-stripped spelling and separates wildcard patterns from
+    /// exact names.
+    pub fn insert_module_name(&mut self, module_name: &str) {
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        if normalized.contains('*') {
+            self.patterns.push(normalized.to_string());
+        } else {
+            self.exact.insert(normalized.to_string());
+        }
+    }
+
+    /// Sort/deduplicate wildcard patterns and compile the matcher.
+    pub fn finish(&mut self) {
+        self.patterns.sort();
+        self.patterns.dedup();
+        self.finalize();
+    }
+
     /// Compile `patterns` into a `GlobSet` for O(patterns) -> O(1)-amortized
     /// match calls. Call once after `patterns` is populated and sorted.
     pub fn finalize(&mut self) {

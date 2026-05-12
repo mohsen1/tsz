@@ -58,7 +58,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{PropertyInfo, TypeId};
 
-// Re-export CheckerOptions and ScriptTarget from tsz-common
+// Re-export context-facing types used by downstream crates.
+pub use tsz_binder::LibContext;
 use tsz_binder::{BinderState, ModuleAugmentation};
 pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
@@ -1370,15 +1371,6 @@ pub struct CheckerContext<'a> {
     // object shapes distinctly.
 }
 
-/// Context for a lib file (arena + binder) for global type resolution.
-#[derive(Clone, Debug)]
-pub struct LibContext {
-    /// The AST arena for this lib file.
-    pub arena: Arc<NodeArena>,
-    /// The binder state with symbols from this lib file.
-    pub binder: Arc<BinderState>,
-}
-
 /// Project-wide shared environment for multi-file type checking.
 ///
 /// Captures all the state that is identical across every per-file `CheckerContext`
@@ -1842,12 +1834,7 @@ impl ProgramContext {
                     }
                 }
                 if let Some(ref mut dm) = declared_modules {
-                    let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(module_spec);
                 }
             }
             if let Some(ref mut dm) = declared_modules {
@@ -1856,12 +1843,7 @@ impl ProgramContext {
                     .iter()
                     .chain(binder.shorthand_ambient_modules.iter())
                 {
-                    let normalized = name.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(name);
                 }
             }
             // Phase 2 step 2: skip the per-binder module_augmentations loop
@@ -1915,9 +1897,7 @@ impl ProgramContext {
         }
 
         if let Some(mut dm) = declared_modules {
-            dm.patterns.sort();
-            dm.patterns.dedup();
-            dm.finalize();
+            dm.finish();
             self.skeleton_declared_modules = Some(Arc::new(dm));
         }
 

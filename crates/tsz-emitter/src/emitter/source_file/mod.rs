@@ -10,6 +10,11 @@ mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     #[test]
     fn emit_source_file_strips_top_level_blank_lines_for_js_files() {
@@ -37,8 +42,7 @@ mod tests {
     fn emit_source_file_does_not_preserve_top_level_blank_lines_for_ts_files() {
         let source = "export const t1 = {\n    p: 'value',\n    get getter() {\n        return 'value';\n    },\n};\n\nexport const t2 = {\n    v: 'value',\n    set setter(v) {},\n};\n\nexport const t3 = {\n    p: 'value',\n    get value() {\n        return 'value';\n    },\n    set value(v) {},\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -58,8 +62,7 @@ mod tests {
     fn erased_interface_member_recovery_does_not_leak_to_js() {
         let source = "interface I {\n  return (value: string): void;\n}\nconst value = 1;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -86,8 +89,7 @@ mod tests {
     fn ambient_module_recovery_ignores_comment_text() {
         let source = "declare module \"outer\" {\n  // module `fake` {\n  export interface Box { value: string; }\n}\nconst value = 1;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -115,8 +117,7 @@ mod tests {
         let source =
             "async function f() {\n    let y: any;\n    for await (const x of y) {\n    }\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES2015,
             ..Default::default()
@@ -147,8 +148,7 @@ mod tests {
         let source =
             "export async function* f() {\n    await 1;\n    yield 2;\n    yield* [3];\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::CommonJS,
@@ -183,8 +183,7 @@ mod tests {
     fn es5_static_class_expression_uses_comma_initializer_alias() {
         let source = "var v = class C {\n    static a = 1;\n    static c = { x: \"hi\" };\n    static d = C.c.x + \" world\";\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
@@ -221,8 +220,7 @@ mod tests {
     fn es5_nested_static_class_expression_reuses_outer_alias_in_async_method() {
         let source = "class A {\n    static B = class B {\n        static func2() { return new Promise((resolve) => { resolve(null); }); }\n        static C = class C {\n            static async func() { await B.func2(); }\n        }\n    }\n}\nA.B.C.func();\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
@@ -257,8 +255,7 @@ mod tests {
     fn es5_nested_static_class_expression_non_null_wrapper_still_hoists_alias() {
         let source = "class A {\n    static B = (class B {\n        static func2() { return new Promise((resolve) => { resolve(null); }); }\n        static C = (class C {\n            static async func() { await B.func2(); }\n        })!;\n    })!;\n}\nA.B.C.func();\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
@@ -289,8 +286,7 @@ mod tests {
     fn class_expression_static_comma_temp_follows_computed_name_temps() {
         let source = "async function* test(x) {\n    return class {\n        [await x] = await x;\n        static [await x] = await x;\n        [yield 1] = yield 2;\n        static [yield 3] = yield 4;\n    };\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES2019,
             ..Default::default()
@@ -321,8 +317,7 @@ mod tests {
     fn es5_static_class_expression_in_loop_uses_block_alias() {
         let source = "var arr = [];\nfor (let i = 0; i < 3; i++) {\n    arr.push(class C {\n        static x = i;\n        static y = () => C.x * 2;\n    });\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
@@ -358,8 +353,7 @@ mod tests {
         let source = "// Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.set_source_text(source);
         printer.print(root);
@@ -396,8 +390,7 @@ class RegularClass {\n    accessor shouldError;\n}\n";
 // Regular class should still error when targeting ES5\n\
 class RegularClass {\n    accessor shouldError: string;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES2015,
             ..Default::default()
@@ -440,8 +433,7 @@ class C {\n\
     w = 4;\n\
 }\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ESNext,
             use_define_for_class_fields: false,
@@ -471,8 +463,7 @@ class C {\n\
         let source = "declare var dec: any;\n\
 class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -502,8 +493,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         let source =
             "class C {\n    get x() { return 1; }\n    get x() { return 2; } // error\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.set_source_text(source);
         printer.print(root);
@@ -523,8 +513,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn commonjs_later_named_export_keeps_legacy_decorator_export_alias() {
         let source = "export {};\ndeclare var dec: any;\n@dec\nclass C {}\nexport { C as D };\nusing after = null;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -552,8 +541,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn legacy_decorated_es2015_class_self_reference_uses_hoisted_alias() {
         let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -585,8 +573,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn legacy_decorated_es5_class_self_reference_uses_iife_alias() {
         let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -618,8 +605,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn legacy_decorated_es5_class_with_static_accessor_and_block_declares_alias_once() {
         let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static get value() { return 1; }\n    static { Foo.value; }\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -648,8 +634,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn es5_object_literal_setter_downlevels_destructured_parameter() {
         let source = "const foo = {\n    set foo([start, end]: [any, any]) {\n        void start;\n        void end;\n    },\n};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -671,8 +656,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn decorator_metadata_conditional_type_uses_common_branch_runtime_type() {
         let source = "declare function d(): PropertyDecorator;\nabstract class BaseEntity<T> {\n    @d()\n    public attributes: T extends { attributes: infer A } ? A : undefined;\n}\nclass C {\n    @d()\n    x: number extends string ? false : true;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -701,8 +685,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn decorator_metadata_nolib_isolated_global_type_uses_typeof_guard() {
         let source = "declare var Decorate: PropertyDecorator;\nexport class B {\n    @Decorate\n    member: Map<string, number>;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -733,8 +716,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         let source =
             "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -766,8 +748,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn commonjs_deferred_class_export_alias_emits_after_declaration() {
         let source = "export { J as JJ };\nexport class J {}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -800,8 +781,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn legacy_decorated_declare_computed_property_emits_decorator_target() {
         let source = "declare function decorator(target: any, key: any): any;\nconst b = Symbol('b');\nclass Foo {\n    @decorator declare [b]: number;\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -824,8 +804,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn named_tc39_decorated_class_expression_skips_set_function_name() {
         let source = "declare var dec: any;\nexport const C = @dec class C {};\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             module: ModuleKind::CommonJS,
             target: ScriptTarget::ES2022,
@@ -854,8 +833,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn ambient_class_parenthesized_tail_emits_recovered_expression() {
         let source = "declare class foo();\nfunction foo() {}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -878,8 +856,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn invalid_var_class_keyword_emits_recovered_class_tail() {
         let source = "var export;\nvar foo;\nvar class;\nvar bar;\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -1013,8 +990,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         // When a file has both `export {};` and `export { C };`, the empty export
         // is redundant and should be suppressed. tsc omits it.
         let source = "export {};\nclass C {}\nexport { C };\n";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(
             &parser.arena,
             PrintOptions {
@@ -1131,8 +1107,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         // When a file's only module syntax is `export {};`, it should be preserved
         // to maintain ESM semantics.
         let source = "export {};\nconst x = 1;\n";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(
             &parser.arena,
             PrintOptions {
@@ -1155,8 +1130,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         let source =
             "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -1185,8 +1159,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn object_rest_assignment_marks_rest_helper() {
         let source = "let bar: {};\n({ ...bar } = {});\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES2015,
             always_strict: true,
@@ -1214,8 +1187,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn namespace_block_preserves_recovered_module_syntax() {
         let source = "namespace P {\n    {\n        namespace M { }\n        export = M;\n        function foo() { }\n        export { foo };\n        import I = M;\n        import I2 = require(\"foo\");\n        import * as Foo from \"ambient\";\n        import bar from \"ambient\";\n        import { baz } from \"ambient\";\n    }\n}\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
@@ -1261,8 +1233,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn amd_es5_reexported_enum_folds_export_into_iife() {
         let source = "enum E { A }\nexport { E };\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let options = PrinterOptions {
             module: ModuleKind::AMD,
@@ -1293,8 +1264,7 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     fn anonymous_declare_module_recovers_runtime_class_shell() {
         let source = "declare module {\n    export class XDate {\n        getDay(): number;\n        static now(): number;\n    }\n}\nvar d = new XDate();\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
             &parser.arena,
             PrinterOptions {
