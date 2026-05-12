@@ -122,12 +122,19 @@ impl<'a> CheckerState<'a> {
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
-                if (flags & symbol_flags::VALUE != 0)
-                    && !self.ctx.merged_value_types.contains_key(&sym_id)
-                    && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
-                {
-                    self.ctx.merged_value_types.insert(sym_id, val_type);
-                }
+                // Previously this branch eagerly invoked
+                // `compute_value_type_for_merged_alias` here. That eager call
+                // recursed into the value's initializer; for a merged
+                // `type X = ...; const X = { ... as X };` pair the
+                // initializer contains `as X`, which feeds a `Lazy(DefId for
+                // X)` back into the TS2352 overlap check while the alias body
+                // has not yet been registered to the DefId. The Lazy stayed
+                // unresolved and TS2352 fired as a false positive (#6014).
+                // The eager population is no longer needed for the AS
+                // dispatch to work, so we drop it here; the alias body is
+                // explicitly registered to the DefId below before this
+                // function returns so any future `as X` lookups resolve
+                // correctly.
 
                 let enclosing_tp_updates = if type_alias.type_parameters.is_none() {
                     self.push_enclosing_type_params_for_node(decl_arena, decl_idx)
@@ -344,6 +351,17 @@ impl<'a> CheckerState<'a> {
                 if let Some(shape) = type_environment::object_shape(self.ctx.types, alias_type) {
                     self.ctx.definition_store.set_instance_shape(def_id, shape);
                 }
+
+                // Register the alias body to its DefId so any `as X` in the
+                // file's later expressions resolves `Lazy(DefId)` to the alias
+                // body during overlap checks. The outer
+                // `get_type_of_symbol_inner` would also do this after we
+                // return, but pre-registering avoids subtle order-of-init
+                // gaps for nested lookups (#6014).
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(alias_type, def_id);
+                self.ctx.definition_store.set_body(def_id, alias_type);
 
                 // Return the params that were used during lowering - this ensures
                 // type_env gets the same TypeIds as the type body
