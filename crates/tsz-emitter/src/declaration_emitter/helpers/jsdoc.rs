@@ -837,7 +837,66 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(crate) fn jsdoc_type_text_for_node(&self, idx: NodeIndex) -> Option<String> {
         let jsdoc = self.function_like_jsdoc_for_node(idx)?;
-        Self::parse_jsdoc_type_text(&jsdoc)
+        let type_text = Self::parse_jsdoc_type_text(&jsdoc)?;
+        self.local_semicolon_class_member_typedef_type_text(idx, &type_text)
+            .or(Some(type_text))
+    }
+
+    fn local_semicolon_class_member_typedef_type_text(
+        &self,
+        idx: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if self.arena.get_property_decl(node).is_none()
+            || !Self::is_simple_jsdoc_type_name(type_text)
+        {
+            return None;
+        }
+
+        let text = self.source_file_text.as_deref()?;
+        let mut cursor = node.pos as usize;
+        while cursor < text.len() && matches!(text.as_bytes()[cursor], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            cursor += 1;
+        }
+
+        for comment in self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= cursor)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            let between = &text[comment.end as usize..cursor];
+            if !between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b';'))
+            {
+                break;
+            }
+
+            let jsdoc = get_jsdoc_content(comment, text);
+            if let Some((name, base_type)) = Self::parse_jsdoc_typedef_alias(&jsdoc)
+                && name == type_text
+            {
+                return Some(Self::normalize_jsdoc_type_text(&base_type, false));
+            }
+            cursor = comment.pos as usize;
+        }
+
+        None
+    }
+
+    fn is_simple_jsdoc_type_name(type_text: &str) -> bool {
+        let mut chars = type_text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     pub(crate) fn jsdoc_template_params_for_node(&self, idx: NodeIndex) -> Vec<String> {
