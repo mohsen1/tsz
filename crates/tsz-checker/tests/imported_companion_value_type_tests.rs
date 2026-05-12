@@ -111,7 +111,6 @@ const value: string = x.value
         "imported companion const should preserve the Readonly alias annotation when eager alias evaluation cannot reduce it, got: {diagnostics:?}"
     );
 }
-
 #[test]
 fn conflicted_reexport_keeps_local_namespace_surface() {
     let diagnostics = check(
