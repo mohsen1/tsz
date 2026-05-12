@@ -1450,7 +1450,10 @@ impl<'a> CheckerState<'a> {
                                         base_index_val,
                                     );
                                 if !base_index_is_generic
-                                    && !self.is_assignable_to(derived_index_val, base_index_val)
+                                    && !self.index_value_assignable_for_interface_extends(
+                                        derived_index_val,
+                                        base_index_val,
+                                    )
                                 {
                                     self.error_at_node(
                                             iface_data.name,
@@ -1901,28 +1904,28 @@ impl<'a> CheckerState<'a> {
 
                 if let (Some((derived_val, _)), Some(base_val)) =
                     (derived_string_index_type, base_string_index_value)
-                    && !self.is_assignable_to(derived_val, base_val)
+                    && !self.index_value_assignable_for_interface_extends(derived_val, base_val)
                 {
                     self.error_at_node(
-                            iface_data.name,
-                            &format!(
-                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
-                            ),
-                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                        );
+                        iface_data.name,
+                        &format!(
+                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                        ),
+                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                    );
                 }
 
                 if let (Some((derived_val, _)), Some(base_val)) =
                     (derived_number_index_type, base_number_index_value)
-                    && !self.is_assignable_to(derived_val, base_val)
+                    && !self.index_value_assignable_for_interface_extends(derived_val, base_val)
                 {
                     self.error_at_node(
-                            iface_data.name,
-                            &format!(
-                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
-                            ),
-                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                        );
+                        iface_data.name,
+                        &format!(
+                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                        ),
+                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                    );
                 }
             }
 
@@ -1943,56 +1946,6 @@ impl<'a> CheckerState<'a> {
 
         shape.params.iter().any(|param| {
             crate::query_boundaries::common::contains_this_type(self.ctx.types, param.type_id)
-        })
-    }
-
-    fn is_direct_this_type(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::is_this_type(self.ctx.types, type_id)
-    }
-
-    fn function_type_returns_current_interface_family(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        current_iface_def_id: Option<tsz_solver::def::DefId>,
-    ) -> bool {
-        let Some(current_iface_def_id) = current_iface_def_id else {
-            return false;
-        };
-        let Some(source_shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
-        else {
-            return false;
-        };
-        let Some(target_shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, target)
-        else {
-            return false;
-        };
-
-        let source_return = source_shape.return_type;
-        let target_return = target_shape.return_type;
-        if self.is_direct_this_type(target_return) {
-            return false;
-        }
-
-        // Only suppress when the target (base) return type is itself a named
-        // type from some interface/class family. Without this guard the
-        // suppression also hides genuine TS2430 errors where the base ancestor
-        // returns an unrelated primitive (e.g. `string`) but the derived method
-        // returns the current interface — see PR #2571 review.
-        if self.type_base_def_id(target_return).is_none() {
-            return false;
-        }
-
-        self.type_base_def_id(source_return) == Some(current_iface_def_id)
-    }
-
-    fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {
-        crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).or_else(|| {
-            let app_id = crate::query_boundaries::common::application_id(self.ctx.types, type_id)?;
-            let app = self.ctx.types.type_application(app_id);
-            crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
         })
     }
 }
