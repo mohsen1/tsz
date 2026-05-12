@@ -296,6 +296,25 @@ impl<'a> CheckerState<'a> {
         sym_id: tsz_binder::SymbolId,
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<tsz_binder::SymbolId> {
+        if crate::checkers_domain::stack_overflow_tripped() {
+            return None;
+        }
+        if crate::checkers_domain::should_probe_stack()
+            && stacker::remaining_stack().unwrap_or(usize::MAX) < 512 * 1024
+        {
+            crate::checkers_domain::trip_stack_overflow();
+            return None;
+        }
+        stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
+            self.resolve_alias_symbol_inner(sym_id, visited_aliases)
+        })
+    }
+
+    fn resolve_alias_symbol_inner(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        visited_aliases: &mut AliasCycleTracker,
+    ) -> Option<tsz_binder::SymbolId> {
         // Prevent stack overflow from long alias chains
         const MAX_ALIAS_RESOLUTION_DEPTH: usize = 128;
         if visited_aliases.len() >= MAX_ALIAS_RESOLUTION_DEPTH {

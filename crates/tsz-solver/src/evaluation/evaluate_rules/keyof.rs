@@ -96,11 +96,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.interner().literal_string_atom(prop.name)
     }
 
-    fn synthetic_property_name_atom_to_key_type(&self, name: Atom) -> TypeId {
-        if let Some(symbol_ref) = self.unique_symbol_ref_from_synthetic_atom(name) {
+    fn synthetic_property_key_to_key_type(
+        &self,
+        key: crate::type_queries::ExactLiteralPropertyKey,
+    ) -> TypeId {
+        if key.is_symbol_named
+            && let Some(symbol_ref) = self.unique_symbol_ref_from_synthetic_atom(key.name)
+        {
             return self.interner().unique_symbol(symbol_ref);
         }
-        self.interner().literal_string_atom(name)
+        self.interner().literal_string_atom(key.name)
     }
 
     fn push_remapped_key_type(&mut self, key_types: &mut Vec<TypeId>, remapped_key: TypeId) {
@@ -183,13 +188,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 PropertyCollectionResult::NonObject => {}
             }
-        } else if let Some(names) =
-            crate::type_queries::collect_finite_mapped_property_names(self.interner(), mapped_id)
+        } else if let Some(keys) =
+            crate::type_queries::collect_finite_mapped_property_keys(self.interner(), mapped_id)
         {
-            let mut sorted_names: Vec<_> = names.into_iter().collect();
-            sorted_names.sort_by_key(|atom| atom.0);
-            for name in sorted_names {
-                key_types.push(self.synthetic_property_name_atom_to_key_type(name));
+            let mut sorted_keys: Vec<_> = keys.into_iter().collect();
+            sorted_keys.sort_by_key(|key| (key.name.0, key.is_symbol_named));
+            for key in sorted_keys {
+                key_types.push(self.synthetic_property_key_to_key_type(key));
             }
         }
 
