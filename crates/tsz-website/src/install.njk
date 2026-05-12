@@ -23,7 +23,7 @@ permalink: /install.html
   .install-page h2 .platform-icon { display: inline-block; width: 1.1em; height: 1.1em; vertical-align: -.18em; margin-right: .4em; opacity: .9; }
   .install-page pre {
     position: relative;
-    background: #fff;
+    background: var(--bg-code, #f0f2f5);
     color: var(--text, #1f2328);
     padding: 1rem 3rem 1rem 1rem;
     border-radius: 6px;
@@ -37,7 +37,7 @@ permalink: /install.html
   .install-page pre code { background: transparent; padding: 0; color: inherit; }
   .install-page .copy-btn {
     position: absolute; top: .5rem; right: .5rem;
-    background: #fff;
+    background: var(--bg, #fff);
     color: var(--text-secondary, #59636e);
     border: 1px solid var(--border, #d1d9e0);
     border-radius: 4px;
@@ -46,16 +46,29 @@ permalink: /install.html
     cursor: pointer;
     font-family: inherit;
   }
-  .install-page .copy-btn:hover { background: rgba(255,255,255,.1); }
+  .install-page .copy-btn:hover { background: var(--bg-subtle, #f6f8fa); color: var(--text, #1f2328); }
   .install-page .copy-btn.copied { color: #56d364; border-color: #56d364; }
   .install-page details { margin-top: 1rem; }
   .install-page details summary { cursor: pointer; color: var(--muted, #8b949e); font-size: .9rem; }
   .install-page .verify { color: var(--text-secondary, #59636e); margin-top: 2.5rem; }
   .install-page .verify code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .install-page ul { line-height: 1.7; padding-left: 1.25rem; }
-  .install-page a { color: #58a6ff; }
+  .install-page a { color: var(--link, #0969da); }
   .install-page .targets-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .25rem .75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; list-style: none; padding: 0; }
   .install-page .targets-list li:before { content: "▸ "; color: var(--muted, #8b949e); }
+  @media (prefers-color-scheme: dark) {
+    .install-page pre {
+      background: var(--bg-code, #1c2128);
+      border-color: var(--border, #30363d);
+    }
+    .install-page .copy-btn {
+      background: var(--bg-code, #1c2128);
+      border-color: var(--border, #30363d);
+    }
+    .install-page .copy-btn:hover {
+      background: var(--bg-subtle, #161b22);
+    }
+  }
 </style>
 
 <div class="install-page">
