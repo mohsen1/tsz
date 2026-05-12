@@ -3,7 +3,7 @@
 - **Date**: 2026-05-12
 - **Branch**: `fix/recursive-conditional-fingerprint-followup-20260512`
 - **Base**: `main`
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/5762
 - **Status**: claim
 - **Issue**: #5579
 - **Workstream**: conformance
