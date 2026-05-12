@@ -25,6 +25,60 @@ pub(super) struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn is_generic_indexed_access_surface(&self, type_id: TypeId) -> bool {
+        self.generic_indexed_access_surface_inner(type_id)
+            || self
+                .ctx
+                .types
+                .get_display_alias(type_id)
+                .is_some_and(|alias| self.generic_indexed_access_surface_inner(alias))
+    }
+
+    fn generic_indexed_access_surface_inner(&self, type_id: TypeId) -> bool {
+        common::contains_generic_indexed_access_surface(self.ctx.types, type_id)
+    }
+
+    fn correlated_union_call_recovery_return(
+        &mut self,
+        callee_type: TypeId,
+        arg_index: usize,
+        actual: TypeId,
+    ) -> Option<TypeId> {
+        if !self.is_generic_indexed_access_surface(actual) {
+            return None;
+        }
+
+        let signatures =
+            common::get_call_signatures(self.ctx.types, callee_type).or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(callee_type)
+                    .and_then(|alias| common::get_call_signatures(self.ctx.types, alias))
+            })?;
+        if signatures.len() < 2 {
+            return None;
+        }
+
+        let param_types: Vec<TypeId> = signatures
+            .iter()
+            .filter_map(|signature| signature.params.get(arg_index).map(|param| param.type_id))
+            .collect();
+        if param_types.len() < 2 {
+            return None;
+        }
+
+        let param_union = self.ctx.types.factory().union(param_types);
+        if !self.is_assignable_to(actual, param_union) {
+            return None;
+        }
+
+        let return_types = signatures
+            .iter()
+            .map(|signature| signature.return_type)
+            .collect();
+        Some(self.ctx.types.factory().union(return_types))
+    }
+
     fn normalized_builtin_object_entries_return_type(
         &self,
         callee_expr: NodeIndex,
@@ -962,6 +1016,16 @@ impl<'a> CheckerState<'a> {
                 let arg_idx = self
                     .map_expanded_arg_index_to_original(args, index)
                     .map(|arg_idx| self.ctx.arena.skip_parenthesized(arg_idx));
+                if expected == TypeId::NEVER
+                    && let Some(return_type) =
+                        self.correlated_union_call_recovery_return(callee_type, index, actual)
+                {
+                    return if fallback_return != TypeId::ERROR {
+                        fallback_return
+                    } else {
+                        return_type
+                    };
+                }
                 let mismatch_is_spread_arg = arg_idx.is_some_and(|arg_idx| {
                     self.ctx
                         .arena

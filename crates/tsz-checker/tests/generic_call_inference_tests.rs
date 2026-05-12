@@ -3398,3 +3398,23 @@ const f = pipe(fooSelf);
         "pipe(<T extends {{ value: T }}>(x: T) => T) must not raise TS2345 once HOFI is implemented. Got: {diags:#?}"
     );
 }
+
+#[test]
+fn type_literal_generic_method_retains_method_type_params_for_call_inference() {
+    let source = r#"
+type Matcher<T> = {
+    with<P, R>(pattern: P, handler: (value: T) => R): Matcher<T>;
+};
+
+declare function match<T>(value: T): Matcher<T>;
+declare function oneOf<T>(left: T, right: T): T;
+declare const item: { kind: "issue"; priority: "low" | "medium" | "high" };
+
+match(item).with({ kind: "issue", priority: oneOf("medium", "high") }, () => true);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "generic methods declared in type literals must retain method type params for call inference. Got: {diags:#?}"
+    );
+}
