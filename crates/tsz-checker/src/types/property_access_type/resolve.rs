@@ -1602,16 +1602,6 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ANY;
             }
 
-            if let Some(result) = self.resolve_mixin_static_member_property_access(
-                idx,
-                access.expression,
-                object_type_for_access,
-                property_name,
-                skip_flow_narrowing,
-            ) {
-                return result;
-            }
-
             // Use the environment-aware resolver so that array methods, boxed
             // primitive types, and other lib-registered types are available.
             let mut result =
@@ -2064,6 +2054,15 @@ impl<'a> CheckerState<'a> {
                             skip_flow_narrowing,
                             false,
                         );
+                    }
+                    if let Some(result) = self.resolve_mixin_static_member_property_access(
+                        idx,
+                        access.expression,
+                        object_type_for_access,
+                        property_name,
+                        skip_flow_narrowing,
+                    ) {
+                        return result;
                     }
                     if let Some((class_idx, is_static_access)) = resolved_class_access
                         && !is_static_access
