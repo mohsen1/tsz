@@ -81,6 +81,14 @@ Close remaining high-signal parser review-audit threads by:
     (`callable_shape_for_type_extended`/`function_shape_for_type`) so construct
     signature presence and genericity are computed without allocating/cloning a
     fresh `Vec<CallSignature>`.
+- review comments left on #5001:
+  - added a freshness guard in
+    `store_intermediate_application_display_alias(...)` so forward display
+    aliases are recorded only when the instantiated application appears newer
+    than the outer application being evaluated.
+  - added solver regression tests proving pre-existing application occurrences
+    are not repainted while still preserving aliasing for newly introduced
+    intermediates.
 
 ## Files Touched
 
@@ -104,6 +112,8 @@ Close remaining high-signal parser review-audit threads by:
 - `scripts/arch/check-checker-boundaries.sh`
 - `scripts/arch/arch_guard.py`
 - `crates/tsz-checker/src/types/computation/call_finalize.rs`
+- `crates/tsz-solver/src/evaluation/evaluate.rs`
+- `crates/tsz-solver/tests/evaluate_tests.rs`
 
 ## Verification
 
@@ -111,4 +121,6 @@ Close remaining high-signal parser review-audit threads by:
 - `cargo test -p tsz-parser`
 - `cargo test -p tsz-checker --test generic_call_inference_tests -- --nocapture`
 - `cargo test -p tsz-checker --test ts2344_class_constructor_constraint -- --nocapture`
+- `cargo test -p tsz-solver --lib intermediate_application_alias_ -- --nocapture`
+- `cargo test -p tsz-solver --lib application_display_alias_can_name_intermediate_application -- --nocapture`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=124`)
