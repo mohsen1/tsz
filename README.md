@@ -41,16 +41,10 @@ curl -fsSL https://tsz.dev/install | sh
 irm https://tsz.dev/install.ps1 | iex
 ```
 
-### TypeScript compatiblity 
-
-`tsz` will be released after TypeScript 6 stable is released. `tsz` will only be compatible with TypeScript 6, not any older versions.
-
+## TypeScript compatiblity 
 <!-- TS_VERSION_START -->
 Currently targeting `TypeScript`@`6.0.3`
 <!-- TS_VERSION_END -->
-
-## Progress
-
 ### Type Checker
 
 To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript conformance
