@@ -1,5 +1,6 @@
 use rustc_hash::FxHashSet;
 use tracing::debug;
+use tsz_common::comments::is_jsdoc_comment;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -853,6 +854,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_jsdoc_comment_chain(&filtered);
         } else if jsdoc_chain.len() == 1
             && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
+            && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
         {
             self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
         } else {
@@ -878,6 +880,23 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_module_indicator = true;
         self.comment_emit_idx = saved_comment_idx;
         self.current_statement_jsdoc_chain.clear();
+    }
+
+    fn hoisted_jsdoc_source_comment_is_multiline(&self, pos: u32) -> bool {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return true;
+        };
+        let Some(comment) = self.all_comments.iter().rev().find(|comment| {
+            comment.end <= pos
+                && is_jsdoc_comment(comment, text)
+                && text
+                    .get(comment.end as usize..pos as usize)
+                    .is_some_and(|between| between.trim().is_empty())
+        }) else {
+            return true;
+        };
+        text.get(comment.pos as usize..comment.end as usize)
+            .is_none_or(|raw| raw.contains('\n'))
     }
 
     pub(in crate::declaration_emitter) fn emit_function_declaration(

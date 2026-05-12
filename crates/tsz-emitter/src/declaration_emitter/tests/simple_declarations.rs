@@ -1929,6 +1929,118 @@ module.exports = { x, b };
 }
 
 #[test]
+fn test_jsdoc_enum_object_literal_emits_type_and_namespace() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @enum {string} */
+export const Target = {
+    START: "start",
+    /** @type {number} */
+    OK_I_GUESS: 2
+};
+
+/** @enum {function(number): number} */
+export const Fs = {
+    ADD1: n => n + 1,
+    SUB1: n => n - 1
+};
+
+/** @enum {?} */
+export const Unknowns = { ANY: 1 };
+
+/** @enum {Array} */
+export const Lists = { EMPTY: [] };
+
+/** @enum {Promise} */
+export const Tasks = { DONE: Promise.resolve() };
+
+/** @enum {function(Array): Promise} */
+export const AsyncFns = { RUN: values => Promise.resolve(values) };
+"#,
+    );
+
+    assert!(
+        output.contains("export type Target = string;\nexport namespace Target {"),
+        "Expected JSDoc enum value to emit type plus namespace: {output}"
+    );
+    assert!(
+        output.contains("let START: string;"),
+        "Expected enum members to use the enum base type: {output}"
+    );
+    assert!(
+        output.contains("let OK_I_GUESS: number;"),
+        "Expected member @type to override the enum base type: {output}"
+    );
+    assert!(
+        output.contains("export type Fs = (arg0: number) => number;"),
+        "Expected function enum base type to normalize to arrow function syntax: {output}"
+    );
+    assert!(
+        output.contains("function ADD1(n: any): any;")
+            && output.contains("function SUB1(n: any): any;"),
+        "Expected function enum members to emit as namespace functions: {output}"
+    );
+    assert!(
+        output.contains("export type Unknowns = any;"),
+        "Expected standalone Closure unknown enum type to normalize to any: {output}"
+    );
+    assert!(
+        output.contains("export type Lists = any[];"),
+        "Expected bare Array enum type to normalize to any[]: {output}"
+    );
+    assert!(
+        output.contains("export type Tasks = Promise<any>;"),
+        "Expected bare Promise enum type to normalize to Promise<any>: {output}"
+    );
+    assert!(
+        output.contains("export type AsyncFns = (arg0: any[]) => Promise<any>;"),
+        "Expected enum function type to use JSDoc function normalization: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_missing_generic_arguments_default_to_any() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {Array=} values
+ */
+function takesArray(values) {}
+
+/** @param {Promise} promise */
+function takesPromise(promise) {}
+
+/** @param {function(Array)} callback */
+function takesCallback(callback) {}
+
+/**
+ * @return {?Promise}
+ */
+function maybePromise() {
+    return null;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function takesArray(values?: any[] | undefined): void;"),
+        "Expected optional bare Array to become any[] | undefined: {output}"
+    );
+    assert!(
+        output.contains("declare function takesPromise(promise: Promise<any>): void;"),
+        "Expected bare Promise to become Promise<any>: {output}"
+    );
+    assert!(
+        output.contains("declare function takesCallback(callback: (arg0: any[]) => any): void;"),
+        "Expected function(Array) to use any[] and default any return: {output}"
+    );
+    assert!(
+        output.contains("declare function maybePromise(): Promise<any> | null;"),
+        "Expected nullable bare Promise return to become Promise<any> | null: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_default_function_export_is_renamed_to_default_alias() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

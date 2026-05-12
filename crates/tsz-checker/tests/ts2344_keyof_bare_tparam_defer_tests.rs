@@ -151,6 +151,25 @@ copyValue;
     );
 }
 
+#[test]
+fn test_type_literal_keyof_with_index_signature_uses_solver_key_space() {
+    let diagnostics = compile_and_get_diagnostic_codes(
+        r#"
+type Source = {
+  [key: string]: number;
+  0: number;
+};
+
+type Read<K extends keyof Source> = Source[K];
+type Hit = Read<string>;
+"#,
+    );
+    assert!(
+        !diagnostics.contains(&2536),
+        "index-signature key space should satisfy indexed access, got: {diagnostics:?}"
+    );
+}
+
 /// Sanity check: a CONCRETE T (a tuple/array literal type) where keyof
 /// resolves to a known set NOT satisfying the constraint should still
 /// emit TS2344. The deferral is gated on T being free, not on the
