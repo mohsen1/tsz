@@ -1884,6 +1884,48 @@ export const Fs = {
 }
 
 #[test]
+fn test_jsdoc_missing_generic_arguments_default_to_any() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {Array=} values
+ */
+function takesArray(values) {}
+
+/** @param {Promise} promise */
+function takesPromise(promise) {}
+
+/** @param {function(Array)} callback */
+function takesCallback(callback) {}
+
+/**
+ * @return {?Promise}
+ */
+function maybePromise() {
+    return null;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function takesArray(values?: any[] | undefined): void;"),
+        "Expected optional bare Array to become any[] | undefined: {output}"
+    );
+    assert!(
+        output.contains("declare function takesPromise(promise: Promise<any>): void;"),
+        "Expected bare Promise to become Promise<any>: {output}"
+    );
+    assert!(
+        output.contains("declare function takesCallback(callback: (arg0: any[]) => any): void;"),
+        "Expected function(Array) to use any[] and default any return: {output}"
+    );
+    assert!(
+        output.contains("declare function maybePromise(): Promise<any> | null;"),
+        "Expected nullable bare Promise return to become Promise<any> | null: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_default_function_export_is_renamed_to_default_alias() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
