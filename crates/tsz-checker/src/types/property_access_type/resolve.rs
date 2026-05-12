@@ -999,6 +999,17 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        if matches!(object_type, TypeId::ANY | TypeId::ERROR)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && self.report_declared_intersection_access_if_reduced(
+                access.expression,
+                &ident.escaped_text,
+                access.name_or_argument,
+            )
+        {
+            return TypeId::ERROR;
+        }
+
         // Don't report errors for any/error types - check BEFORE accessibility
         // to prevent cascading errors when the object type is already invalid
         if object_type == TypeId::ANY {
@@ -1027,17 +1038,23 @@ impl<'a> CheckerState<'a> {
                 // The earlier blanket suppression hid the diagnostic for type-
                 // predicate / typeof narrowing chains that exhaust a union to
                 // never (e.g. `instanceofWithStructurallyIdenticalTypes`).
-                let suppress_declared_intersection_access = self
-                    .declared_intersection_receiver_has_property(access.expression, property_name);
-                if !property_name.starts_with('#') && !suppress_declared_intersection_access {
+                let declared_intersection_receiver = self
+                    .declared_intersection_receiver_property_type(access.expression, property_name);
+                if let Some(receiver) = declared_intersection_receiver {
+                    object_type = receiver;
+                } else if !property_name.starts_with('#') {
                     self.error_property_not_exist_at(
                         property_name,
                         TypeId::NEVER,
                         access.name_or_argument,
                     );
+                    return TypeId::ERROR;
+                } else {
+                    return TypeId::ERROR;
                 }
+            } else {
+                return TypeId::ERROR;
             }
-            return TypeId::ERROR;
         }
 
         // Enforce private/protected access modifiers when possible.
@@ -1604,6 +1621,19 @@ impl<'a> CheckerState<'a> {
                 )
             {
                 return TypeId::ANY;
+            }
+
+            if let Some((class_idx, true)) =
+                self.resolve_class_for_access(access.expression, object_type_for_access)
+                && let Some(member_type) =
+                    self.find_mixin_static_member_type(class_idx, property_name)
+            {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
             }
 
             // Use the environment-aware resolver so that array methods, boxed

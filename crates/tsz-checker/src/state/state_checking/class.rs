@@ -1748,9 +1748,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Check if the base type is a valid base type
-            if !crate::query_boundaries::class::is_valid_base_type(self.ctx.types, base_type) {
-                let type_name = self.format_type(base_type);
+            // Check if the base type is a valid base type. Mixin intersections
+            // with incompatible private property origins are invalid bases even
+            // when the structural intersection has not been fully reduced to
+            // `never` yet.
+            let private_property_conflict =
+                self.intersection_has_private_property_conflict(base_type);
+            if !crate::query_boundaries::class::is_valid_base_type(self.ctx.types, base_type)
+                || private_property_conflict
+            {
+                let type_name = if private_property_conflict {
+                    self.format_type(TypeId::NEVER)
+                } else {
+                    self.format_type(base_type)
+                };
                 let message = format_message(
                     diagnostic_messages::BASE_CONSTRUCTOR_RETURN_TYPE_IS_NOT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYP,
                     &[&type_name],

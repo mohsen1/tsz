@@ -320,14 +320,12 @@ impl<'a> CheckerState<'a> {
                 .has_modifier_ref(modifiers, SyntaxKind::ProtectedKeyword)
     }
 
-    pub(crate) fn declared_intersection_receiver_has_property(
+    pub(crate) fn declared_intersection_receiver_property_type(
         &mut self,
         expression: NodeIndex,
         property_name: &str,
-    ) -> bool {
-        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expression) else {
-            return false;
-        };
+    ) -> Option<TypeId> {
+        let sym_id = self.resolve_identifier_symbol_without_tracking(expression)?;
 
         let declared_type = self.get_type_of_symbol(sym_id);
         if declared_type == TypeId::ANY
@@ -335,7 +333,7 @@ impl<'a> CheckerState<'a> {
             || declared_type == TypeId::UNKNOWN
             || declared_type == TypeId::NEVER
         {
-            return false;
+            return None;
         }
 
         let declared_from_intersection_annotation =
@@ -360,16 +358,135 @@ impl<'a> CheckerState<'a> {
             });
 
         if !declared_from_intersection_annotation {
+            return None;
+        }
+
+        let evaluated_declared = self.evaluate_application_type(declared_type);
+        if self.intersection_has_private_property_conflict(evaluated_declared) {
+            return None;
+        }
+        let receiver = self.resolve_type_for_property_access(evaluated_declared);
+        if receiver == TypeId::NEVER {
+            return None;
+        }
+        matches!(
+            self.resolve_property_access_with_env(receiver, property_name),
+            PropertyAccessResult::Success { .. }
+        )
+        .then_some(receiver)
+    }
+
+    pub(crate) fn report_declared_intersection_access_if_reduced(
+        &mut self,
+        expression: NodeIndex,
+        property_name: &str,
+        error_node: NodeIndex,
+    ) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expression) else {
+            return false;
+        };
+        let declared_type = self.get_type_of_symbol(sym_id);
+        if matches!(
+            declared_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return false;
+        }
+
+        let declared_from_intersection_annotation =
+            self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.declarations.iter().any(|&decl_idx| {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        return false;
+                    };
+                    let type_annotation =
+                        if let Some(param) = self.ctx.arena.get_parameter(decl_node) {
+                            param.type_annotation
+                        } else if let Some(var_decl) =
+                            self.ctx.arena.get_variable_declaration(decl_node)
+                        {
+                            var_decl.type_annotation
+                        } else {
+                            NodeIndex::NONE
+                        };
+
+                    self.type_annotation_is_intersection(type_annotation)
+                })
+            });
+        if !declared_from_intersection_annotation {
             return false;
         }
 
         let evaluated_declared = self.evaluate_application_type(declared_type);
-        let receiver = self.resolve_type_for_property_access(evaluated_declared);
-        receiver != TypeId::NEVER
-            && matches!(
-                self.resolve_property_access_with_env(receiver, property_name),
-                PropertyAccessResult::Success { .. }
+        if self.intersection_has_private_property_conflict(evaluated_declared) {
+            self.error_property_not_exist_at(property_name, TypeId::NEVER, error_node);
+            return true;
+        }
+
+        let source_type = self
+            .ctx
+            .types
+            .get_display_alias(evaluated_declared)
+            .unwrap_or(evaluated_declared);
+        let Some(members) = crate::query_boundaries::property_access::intersection_members(
+            self.ctx.types,
+            source_type,
+        ) else {
+            return false;
+        };
+
+        let mut restricted = None;
+        for member in members {
+            let member = self.evaluate_application_type(member);
+            let member = self.resolve_type_for_property_access(member);
+            let Some(class_idx) = self.get_class_decl_from_type(member) else {
+                continue;
+            };
+            if crate::query_boundaries::property_access::receiver_property_visibility(
+                self.ctx.types,
+                member,
+                property_name,
             )
+            .is_some_and(|visibility| visibility == tsz_solver::Visibility::Public)
+            {
+                return false;
+            }
+            if let Some(access_info) = self.find_member_access_info(class_idx, property_name, false)
+            {
+                restricted.get_or_insert(access_info);
+            }
+        }
+
+        let Some(access_info) = restricted else {
+            return false;
+        };
+
+        use crate::diagnostics::diagnostic_codes;
+        match access_info.level {
+            crate::state::MemberAccessLevel::Private => {
+                let message = format!(
+                    "Property '{}' is private and only accessible within class '{}'.",
+                    property_name, access_info.declaring_class_name
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS,
+                );
+            }
+            crate::state::MemberAccessLevel::Protected => {
+                let message = format!(
+                    "Property '{property_name}' is protected and only accessible within class '{}' and its subclasses.",
+                    access_info.declaring_class_name
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES,
+                );
+            }
+        }
+        true
     }
 
     fn type_annotation_is_intersection(&self, mut type_annotation: NodeIndex) -> bool {
