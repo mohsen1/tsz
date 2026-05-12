@@ -1,0 +1,122 @@
+//! Class-member decorator signature validation helpers.
+
+use crate::state::CheckerState;
+use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
+
+impl<'a> CheckerState<'a> {
+    /// TS1240 for ES field decorators: the runtime invokes field decorators as
+    /// `decorator(undefined, context)`. Resolve the decorator expression against
+    /// that value argument so signatures that require the field value itself are
+    /// rejected like tsc.
+    pub(crate) fn check_es_property_decorator_call_signature(
+        &mut self,
+        decorator_node: NodeIndex,
+        decorator_type: TypeId,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::query_boundaries::common::{CallResult, call_signatures_for_type};
+
+        if decorator_type == TypeId::ERROR
+            || decorator_type == TypeId::ANY
+            || decorator_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
+        self.ensure_relation_input_ready(decorator_type);
+        let resolved = self.evaluate_type_for_assignability(decorator_type);
+        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
+            return;
+        }
+
+        let has_call_signatures =
+            crate::query_boundaries::class_type::function_shape(self.ctx.types, resolved).is_some()
+                || call_signatures_for_type(self.ctx.types, resolved)
+                    .is_some_and(|sigs| !sigs.is_empty());
+
+        if !has_call_signatures {
+            self.error_at_node(
+                decorator_node,
+                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            );
+            return;
+        }
+
+        let (result, _, _) = self.resolve_call_with_checker_adapter(
+            resolved,
+            &[TypeId::UNDEFINED, TypeId::ANY],
+            false,
+            None,
+            None,
+        );
+
+        if !matches!(result, CallResult::Success(_)) {
+            self.error_at_node(
+                decorator_node,
+                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            );
+        }
+    }
+
+    /// TS1329: Check if a method/accessor decorator accepts too few arguments.
+    ///
+    /// For experimental decorators, method/accessor decorators are called as
+    /// `decorator(target, propertyKey, descriptor)` - 3 arguments.
+    /// If the decorator expression has call signatures but none can accept 3 args,
+    /// emit TS1329 suggesting to call it first: `@dec()` instead of `@dec`.
+    pub(crate) fn check_method_decorator_arity(
+        &mut self,
+        decorator_expr: NodeIndex,
+        decorator_type: TypeId,
+        decorator_node: NodeIndex,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if decorator_type == TypeId::ERROR
+            || decorator_type == TypeId::ANY
+            || decorator_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
+        let has_too_few_args = if let Some(shape) =
+            crate::query_boundaries::class_type::function_shape(self.ctx.types, decorator_type)
+        {
+            shape.params.is_empty()
+        } else if let Some(callable) = crate::query_boundaries::class_type::callable_shape_for_type(
+            self.ctx.types,
+            decorator_type,
+        ) {
+            !callable.call_signatures.is_empty()
+                && callable
+                    .call_signatures
+                    .iter()
+                    .all(|sig| sig.params.is_empty())
+        } else {
+            false
+        };
+
+        if has_too_few_args {
+            let name = self.get_decorator_expression_name(decorator_expr);
+            let msg = diagnostic_messages::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT
+                .replace("{0}", &name);
+            self.error_at_node(
+                decorator_node,
+                &msg,
+                diagnostic_codes::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT,
+            );
+        }
+    }
+
+    fn get_decorator_expression_name(&self, expr: NodeIndex) -> String {
+        if let Some(node) = self.ctx.arena.get(expr)
+            && let Some(ident) = self.ctx.arena.get_identifier(node)
+        {
+            return ident.escaped_text.to_string();
+        }
+        "decorator".to_string()
+    }
+}
