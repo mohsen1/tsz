@@ -5258,7 +5258,7 @@ export class Aleph {
 
     assert!(
         output.contains(
-            "/**\n     * Field is always null\n     */\n    field: null;\n    /**\n     * Explicitly typed count.\n     * @type {number}\n     */\n    count: number;\n    /**\n     * Doesn't actually do anything"
+            "/**\n     * Field is always null\n     */\n    field: any;\n    /**\n     * Explicitly typed count.\n     * @type {number}\n     */\n    count: number;\n    /**\n     * Doesn't actually do anything"
         ),
         "Expected documented constructor assignment field before method declaration: {output}"
     );
