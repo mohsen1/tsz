@@ -124,3 +124,11 @@ Verification:
   - `cargo test -p tsz-checker --lib ts2322_tests::exact_optional_tuple_source_display_uses_boolean_literal_policy -- --nocapture` -> passed.
   - `cargo test -p tsz-checker --lib ts2322_tests::variadic_tuple_source_display_maps_middle_positions_to_rest_before_suffix -- --nocapture` -> passed.
   - `cargo test -p tsz-checker --lib ts2322_tests::test_ts2322_same_enum_member_union_source_display_collapses_to_enum -- --nocapture` -> passed.
+
+## 2026-05-12 main sync validation
+
+Merged `origin/main` at `d0be93092d` into `fix-conformance-aggregate-regressions-20260512`.
+
+Verification:
+
+- `./scripts/conformance/conformance.sh run` -> `12582/12582 passed (100.0%)`; skipped 3; known failures 0; crashed 0; timeout 0; fingerprint-only 0; net `12580 -> 12582 (+2)`.
