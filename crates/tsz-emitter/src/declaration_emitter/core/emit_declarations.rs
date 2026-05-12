@@ -1189,6 +1189,12 @@ impl<'a> DeclarationEmitter<'a> {
                                 func,
                                 &printed_type_text,
                             );
+                        let printed_type_text = self
+                            .expand_rest_tuple_parameters_in_function_type_text(
+                                func_body,
+                                &printed_type_text,
+                            )
+                            .unwrap_or(printed_type_text);
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
@@ -1209,6 +1215,12 @@ impl<'a> DeclarationEmitter<'a> {
                                 func,
                                 &printed_type_text,
                             );
+                        let printed_type_text = self
+                            .expand_rest_tuple_parameters_in_function_type_text(
+                                func_body,
+                                &printed_type_text,
+                            )
+                            .unwrap_or(printed_type_text);
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
