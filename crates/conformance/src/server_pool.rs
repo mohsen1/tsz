@@ -40,8 +40,6 @@ pub enum ServerOutcome {
 /// Response from the server's legacy protocol.
 #[derive(Deserialize)]
 struct ServerResponse {
-    #[allow(dead_code)]
-    id: u64,
     codes: Option<Vec<i32>>,
     error: Option<String>,
 }
@@ -306,5 +304,22 @@ async fn read_response_line(
             std::io::ErrorKind::InvalidData,
             format!("invalid server response JSON: {e}"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_response_ignores_legacy_id_field() {
+        let resp: ServerResponse =
+            serde_json::from_str(r#"{"id":7,"codes":[2322,2322,-1],"error":null}"#)
+                .expect("legacy server response should deserialize");
+
+        match parse_response(resp) {
+            ServerOutcome::Done(codes) => assert_eq!(codes, vec![2322]),
+            _ => panic!("expected normal server response"),
+        }
     }
 }
