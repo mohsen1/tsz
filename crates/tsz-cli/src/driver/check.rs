@@ -108,6 +108,8 @@ fn file_session_reuse_requested() -> bool {
     std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some()
 }
 
+const FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE: usize = 8;
+
 fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
     importing_file
         .components()
@@ -1487,6 +1489,29 @@ pub(super) fn collect_diagnostics(
                     program_has_unsupported_js_root,
                     extract_type_cache,
                     build_checker_binder,
+                )
+            } else if !use_sequential_checking
+                && !extract_type_cache
+                && file_session_reuse_requested()
+            {
+                tsz::parallel::ensure_rayon_global_pool();
+                check_files_in_parallel_chunks_with_reuse(
+                    &work_items,
+                    program,
+                    &compiler_options,
+                    &program_context,
+                    &resolved_modules_per_file,
+                    Arc::clone(&shared_lib_cache),
+                    shared_query_cache.as_ref(),
+                    no_check,
+                    check_js,
+                    explicit_check_js_false,
+                    skip_lib_check,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    extract_type_cache,
+                    FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE,
+                    &build_checker_binder,
                 )
             } else if use_sequential_checking {
                 work_items
@@ -2868,6 +2893,61 @@ where
     results
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn check_files_in_parallel_chunks_with_reuse<F>(
+    work_items: &[usize],
+    program: &MergedProgram,
+    compiler_options: &tsz_common::CheckerOptions,
+    program_context: &tsz::checker::context::ProgramContext,
+    resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
+    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    shared_query_cache: Option<&tsz_solver::SharedQueryCache>,
+    no_check: bool,
+    check_js: bool,
+    explicit_check_js_false: bool,
+    skip_lib_check: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+    extract_type_cache: bool,
+    chunk_size: usize,
+    build_checker_binder: &F,
+) -> Vec<CheckFileResult>
+where
+    F: Fn(usize) -> tsz_binder::BinderState + Sync,
+{
+    use rayon::iter::ParallelIterator;
+    use rayon::slice::ParallelSlice;
+
+    debug_assert!(!extract_type_cache);
+    let chunk_size = chunk_size.max(1);
+    work_items
+        .par_chunks(chunk_size)
+        .map(|chunk| {
+            check_files_sequentially_with_reuse(
+                chunk,
+                program,
+                compiler_options,
+                program_context,
+                resolved_modules_per_file,
+                Arc::clone(&shared_lib_cache),
+                shared_query_cache,
+                no_check,
+                check_js,
+                explicit_check_js_false,
+                skip_lib_check,
+                program_has_real_syntax_errors,
+                program_has_unsupported_js_root,
+                extract_type_cache,
+                build_checker_binder,
+            )
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 struct CheckerLibFileCheckEnv<'a> {
     program: &'a MergedProgram,
     options: &'a ResolvedCompilerOptions,
@@ -4166,6 +4246,35 @@ mod tests {
         assert!(
             !default_diagnostics.is_empty(),
             "fixture should exercise real checker diagnostics"
+        );
+    }
+
+    #[test]
+    fn file_session_reuse_preserves_parallel_multifile_diagnostics() {
+        let owned_files = (0..40)
+            .map(|idx| {
+                (
+                    format!("pkg{idx}/file{idx}.ts"),
+                    format!("export {{}};\nconst value{idx}: number = \"nope\";\n"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let files = owned_files
+            .iter()
+            .map(|(file_name, source)| (file_name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+
+        let default_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, false);
+        let reused_diagnostics = collect_test_diagnostics_with_file_session_reuse(&files, true);
+
+        assert_eq!(
+            reused_diagnostics, default_diagnostics,
+            "parallel file-session reuse must preserve byte-identical diagnostics"
+        );
+        assert_eq!(
+            default_diagnostics.len(),
+            owned_files.len(),
+            "fixture should produce one checker diagnostic per file"
         );
     }
 
