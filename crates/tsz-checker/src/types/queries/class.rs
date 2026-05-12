@@ -1826,23 +1826,6 @@ impl<'a> CheckerState<'a> {
                     }
                     return Some(in_progress);
                 }
-                if !self.ctx.class_instance_type_cache.contains_key(&class_idx)
-                    && let Some(node) = self.ctx.arena.get(class_idx)
-                    && let Some(class) = self.ctx.arena.get_class(node)
-                {
-                    let prescan = self.quick_prescan_class_members(class_idx, class);
-                    if prescan != TypeId::ANY
-                        && prescan != TypeId::ERROR
-                        && object_property_count(self, prescan) > cached_count
-                    {
-                        if let Some(info) = self.ctx.enclosing_class.as_mut()
-                            && info.class_idx == class_idx
-                        {
-                            info.cached_instance_this_type = Some(prescan);
-                        }
-                        return Some(prescan);
-                    }
-                }
                 return Some(cached);
             }
 
