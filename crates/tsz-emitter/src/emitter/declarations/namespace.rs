@@ -1087,6 +1087,10 @@ impl<'a> Printer<'a> {
                 .arena
                 .get_enum(node)
                 .map(|e| self.get_identifier_text_idx(e.name)),
+            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(node)
+                .map(|m| self.get_identifier_text_idx(m.name)),
             _ => None,
         }?;
         if name.is_empty() { None } else { Some(name) }
@@ -1802,6 +1806,7 @@ impl<'a> Printer<'a> {
 
                         if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
                             // export var x = 10; → ns.x = 10;
+                            let before_len = self.writer.len();
                             self.emit_namespace_exported_variable(
                                 inner_idx,
                                 &ns_name,
@@ -1809,6 +1814,13 @@ impl<'a> Printer<'a> {
                                 upper_bound,
                                 &destructuring_export_temps,
                             );
+                            if self.writer.len() == before_len {
+                                if self.writer.len() > pre_comment_writer_len {
+                                    self.writer.truncate(pre_comment_writer_len);
+                                    self.comment_emit_idx = pre_comment_idx;
+                                }
+                                self.skip_comments_for_erased_node(stmt_node);
+                            }
                         } else if inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                             // export import X = Y; → ns.X = Y;
                             self.emit_namespace_exported_import_alias(

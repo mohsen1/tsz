@@ -743,6 +743,25 @@ fn test_namespace_erased_member_drops_its_leading_comment() {
 }
 
 #[test]
+fn test_namespace_erased_exported_var_drops_its_leading_comment() {
+    let source = r#"namespace M {
+    // Function type
+    export var y: (a: private1) => public1;
+    export var y2 = y;
+}"#;
+    let output = transform_and_emit_with_comments(source);
+
+    assert!(
+        !output.contains("// Function type"),
+        "Leading comment on erased exported variable must be dropped. Got:\n{output}"
+    );
+    assert!(
+        output.contains("M.y2 = M.y;"),
+        "Following value export should still be emitted. Got:\n{output}"
+    );
+}
+
+#[test]
 fn test_namespace_comment_between_value_exports() {
     let source = r#"namespace Geometry {
     export var Origin = { x: 0, y: 0 };

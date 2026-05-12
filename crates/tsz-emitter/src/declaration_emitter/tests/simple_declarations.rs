@@ -2902,6 +2902,31 @@ exports.value = {};
 }
 
 #[test]
+fn test_jsdoc_property_typedef_preserves_alias_description() {
+    let source = r#"
+/**
+ * Options for Foo.
+ * @typedef {Object} FooOptions
+ * @property {boolean} bar - Enables bar.
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("/**\n * Options for Foo.\n */\ntype FooOptions = {"),
+        "Expected typedef description to be preserved above the type alias: {output}"
+    );
+    assert!(
+        output.contains("/**\n     * - Enables bar.\n     */\n    bar: boolean;"),
+        "Expected property description to remain on the property: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_static_method_augmentation_emits_namespace_merge() {
     let source = r#"
 export class Clazz {

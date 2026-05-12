@@ -412,3 +412,31 @@ fn nested_namespace_uses_parent_current_class_lexically() {
         "Current-block parent class should not be treated as a prior namespace-object export.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn nested_namespace_uses_parent_current_namespace_lexically() {
+    let source = "namespace A {\n  export declare namespace BB {\n    export var Elephant: any;\n  }\n  export namespace B {\n    export class C {\n      x = BB.Elephant.X;\n    }\n  }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("this.x = BB.Elephant.X;"),
+        "Nested namespace should use parent current-block namespaces through lexical scope.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.x = A.BB.Elephant.X;"),
+        "Current-block parent namespace should not be qualified through the parent object.\nOutput:\n{output}"
+    );
+}

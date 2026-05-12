@@ -1615,13 +1615,6 @@ impl FileIdAllocator {
             Some(name.as_str())
         }
     }
-
-    /// Number of currently tracked files.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.name_to_id.len()
-    }
 }
 
 /// Centralized cache of per-file export signature fingerprints.
@@ -1678,20 +1671,6 @@ impl SkeletonFingerprintCache {
     /// The output is suitable for [`tsz_solver::def::incremental::diff_fingerprints`].
     pub fn snapshot(&self) -> Vec<(u32, u64)> {
         self.entries.iter().map(|(&k, &v)| (k, v)).collect()
-    }
-
-    /// Number of files tracked.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Whether the cache is empty.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
