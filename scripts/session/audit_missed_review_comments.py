@@ -36,7 +36,7 @@ query($owner: String!, $repo: String!, $cursor: String) {
         updatedAt
         baseRefName
         author { login }
-        reviewThreads(first: 100) {
+        reviewThreads(first: 100) {  # NOTE: max 100 threads per PR; pagination not implemented
           pageInfo { hasNextPage }
           nodes {
             id

@@ -53,6 +53,7 @@ impl<'a> Printer<'a> {
         }
     }
 
+    // NOTE: Only scans top-level statements; nested decorated classes in namespaces/blocks are not handled.
     fn system_source_legacy_decorator_helpers(
         &self,
         source: &tsz_parser::parser::node::SourceFileData,
