@@ -1058,6 +1058,74 @@ export default class {
 }
 
 #[test]
+fn recovered_anonymous_named_class_export_gets_synthetic_binding() {
+    let source = "export class {\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let class_pos = output
+        .find("class default_")
+        .expect("recovered class should get a synthetic default_N binding");
+    let binding_start = class_pos + "class ".len();
+    let binding_len = output[binding_start..]
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .expect("synthetic binding should be followed by class syntax");
+    let binding = &output[binding_start..binding_start + binding_len];
+    assert!(
+        binding
+            .strip_prefix("default_")
+            .is_some_and(|suffix| suffix.parse::<u32>().is_ok()),
+        "Recovered anonymous exported class should use a default_N binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(&format!("exports.{binding} = {binding};")),
+        "Recovered anonymous exported class should be exported under its synthetic name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_declare_class_export_does_not_leave_pending_export_name() {
+    let source = "export declare class Declared {}\nexport class Live {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("exports.Declared"),
+        "declare class exports should be erased without a pending CJS assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class Live"),
+        "live class declaration should still be emitted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.Live = Live;"),
+        "following live class export should not inherit the erased declare export state.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn anonymous_default_function_avoids_user_default_1_binding() {
     let source = r#"
 const default_1 = "user binding";

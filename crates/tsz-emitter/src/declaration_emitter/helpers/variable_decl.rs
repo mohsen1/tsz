@@ -99,6 +99,11 @@ impl<'a> DeclarationEmitter<'a> {
             if has_type_annotation {
                 self.write(": ");
                 self.emit_type(type_annotation);
+            } else if self.inside_non_ambient_namespace
+                && !has_initializer
+                && self.get_identifier_text(decl_name).as_deref() == Some("__proto__")
+            {
+                self.write(": any");
             } else if is_unique_symbol {
                 self.write(": unique symbol");
             } else if let Some(enum_member_text) = const_asserted_enum_member {

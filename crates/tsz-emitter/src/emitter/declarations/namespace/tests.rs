@@ -59,6 +59,41 @@ fn no_blank_line_for_type_only_import_alias_in_namespace() {
 }
 
 #[test]
+fn namespace_anonymous_default_class_gets_synthetic_export_binding() {
+    let source = "namespace ns_class {\n    export default class {}\n}\n\nnamespace ns_abstract_class {\n    export default abstract class {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("class default_1"),
+        "First anonymous default class should get default_1 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("ns_class.default_1 = default_1;"),
+        "Namespace should export the first synthetic class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class default_2"),
+        "Second anonymous default class should get default_2 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("ns_abstract_class.default_2 = default_2;"),
+        "Namespace should export the second synthetic class binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
     let source = "namespace M {\n    export var [a, b] = [1, 2];\n}";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -438,5 +473,32 @@ fn nested_namespace_uses_parent_current_namespace_lexically() {
     assert!(
         !output.contains("this.x = A.BB.Elephant.X;"),
         "Current-block parent namespace should not be qualified through the parent object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_default_function_recovery_emits_default_assignment() {
+    let source = "namespace ns_function {\n    export default function () {}\n}\n\nnamespace ns_async_function {\n    export default async function () {}\n}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("default function () { }\n    ns_function.default_1 = default_1;"),
+        "Recovered namespace default function should keep tsc's default-function recovery and export assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("default function () {\n        return __awaiter(this, void 0, void 0, function* () { });\n    }\n    ns_async_function.default_2 = default_2;"),
+        "Recovered async namespace default function should lower async body and export assignment.\nOutput:\n{output}"
     );
 }

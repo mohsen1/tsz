@@ -927,6 +927,27 @@ var notOK = 0;
 }
 
 #[test]
+fn test_js_variable_preserves_generic_jsdoc_type_reference() {
+    let output = emit_js_dts(
+        r#"
+/** @template T @typedef {<T1 extends T>(data: T1) => T1} Test */
+
+/** @type {Test<number>} */
+const test = dibbity => dibbity
+"#,
+    );
+
+    assert!(
+        output.contains("declare const test: Test<number>;"),
+        "Expected generic JSDoc @type alias reference to be preserved: {output}"
+    );
+    assert!(
+        output.contains("type Test<T> = <T1 extends T>(data: T1) => T1;"),
+        "Expected same-line @template/@typedef alias to emit clean type parameters: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -1113,6 +1134,35 @@ export function id(x) {
     assert!(
         !output.contains("id<{string}, T>"),
         "Did not expect braced JSDoc constraint to emit as a fake type parameter: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(m : T) => T} IFn
+ */
+
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs<T>(m: T): T;"),
+        "Expected JSDoc @type function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("export type IFn = <T>(m: T) => T;"),
+        "Expected the JSDoc typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@type {IFn}"),
+        "Did not expect implementation-only @type comment in declaration output: {output}"
     );
 }
 
@@ -2678,6 +2728,57 @@ Point2D.prototype = {
     assert!(
         set_pos < get_pos && get_pos < proto_pos,
         "Expected setter/getter before deferred __proto__ member: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_exported_proto_var_suppresses_private_interface_merge() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace m1 {
+    export var __proto__;
+    interface __proto__ {}
+
+    class C<T extends { __proto__: __proto__ }> { }
+}
+__proto__ = 0;
+m1.__proto__ = 0;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace m1 {\n    var __proto__: any;\n}"),
+        "Expected exported __proto__ var to stay as the namespace surface: {output}"
+    );
+    assert!(
+        !output.contains("interface __proto__"),
+        "Private merged __proto__ interface should not leak into the namespace d.ts: {output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "Skipping the private interface should also avoid a namespace scope marker: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_exported_proto_interface_is_public_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace m1 {
+    export interface __proto__ {
+        value: string;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("interface __proto__"),
+        "Expected exported __proto__ interface to stay in namespace d.ts: {output}"
+    );
+    assert!(
+        output.contains("value: string;"),
+        "Expected exported __proto__ interface members to stay in namespace d.ts: {output}"
     );
 }
 
@@ -4348,6 +4449,28 @@ export default Test;
     assert!(
         default_pos < decl_pos,
         "`export default` should appear before the class declaration: {trimmed}"
+    );
+}
+
+#[test]
+fn test_js_default_typedef_after_default_identifier_export_uses_export_name() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Cls {
+    x = 12;
+}
+export default Cls;
+/** @typedef {string | number} default */
+"#,
+    );
+    let trimmed = output.trim();
+    assert!(
+        trimmed.starts_with("export type Cls = string | number;\nexport default Cls;"),
+        "Expected default typedef to emit before the hoisted default export: {trimmed}"
+    );
+    assert!(
+        trimmed.contains("declare class Cls"),
+        "Expected the exported class declaration to remain: {trimmed}"
     );
 }
 

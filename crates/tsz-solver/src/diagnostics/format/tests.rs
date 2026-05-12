@@ -1113,6 +1113,38 @@ fn format_object_with_index_prefers_symbol_tail_over_later_string_member() {
 }
 
 #[test]
+fn format_object_with_symbol_index_signature_renders_symbol_key_type() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // { [key: symbol]: string } — symbol-indexed type.
+    // The `key_type` field stores TypeId::SYMBOL; the formatter must use it
+    // rather than hardcoding "string" based on the storage slot name.
+    let shape = crate::types::ObjectShape {
+        properties: vec![],
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: Some(db.intern_string("key")),
+        }),
+        number_index: None,
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+    assert!(
+        result.contains("[key: symbol]: string"),
+        "Expected symbol index signature to render as '[key: symbol]: ...', got: {result}"
+    );
+    assert!(
+        !result.contains("[key: string]"),
+        "Must not render symbol index as '[key: string]', got: {result}"
+    );
+}
+
+#[test]
 fn format_array_like_object_with_index_expands_to_locale_string_overload_display() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

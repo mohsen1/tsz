@@ -208,17 +208,31 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let dot_pos = self
+            .arena
+            .get(access.expression)
+            .and_then(|expr_node| self.find_char_after(expr_node.end, node.end, b'.'));
+
         if let Some(expr_node) = self.arena.get(access.expression)
             && let Some(name_node) = self.arena.get(access.name_or_argument)
         {
-            self.emit_comments_in_range(expr_node.end, name_node.pos, true, false);
+            let comments_before_dot_end = dot_pos.unwrap_or(name_node.pos);
+            self.emit_comments_in_range(expr_node.end, comments_before_dot_end, true, false);
         }
 
         // Map the `.` token to its source position
-        if let Some(expr_node) = self.arena.get(access.expression) {
+        if let Some(dot_pos) = dot_pos {
+            self.map_source_offset(dot_pos);
+        } else if let Some(expr_node) = self.arena.get(access.expression) {
             self.map_token_after(expr_node.end, node.end, b'.');
         }
         self.write_dot_token(access.expression);
+
+        if let Some(dot_pos) = dot_pos
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            self.emit_comments_in_range(dot_pos + 1, name_node.pos, true, false);
+        }
         // When the property name is missing (error recovery), the source layout
         // determines whether tsc breaks to a new line:
         // - `bar.\n}` -> emit `bar.\n    ;` (newline preserved when source had a
@@ -1149,6 +1163,26 @@ mod tests {
         printer.set_source_text(source);
         printer.emit(root);
         printer.get_output().to_string()
+    }
+
+    #[test]
+    fn decl_file_comment_positions_around_names_and_property_access() {
+        let output = emit_js(
+            "function /*1*/makePoint(x: number) {}\nvar /*2*/point = makePoint(2);\nvar y = point./*3*/x;\n",
+        );
+
+        assert!(
+            output.contains("function makePoint(x)"),
+            "Comment before a function declaration name should be erased, not reattached to the first parameter.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var /*2*/ point = makePoint(2);"),
+            "Comment before a variable declaration name should stay after `var`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("point. /*3*/x"),
+            "Comment after a property-access dot should stay after the dot.\nOutput:\n{output}"
+        );
     }
 
     #[test]

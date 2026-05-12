@@ -399,6 +399,42 @@ class RegularClass {\n    accessor shouldError: string;\n}\n";
     }
 
     #[test]
+    fn esnext_legacy_class_fields_hoist_auto_accessors_in_source_order() {
+        let source = "// order comment\n\
+class C {\n\
+    x = 1;\n\
+    accessor y = 2;\n\
+    #z = 3;\n\
+    w = 4;\n\
+}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ESNext,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        };
+        let mut printer = EmitterPrinter::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "// order comment\nclass C {\n    constructor() {\n        this.x = 1;\n        this.#y_accessor_storage = 2;\n        this.#z = 3;\n        this.w = 4;\n    }"
+            ),
+            "Constructor initializers should preserve source order and keep the class comment outside.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "    #y_accessor_storage;\n    get y() { return this.#y_accessor_storage; }\n    set y(value) { this.#y_accessor_storage = value; }\n    #z;"
+            ),
+            "Hoisted auto-accessor and private-field declarations should omit constructor-moved initializers.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn legacy_decorated_private_auto_accessors_use_unique_storage_names() {
         let source = "declare var dec: any;\n\
 class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n";
