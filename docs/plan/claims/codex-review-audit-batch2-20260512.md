@@ -1,4 +1,4 @@
-# fix(audit): tighten claim metadata and interner/runtime-comment precision
+# chore(audit): align claim status and comment precision
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/review-audit-batch2-20260512`
