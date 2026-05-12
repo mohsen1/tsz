@@ -9,7 +9,12 @@ extra_scripts: '<script src="/home.js" defer></script>'
 
 <h1 class="home-logo-title"><span class="tsz-logo tsz-logo-hero" role="img" aria-label="tsz"></span></h1>
 
-<p class="subtitle"><code>tsz</code> is a TypeScript checker and language service written in Rust. It is designed to outperform <code>tsgo</code>, and beyond speed, <code>tsz</code> also targets a <a href="/sound-mode">Sound Mode</a> for stricter type-checking.</p>
+<p class="subtitle"><code>tsz</code> is a TypeScript checker and language service written in Rust. It is designed to outperform <code>tsgo</code>, and beyond speed, <code>tsz</code> also explores an <a href="/sound-mode">experimental Sound Mode</a> for stricter type-checking.</p>
+
+<div class="hero-actions">
+  <a href="/install.html">Install tsz</a>
+  <a href="/playground/">Try the playground</a>
+</div>
 
 ## Performance
 
@@ -17,12 +22,12 @@ extra_scripts: '<script src="/home.js" defer></script>'
 
 <blockquote class="wip-warning">
   <h3>Project Status</h3>
-  <p><strong>Nearly complete.</strong> TypeScript support is in its final compiler stages, with remaining work focused on performance tuning and LSP support in WebAssembly.</p>
+  <p><strong>Work in progress.</strong> Reaching 100% conformance compatibility is a major milestone: <code>tsz</code> now passes TypeScript's own compiler test cases. Performance work is underway. Current micro-benchmarks are saturated, so the focus is moving to large, complex, type-heavy projects.</p>
 </blockquote>
 
-## Progress
+## TypeScript compatibility
 
-tsz runs TypeScript's own test suite to prove it can serve as a drop-in replacement - comparing diagnostics, JavaScript emit, declaration emit, and language service behavior against `tsc`.
+tsz runs TypeScript's own test suite against `tsc`, comparing diagnostics, JavaScript emit, declaration emit, and language service behavior. Even with 100% of TypeScript's compiler tests passing, we are not yet confident that tsz is fully compatible. Many full-project benchmarks still fail to compile, and many open bugs are not covered by conformance tests.
 
 Currently targeting **TypeScript `{{ metrics.ts_version }}`**
 
