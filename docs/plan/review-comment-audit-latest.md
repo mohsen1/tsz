@@ -20,7 +20,7 @@
 ## Top PRs By Candidate Count
 
 - [#5717](https://github.com/mohsen1/tsz/pull/5717) fix(emit): decorate system class exports: 5
-- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit \`type X = any\` aliases: 4
+- [#4982](https://github.com/mohsen1/tsz/pull/4982) fix(checker): emit TS2315 for explicit `type X = any` aliases: 4
 - [#4967](https://github.com/mohsen1/tsz/pull/4967) fix(solver): preserve literal constraint display candidates: 3
 - [#5720](https://github.com/mohsen1/tsz/pull/5720) fix(checker): align indexSignatures1 fingerprints: 3
 - [#5100](https://github.com/mohsen1/tsz/pull/5100) fix(checker): defer parameter-dependent recursive alias TS2589: 3
