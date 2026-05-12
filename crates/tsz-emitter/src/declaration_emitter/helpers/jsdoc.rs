@@ -1069,15 +1069,6 @@ impl<'a> DeclarationEmitter<'a> {
         Some((type_params, params, return_type.to_string()))
     }
 
-    fn is_simple_jsdoc_type_name(type_text: &str) -> bool {
-        let mut chars = type_text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        (first == '_' || first == '$' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-    }
-
     pub(crate) fn jsdoc_template_params_for_node(&self, idx: NodeIndex) -> Vec<String> {
         self.function_like_jsdoc_for_node(idx)
             .map(|jsdoc| Self::parse_jsdoc_template_params(&jsdoc))
