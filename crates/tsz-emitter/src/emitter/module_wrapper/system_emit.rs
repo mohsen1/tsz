@@ -465,8 +465,7 @@ impl<'a> Printer<'a> {
             self.in_system_execute_body = false;
             return;
         };
-        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) && self.jsx_dev_file_name.is_none()
-        {
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
             self.jsx_dev_file_name = Some(system_jsx_dev_file_name(&source.file_name));
         }
         self.register_system_import_substitutions(source, dep_vars, system_plan);
