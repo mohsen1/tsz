@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `chore/arch-line-limit-ratchet-refresh-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: https://github.com/mohsen1/tsz/pull/6018
+- **Status**: ready
 - **Workstream**: 4 / architecture guardrails
 
 ## Intent
@@ -22,4 +22,6 @@ guardrail maintenance PR.
 
 ## Verification
 
-- Pending
+- `python3 -m py_compile scripts/arch/arch_guard.py scripts/arch/test_arch_guard.py`
+- `python3 -m unittest scripts.arch.test_arch_guard`
+- `python3 scripts/arch/arch_guard.py`

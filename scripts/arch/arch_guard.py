@@ -388,9 +388,11 @@ LINE_LIMIT_CHECKS = [
         2000,
         # Exclusion list pruned 2026-05-01: removed 15 entries for files
         # that no longer exist (split or renamed) and 16 entries for files
-        # that have since dropped below 2000 lines. The set below is the
-        # actual current set of files at-or-above 2000 raw lines, audited
-        # against disk on the prune date.
+        # that have since dropped below 2000 lines.
+        #
+        # Refreshed 2026-05-12: removed entries that had since dropped below
+        # 2000 raw lines. The set below is the audited current set of files
+        # above 2000 raw lines.
         {
             # ≥2000 LOC, real files. When a file drops below the limit,
             # delete it from this set in the same diff and the
@@ -400,7 +402,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
             "crates/tsz-checker/src/checkers/jsx/tests.rs",
             "crates/tsz-checker/src/checkers/jsx/props/resolution.rs",
-            "crates/tsz-checker/src/checkers/jsx/tests.rs",
             "crates/tsz-checker/src/classes/class_checker.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
             "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
@@ -423,27 +424,18 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/class_type/core.rs",
-            "crates/tsz-checker/src/types/computation/access.rs",
             "crates/tsz-checker/src/types/computation/binary.rs",
             "crates/tsz-checker/src/types/computation/call/inner.rs",
             "crates/tsz-checker/src/types/computation/call_inference.rs",
             "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
             "crates/tsz-checker/src/types/function_type.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-            "crates/tsz-checker/src/checkers/jsx/tests.rs",
             "crates/tsz-checker/src/types/queries/core.rs",
             "crates/tsz-checker/src/types/queries/lib.rs",
-            "crates/tsz-checker/src/types/queries/lib_resolution.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
-            "crates/tsz-checker/src/types/type_node.rs",
             "crates/tsz-checker/src/types/utilities/core.rs",
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
-            # Added by fix/merged-const-type-alias-false-positive (issue #5808):
-            "crates/tsz-checker/src/context/mod.rs",
-            "crates/tsz-checker/src/query_boundaries/common.rs",
-            "crates/tsz-checker/src/state/type_analysis/computed/type_alias_variable_alias.rs",
-            "crates/tsz-checker/src/types/type_node_advanced.rs",
         },
     ),
 ]
