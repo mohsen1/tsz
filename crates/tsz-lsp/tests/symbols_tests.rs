@@ -1,11 +1,14 @@
 use super::*;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_symbols_api_simple() {
     let source = "function foo() {}\nconst x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -25,8 +28,7 @@ class MyClass {
     property1: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -49,8 +51,7 @@ interface Point {
     y: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -64,8 +65,7 @@ interface Point {
 #[test]
 fn test_symbols_api_enum() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -86,8 +86,7 @@ namespace MyNamespace {
     const bar = 1;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -101,8 +100,7 @@ namespace MyNamespace {
 #[test]
 fn test_symbols_api_type_alias_union() {
     let source = "type StringOrNumber = string | number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -116,8 +114,7 @@ fn test_symbols_api_type_alias_union() {
 #[test]
 fn test_symbols_api_type_alias_generic() {
     let source = "type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -137,8 +134,7 @@ namespace Outer {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -159,8 +155,7 @@ namespace Outer {
 #[test]
 fn test_symbols_api_multiple_functions_and_variables() {
     let source = "function a() {}\nfunction b() {}\nconst c = 1;\nlet d = 2;\nvar e = 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -181,8 +176,7 @@ fn test_symbols_api_multiple_functions_and_variables() {
 #[test]
 fn test_symbols_api_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -193,8 +187,7 @@ fn test_symbols_api_empty_file() {
 #[test]
 fn test_symbols_api_only_comments() {
     let source = "// this is a comment\n/* block comment */";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -213,8 +206,7 @@ class Config {
     set value(v: number) {}
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -240,8 +232,7 @@ class MathUtils {
     instance_method() {}
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -264,8 +255,7 @@ abstract class Shape {
     name: string;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -283,8 +273,7 @@ abstract class Shape {
 #[test]
 fn test_symbols_api_export_class_and_interface() {
     let source = "export class Foo {}\nexport interface Bar { x: number; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -304,8 +293,7 @@ class Service {
     run() {}
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -334,8 +322,7 @@ interface Serializable {
     deserialize(data: string): void;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -360,8 +347,7 @@ class UserService {
 }
 enum Role { Admin, User }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -380,8 +366,7 @@ enum Role { Admin, User }
 #[test]
 fn test_symbols_api_export_default_function() {
     let source = "export default function main() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -402,8 +387,7 @@ fn test_symbols_api_export_default_function() {
 #[test]
 fn test_symbols_api_type_alias_intersection() {
     let source = "type Named = { name: string } & { id: number };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -417,8 +401,7 @@ fn test_symbols_api_type_alias_intersection() {
 #[test]
 fn test_symbols_api_type_alias_mapped() {
     let source = "type Readonly<T> = { readonly [K in keyof T]: T[K] };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -431,8 +414,7 @@ fn test_symbols_api_type_alias_mapped() {
 #[test]
 fn test_symbols_api_type_alias_conditional() {
     let source = "type NonNullable<T> = T extends null | undefined ? never : T;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -456,8 +438,7 @@ namespace Outer {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -489,8 +470,7 @@ namespace Outer {
 fn test_symbols_api_arrow_function_const() {
     // Arrow functions assigned to const should show up as Constant symbols
     let source = "const greet = (name: string) => `Hello ${name}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -504,8 +484,7 @@ fn test_symbols_api_arrow_function_const() {
 fn test_symbols_api_arrow_function_let() {
     // Arrow functions assigned to let should show up as Variable symbols
     let source = "let handler = () => {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -523,8 +502,7 @@ export class Service {
     async fetch() {}
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -542,8 +520,7 @@ export class Service {
 #[test]
 fn test_symbols_api_export_interface_with_members() {
     let source = "export interface Config { host: string; port: number; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -565,8 +542,7 @@ abstract class Animal {
     name: string;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -599,8 +575,7 @@ class Counter {
     reset() {}
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -628,8 +603,7 @@ class Box {
     get height() { return 0; }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -656,8 +630,7 @@ type Delta = string[];
 enum Epsilon { A, B }
 class Zeta { method() {} }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -684,8 +657,7 @@ class Zeta { method() {} }
 #[test]
 fn test_symbols_api_module_declaration() {
     let source = "module MyMod {\n  function init() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -700,8 +672,7 @@ fn test_symbols_api_module_declaration() {
 #[test]
 fn test_symbols_api_const_enum() {
     let source = "const enum Flags { Read = 1, Write = 2 }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -717,8 +688,7 @@ fn test_symbols_api_const_enum() {
 #[test]
 fn test_symbols_api_declare_function() {
     let source = "declare function readFile(path: string): string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -731,8 +701,7 @@ fn test_symbols_api_declare_function() {
 #[test]
 fn test_symbols_api_declare_class() {
     let source = "declare class Buffer {\n  length: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -746,8 +715,7 @@ fn test_symbols_api_declare_class() {
 #[test]
 fn test_symbols_api_async_function() {
     let source = "async function fetchData() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -766,8 +734,7 @@ class Secure {
     public visible: boolean;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -783,8 +750,7 @@ class Secure {
 #[test]
 fn test_symbols_api_nested_function() {
     let source = "function outer() {\n  function inner() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -800,8 +766,7 @@ fn test_symbols_api_nested_function() {
 #[test]
 fn test_symbols_api_enum_with_values() {
     let source = "enum HttpStatus {\n  OK = 200,\n  NotFound = 404,\n  InternalError = 500\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -818,8 +783,7 @@ fn test_symbols_api_enum_with_values() {
 #[test]
 fn test_symbols_api_interface_with_optional_properties() {
     let source = "interface Options {\n  width?: number;\n  height?: number;\n  title: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -836,8 +800,7 @@ fn test_symbols_api_interface_with_optional_properties() {
 #[test]
 fn test_symbols_api_multiple_const_declarations() {
     let source = "const a = 1, b = 'hello', c = true;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -861,8 +824,7 @@ class Router {
     get(path: string) {}
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -885,8 +847,7 @@ class Router {
 #[test]
 fn test_symbols_api_export_default_expression() {
     let source = "export default 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -905,8 +866,7 @@ namespace API {
     export const BASE_URL = "http://example.com";
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -920,8 +880,7 @@ namespace API {
 #[test]
 fn test_symbols_api_var_declarations() {
     let source = "var x = 1;\nvar y = 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
@@ -936,8 +895,7 @@ fn test_symbols_api_var_declarations() {
 #[test]
 fn test_symbols_api_generator_function() {
     let source = "function* gen() { yield 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(
@@ -956,8 +914,7 @@ class Config {
     name: string;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -976,8 +933,7 @@ interface Dictionary {
     length: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -988,8 +944,7 @@ interface Dictionary {
 #[test]
 fn test_symbols_api_multiple_declarations() {
     let source = "let a = 1, b = 2, c = 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(
@@ -1008,8 +963,7 @@ enum Direction {
     Right = "RIGHT"
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1021,8 +975,7 @@ enum Direction {
 #[test]
 fn test_symbols_api_type_alias_union_generic() {
     let source = "type Result<T, E = Error> = { ok: T } | { err: E };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(!tree.is_empty());
@@ -1038,8 +991,7 @@ class Point {
     toString() { return `(${this.x}, ${this.y})`; }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1059,8 +1011,7 @@ namespace A {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1072,8 +1023,7 @@ namespace A {
 #[test]
 fn test_symbols_api_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 0);
@@ -1082,8 +1032,7 @@ fn test_symbols_api_empty_source() {
 #[test]
 fn test_symbols_api_only_block_and_line_comments() {
     let source = "// comment\n/* block comment */";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 0);
@@ -1098,8 +1047,7 @@ class Person {
     set name(value: string) { this._name = value; }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1116,8 +1064,7 @@ fn test_symbols_api_declare_module() {
     export function doStuff(): void;
     export const VERSION: string;
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(!tree.is_empty(), "Declare module should produce symbols");
@@ -1130,8 +1077,7 @@ fn test_symbols_api_declare_module() {
 #[test]
 fn test_symbols_api_function_with_overloads() {
     let source = "function foo(x: string): string;\nfunction foo(x: number): number;\nfunction foo(x: any): any { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(
@@ -1152,8 +1098,7 @@ class Dictionary {
     count: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1170,8 +1115,7 @@ class Entity extends Base implements Serializable {
     serialize() { return ""; }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 3);
@@ -1186,8 +1130,7 @@ class Entity extends Base implements Serializable {
 #[test]
 fn test_symbols_api_export_enum_with_computed_values() {
     let source = "export enum Bits {\n  A = 1 << 0,\n  B = 1 << 1,\n  C = 1 << 2\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1199,8 +1142,7 @@ fn test_symbols_api_export_enum_with_computed_values() {
 #[test]
 fn test_symbols_api_type_alias_tuple() {
     let source = "type Pair = [string, number];";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1211,8 +1153,7 @@ fn test_symbols_api_type_alias_tuple() {
 #[test]
 fn test_symbols_api_multiple_var_in_one_statement() {
     let source = "var a = 1, b = 2, c = 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 3);
@@ -1230,8 +1171,7 @@ class Config {
     readonly version: number;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1245,8 +1185,7 @@ class Config {
 #[test]
 fn test_symbols_api_async_generator_function() {
     let source = "async function* asyncGen() { yield 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(!tree.is_empty(), "Should have symbol for async generator");
@@ -1262,8 +1201,7 @@ abstract class Widget {
     destroy?(): void;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1283,8 +1221,7 @@ namespace Models {
     enum Role { Admin, Guest }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1301,8 +1238,7 @@ namespace Models {
 #[test]
 fn test_symbols_api_whitespace_only() {
     let source = "   \n\n\t\t  \n  ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(
@@ -1314,8 +1250,7 @@ fn test_symbols_api_whitespace_only() {
 #[test]
 fn test_symbols_api_const_enum_with_four_members() {
     let source = "const enum Direction { Up, Down, Left, Right }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(!tree.is_empty());
@@ -1325,8 +1260,7 @@ fn test_symbols_api_const_enum_with_four_members() {
 #[test]
 fn test_symbols_api_type_alias_with_intersection() {
     let source = "type Combined = A & B & C;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1336,8 +1270,7 @@ fn test_symbols_api_type_alias_with_intersection() {
 #[test]
 fn test_symbols_api_arrow_function_const_with_template() {
     let source = "const greet = (name: string) => `Hello, ${name}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1347,8 +1280,7 @@ fn test_symbols_api_arrow_function_const_with_template() {
 #[test]
 fn test_symbols_api_class_with_private_field() {
     let source = "class Secret {\n  #value: string;\n  getValue() { return this.#value; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree[0].name, "Secret");
@@ -1358,8 +1290,7 @@ fn test_symbols_api_class_with_private_field() {
 #[test]
 fn test_symbols_api_multiple_exports() {
     let source = "export const a = 1;\nexport const b = 2;\nexport function c() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 3);
@@ -1368,8 +1299,7 @@ fn test_symbols_api_multiple_exports() {
 #[test]
 fn test_symbols_api_function_with_three_overloads() {
     let source = "function foo(x: number): number;\nfunction foo(x: string): string;\nfunction foo(x: any): any { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     let _ = tree;
@@ -1378,8 +1308,7 @@ fn test_symbols_api_function_with_three_overloads() {
 #[test]
 fn test_symbols_api_conditional_type() {
     let source = "type IsString<T> = T extends string ? true : false;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1389,8 +1318,7 @@ fn test_symbols_api_conditional_type() {
 #[test]
 fn test_symbols_api_mapped_type() {
     let source = "type Readonly<T> = { readonly [K in keyof T]: T[K] };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1399,8 +1327,7 @@ fn test_symbols_api_mapped_type() {
 #[test]
 fn test_symbols_api_class_with_computed_property() {
     let source = "const key = 'prop';\nclass Foo {\n  [key]: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(tree.len() >= 2);
@@ -1409,8 +1336,7 @@ fn test_symbols_api_class_with_computed_property() {
 #[test]
 fn test_symbols_api_var_declaration() {
     let source = "var legacy = true;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1420,8 +1346,7 @@ fn test_symbols_api_var_declaration() {
 #[test]
 fn test_symbols_api_destructured_const() {
     let source = "const { a, b } = { a: 1, b: 2 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     let _ = tree;
@@ -1430,8 +1355,7 @@ fn test_symbols_api_destructured_const() {
 #[test]
 fn test_symbols_api_class_extends_implements() {
     let source = "interface Serializable { serialize(): string; }\nclass Foo extends Bar implements Serializable {\n  serialize() { return ''; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(tree.len() >= 2);
@@ -1440,8 +1364,7 @@ fn test_symbols_api_class_extends_implements() {
 #[test]
 fn test_symbols_api_template_literal_type() {
     let source = "type Greeting = `Hello ${string}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1451,8 +1374,7 @@ fn test_symbols_api_template_literal_type() {
 #[test]
 fn test_symbols_api_index_signature_only() {
     let source = "interface Dict {\n  [key: string]: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree[0].name, "Dict");
@@ -1465,8 +1387,7 @@ fn test_symbols_api_index_signature_only() {
 #[test]
 fn test_symbols_api_single_line_function() {
     let source = "function f() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1477,8 +1398,7 @@ fn test_symbols_api_single_line_function() {
 #[test]
 fn test_symbols_api_unicode_function_name() {
     let source = "function \u{00e4}\u{00f6}\u{00fc}() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1487,8 +1407,7 @@ fn test_symbols_api_unicode_function_name() {
 #[test]
 fn test_symbols_api_class_with_private_method() {
     let source = "class Foo {\n  private doWork() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1499,8 +1418,7 @@ fn test_symbols_api_class_with_private_method() {
 #[test]
 fn test_symbols_api_class_with_hash_private_field() {
     let source = "class Secret {\n  #value = 42;\n  #getVal() { return this.#value; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1510,8 +1428,7 @@ fn test_symbols_api_class_with_hash_private_field() {
 #[test]
 fn test_symbols_api_interface_extends() {
     let source = "interface Base { a: number; }\ninterface Child extends Base { b: string; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 2);
@@ -1522,8 +1439,7 @@ fn test_symbols_api_interface_extends() {
 #[test]
 fn test_symbols_api_type_alias_simple() {
     let source = "type Name = string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1533,8 +1449,7 @@ fn test_symbols_api_type_alias_simple() {
 #[test]
 fn test_symbols_api_type_alias_function_type() {
     let source = "type Handler = (event: Event) => void;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1544,8 +1459,7 @@ fn test_symbols_api_type_alias_function_type() {
 #[test]
 fn test_symbols_api_let_declaration() {
     let source = "let mutable = 0;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1555,8 +1469,7 @@ fn test_symbols_api_let_declaration() {
 #[test]
 fn test_symbols_api_async_arrow_const() {
     let source = "const fetchData = async () => { return 1; };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1567,8 +1480,7 @@ fn test_symbols_api_async_arrow_const() {
 fn test_symbols_api_class_with_decorator_like() {
     // Decorators are a syntax feature; just test the class is reported
     let source = "class Decorated {\n  value = 1;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1579,8 +1491,7 @@ fn test_symbols_api_class_with_decorator_like() {
 #[test]
 fn test_symbols_api_nested_function_deep() {
     let source = "function a() {\n  function b() {\n    function c() {}\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1591,8 +1502,7 @@ fn test_symbols_api_nested_function_deep() {
 #[test]
 fn test_symbols_api_enum_with_computed_values() {
     let source = "enum Bits {\n  A = 1 << 0,\n  B = 1 << 1,\n  C = 1 << 2\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1604,8 +1514,7 @@ fn test_symbols_api_enum_with_computed_values() {
 fn test_symbols_api_abstract_method_no_body() {
     let source =
         "abstract class Shape {\n  abstract area(): number;\n  abstract perimeter(): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1619,8 +1528,7 @@ fn test_symbols_api_abstract_method_no_body() {
 #[test]
 fn test_symbols_api_interface_with_call_signature() {
     let source = "interface Callable {\n  (x: number): string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1630,8 +1538,7 @@ fn test_symbols_api_interface_with_call_signature() {
 #[test]
 fn test_symbols_api_interface_with_construct_signature() {
     let source = "interface Constructor {\n  new (x: number): object;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1641,8 +1548,7 @@ fn test_symbols_api_interface_with_construct_signature() {
 #[test]
 fn test_symbols_api_multiple_classes() {
     let source = "class A {}\nclass B {}\nclass C {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 3);
@@ -1654,8 +1560,7 @@ fn test_symbols_api_multiple_classes() {
 #[test]
 fn test_symbols_api_export_default_class() {
     let source = "export default class MyDefault {\n  method() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert!(!tree.is_empty());
@@ -1664,8 +1569,7 @@ fn test_symbols_api_export_default_class() {
 #[test]
 fn test_symbols_api_class_with_generic_method() {
     let source = "class Container {\n  get<T>(key: string): T { return {} as T; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1676,8 +1580,7 @@ fn test_symbols_api_class_with_generic_method() {
 #[test]
 fn test_symbols_api_global_declare_var() {
     let source = "declare var process: any;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1687,8 +1590,7 @@ fn test_symbols_api_global_declare_var() {
 #[test]
 fn test_symbols_api_declare_const() {
     let source = "declare const VERSION: string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1698,8 +1600,7 @@ fn test_symbols_api_declare_const() {
 #[test]
 fn test_symbols_api_type_alias_with_keyof() {
     let source = "type Keys<T> = keyof T;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 1);
@@ -1710,8 +1611,7 @@ fn test_symbols_api_type_alias_with_keyof() {
 fn test_symbols_api_multiple_interfaces() {
     let source =
         "interface A { x: number; }\ninterface B { y: string; }\ninterface C { z: boolean; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let symbols = DocumentSymbols::new(parser.get_arena(), source);
     let tree = symbols.get_symbol_tree(root);
     assert_eq!(tree.len(), 3);
