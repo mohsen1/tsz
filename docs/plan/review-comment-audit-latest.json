@@ -8,9 +8,15 @@
   "excluded_followed_up_prs": [
     4954,
     4955,
-    4960
+    4960,
+    5003,
+    5743,
+    5753,
+    5811,
+    5830,
+    5901
   ],
-  "candidate_count": 155,
+  "candidate_count": 141,
   "candidates": [
     {
       "pr_number": 5089,
@@ -746,108 +752,6 @@
       ]
     },
     {
-      "pr_number": 5743,
-      "pr_title": "fix(checker): validate return type for all union JSX component members",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5743",
-      "merged_at": "2026-05-12T07:12:02Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BUZLn",
-      "path": "crates/tsz-checker/src/checkers/jsx/tests.rs",
-      "line": 431,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The new regression test\u2019s doc comment says \u201call members have valid props\u201d, but `BadClass` as declared has no constructor parameter and no `props` member, and there\u2019s no `JSX.ElementAttributesProperty`; per `get_class_component_props_type` this likely makes props extraction return `None` for the class member. This weakens the intended coverage of the original bug (props extraction succeeding for union members suppressing return-type validation). Consider updating the test to make class props extraction succeed (e.g., add a `constructor(props: {})` or a `props` property / `ElementAttributesProperty`) so the test reliably exercises the exact suppression scenario.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5743,
-      "pr_title": "fix(checker): validate return type for all union JSX component members",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5743",
-      "merged_at": "2026-05-12T07:12:02Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BUZMF",
-      "path": "crates/tsz-checker/src/checkers/jsx/tests.rs",
-      "line": 452,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "In `jsx_union_component_all_valid_no_ts2786`, the class member\u2019s validity isn\u2019t actually being asserted if `JSX.ElementClass` is absent: `check_jsx_component_return_type` treats construct signatures as valid when the `JSX.ElementClass` target type is `None` (`target.is_none_or(...)`). Consider adding a minimal `JSX.ElementClass` definition (and shaping `GoodClass` accordingly) so this test genuinely verifies the \u201call union members are valid JSX components\u201d condition instead of passing due to a missing target type.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5753,
-      "pr_title": "fix(dts): preserve js function variable docs",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5753",
-      "merged_at": "2026-05-12T07:44:05Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BVEci",
-      "path": "crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs",
-      "line": 1091,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This regression assertion covers the non-export case, but it doesn\u2019t exercise the `export =` / CommonJS export-equals path where `emit_pending_js_export_equals_for_name` may emit `export = send;` before the synthetic `declare function send...`. A focused test for a JSDoc-annotated function variable that is the export-equals target would help ensure the JSDoc remains attached to the `declare function` (and not to the `export =` statement).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5811,
-      "pr_title": "fix(checker): validate JSX union returns structurally",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5811",
-      "merged_at": "2026-05-12T10:55:21Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BYbB5",
-      "path": "crates/tsz-checker/src/checkers/jsx/tests.rs",
-      "line": 860,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "This regression test only asserts that *some* TS2786 was produced. To make it more robust against unrelated TS2786s (or future changes that introduce additional TS2786s in the snippet), consider also asserting the TS2786 message mentions the JSX tag name (e.g. contains \"'Bad'\") similar to `jsx_union_of_invalid_function_and_class_component_emits_ts2786`.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5830,
-      "pr_title": "test(checker): load bundled DOM libs in JS constructor tests",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5830",
-      "merged_at": "2026-05-12T11:40:09Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BZNuw",
-      "path": "crates/tsz-checker/tests/js_constructor_property_tests.rs",
-      "line": 172,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "If none of the lib roots resolve both ES5 and DOM, this returns `Vec::new()` and the tests will run without any libs. That can silently make some DOM-related assertions meaningless when running an individual test. Prefer failing fast with a clear panic/assert when the expected libs can't be loaded (or at least assert non-empty in `check_js_with_es5_and_dom_lib`).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5901,
-      "pr_title": "fix(dts): keep js accessor comments with reordered members",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5901",
-      "merged_at": "2026-05-12T14:44:10Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6Bc52l",
-      "path": "crates/tsz-emitter/src/declaration_emitter/core/emit_members.rs",
-      "line": 1189,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`type_text_union_contains` splits on every `|` without tracking nesting, which can mis-detect `null`/`undefined` inside parenthesized or generic unions (e.g. `(string | null)[]`) and incorrectly append top-level nullability to the setter/getter types. Consider reusing the existing top-level-union splitting logic used in `normalize_jsdoc_type_expr` (depth-aware over `()<>[]{}`) so only top-level union members are considered, and add a regression case for array/generic nested unions.",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
       "pr_number": 5100,
       "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
@@ -891,23 +795,6 @@
       "line": 26,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This inlines only `DECORATE_HELPER`, but legacy decorator emit can also reference `__param` (constructor/method parameter decorators) and `__metadata` (when `emit_decorator_metadata` is enabled). In the no-transform System wrapper path, those helpers won\u2019t be emitted elsewhere, so decorated output can call `__param`/`__metadata` without definitions. Consider emitting the full required legacy-decorator helper set (decorate/param/metadata) based on a scan (or a shared helper-needed computation) rather than only `__decorate`.",
-      "score": 3,
-      "reasons": [
-        "action-language",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5811,
-      "pr_title": "fix(checker): validate JSX union returns structurally",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5811",
-      "merged_at": "2026-05-12T10:55:21Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BYbBY",
-      "path": "crates/tsz-checker/src/checkers/jsx/extraction.rs",
-      "line": 1064,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`jsx_construct_return_satisfies_element_class_render` is used as an OR-condition when `check_ret` is *not* assignable to `JSX.ElementClass`. Because it only checks `render` compatibility, it can incorrectly treat an instance type as a valid `JSX.ElementClass` even when it is missing other required members of `ElementClass` (e.g. `props`, `state`, etc.). This risks suppressing TS2786 in cases where the instance structurally fails `JSX.ElementClass` for reasons other than `render`.\n\nConsider tightening this fallback so it only applies when the assignability failure is specifically about `render` (or alternatively, additionally validate that all other required `ElementClass` members are satisfied before returning true).",
       "score": 3,
       "reasons": [
         "action-language",
@@ -1439,86 +1326,6 @@
       "line": 1155,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`store_intermediate_application_display_alias` stores a *global* display_alias mapping from `instantiated` (an Application like `Inner<1>`) to `original_type_id` (e.g. `Outer<1>`). Because Application TypeIds are interned, this can repaint any other occurrence of the same `instantiated` application later (including cases where the user explicitly referenced `Inner<1>`), potentially producing misleading diagnostics. Consider scoping this mapping to the specific evaluation/diagnostic context (or adding an additional guard so it only applies when you can prove the instantiated Application was introduced solely as an evaluation intermediate).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5003,
-      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
-      "merged_at": "2026-05-10T14:43:28Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5_5K",
-      "path": "crates/tsz-solver/src/evaluation/evaluate_rules/keyof.rs",
-      "line": 102,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`synthetic_property_name_atom_to_key_type` still treats any atom whose text starts with `__unique_` as a unique-symbol key. That defeats the goal of preserving user-authored/computed string keys like \"__unique_1\" in code paths that feed atoms directly (e.g. finite mapped-type property-name collection) and can reintroduce collisions between source string keys and internal unique-symbol placeholders. Consider carrying explicit \"is symbol-named\" metadata alongside these atoms (or returning `TypeId` keys instead of `Atom` names from the mapped-property-name collection APIs) so only genuinely synthetic unique-symbol atoms are converted to `UniqueSymbol`.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5003,
-      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
-      "merged_at": "2026-05-10T14:43:28Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5_5O",
-      "path": "crates/tsz-checker/src/types/interface_type.rs",
-      "line": 265,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`is_symbol_named` is derived from `is_symbol_property_name`, which classifies computed names as symbol keys based on the *resolved name text* starting with `__unique_`. That will misclassify computed string keys like `const k = \"__unique_1\" as const; interface X { [k]: ... }` as symbol-named, making them behave like unique symbols downstream. Determine symbol-ness from the computed expression\u2019s type (unique symbol / well-known symbol), not from the resolved name prefix.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5003,
-      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
-      "merged_at": "2026-05-10T14:43:28Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5_5T",
-      "path": "crates/tsz-checker/src/types/interface_type.rs",
-      "line": 301,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "Same issue for method signatures: using `is_symbol_property_name` (name-prefix based) can mark computed string keys that start with `__unique_` as symbol-named, reintroducing collisions with user-authored keys. `is_symbol_named` should be based on the computed expression type being a (unique) symbol, not the resolved name string.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5003,
-      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
-      "merged_at": "2026-05-10T14:43:28Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5_5X",
-      "path": "crates/tsz-checker/src/types/interface_type.rs",
-      "line": 373,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "Same issue for accessors: `is_symbol_named` computed via `is_symbol_property_name` can incorrectly treat computed string keys like \"__unique_1\" as symbol-named due to the `__unique_` prefix check. Prefer checking the computed expression\u2019s type for unique-symbol-ness rather than the resolved name text.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5003,
-      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
-      "merged_at": "2026-05-10T14:43:28Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5_5a",
-      "path": "crates/tsz-checker/src/state/type_resolution/symbol_types.rs",
-      "line": 1148,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`precompute_symbol_named_computed_property_names` repeats the same declaration/member traversal and `get_type_of_node` work already done in `precompute_computed_property_names`. This adds an extra full pass over interface members and can be costly on large declaration graphs. Consider computing the name map and the symbol-named set/bit in a single traversal to avoid double evaluation.",
       "score": 1,
       "reasons": [
         "detailed-thread"
@@ -2431,38 +2238,6 @@
       "line": 605,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`rewrite_index_signatures1_fingerprints` is invoked even when `ctx.allow_source_file_test_pragmas` is false, which means this conformance-specific diagnostic rewriting could affect normal CLI/LSP checking for any user file that happens to contain the trigger strings. Consider gating this call behind `allow_source_file_test_pragmas` (as is already done for `rewrite_intersection_index_signature_fingerprints`) to ensure fingerprint rewrites only run in conformance/test mode.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5830,
-      "pr_title": "test(checker): load bundled DOM libs in JS constructor tests",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5830",
-      "merged_at": "2026-05-12T11:40:09Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BZNuM",
-      "path": "crates/tsz-checker/tests/js_constructor_property_tests.rs",
-      "line": 164,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`LibFile::from_source` is given the basename from disk (`lib.es5.d.ts`/`lib.dom.d.ts` when loading from `TypeScript/lib`, but `es5.d.ts`/`dom.d.ts` when loading from the bundled assets). Several checker paths key off `source.file_name.starts_with(\"lib.\")` / default-lib detection, so this can make the same test behave differently depending on whether a local `TypeScript/lib` checkout exists. Consider using a consistent, canonical `LibFile` name for all roots (e.g., always `lib.es5.d.ts` and `lib.dom.d.ts`, even when reading the contents from `es5.d.ts`/`dom.d.ts` assets).",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5830,
-      "pr_title": "test(checker): load bundled DOM libs in JS constructor tests",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5830",
-      "merged_at": "2026-05-12T11:40:09Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6BZNvC",
-      "path": "crates/tsz-checker/tests/js_constructor_property_tests.rs",
-      "line": 151,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The root preference order here tries `TypeScript/lib` first, which can be much heavier than the bundled stripped assets and makes test performance/environment behavior depend on a local checkout. This is the inverse of the order used by `tsz_checker::test_utils::lib_test_roots` (stripped assets first). Consider preferring the stripped/full bundled assets first and keeping `TypeScript/lib` as a last fallback if the goal is just to ensure libs are present in all environments.",
       "score": 1,
       "reasons": [
         "detailed-thread"
