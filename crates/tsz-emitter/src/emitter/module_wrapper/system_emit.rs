@@ -8,6 +8,68 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(super) fn emit_system_decorate_helper_if_needed(
+        &mut self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if self.ctx.options.no_emit_helpers
+            || self.ctx.options.import_helpers
+            || !self.ctx.options.legacy_decorators
+            || !self.system_source_needs_legacy_decorate_helper(source)
+        {
+            return;
+        }
+
+        for line in crate::transforms::helpers::DECORATE_HELPER.lines() {
+            self.write(line);
+            self.write_line();
+        }
+    }
+
+    fn system_source_needs_legacy_decorate_helper(
+        &self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        source.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_decl) = self.arena.get_class(stmt_node)
+            {
+                return self.system_class_needs_legacy_decorate_helper(class_decl);
+            }
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                return false;
+            }
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                return false;
+            };
+            if export_decl.module_specifier.is_some() {
+                return false;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                return false;
+            };
+            clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && self.arena.get_class(clause_node).is_some_and(|class_decl| {
+                    self.system_class_needs_legacy_decorate_helper(class_decl)
+                })
+        })
+    }
+
+    fn system_class_needs_legacy_decorate_helper(
+        &self,
+        class_decl: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        !self
+            .collect_class_decorators(&class_decl.modifiers)
+            .is_empty()
+            || !self
+                .collect_constructor_param_decorators(&class_decl.members.nodes)
+                .is_empty()
+    }
+
     pub(super) fn emit_wrapped_import_helpers(
         &mut self,
         source: &tsz_parser::parser::node::SourceFileData,
@@ -1299,6 +1361,21 @@ impl<'a> Printer<'a> {
             self.write("\", ");
             self.write(&class_name);
             self.write(");");
+            let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
+            if self.ctx.options.legacy_decorators
+                && (!legacy_class_decorators.is_empty()
+                    || !self
+                        .collect_constructor_param_decorators(&class_decl.members.nodes)
+                        .is_empty())
+            {
+                self.write_line();
+                self.emit_system_legacy_class_decorator_export(
+                    &class_name,
+                    &class_name,
+                    &legacy_class_decorators,
+                    &class_decl.members.nodes,
+                );
+            }
             if !deferred.is_empty() {
                 self.emit_static_block_iifes(deferred);
             }
@@ -1390,6 +1467,41 @@ impl<'a> Printer<'a> {
         false
     }
 
+    fn emit_system_legacy_class_decorator_export(
+        &mut self,
+        export_name: &str,
+        class_name: &str,
+        decorators: &[NodeIndex],
+        members: &[NodeIndex],
+    ) {
+        let before_len = self.writer.len();
+        self.emit_legacy_class_decorator_assignment(
+            class_name, decorators, false, false, false, members,
+        );
+        let after_len = self.writer.len();
+        if after_len == before_len {
+            return;
+        }
+
+        let full_output = self.writer.get_output().to_string();
+        let emitted = full_output[before_len..after_len].to_string();
+        self.writer.truncate(before_len);
+        let assignment = emitted
+            .trim_start()
+            .trim_end()
+            .trim_end_matches(';')
+            .to_string();
+        if assignment.is_empty() {
+            return;
+        }
+
+        self.write("exports_1(\"");
+        self.write(export_name);
+        self.write("\", ");
+        self.write(&assignment);
+        self.write(");");
+    }
+
     fn emit_system_enum_with_export_fold(
         &mut self,
         enum_idx: NodeIndex,
@@ -1464,6 +1576,23 @@ impl<'a> Printer<'a> {
         let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
         if !self.output_ends_with_semicolon() {
             self.write(";");
+        }
+        let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
+        if self.ctx.options.legacy_decorators
+            && (!legacy_class_decorators.is_empty()
+                || !self
+                    .collect_constructor_param_decorators(&class_decl.members.nodes)
+                    .is_empty())
+        {
+            self.write_line();
+            self.emit_legacy_class_decorator_assignment(
+                &class_name,
+                &legacy_class_decorators,
+                false,
+                false,
+                false,
+                &class_decl.members.nodes,
+            );
         }
         if !deferred.is_empty() {
             self.emit_static_block_iifes(deferred);
