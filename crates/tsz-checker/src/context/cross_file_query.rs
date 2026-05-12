@@ -20,6 +20,7 @@
 //! the (more common) "treat as cache miss" semantics.
 
 use tsz_binder::SymbolId;
+use tsz_common::perf_counters::{CrossFileCacheMissCause, record_cross_file_cache_miss_cause};
 
 use crate::query_boundaries::common::type_id_is_known_to_db;
 use crate::state_type_analysis::cross_file::CrossFileQueryKind;
@@ -41,22 +42,28 @@ impl<'a> CheckerContext<'a> {
         file_idx: u32,
     ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         if !self.share_owner_symbol_type_results {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
             return None;
         }
-        let (cached_type, params) = self.definition_store.get_resolved_cross_file_query(
+        let Some((cached_type, params)) = self.definition_store.get_resolved_cross_file_query(
             CrossFileQueryKind::SymbolType.as_storage_kind(),
             file_idx,
             sym_id.0,
             0,
             0,
-        )?;
+        ) else {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::BucketEmpty);
+            return None;
+        };
         if matches!(
             cached_type,
             tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
         ) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::SentinelErrorUnknown);
             return None;
         }
         if !type_id_is_known_to_db(self.types, cached_type) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::TypeIdNotInterned);
             return None;
         }
         Some((cached_type, params))
@@ -117,22 +124,28 @@ impl<'a> CheckerContext<'a> {
         file_idx: u32,
     ) -> Option<tsz_solver::TypeId> {
         if !self.share_owner_symbol_type_results {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
             return None;
         }
-        let (cached_type, _params) = self.definition_store.get_resolved_cross_file_query(
+        let Some((cached_type, _params)) = self.definition_store.get_resolved_cross_file_query(
             CrossFileQueryKind::InterfaceType.as_storage_kind(),
             file_idx,
             sym_id.0,
             0,
             0,
-        )?;
+        ) else {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::BucketEmpty);
+            return None;
+        };
         if matches!(
             cached_type,
             tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
         ) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::SentinelErrorUnknown);
             return None;
         }
         if !type_id_is_known_to_db(self.types, cached_type) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::TypeIdNotInterned);
             return None;
         }
         Some(cached_type)
@@ -193,22 +206,28 @@ impl<'a> CheckerContext<'a> {
         file_idx: u32,
     ) -> Option<tsz_solver::TypeId> {
         if !self.share_owner_symbol_type_results {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
             return None;
         }
-        let (cached_type, _params) = self.definition_store.get_resolved_cross_file_query(
+        let Some((cached_type, _params)) = self.definition_store.get_resolved_cross_file_query(
             CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
             file_idx,
             interface_idx.0,
             member_idx.0,
             0,
-        )?;
+        ) else {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::BucketEmpty);
+            return None;
+        };
         if matches!(
             cached_type,
             tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
         ) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::SentinelErrorUnknown);
             return None;
         }
         if !type_id_is_known_to_db(self.types, cached_type) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::TypeIdNotInterned);
             return None;
         }
         Some(cached_type)
@@ -274,16 +293,29 @@ impl<'a> CheckerContext<'a> {
         file_idx: u32,
     ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         if !self.share_owner_symbol_type_results {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
             return None;
         }
-        let (cached_type, params) = self.definition_store.get_resolved_cross_file_query(
+        let Some((cached_type, params)) = self.definition_store.get_resolved_cross_file_query(
             CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
             file_idx,
             sym_id.0,
             0,
             0,
-        )?;
+        ) else {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::BucketEmpty);
+            return None;
+        };
+        // Sentinel filtering is intentionally **not** applied here — see the
+        // docstring above. The next branch (`type_id_is_known_to_db`) still
+        // counts as a `TypeIdNotInterned` miss, but `ERROR` / `UNKNOWN` /
+        // `ANY` cached values are forwarded to the caller (which may treat
+        // them as a real hit). That asymmetry is consistent with the
+        // pre-instrumentation behavior; it means the
+        // `SentinelErrorUnknown` bucket for this helper stays at zero
+        // unless a future PR opts the class-instance reader in.
         if !type_id_is_known_to_db(self.types, cached_type) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::TypeIdNotInterned);
             return None;
         }
         Some((cached_type, params))

@@ -336,6 +336,63 @@ impl DirectCrossFileInterfaceLoweringOutcome {
     }
 }
 
+/// Why a cross-file cache reader (`cached_cross_file_*` in
+/// `tsz-checker/src/context/cross_file_query.rs`) returned `None`.
+///
+/// The 2026-05-11 attribution decision record locked in
+/// `delegate.cache_hits_cross_file = 0` on the cliff (1107 calls,
+/// 0 hits on `monorepo-006`). The flat miss counter does not say
+/// **why** each miss happens. Splitting the cause buckets lets the
+/// next T2.2 architecture PR target the dominant root cause directly
+/// instead of guessing between the gate state, the cache-key
+/// collision, and `TypeId` namespacing.
+///
+/// The four root causes the buckets distinguish:
+///
+/// - **`GateOff`** — `CheckerContext::share_owner_symbol_type_results`
+///   is `false`. The reader short-circuits before touching the
+///   `DefinitionStore`. A high count here means the gate is wrong
+///   for the workload, not that the cache is empty.
+/// - **`BucketEmpty`** — the `DefinitionStore` lookup returned `None`
+///   for the composite key. Either no writer has run yet, or the
+///   writer and reader disagree on the key shape (e.g. caller's
+///   `SymbolId` vs. owner's `SymbolId`).
+/// - **`SentinelErrorUnknown`** — the bucket has an entry but the
+///   cached `TypeId` is `TypeId::ERROR` or `TypeId::UNKNOWN`. The
+///   reader treats those as "not a real answer" so the call re-runs
+///   the slow path.
+/// - **`TypeIdNotInterned`** — the cached non-intrinsic `TypeId` is
+///   not interned in the reader's `TypeInterner`. This happens when
+///   a child checker allocated the `TypeId` and the parent's
+///   interner doesn't share it. The cache entry is stale.
+///
+/// `as_index` matches the `*_NAMES` array ordering; new variants
+/// MUST append, never re-order.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum CrossFileCacheMissCause {
+    GateOff = 0,
+    BucketEmpty = 1,
+    SentinelErrorUnknown = 2,
+    TypeIdNotInterned = 3,
+}
+
+pub const CROSS_FILE_CACHE_MISS_CAUSE_COUNT: usize = 4;
+
+pub const CROSS_FILE_CACHE_MISS_CAUSE_NAMES: [&str; CROSS_FILE_CACHE_MISS_CAUSE_COUNT] = [
+    "gate_off",
+    "bucket_empty",
+    "sentinel_error_unknown",
+    "type_id_not_interned",
+];
+
+impl CrossFileCacheMissCause {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// One process-wide instance. Incremented from any thread, read once at
 /// dump time.
 pub struct PerfCounters {
@@ -368,6 +425,11 @@ pub struct PerfCounters {
     /// Outcome buckets for direct cross-file interface lowering attempts.
     pub direct_cross_file_interface_lowering_outcome:
         [AtomicU64; DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
+    /// Why each `cached_cross_file_*` reader returned `None`. See
+    /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
+    /// all buckets equals the flat miss count for the four reader
+    /// helpers in `crates/tsz-checker/src/context/cross_file_query.rs`.
+    pub cross_file_cache_miss_cause: [AtomicU64; CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
 
     // ─── checker construction ────────────────────────────────────────────
     pub checker_state_constructed: AtomicU64,
@@ -468,6 +530,8 @@ impl PerfCounters {
                 CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
             direct_cross_file_interface_lowering_outcome: [const { AtomicU64::new(0) };
                 DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
+            cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
+                CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             checker_state_constructed: AtomicU64::new(0),
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
@@ -787,6 +851,18 @@ pub fn record_cross_arena_alias_shortcut_outcome(outcome: CrossArenaAliasShortcu
     let c = counters();
     c.delegate_cross_arena_alias_shortcut_outcome[outcome.as_index()]
         .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Classify a `cached_cross_file_*` miss. Called by the four reader
+/// helpers in `crates/tsz-checker/src/context/cross_file_query.rs`
+/// at each early-return point. See [`CrossFileCacheMissCause`].
+#[inline]
+pub fn record_cross_file_cache_miss_cause(cause: CrossFileCacheMissCause) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.cross_file_cache_miss_cause[cause.as_index()].fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record a cross-arena delegate invocation that has no cache fast path —
@@ -1430,6 +1506,19 @@ pub struct PerfCounterSnapshot {
     /// path from firing — the target list for "widen the direct
     /// lowering" follow-ups.
     pub direct_interface_lowering_outcomes: Vec<NamedCount>,
+    /// Why each `cached_cross_file_*` reader returned `None`.
+    ///
+    /// Always `CROSS_FILE_CACHE_MISS_CAUSE_COUNT` long, in
+    /// `CROSS_FILE_CACHE_MISS_CAUSE_NAMES` order. The 2026-05-11
+    /// attribution decision record locked in
+    /// `delegate.cache_hits_cross_file = 0`; this array splits that
+    /// flat miss number into structural root causes so the next T2.2
+    /// architecture PR can target the dominant cause directly.
+    ///
+    /// Sum of all rows equals the total miss count across the four
+    /// reader helpers in
+    /// `crates/tsz-checker/src/context/cross_file_query.rs`.
+    pub cross_file_cache_miss_causes: Vec<NamedCount>,
 }
 
 /// Per-bucket "is this wired up to its producer?" flag. Lets the bench
@@ -1715,6 +1804,12 @@ impl PerfCounters {
                     count: load(&c.direct_cross_file_interface_lowering_outcome[i]),
                 })
                 .collect(),
+            cross_file_cache_miss_causes: (0..CROSS_FILE_CACHE_MISS_CAUSE_COUNT)
+                .map(|i| NamedCount {
+                    name: CROSS_FILE_CACHE_MISS_CAUSE_NAMES[i],
+                    count: load(&c.cross_file_cache_miss_cause[i]),
+                })
+                .collect(),
         }
     }
 
@@ -1761,6 +1856,7 @@ mod json_tests {
             "delegate_miss_classification",
             "alias_shortcut_outcomes",
             "direct_interface_lowering_outcomes",
+            "cross_file_cache_miss_causes",
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
@@ -2139,6 +2235,100 @@ mod json_tests {
                 "direct_interface_lowering_outcomes[{i}].count should be a number",
             );
         }
+    }
+
+    #[test]
+    fn cross_file_cache_miss_causes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["cross_file_cache_miss_causes"]
+            .as_array()
+            .expect("cross_file_cache_miss_causes is array");
+        assert_eq!(
+            rows.len(),
+            CROSS_FILE_CACHE_MISS_CAUSE_COUNT,
+            "cross_file_cache_miss_causes length must match CROSS_FILE_CACHE_MISS_CAUSE_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], CROSS_FILE_CACHE_MISS_CAUSE_NAMES[i],
+                "cross_file_cache_miss_causes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "cross_file_cache_miss_causes[{i}].count should be a number",
+            );
+            let obj = row.as_object().expect("row is object");
+            let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+            let expected: std::collections::BTreeSet<&str> =
+                ["name", "count"].into_iter().collect();
+            assert_eq!(
+                actual, expected,
+                "cross_file_cache_miss_causes[{i}] field shape drifted",
+            );
+        }
+    }
+
+    #[test]
+    fn cross_file_cache_miss_cause_atomic_propagates_into_snapshot() {
+        // Mirrors `classification_arrays_propagate_atomic_state_into_snapshot`:
+        // drive the underlying atomic directly to prove the snapshot reads
+        // it back at the right index. `record_cross_file_cache_miss_cause`
+        // short-circuits on `enabled_fast() == false`, which is the default
+        // in `cargo nextest`, so the helper is unsuitable here.
+        let c = counters();
+
+        let gate_idx = CrossFileCacheMissCause::GateOff.as_index();
+        let bucket_idx = CrossFileCacheMissCause::BucketEmpty.as_index();
+        let sentinel_idx = CrossFileCacheMissCause::SentinelErrorUnknown.as_index();
+        let not_interned_idx = CrossFileCacheMissCause::TypeIdNotInterned.as_index();
+
+        let before_gate = c.cross_file_cache_miss_cause[gate_idx].load(Ordering::Relaxed);
+        let before_bucket = c.cross_file_cache_miss_cause[bucket_idx].load(Ordering::Relaxed);
+        let before_sentinel = c.cross_file_cache_miss_cause[sentinel_idx].load(Ordering::Relaxed);
+        let before_not_interned =
+            c.cross_file_cache_miss_cause[not_interned_idx].load(Ordering::Relaxed);
+
+        c.cross_file_cache_miss_cause[gate_idx].fetch_add(1, Ordering::Relaxed);
+        c.cross_file_cache_miss_cause[bucket_idx].fetch_add(2, Ordering::Relaxed);
+        c.cross_file_cache_miss_cause[sentinel_idx].fetch_add(3, Ordering::Relaxed);
+        c.cross_file_cache_miss_cause[not_interned_idx].fetch_add(4, Ordering::Relaxed);
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["cross_file_cache_miss_causes"]
+            .as_array()
+            .expect("cross_file_cache_miss_causes is array");
+
+        let read = |idx: usize| rows[idx]["count"].as_u64().unwrap_or(0);
+
+        assert_eq!(rows[gate_idx]["name"], "gate_off");
+        assert!(
+            read(gate_idx) > before_gate,
+            "gate_off bump not visible (before={before_gate}, after={})",
+            read(gate_idx),
+        );
+
+        assert_eq!(rows[bucket_idx]["name"], "bucket_empty");
+        assert!(
+            read(bucket_idx) >= before_bucket.saturating_add(2),
+            "bucket_empty bump not visible (before={before_bucket}, after={})",
+            read(bucket_idx),
+        );
+
+        assert_eq!(rows[sentinel_idx]["name"], "sentinel_error_unknown");
+        assert!(
+            read(sentinel_idx) >= before_sentinel.saturating_add(3),
+            "sentinel_error_unknown bump not visible (before={before_sentinel}, after={})",
+            read(sentinel_idx),
+        );
+
+        assert_eq!(rows[not_interned_idx]["name"], "type_id_not_interned");
+        assert!(
+            read(not_interned_idx) >= before_not_interned.saturating_add(4),
+            "type_id_not_interned bump not visible (before={before_not_interned}, after={})",
+            read(not_interned_idx),
+        );
     }
 
     #[test]
