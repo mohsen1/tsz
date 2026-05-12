@@ -9,11 +9,8 @@
 //! as `Omit<T, "method" | "getter" | "setter" | <explicit destructured>>`.
 //! The K order is methods first, then accessors in source declaration order.
 
+use tsz_checker::test_utils::check_source_code_messages as checker_diagnostics;
 use tsz_common::diagnostics::diagnostic_codes;
-
-fn checker_diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source_code_messages(source)
-}
 
 fn ts2339_messages(diags: &[(u32, String)]) -> Vec<String> {
     diags
