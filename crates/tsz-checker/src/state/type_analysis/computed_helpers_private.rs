@@ -865,6 +865,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.apply_flow_narrowing(idx, result_type)
+        // Do not apply flow narrowing in write context: the assignment target's
+        // declared type must be used, not the narrowed (read) type.
+        // E.g., inside `if (!this.#x)`, the narrowed type of `this.#x` is `null`,
+        // but assigning `this.#x = value` must check against `T | null`.
+        self.finalize_property_access_result(idx, result_type, is_write_context, false)
     }
 }

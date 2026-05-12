@@ -577,6 +577,9 @@ mod ts1170_computed_property_syntactic_form_tests;
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
 #[cfg(test)]
+#[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
+mod ts2322_private_field_narrowing_write_tests;
+#[cfg(test)]
 #[path = "tests/ts2339_js_this_function_name_display_tests.rs"]
 mod ts2339_js_this_function_name_display_tests;
 #[cfg(test)]
