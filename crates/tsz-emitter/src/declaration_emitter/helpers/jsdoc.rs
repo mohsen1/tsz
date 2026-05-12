@@ -745,6 +745,73 @@ impl<'a> DeclarationEmitter<'a> {
         params.into_iter().nth(position)
     }
 
+    pub(crate) fn jsdoc_object_binding_param_type_literal(
+        &self,
+        param_idx: NodeIndex,
+        position: usize,
+    ) -> Option<String> {
+        let jsdoc = self.function_like_jsdoc_for_node(param_idx)?;
+        let params = Self::parse_jsdoc_param_decls(&jsdoc);
+        if params.is_empty() {
+            return None;
+        }
+
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        let pattern_node = self.arena.get(param.name)?;
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+
+        let root_decl = if let Some(name) = self.get_identifier_text(param.name) {
+            params.iter().find(|decl| decl.name == name)
+        } else {
+            params.get(position)
+        }?;
+        if !matches!(root_decl.type_text.as_str(), "object" | "Object") {
+            return None;
+        }
+
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        let mut members = Vec::new();
+        for &elem_idx in &pattern.elements.nodes {
+            let elem_node = self.arena.get(elem_idx)?;
+            let elem = self.arena.get_binding_element(elem_node)?;
+            if elem.dot_dot_dot_token {
+                return None;
+            }
+
+            let prop_name_idx = if elem.property_name.is_some() {
+                elem.property_name
+            } else {
+                elem.name
+            };
+            let prop_node = self.arena.get(prop_name_idx)?;
+            if prop_node.kind != SyntaxKind::Identifier as u16 {
+                return None;
+            }
+            let prop_name = self.arena.get_identifier(prop_node)?.escaped_text.as_str();
+            let qualified_name = format!("{}.{}", root_decl.name, prop_name);
+            let prop_decl = params.iter().find(|decl| decl.name == qualified_name)?;
+
+            let mut member = String::new();
+            member.push_str("    ");
+            member.push_str(prop_name);
+            if prop_decl.optional {
+                member.push('?');
+            }
+            member.push_str(": ");
+            member.push_str(&prop_decl.type_text);
+            if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
+                member.push_str(" | undefined");
+            }
+            member.push(';');
+            members.push(member);
+        }
+
+        (!members.is_empty()).then(|| format!("{{\n{}\n}}", members.join("\n")))
+    }
+
     pub(crate) fn jsdoc_satisfies_param_decl_for_parameter(
         &self,
         param_idx: NodeIndex,
