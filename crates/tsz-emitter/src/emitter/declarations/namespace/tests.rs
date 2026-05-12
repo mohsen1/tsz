@@ -1,13 +1,16 @@
 use crate::emitter::ModuleKind;
 use crate::output::printer::{PrintOptions, Printer};
 use tsz_common::ScriptTarget;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn namespace_recovers_malformed_export_function_arrow_body() {
     let source = "namespace M {\n    export namespace N {\n        export function f(x:number)=>2*x;\n    }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -37,8 +40,7 @@ fn namespace_recovers_malformed_export_function_arrow_body() {
 fn no_blank_line_for_type_only_import_alias_in_namespace() {
     let source = "namespace M1 {\n    export interface I {\n        foo();\n    }\n}\n\nnamespace M2 {\n    import T = M1.I;\n    class C implements T {\n        foo() {}\n    }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -61,8 +63,7 @@ fn no_blank_line_for_type_only_import_alias_in_namespace() {
 #[test]
 fn namespace_anonymous_default_class_gets_synthetic_export_binding() {
     let source = "namespace ns_class {\n    export default class {}\n}\n\nnamespace ns_abstract_class {\n    export default abstract class {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(
         &parser.arena,
@@ -96,8 +97,7 @@ fn namespace_anonymous_default_class_gets_synthetic_export_binding() {
 #[test]
 fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
     let source = "namespace M {\n    export var [a, b] = [1, 2];\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -117,8 +117,7 @@ fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
 #[test]
 fn namespace_exported_destructuring_temp_hoists_before_class() {
     let source = "namespace m {\n    export class c {}\n    export var [x, y] = [10, new c()];\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -141,8 +140,7 @@ fn namespace_exported_destructuring_temp_hoists_before_class() {
 fn top_level_import_alias_to_ambient_namespace_value_emits_runtime_alias() {
     let source = "declare namespace foo { const await: any; }\n\n// await allowed in import=namespace when not a module\nimport await = foo.await;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(
         &parser.arena,
@@ -165,8 +163,7 @@ fn top_level_import_alias_to_ambient_namespace_value_emits_runtime_alias() {
 fn top_level_import_alias_to_ambient_namespace_value_is_erased_in_modules() {
     let source = "export {};\ndeclare namespace foo { const await: any; }\n\n// await disallowed in import=namespace when in a module\nimport await = foo.await;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(
         &parser.arena,
@@ -196,8 +193,7 @@ fn top_level_import_alias_to_ambient_namespace_value_is_erased_in_modules() {
 fn namespace_iife_param_renamed_for_variable_conflict() {
     let source = "namespace m {\n  export var m = '';\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -221,8 +217,7 @@ fn namespace_iife_param_renamed_for_variable_conflict() {
 fn namespace_iife_param_renamed_for_import_equals_conflict() {
     let source = "namespace Z {\n  export namespace M {\n    export function bar() { return ''; }\n  }\n}\nnamespace A {\n  export namespace M {\n    import M = Z.M;\n    export function bar() {}\n    M.bar();\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -245,8 +240,7 @@ fn namespace_iife_param_renamed_for_import_equals_conflict() {
 fn dotted_namespace_inner_iife_uses_outer_renamed_param_in_argument() {
     let source = "namespace Y.Y {\n  export enum Y { Red, Blue }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -267,8 +261,7 @@ fn dotted_namespace_inner_iife_uses_outer_renamed_param_in_argument() {
 fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
     let source = "function foo(title: string) {}\nnamespace foo.Bar {\n  export function f() {}\n}\nnamespace foo.Baz {\n  export function g() {\n    Bar.f();\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -289,8 +282,7 @@ fn dotted_namespace_reference_to_sibling_qualifies_parent_namespace() {
 fn dotted_namespace_reopen_qualifies_prior_value_exports() {
     let source = "namespace X.Y {\n  class A {\n    m(Y: any) {\n      new B();\n    }\n  }\n}\nnamespace X.Y {\n  export class B {}\n}\nnamespace my.data {\n  export function buz() {}\n}\nnamespace my.data.foo {\n  function data(my, foo) {\n    buz();\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -314,8 +306,7 @@ fn dotted_namespace_reopen_qualifies_prior_value_exports() {
 #[test]
 fn namespace_exported_var_rewrites_computed_class_method_name() {
     let source = "namespace M {\n    export var Symbol;\n\n    class C {\n        [Symbol.iterator]() { }\n    }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -351,8 +342,7 @@ fn namespace_exported_var_rewrites_computed_class_method_name() {
 fn reopened_dotted_namespace_qualifies_merged_exports_by_source_path() {
     let source = "namespace my.data.foo {\n  export function child() {}\n}\nnamespace my.data {\n  export function buz() {}\n}\nnamespace my.data {\n  function data(my) {\n    foo.child();\n  }\n}\nnamespace my.data.foo {\n  function data(my, foo) {\n    buz();\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -386,8 +376,7 @@ fn same_block_class_extends_class_uses_unqualified_name() {
     // branch wins and the output incorrectly becomes `extends X.A`.
     let source = "namespace X {\n  export class A {}\n}\nnamespace X {\n  export class A {}\n  export class B extends A {}\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -408,8 +397,7 @@ fn same_block_class_extends_class_uses_unqualified_name() {
 fn nested_namespace_does_not_qualify_own_leaf_name_from_parent_exports() {
     let source = "namespace X.Y {\n  export namespace Point {\n    export var Origin = new Point(0, 0);\n  }\n}\nnamespace X.Y {\n  export class Point {}\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -430,8 +418,7 @@ fn nested_namespace_does_not_qualify_own_leaf_name_from_parent_exports() {
 fn nested_namespace_uses_parent_current_class_lexically() {
     let source = "namespace A {\n  export class Point {\n    constructor(public x: number, public y: number) {}\n  }\n\n  export namespace B {\n    export var Origin: Point = new Point(0, 0);\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
@@ -452,8 +439,7 @@ fn nested_namespace_uses_parent_current_class_lexically() {
 fn nested_namespace_uses_parent_current_namespace_lexically() {
     let source = "namespace A {\n  export declare namespace BB {\n    export var Elephant: any;\n  }\n  export namespace B {\n    export class C {\n      x = BB.Elephant.X;\n    }\n  }\n}";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(
         &parser.arena,
@@ -479,8 +465,7 @@ fn nested_namespace_uses_parent_current_namespace_lexically() {
 #[test]
 fn namespace_default_function_recovery_emits_default_assignment() {
     let source = "namespace ns_function {\n    export default function () {}\n}\n\nnamespace ns_async_function {\n    export default async function () {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut printer = Printer::new(
         &parser.arena,

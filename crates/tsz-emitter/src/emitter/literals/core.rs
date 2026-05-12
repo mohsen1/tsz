@@ -861,12 +861,16 @@ fn has_unterminated_codepoint_escape(text: &str) -> bool {
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     #[test]
     fn regex_literal_preserves_non_ascii_flags() {
         let source = "const 𝘳𝘦𝘨𝘦𝘹 = /(?𝘴𝘪-𝘮:^𝘧𝘰𝘰.)/𝘨𝘮𝘶;";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -948,8 +952,7 @@ mod tests {
         ]
         .join("\n");
 
-        let mut parser = ParserState::new("test.ts".to_string(), source);
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(&source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.print(root);
         let output = printer.finish().code;
@@ -976,8 +979,7 @@ mod tests {
     #[test]
     fn unterminated_codepoint_escape_string_downlevels_to_cooked_text() {
         let source = "var x = \"\\u{00000000000067}\r\n";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.set_source_text(source);
         printer.print(root);
@@ -992,8 +994,7 @@ mod tests {
     #[test]
     fn incomplete_codepoint_escape_string_keeps_missing_close_quote() {
         let source = "var x = \"\\u{00000000000067";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
         printer.set_source_text(source);
         printer.print(root);
@@ -1014,8 +1015,7 @@ mod tests {
         use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
 
         let source = "var es1 = \"line 1\n\";\nvar es13 = \" \nvar es14 = \"";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(&parser.arena, PrinterOptions::default());
         printer.set_source_text(source);
         printer.emit(root);
@@ -1038,8 +1038,7 @@ mod tests {
     #[test]
     fn unterminated_regex_in_call_does_not_duplicate_recovery_paren() {
         let source = "foo(/notregexp);";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -1059,8 +1058,7 @@ mod tests {
     #[test]
     fn unicode_escape_in_identifier_preserved() {
         let source = "var \\u0041 = 1;";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -1109,8 +1107,7 @@ mod tests {
     fn numeric_separator_decimal_exponents_normalized_below_es2021() {
         use tsz_common::ScriptTarget;
         let source = "1e1_0\n1e+1_0\n1.1e10_0\n1_2.3_4e5_6\n1_2.3_4e-5_6";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let opts = PrintOptions {
             target: ScriptTarget::ES2020,
             ..Default::default()
@@ -1132,8 +1129,7 @@ mod tests {
     fn numeric_separator_leading_decimal_fraction_gets_zero_prefix_below_es2021() {
         use tsz_common::ScriptTarget;
         let source = "00.5_5;\n01.5_5;\n";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let opts = PrintOptions {
             target: ScriptTarget::ES2020,
             ..Default::default()
@@ -1187,8 +1183,7 @@ mod tests {
         use tsz_common::ScriptTarget;
         let source = "0b1010_0001_1000_0101;";
         let expected = "41349;";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let opts = PrintOptions {
             target: ScriptTarget::ES2015,
             ..Default::default()
@@ -1232,8 +1227,7 @@ mod tests {
     #[test]
     fn unicode_escape_in_property_name_preserved() {
         let source = "var x = { \\u0061: \"ss\" };";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -1255,8 +1249,7 @@ mod tests {
         // U+2028 LINE SEPARATOR is 3 bytes in UTF-8: E2 80 A8
         // The source string: var x = "line 1\<LS> line 2";
         let source = "var x = \"line 1\\\u{2028} line 2\";";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let opts = PrintOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
