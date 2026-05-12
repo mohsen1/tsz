@@ -10,7 +10,7 @@
     4955,
     4960
   ],
-  "candidate_count": 140,
+  "candidate_count": 155,
   "candidates": [
     {
       "pr_number": 5089,
@@ -746,6 +746,108 @@
       ]
     },
     {
+      "pr_number": 5743,
+      "pr_title": "fix(checker): validate return type for all union JSX component members",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5743",
+      "merged_at": "2026-05-12T07:12:02Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BUZLn",
+      "path": "crates/tsz-checker/src/checkers/jsx/tests.rs",
+      "line": 431,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The new regression test\u2019s doc comment says \u201call members have valid props\u201d, but `BadClass` as declared has no constructor parameter and no `props` member, and there\u2019s no `JSX.ElementAttributesProperty`; per `get_class_component_props_type` this likely makes props extraction return `None` for the class member. This weakens the intended coverage of the original bug (props extraction succeeding for union members suppressing return-type validation). Consider updating the test to make class props extraction succeed (e.g., add a `constructor(props: {})` or a `props` property / `ElementAttributesProperty`) so the test reliably exercises the exact suppression scenario.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5743,
+      "pr_title": "fix(checker): validate return type for all union JSX component members",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5743",
+      "merged_at": "2026-05-12T07:12:02Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BUZMF",
+      "path": "crates/tsz-checker/src/checkers/jsx/tests.rs",
+      "line": 452,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "In `jsx_union_component_all_valid_no_ts2786`, the class member\u2019s validity isn\u2019t actually being asserted if `JSX.ElementClass` is absent: `check_jsx_component_return_type` treats construct signatures as valid when the `JSX.ElementClass` target type is `None` (`target.is_none_or(...)`). Consider adding a minimal `JSX.ElementClass` definition (and shaping `GoodClass` accordingly) so this test genuinely verifies the \u201call union members are valid JSX components\u201d condition instead of passing due to a missing target type.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5753,
+      "pr_title": "fix(dts): preserve js function variable docs",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5753",
+      "merged_at": "2026-05-12T07:44:05Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BVEci",
+      "path": "crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs",
+      "line": 1091,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This regression assertion covers the non-export case, but it doesn\u2019t exercise the `export =` / CommonJS export-equals path where `emit_pending_js_export_equals_for_name` may emit `export = send;` before the synthetic `declare function send...`. A focused test for a JSDoc-annotated function variable that is the export-equals target would help ensure the JSDoc remains attached to the `declare function` (and not to the `export =` statement).",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5811,
+      "pr_title": "fix(checker): validate JSX union returns structurally",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5811",
+      "merged_at": "2026-05-12T10:55:21Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BYbB5",
+      "path": "crates/tsz-checker/src/checkers/jsx/tests.rs",
+      "line": 860,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This regression test only asserts that *some* TS2786 was produced. To make it more robust against unrelated TS2786s (or future changes that introduce additional TS2786s in the snippet), consider also asserting the TS2786 message mentions the JSX tag name (e.g. contains \"'Bad'\") similar to `jsx_union_of_invalid_function_and_class_component_emits_ts2786`.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5830,
+      "pr_title": "test(checker): load bundled DOM libs in JS constructor tests",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5830",
+      "merged_at": "2026-05-12T11:40:09Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BZNuw",
+      "path": "crates/tsz-checker/tests/js_constructor_property_tests.rs",
+      "line": 172,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "If none of the lib roots resolve both ES5 and DOM, this returns `Vec::new()` and the tests will run without any libs. That can silently make some DOM-related assertions meaningless when running an individual test. Prefer failing fast with a clear panic/assert when the expected libs can't be loaded (or at least assert non-empty in `check_js_with_es5_and_dom_lib`).",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5901,
+      "pr_title": "fix(dts): keep js accessor comments with reordered members",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5901",
+      "merged_at": "2026-05-12T14:44:10Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6Bc52l",
+      "path": "crates/tsz-emitter/src/declaration_emitter/core/emit_members.rs",
+      "line": 1189,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`type_text_union_contains` splits on every `|` without tracking nesting, which can mis-detect `null`/`undefined` inside parenthesized or generic unions (e.g. `(string | null)[]`) and incorrectly append top-level nullability to the setter/getter types. Consider reusing the existing top-level-union splitting logic used in `normalize_jsdoc_type_expr` (depth-aware over `()<>[]{}`) so only top-level union members are considered, and add a regression case for array/generic nested unions.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
       "pr_number": 5100,
       "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
       "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
@@ -789,6 +891,40 @@
       "line": 26,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This inlines only `DECORATE_HELPER`, but legacy decorator emit can also reference `__param` (constructor/method parameter decorators) and `__metadata` (when `emit_decorator_metadata` is enabled). In the no-transform System wrapper path, those helpers won\u2019t be emitted elsewhere, so decorated output can call `__param`/`__metadata` without definitions. Consider emitting the full required legacy-decorator helper set (decorate/param/metadata) based on a scan (or a shared helper-needed computation) rather than only `__decorate`.",
+      "score": 3,
+      "reasons": [
+        "action-language",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5811,
+      "pr_title": "fix(checker): validate JSX union returns structurally",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5811",
+      "merged_at": "2026-05-12T10:55:21Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BYbBY",
+      "path": "crates/tsz-checker/src/checkers/jsx/extraction.rs",
+      "line": 1064,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`jsx_construct_return_satisfies_element_class_render` is used as an OR-condition when `check_ret` is *not* assignable to `JSX.ElementClass`. Because it only checks `render` compatibility, it can incorrectly treat an instance type as a valid `JSX.ElementClass` even when it is missing other required members of `ElementClass` (e.g. `props`, `state`, etc.). This risks suppressing TS2786 in cases where the instance structurally fails `JSX.ElementClass` for reasons other than `render`.\n\nConsider tightening this fallback so it only applies when the assignability failure is specifically about `render` (or alternatively, additionally validate that all other required `ElementClass` members are satisfied before returning true).",
+      "score": 3,
+      "reasons": [
+        "action-language",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5899,
+      "pr_title": "chore(emitter,binder-tests): share parse_test_source helper across src-mounted test modules",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5899",
+      "merged_at": "2026-05-12T14:42:21Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6Bc1iQ",
+      "path": "crates/tsz-emitter/src/emitter/literals/core.rs",
+      "line": 865,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`parse_test_source` takes `&str` and then immediately allocates via `source.to_string()`. In tests that already build a `String` (e.g. the joined `source` used later in this module), this introduces an extra clone/allocation versus moving the existing `String`. Consider adding a variant that takes `String`, or making the helper generic over `Into<String>` and adjusting call sites that don't need to retain the original string.",
       "score": 3,
       "reasons": [
         "action-language",
@@ -2295,6 +2431,118 @@
       "line": 605,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "`rewrite_index_signatures1_fingerprints` is invoked even when `ctx.allow_source_file_test_pragmas` is false, which means this conformance-specific diagnostic rewriting could affect normal CLI/LSP checking for any user file that happens to contain the trigger strings. Consider gating this call behind `allow_source_file_test_pragmas` (as is already done for `rewrite_intersection_index_signature_fingerprints`) to ensure fingerprint rewrites only run in conformance/test mode.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5830,
+      "pr_title": "test(checker): load bundled DOM libs in JS constructor tests",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5830",
+      "merged_at": "2026-05-12T11:40:09Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BZNuM",
+      "path": "crates/tsz-checker/tests/js_constructor_property_tests.rs",
+      "line": 164,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`LibFile::from_source` is given the basename from disk (`lib.es5.d.ts`/`lib.dom.d.ts` when loading from `TypeScript/lib`, but `es5.d.ts`/`dom.d.ts` when loading from the bundled assets). Several checker paths key off `source.file_name.starts_with(\"lib.\")` / default-lib detection, so this can make the same test behave differently depending on whether a local `TypeScript/lib` checkout exists. Consider using a consistent, canonical `LibFile` name for all roots (e.g., always `lib.es5.d.ts` and `lib.dom.d.ts`, even when reading the contents from `es5.d.ts`/`dom.d.ts` assets).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5830,
+      "pr_title": "test(checker): load bundled DOM libs in JS constructor tests",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5830",
+      "merged_at": "2026-05-12T11:40:09Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BZNvC",
+      "path": "crates/tsz-checker/tests/js_constructor_property_tests.rs",
+      "line": 151,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The root preference order here tries `TypeScript/lib` first, which can be much heavier than the bundled stripped assets and makes test performance/environment behavior depend on a local checkout. This is the inverse of the order used by `tsz_checker::test_utils::lib_test_roots` (stripped assets first). Consider preferring the stripped/full bundled assets first and keeping `TypeScript/lib` as a last fallback if the goal is just to ensure libs are present in all environments.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5845,
+      "pr_title": "fix(dts): ignore cjs exports in esm js modules",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5845",
+      "merged_at": "2026-05-12T12:22:05Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BZ_S_",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs",
+      "line": 403,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`source_file_has_native_esm_syntax` walks every top-level statement; it\u2019s called multiple times during per-file setup (e.g., several `collect_js_*` helpers), which adds repeated O(n) passes over the same statement list. Consider computing this once per source file (store a boolean on `DeclarationEmitter` during setup and reuse it) to avoid extra scans on large JS files.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5845,
+      "pr_title": "fix(dts): ignore cjs exports in esm js modules",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5845",
+      "merged_at": "2026-05-12T12:22:05Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BZ_Tu",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs",
+      "line": 401,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`source_file_has_native_esm_syntax` treats any `EXPORT_ASSIGNMENT` as \u201cnative ESM\u201d, but in this codebase JS files can contain `export =` (see existing `test_js_export_equals_emits_before_target_declaration`). That means a JS file using `export =` will be misclassified as \u201cnative ESM\u201d and will now skip CommonJS export synthesis/analysis guarded by this helper. Consider checking `EXPORT_ASSIGNMENT` nodes and only treating them as native ESM when they are *not* `export =` (i.e., `export default`), so `export =` JS files keep their CommonJS behavior.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5867,
+      "pr_title": "fix(dts): emit js function keyword property aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5867",
+      "merged_at": "2026-05-12T13:16:24Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6Ba7U6",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/late_bound_function_analysis.rs",
+      "line": 848,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`reserved_names` is documented as tracking names taken in the *top-level scope* of the file. Inserting namespace member locals into this set (including when no alias is needed) can force unrelated later top-level imports/aliases to be renamed even though namespace members are scoped. Consider keeping a separate JS late-bound namespace-local name set (or only reserving within `reserved_member_names`) instead of mutating `self.reserved_names` here.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5867,
+      "pr_title": "fix(dts): emit js function keyword property aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5867",
+      "merged_at": "2026-05-12T13:16:24Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6Ba7V4",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/late_bound_function_analysis.rs",
+      "line": 840,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "When renaming a `namespace_member_name` due to a global collision, `generate_unique_name(namespace_member_name)` only checks `self.reserved_names`, not the already-known `reserved_member_names` for the current namespace. This can pick a name that exists as another member in the same namespace (e.g., choosing `normal_1` when there is already a `normal_1` property), producing duplicate declarations and an invalid `.d.ts`. Ensure the chosen synthetic name is unique against the current namespace\u2019s member names as well (e.g., seed `reserved_names` with `reserved_member_names` before generating, or generate against both sets).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5874,
+      "pr_title": "fix(checker): map variadic tuple source display through rest slots",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5874",
+      "merged_at": "2026-05-12T13:49:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6Bbl45",
+      "path": "crates/tsz-checker/src/error_reporter/core/diagnostic_source/tuple_source_display.rs",
+      "line": 111,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`target_tuple_element_for_literal_position` linearly scans `elements` to find the rest index on every literal element (`iter().position(...)`), which makes building a diagnostic O(literal_len * target_len) for large tuples. Consider computing `rest_index`/`suffix_len` once in `array_literal_tuple_source_type_display` (or caching it) and passing the precomputed mapping info into the per-element helper.",
       "score": 1,
       "reasons": [
         "detailed-thread"
