@@ -81,3 +81,27 @@ const Point = { wrong: ("hello" as Point) };
         "Expected one TS2352 for genuinely non-overlapping assertion: {ts2352:?}",
     );
 }
+
+/// #5990: the same merged-symbol pattern surfaced via a return-type
+/// annotation rather than an `as` assertion. The arrow function returns
+/// `{ type: "foo" }` against a `: Foo` return-type annotation where `Foo`
+/// is both a type alias and a same-named const. The annotation must
+/// resolve to the type alias body, not the const value type.
+#[test]
+fn return_type_annotation_resolves_to_type_alias_when_const_shares_name() {
+    let source = r#"
+type Foo = { type: "foo" };
+
+const Foo = {
+  make: (): Foo => {
+    return { type: "foo" };
+  }
+};
+"#;
+    let ds = diags(source);
+    let ts2322: Vec<_> = ds.iter().filter(|d| d.0 == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322; return-type `Foo` must bind to the alias body: {ts2322:?}",
+    );
+}
