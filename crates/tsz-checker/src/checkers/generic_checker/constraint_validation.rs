@@ -26,6 +26,21 @@ impl<'a> CheckerState<'a> {
             .any(|d| matches!(d.code, 2314 | 2315 | 2707) && d.start >= start && d.start < end)
     }
 
+    fn type_arg_subtree_has_value_used_as_type_error(&self, type_arg_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_arg_idx) else {
+            return false;
+        };
+        let (start, end) = (node.pos, node.end);
+        if end <= start {
+            return false;
+        }
+        let code = crate::diagnostics::diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF;
+        self.ctx
+            .diagnostics
+            .iter()
+            .any(|d| d.code == code && d.start >= start && d.start < end)
+    }
+
     /// Validate each type argument against its corresponding type parameter
     /// constraint. Reports TS2344 when a type argument doesn't satisfy its
     /// constraint. Shared by call expressions, new expressions, and type refs.
@@ -73,6 +88,12 @@ impl<'a> CheckerState<'a> {
                 // and the broader `extra-2344-with-2314` cluster.
                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                     && self.type_arg_subtree_has_arity_error(arg_idx)
+                {
+                    continue;
+                }
+
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self.type_arg_subtree_has_value_used_as_type_error(arg_idx)
                 {
                     continue;
                 }
