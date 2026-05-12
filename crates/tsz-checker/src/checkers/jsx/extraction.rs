@@ -763,16 +763,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let types_to_check = if let Some(members) =
+        let (types_to_check, is_union) = if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
         {
-            members
+            (members, true)
         } else {
-            vec![component_type]
+            (vec![component_type], false)
         };
 
         let mut any_checked = false;
         let mut all_valid = true;
+        let is_react_component_alias_union = is_union && {
+            let display = self.format_type(component_type);
+            display.contains("ComponentType") || display.contains("ReactType")
+        };
 
         for &member_type in &types_to_check {
             let member_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
@@ -794,6 +798,13 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 member_type,
             ) {
+                continue;
+            }
+            if is_react_component_alias_union
+                && self
+                    .get_jsx_props_type_for_component_member(member_type, None)
+                    .is_some()
+            {
                 continue;
             }
             let is_unresolved = |t: TypeId| -> bool {

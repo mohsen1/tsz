@@ -4,7 +4,7 @@
 - **Branch**: `fix/calls-complex-signatures-ts2786-regression-20260512`
 - **Base**: `main`
 - **PR**: https://github.com/mohsen1/tsz/pull/5780
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: conformance
 
 ## Intent
@@ -31,4 +31,16 @@ TS2786 for a JSX tag-name union case while tsc expects no diagnostics.
 
 ## Progress
 
-- Claim created.
+- Restored the JSX union component return-type guard for union members that are
+  already accepted by JSX props extraction.
+- Verified the focused conformance regression now matches tsc.
+- Verified the existing invalid JSX union guard still emits TS2786.
+
+## Verification
+
+- `cargo fmt --all` - passed
+- `cargo test -p tsz-checker jsx_union_component_with_invalid_return_emits_ts2786 -- --nocapture` - passed
+- `cargo test -p tsz-checker jsx_react_component_type_union_does_not_emit_ts2786 -- --nocapture` - passed
+- `cargo test -p tsz-checker jsx_union_of_invalid_function_and_class_component_emits_ts2786 -- --nocapture` - passed
+- `./scripts/conformance/conformance.sh run --filter "callsOnComplexSignatures" --verbose` - `FINAL RESULTS: 1/1 passed (100.0%)`
+- `./scripts/conformance/conformance.sh run --filter "jsxComponentTypeErrors" --verbose` - `FINAL RESULTS: 1/1 passed (100.0%)`
