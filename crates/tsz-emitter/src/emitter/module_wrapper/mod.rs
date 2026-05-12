@@ -1,5 +1,6 @@
 mod bang_module_reference;
 mod system_emit;
+mod system_hoist;
 #[cfg(test)]
 mod tests;
 mod wrapper_entry;
