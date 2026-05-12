@@ -949,6 +949,39 @@ fn jsx_react_component_type_union_does_not_emit_ts2786() {
 }
 
 #[test]
+fn jsx_element_class_requirements_are_not_reduced_to_render_only() {
+    let source = r#"
+        declare namespace JSX {
+            interface Element { ok: true; }
+            interface ElementClass { render(): Element; props: { required: true }; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare function GoodFC(props: { required: true }): JSX.Element;
+        declare class MissingPropsClass {
+            render(): JSX.Element;
+        }
+        declare const Mixed: typeof GoodFC | typeof MissingPropsClass;
+        const elem = <Mixed required={true} />;
+        "#;
+    let diagnostics = check_jsx_strict(source);
+    let expected_start = source
+        .find("<Mixed")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <Mixed");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'Mixed'"))
+        .expect(
+            "Class branch missing JSX.ElementClass-required members should still trigger TS2786",
+        );
+    assert_eq!(
+        ts2786.start, expected_start,
+        "Expected TS2786 to anchor at the Mixed JSX tag name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_react_type_union_with_string_does_not_emit_ts2786() {
     let diagnostics = check_jsx_strict(
         r#"
