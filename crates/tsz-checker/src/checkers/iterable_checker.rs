@@ -1666,6 +1666,8 @@ impl<'a> CheckerState<'a> {
         if next_type == TypeId::ANY
             || next_type == TypeId::UNKNOWN
             || next_type == TypeId::UNDEFINED
+            || crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, next_type)
+            || crate::query_boundaries::common::contains_infer_types(self.ctx.types, next_type)
         {
             return true;
         }

@@ -885,9 +885,23 @@ impl<'a> CheckerState<'a> {
                 } else if self.is_get_accessor_call(callee_expr) {
                     self.error_get_accessor_not_callable_at(callee_expr);
                 } else if self.ctx.compiler_options.strict_null_checks {
-                    let (_non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
+                    let (non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
                     if let Some(cause) = nullish_cause {
-                        self.error_cannot_invoke_possibly_nullish_at(cause, callee_expr);
+                        if cause == TypeId::UNDEFINED
+                            && let Some(namespace_type) =
+                                self.same_file_namespace_value_type_for_call(callee_expr)
+                        {
+                            self.error_not_callable_at(namespace_type, callee_expr);
+                        } else if let Some(non_nullish) = non_nullish
+                            && !crate::query_boundaries::common::is_callable_type(
+                                self.ctx.types,
+                                non_nullish,
+                            )
+                        {
+                            self.error_not_callable_at(non_nullish, callee_expr);
+                        } else {
+                            self.error_cannot_invoke_possibly_nullish_at(cause, callee_expr);
+                        }
                     } else if !self.is_in_decorator_expression(callee_expr) {
                         // Don't emit TS2349 for calls inside decorators - decorators
                         // are resolved at runtime and should not be checked for callability.
@@ -1979,5 +1993,38 @@ impl<'a> CheckerState<'a> {
                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                 .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
         })
+    }
+
+    fn same_file_namespace_value_type_for_call(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_idx = self.ctx.arena.skip_parenthesized(callee_expr);
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        let ident = self.ctx.arena.get_identifier(expr_node)?;
+        let candidates: Vec<_> = self
+            .ctx
+            .binder
+            .symbols
+            .find_all_by_name(ident.escaped_text.as_str())
+            .iter()
+            .copied()
+            .collect();
+        for sym_id in candidates {
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if !symbol.has_any_flags(tsz_binder::symbol_flags::MODULE) {
+                continue;
+            }
+            let namespace_type = self.get_type_of_symbol(sym_id);
+            if !matches!(
+                namespace_type,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::UNDEFINED
+            ) {
+                return Some(namespace_type);
+            }
+        }
+        None
     }
 }
