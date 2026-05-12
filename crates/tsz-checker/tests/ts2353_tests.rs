@@ -54,6 +54,29 @@ test3({ x: "foo" }, { x: "bar", y: 42 });
     );
 }
 
+#[test]
+fn const_assertion_assignment_reports_excess_property() {
+    let source = r#"
+interface Point {
+    x: number;
+    y: number;
+}
+
+const point: Point = { x: 1, y: 2, z: 3 } as const;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 through as const, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'z'") && ts2353[0].1.contains("'Point'"),
+        "Expected TS2353 to mention excess property z and target Point, got: {ts2353:?}",
+    );
+}
+
 // --- Discriminated union excess property checking ---
 
 #[test]

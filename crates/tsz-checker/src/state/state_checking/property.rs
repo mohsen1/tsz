@@ -4,6 +4,7 @@ use crate::symbol_resolver::TypeSymbolResolution;
 use std::collections::HashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -167,14 +168,16 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_relation_input_ready(target);
 
+        let const_assertion_object_literal = self.const_assertion_object_literal_expression(idx);
+        let object_literal_idx = const_assertion_object_literal.unwrap_or(idx);
         let evaluated_target = self.evaluate_type_with_env(target);
 
         // Run named-property value checks before excess-property reporting. When
         // a known property is already invalid, tsc reports that assignability
         // error instead of additionally reporting an excess property from the
         // same object literal.
-        let emitted_named_property_value_error =
-            self.check_object_literal_named_property_values_against_target(idx, target);
+        let emitted_named_property_value_error = self
+            .check_object_literal_named_property_values_against_target(object_literal_idx, target);
         if emitted_named_property_value_error {
             return;
         }
@@ -188,8 +191,10 @@ impl<'a> CheckerState<'a> {
         let is_fresh_source = freshness_query::is_fresh_object_type(self.ctx.types, source);
         let explicit_property_names = if is_fresh_source {
             None
+        } else if const_assertion_object_literal.is_some() {
+            self.explicit_object_literal_property_names(object_literal_idx)
         } else {
-            self.explicit_object_literal_property_names_for_spread(idx)
+            self.explicit_object_literal_property_names_for_spread(object_literal_idx)
         };
         // Non-fresh object literals should be exempt from excess-property checks
         // unless they use spread, in which case we still check explicit properties.
@@ -2002,6 +2007,20 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        self.explicit_object_literal_property_names(obj_literal_idx)
+    }
+
+    fn explicit_object_literal_property_names(
+        &self,
+        obj_literal_idx: NodeIndex,
+    ) -> Option<HashSet<Atom>> {
+        let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+        if obj_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+
         let mut explicit_names = HashSet::new();
         for &elem_idx in &obj_lit.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -2038,6 +2057,47 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(explicit_names)
+    }
+
+    fn const_assertion_object_literal_expression(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::AS_EXPRESSION
+            && node.kind != syntax_kind_ext::TYPE_ASSERTION
+        {
+            return None;
+        }
+        let assertion = self.ctx.arena.get_type_assertion(node)?;
+        if !self.is_const_assertion_type_node(assertion.type_node) {
+            return None;
+        }
+        let expression = self.ctx.arena.get(assertion.expression)?;
+        if expression.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return Some(assertion.expression);
+        }
+        None
+    }
+
+    fn is_const_assertion_type_node(&self, type_node_idx: NodeIndex) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16 {
+            return true;
+        }
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+        {
+            return self
+                .ctx
+                .arena
+                .get_identifier_text(type_ref.type_name)
+                .is_some_and(|name| name == "const")
+                && type_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_none_or(|args| args.nodes.is_empty());
+        }
+        false
     }
 
     /// Check nested object literal properties for excess properties.
