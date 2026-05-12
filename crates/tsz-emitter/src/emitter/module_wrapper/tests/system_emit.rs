@@ -203,6 +203,40 @@ fn system_top_level_using_direct_exported_legacy_class_stays_inline() {
 }
 
 #[test]
+fn system_exported_legacy_decorated_class_exports_decorator_assignment() {
+    let source = "declare var dec: any;\n@dec\nexport class A {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            legacy_decorators: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __decorate = (this && this.__decorate) || function"),
+        "System wrapper should inline __decorate inside the register callback.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"A\", A);"),
+        "System wrapper should preserve the pre-decorator live export.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"A\", A = __decorate(["),
+        "System wrapper should export the decorated class reassignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_top_level_using_env_hoists_before_later_nested_var() {
     let source = "export { y };\nusing z = null;\nif (false) {\n    var y = 1;\n}\n";
 
