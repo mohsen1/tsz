@@ -1179,8 +1179,7 @@ impl<'a> AstToIr<'a> {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
                     || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
                     || self.arena.get(elem_idx).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::METHOD_DECLARATION
-                            || n.kind == syntax_kind_ext::GET_ACCESSOR
+                        n.kind == syntax_kind_ext::GET_ACCESSOR
                             || n.kind == syntax_kind_ext::SET_ACCESSOR
                     })
             });
@@ -1228,8 +1227,7 @@ impl<'a> AstToIr<'a> {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
                     || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
                     || self.arena.get(elem_idx).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::METHOD_DECLARATION
-                            || n.kind == syntax_kind_ext::GET_ACCESSOR
+                        n.kind == syntax_kind_ext::GET_ACCESSOR
                             || n.kind == syntax_kind_ext::SET_ACCESSOR
                     })
             })
@@ -1485,6 +1483,14 @@ impl<'a> AstToIr<'a> {
             Some(IRProperty {
                 key: IRPropertyKey::Identifier(name.clone().into()),
                 value: IRNode::Identifier(name.into()),
+                kind: IRPropertyKind::Init,
+            })
+        } else if let Some(method) = self.arena.get_method_decl(node) {
+            let key = self.get_property_key(method.name)?;
+            let value = self.convert_method_to_function_expr(node)?;
+            Some(IRProperty {
+                key,
+                value,
                 kind: IRPropertyKind::Init,
             })
         } else {
