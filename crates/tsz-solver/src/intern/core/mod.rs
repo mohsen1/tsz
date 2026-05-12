@@ -8,8 +8,8 @@ mod constructors;
 mod interner;
 
 // Re-export everything that was previously public from core.rs
+#[cfg(test)]
+pub(crate) use interner::PROPERTY_MAP_THRESHOLD;
 pub use interner::TypeInterner;
 pub use interner::clear_thread_local_cache;
-pub(crate) use interner::{
-    PROPERTY_MAP_THRESHOLD, TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeListBuffer,
-};
+pub(crate) use interner::{TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeListBuffer};

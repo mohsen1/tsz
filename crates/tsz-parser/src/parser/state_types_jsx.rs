@@ -764,7 +764,7 @@ impl ParserState {
                     && let Some(close_data) = self.arena.get_jsx_closing(close_node)
                 {
                     let close_tag = close_data.tag_name;
-                    if !close_tag.is_none() && !self.jsx_tag_names_match(open_tag, close_tag) {
+                    if close_tag.is_some() && !self.jsx_tag_names_match(open_tag, close_tag) {
                         // Check if closing matches parent's tag (tsc pattern)
                         let matches_parent = currently_opened_tag
                             .is_some_and(|pt| self.jsx_tag_names_match(pt, close_tag));

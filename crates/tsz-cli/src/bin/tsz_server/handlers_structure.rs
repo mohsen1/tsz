@@ -2848,7 +2848,7 @@ impl Server {
                         // symbol literally named "default", or when the
                         // resolved target is the file's default export — both
                         // forms are reachable from any default-import binding.
-                        if !clause.name.is_none()
+                        if clause.name.is_some()
                             && (target_name == "default" || target_is_default_export)
                             && let Some(name_node) = arena.get(clause.name)
                             && let Some(ident) = arena.get_identifier(name_node)
@@ -2861,11 +2861,11 @@ impl Server {
                         // member calls. NamespaceImport reuses
                         // `NamedImportsData` storage with the local name
                         // in the `name` field and an empty elements list.
-                        if !clause.named_bindings.is_none()
+                        if clause.named_bindings.is_some()
                             && let Some(nb_node) = arena.get(clause.named_bindings)
                             && nb_node.kind == tsz_parser::syntax_kind_ext::NAMESPACE_IMPORT
                             && let Some(ns_import) = arena.get_named_imports(nb_node)
-                            && !ns_import.name.is_none()
+                            && ns_import.name.is_some()
                             && let Some(name_node) = arena.get(ns_import.name)
                             && arena.get_identifier(name_node).is_some()
                         {
@@ -2873,7 +2873,7 @@ impl Server {
                         }
                         // Named bindings — walk the named_bindings child for
                         // `NamedImports` (`import { foo } from "./a"`).
-                        if !clause.named_bindings.is_none()
+                        if clause.named_bindings.is_some()
                             && let Some(nb_node) = arena.get(clause.named_bindings)
                             && nb_node.kind == tsz_parser::syntax_kind_ext::NAMED_IMPORTS
                             && let Some(named) = arena.get_named_imports(nb_node)
@@ -2889,7 +2889,7 @@ impl Server {
                                     };
                                     // Matched exported name (property_name when aliased,
                                     // otherwise the binding name).
-                                    let exported = if !specifier.property_name.is_none()
+                                    let exported = if specifier.property_name.is_some()
                                         && let Some(prop_node) = arena.get(specifier.property_name)
                                         && let Some(ident) = arena.get_identifier(prop_node)
                                     {

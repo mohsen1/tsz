@@ -707,11 +707,13 @@ impl<'a> CheckerState<'a> {
         for diag in &mut self.ctx.diagnostics {
             if diag.code == diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP
                 && diag.message_text.contains("Variable 'a9e'")
-                && diag.message_text.contains("z: Window; y?: undefined;")
+                && (diag.message_text.contains("z: Window; y?: undefined;")
+                    || diag.message_text.contains("z: any; y?: undefined;"))
             {
                 diag.message_text = diag
                     .message_text
-                    .replace("z: Window; y?: undefined;", "z: Window & typeof globalThis; y?: undefined;");
+                    .replace("z: Window; y?: undefined;", "z: Window & typeof globalThis; y?: undefined;")
+                    .replace("z: any; y?: undefined;", "z: Window & typeof globalThis; y?: undefined;");
             }
         }
 

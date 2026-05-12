@@ -183,6 +183,52 @@ const test9 = new C();
 }
 
 #[test]
+fn jsdoc_type_assignment_new_expression_reports_subclass_mismatch() {
+    let codes = check_js_file_with_types(
+        "types.ts",
+        r#"
+interface Lifecycle<Attrs, State> {
+    oninit?(vnode: Vnode<Attrs, State>): number;
+    [_: number]: any;
+}
+
+interface Vnode<Attrs, State extends Lifecycle<Attrs, State> = Lifecycle<Attrs, State>> {
+    tag: Component<Attrs, State>;
+}
+
+interface Component<Attrs, State> {
+    view(this: State, vnode: Vnode<Attrs, State>): number;
+}
+
+interface ClassComponent<A> extends Lifecycle<A, ClassComponent<A>> {
+    oninit?(vnode: Vnode<A, this>): number;
+    view(vnode: Vnode<A, this>): number;
+}
+
+interface MyAttrs { id: number }
+class C implements ClassComponent<MyAttrs> {
+    view(v: Vnode<MyAttrs>) { return 0; }
+}
+"#,
+        "file1.js",
+        r#"
+/** @type {ClassComponent<any>} */
+const test9 = new C();
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        codes.contains(&2322),
+        "JSDoc @type new-expression assignment should emit TS2322; got {codes:?}"
+    );
+}
+
+#[test]
 fn cross_file_jsdoc_typedef_is_visible_from_ts_type_reference() {
     let codes = check_types_file_with_jsdoc_global(
         r#"
