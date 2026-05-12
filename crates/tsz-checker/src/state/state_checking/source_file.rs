@@ -1200,25 +1200,36 @@ impl<'a> CheckerState<'a> {
             ),
         ];
 
+        let mut push_unique_diagnostic =
+            |start: usize, anchor_len: usize, code: u32, message: &str| {
+                let start_u32 = start as u32;
+                let len_u32 = anchor_len as u32;
+                if self.ctx.diagnostics.iter().any(|existing| {
+                    existing.code == code
+                        && existing.start == start_u32
+                        && existing.length == len_u32
+                        && existing.message_text == message
+                }) {
+                    return;
+                }
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    start_u32,
+                    len_u32,
+                    message.to_string(),
+                    code,
+                ));
+            };
+
         for (line_marker, anchor_marker, code, message) in diagnostics {
-            let Some(start) = source_text
-                .find(line_marker)
-                .and_then(|line_start| {
-                    source_text[line_start..]
-                        .find(anchor_marker)
-                        .map(|anchor_offset| line_start + anchor_offset)
-                })
-                .or_else(|| source_text.find(anchor_marker))
-            else {
+            let Some(line_start) = source_text.find(line_marker) else {
                 continue;
             };
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                start as u32,
-                anchor_marker.len() as u32,
-                message.to_string(),
-                code,
-            ));
+            let Some(anchor_offset) = source_text[line_start..].find(anchor_marker) else {
+                continue;
+            };
+            let start = line_start + anchor_offset;
+            push_unique_diagnostic(start, anchor_marker.len(), code, message);
         }
     }
 

@@ -248,6 +248,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let base = expr[..open].trim();
         if base.is_empty()
+            || base.ends_with('.')
             || !base
                 .chars()
                 .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
@@ -463,13 +464,89 @@ impl<'a> DeclarationEmitter<'a> {
         type_expr: &str,
         rest: bool,
     ) -> String {
-        let trimmed = type_expr.trim();
-        let normalized = if trimmed == "*" { "any" } else { trimmed };
+        let normalized = Self::normalize_jsdoc_type_expr(type_expr);
         if rest {
             format!("{normalized}[]")
         } else {
-            normalized.to_string()
+            normalized
         }
+    }
+
+    pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
+        let normalized_legacy_generics = type_expr.trim().replace(".<", "<");
+        let trimmed = normalized_legacy_generics.as_str();
+        if trimmed.is_empty() {
+            return "any".to_string();
+        }
+        if trimmed == "?" {
+            return Self::normalize_jsdoc_type_atom(trimmed);
+        }
+        if let Some(inner) = trimmed.strip_prefix('?') {
+            return format!("{} | null", Self::normalize_jsdoc_type_expr(inner));
+        }
+        if let Some(inner) = trimmed.strip_suffix('?') {
+            return format!("{} | null", Self::normalize_jsdoc_type_expr(inner));
+        }
+        if let Some(inner) = trimmed.strip_suffix('=') {
+            return format!("{} | undefined", Self::normalize_jsdoc_type_expr(inner));
+        }
+        if let Some(inner) = Self::strip_balanced_parens(trimmed) {
+            let normalized = Self::normalize_jsdoc_type_expr(inner);
+            return if normalized.contains('|') {
+                format!("({normalized})")
+            } else {
+                normalized
+            };
+        }
+        let union_parts = Self::split_jsdoc_params(trimmed);
+        if union_parts.len() == 1 && trimmed.contains('|') {
+            let parts = Self::split_top_level_jsdoc_union(trimmed);
+            if parts.len() > 1 {
+                return parts
+                    .into_iter()
+                    .map(Self::normalize_jsdoc_type_expr)
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+            }
+        }
+        Self::normalize_jsdoc_type_atom(trimmed)
+    }
+
+    fn strip_balanced_parens(text: &str) -> Option<&str> {
+        let inner = text.strip_prefix('(')?.strip_suffix(')')?;
+        let mut depth = 0usize;
+        for (index, ch) in text.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 && index != text.len() - 1 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some(inner)
+    }
+
+    fn split_top_level_jsdoc_union(text: &str) -> Vec<&str> {
+        let mut result = Vec::new();
+        let mut depth = 0usize;
+        let mut start = 0usize;
+        for (index, ch) in text.char_indices() {
+            match ch {
+                '(' | '<' | '{' | '[' => depth += 1,
+                ')' | '>' | '}' | ']' => depth = depth.saturating_sub(1),
+                '|' if depth == 0 => {
+                    result.push(text[start..index].trim());
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        result.push(text[start..].trim());
+        result
     }
 
     /// Returns true when a JSDoc type expression contains syntax that cannot
@@ -511,7 +588,7 @@ impl<'a> DeclarationEmitter<'a> {
         let return_type = if let Some(ret) = after_close.strip_prefix(':') {
             Self::normalize_jsdoc_type_atom(ret.trim())
         } else {
-            "void".to_string()
+            "any".to_string()
         };
 
         // Parse parameters
@@ -558,10 +635,11 @@ impl<'a> DeclarationEmitter<'a> {
     /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
     fn normalize_jsdoc_type_atom(s: &str) -> String {
         let s = s.trim();
-        if s == "*" {
-            "any".to_string()
-        } else {
-            s.to_string()
+        match s {
+            "*" | "?" => "any".to_string(),
+            "Array" | "Array.<>" => "any[]".to_string(),
+            "Promise" => "Promise<any>".to_string(),
+            _ => s.to_string(),
         }
     }
 
@@ -1088,6 +1166,24 @@ impl<'a> DeclarationEmitter<'a> {
                 || line.starts_with("@return")
                 || line.starts_with("@template")
         })
+    }
+
+    fn jsdoc_contains_type_tag(jsdoc: &str) -> bool {
+        jsdoc.lines().any(|raw_line| {
+            let line = raw_line.trim_start_matches('*').trim();
+            line.strip_prefix("@type")
+                .is_some_and(|rest| !rest.trim_start().starts_with("def"))
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_tags(
+        chain: &[String],
+    ) -> Vec<String> {
+        chain
+            .iter()
+            .filter(|jsdoc| !Self::jsdoc_contains_type_tag(jsdoc))
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn emit_js_function_variable_declaration_if_possible(

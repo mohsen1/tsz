@@ -1985,6 +1985,19 @@ impl<'a> DeclarationEmitter<'a> {
 
                 if regular_decls.len() == 1 {
                     let (decl_idx, decl) = regular_decls[0];
+                    if self.emit_jsdoc_enum_variable_declaration_if_possible(
+                        decl_idx,
+                        decl.name,
+                        decl.initializer,
+                        true,
+                    ) {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
+                        continue;
+                    }
                     if self.emit_js_function_variable_declaration_if_possible(
                         decl_idx,
                         decl.name,

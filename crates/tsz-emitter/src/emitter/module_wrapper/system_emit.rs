@@ -1,11 +1,20 @@
 use super::super::Printer;
 use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::{JsxEmit, ModuleKind};
+use crate::output::source_writer::SourceWriter;
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+
+#[derive(Default)]
+struct LegacySystemDecoratorHelpersNeeded {
+    decorate: bool,
+    metadata: bool,
+    param: bool,
+}
 
 impl<'a> Printer<'a> {
     pub(super) fn emit_system_decorate_helper_if_needed(
@@ -15,8 +24,12 @@ impl<'a> Printer<'a> {
         if self.ctx.options.no_emit_helpers
             || self.ctx.options.import_helpers
             || !self.ctx.options.legacy_decorators
-            || !self.system_source_needs_legacy_decorate_helper(source)
         {
+            return;
+        }
+
+        let needed = self.system_source_legacy_decorator_helpers(source);
+        if !needed.decorate {
             return;
         }
 
@@ -24,50 +37,138 @@ impl<'a> Printer<'a> {
             self.write(line);
             self.write_line();
         }
+
+        if needed.metadata {
+            for line in crate::transforms::helpers::METADATA_HELPER.lines() {
+                self.write(line);
+                self.write_line();
+            }
+        }
+
+        if needed.param {
+            for line in crate::transforms::helpers::PARAM_HELPER.lines() {
+                self.write(line);
+                self.write_line();
+            }
+        }
     }
 
-    fn system_source_needs_legacy_decorate_helper(
+    // NOTE: Only scans top-level statements; nested decorated classes in namespaces/blocks are not handled.
+    fn system_source_legacy_decorator_helpers(
         &self,
         source: &tsz_parser::parser::node::SourceFileData,
-    ) -> bool {
-        source.statements.nodes.iter().any(|&stmt_idx| {
+    ) -> LegacySystemDecoratorHelpersNeeded {
+        let mut needed = LegacySystemDecoratorHelpersNeeded::default();
+        let mut stack = source.statements.nodes.clone();
+        while let Some(stmt_idx) = stack.pop() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                return false;
+                continue;
             };
-            if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            if (stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || stmt_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
                 && let Some(class_decl) = self.arena.get_class(stmt_node)
             {
-                return self.system_class_needs_legacy_decorate_helper(class_decl);
+                self.accumulate_system_class_legacy_decorator_helpers(class_decl, &mut needed);
             }
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                return false;
-            }
-            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
-                return false;
-            };
-            if export_decl.module_specifier.is_some() {
-                return false;
-            }
-            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
-                return false;
-            };
-            clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                && self.arena.get_class(clause_node).is_some_and(|class_decl| {
-                    self.system_class_needs_legacy_decorate_helper(class_decl)
-                })
-        })
+            stack.extend(self.arena.get_children(stmt_idx));
+        }
+        needed
     }
 
-    fn system_class_needs_legacy_decorate_helper(
+    fn accumulate_system_class_legacy_decorator_helpers(
         &self,
         class_decl: &tsz_parser::parser::node::ClassData,
-    ) -> bool {
-        !self
+        needed: &mut LegacySystemDecoratorHelpersNeeded,
+    ) {
+        let has_class_decorators = !self
             .collect_class_decorators(&class_decl.modifiers)
-            .is_empty()
-            || !self
-                .collect_constructor_param_decorators(&class_decl.members.nodes)
-                .is_empty()
+            .is_empty();
+        let ctor_param_decorators =
+            self.collect_constructor_param_decorators(&class_decl.members.nodes);
+        let has_ctor_param_decorators = !ctor_param_decorators.is_empty();
+        let mut has_ctor = false;
+        let mut has_decorated_member_call = false;
+        let mut has_method_param_decorators = false;
+        let mut member_requires_metadata = false;
+
+        for &member_idx in &class_decl.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                has_ctor = true;
+                continue;
+            }
+
+            match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    let member_decorators =
+                        !self.collect_class_decorators(&method.modifiers).is_empty();
+                    let has_param_decorators = method.parameters.nodes.iter().any(|&param_idx| {
+                        self.arena
+                            .get(param_idx)
+                            .and_then(|param_node| self.arena.get_parameter(param_node))
+                            .is_some_and(|param| {
+                                !self.collect_class_decorators(&param.modifiers).is_empty()
+                            })
+                    });
+                    if member_decorators || has_param_decorators {
+                        has_decorated_member_call = true;
+                        if self.ctx.options.emit_decorator_metadata {
+                            member_requires_metadata = true;
+                        }
+                    }
+                    if has_param_decorators {
+                        has_method_param_decorators = true;
+                    }
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    let member_decorators =
+                        !self.collect_class_decorators(&prop.modifiers).is_empty();
+                    if member_decorators {
+                        has_decorated_member_call = true;
+                        if self.ctx.options.emit_decorator_metadata {
+                            member_requires_metadata = true;
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if !self
+                        .collect_class_decorators(&accessor.modifiers)
+                        .is_empty()
+                    {
+                        has_decorated_member_call = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if has_class_decorators || has_ctor_param_decorators || has_decorated_member_call {
+            needed.decorate = true;
+        }
+
+        if has_ctor_param_decorators || has_method_param_decorators {
+            needed.param = true;
+        }
+
+        if self.ctx.options.emit_decorator_metadata {
+            let class_assignment_emits_metadata =
+                (has_class_decorators || has_ctor_param_decorators) && has_ctor;
+            if class_assignment_emits_metadata || member_requires_metadata {
+                needed.metadata = true;
+            }
+        }
     }
 
     pub(super) fn emit_wrapped_import_helpers(
@@ -365,8 +466,7 @@ impl<'a> Printer<'a> {
             self.in_system_execute_body = false;
             return;
         };
-        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) && self.jsx_dev_file_name.is_none()
-        {
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
             self.jsx_dev_file_name = Some(system_jsx_dev_file_name(&source.file_name));
         }
         self.register_system_import_substitutions(source, dep_vars, system_plan);
@@ -1474,18 +1574,21 @@ impl<'a> Printer<'a> {
         decorators: &[NodeIndex],
         members: &[NodeIndex],
     ) {
-        let before_len = self.writer.len();
+        let mut temp_writer = SourceWriter::with_capacity(256);
+        temp_writer.set_new_line_kind(self.ctx.options.new_line);
+        temp_writer.set_indent_level(self.writer.indent_level());
+        std::mem::swap(&mut self.writer, &mut temp_writer);
+
         self.emit_legacy_class_decorator_assignment(
             class_name, decorators, false, false, false, members,
         );
-        let after_len = self.writer.len();
-        if after_len == before_len {
+
+        std::mem::swap(&mut self.writer, &mut temp_writer);
+        let emitted = temp_writer.take_output();
+        if emitted.is_empty() {
             return;
         }
 
-        let full_output = self.writer.get_output().to_string();
-        let emitted = full_output[before_len..after_len].to_string();
-        self.writer.truncate(before_len);
         let assignment = emitted
             .trim_start()
             .trim_end()

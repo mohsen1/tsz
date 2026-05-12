@@ -159,6 +159,37 @@ fn block_bodied_arrow_statement_recovers_invalid_tail_with_nested_conditional_br
 }
 
 #[test]
+fn block_bodied_arrow_statement_conditional_tail_ignores_nested_branch_semicolons() {
+    let source = "(a?) => { return a; } ? (() => { foo(); }) : bar;\n";
+    let question_pos = source.find(" ? (()").expect("outer question") as u32 + 1;
+    let inner_semicolon_pos = source.find("foo();").expect("inner semicolon") as u32 + 5;
+    let outer_colon_pos = source.find(" : bar").expect("outer colon") as u32 + 1;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let actual: Vec<_> = diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.as_str()))
+        .collect();
+
+    assert_eq!(
+        actual,
+        vec![
+            (diagnostic_codes::EXPECTED, question_pos, "';' expected."),
+            (diagnostic_codes::EXPECTED, outer_colon_pos, "';' expected."),
+        ],
+        "recovery should skip nested branch semicolons and still anchor at the outer `:`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.start != inner_semicolon_pos),
+        "inner branch semicolon should not terminate outer conditional-tail recovery: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn parenthesized_arrow_condition_still_parses_conditional_branch_arrows() {
     let source = "((a?) => { return a; }) ? (b?) => b : (c?) => c;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
