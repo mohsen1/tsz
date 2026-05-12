@@ -701,6 +701,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_file_is_js(source_file) {
             return (aliases, skipped);
         }
+        let enum_targets = self.js_local_enum_targets_by_name(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -740,9 +741,224 @@ impl<'a> DeclarationEmitter<'a> {
 
             aliases.push(stmt_idx);
             skipped.insert(stmt_idx);
+            continue;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            if named.elements.nodes.is_empty() {
+                continue;
+            }
+            let all_plain_enum_exports = named.elements.nodes.iter().copied().all(|spec_idx| {
+                self.arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                    .and_then(|spec| {
+                        if spec.property_name.is_some() || spec.is_type_only {
+                            return None;
+                        }
+                        self.get_identifier_text(spec.name)
+                    })
+                    .is_some_and(|name| enum_targets.contains_key(&name))
+            });
+            if all_plain_enum_exports {
+                skipped.insert(stmt_idx);
+            }
         }
 
         (aliases, skipped)
+    }
+
+    pub(crate) fn collect_js_local_export_enum_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<NodeIndex> {
+        let mut deferred = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return deferred;
+        }
+        let enum_targets = self.js_local_enum_targets_by_name(source_file);
+        if enum_targets.is_empty() {
+            return deferred;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec) = self
+                    .arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                else {
+                    continue;
+                };
+                if spec.is_type_only {
+                    continue;
+                }
+                let local_name_idx = if spec.property_name.is_some() {
+                    spec.property_name
+                } else {
+                    spec.name
+                };
+                let Some(local_name) = self.get_identifier_text(local_name_idx) else {
+                    continue;
+                };
+                if let Some(&enum_stmt) = enum_targets.get(&local_name) {
+                    deferred.insert(enum_stmt);
+                }
+            }
+        }
+
+        deferred
+    }
+
+    pub(crate) fn emit_deferred_js_local_export_enum_statements(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if self.js_deferred_local_export_enum_statements.is_empty() {
+            return;
+        }
+        for &stmt_idx in &source_file.statements.nodes {
+            if !self
+                .js_deferred_local_export_enum_statements
+                .contains(&stmt_idx)
+            {
+                continue;
+            }
+            if self.js_local_enum_has_plain_export(stmt_idx, source_file) {
+                self.emit_exported_enum(stmt_idx);
+                self.emitted_module_indicator = true;
+            } else {
+                self.emit_enum_declaration(stmt_idx);
+            }
+        }
+    }
+
+    fn js_local_enum_targets_by_name(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashMap<String, NodeIndex> {
+        let mut targets = FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                continue;
+            }
+            let Some(enum_data) = self.arena.get_enum(stmt_node) else {
+                continue;
+            };
+            if self
+                .arena
+                .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
+            {
+                continue;
+            }
+            if let Some(name) = self.get_identifier_text(enum_data.name) {
+                targets.insert(name, stmt_idx);
+            }
+        }
+        targets
+    }
+
+    fn js_local_enum_has_plain_export(
+        &self,
+        enum_stmt: NodeIndex,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        let Some(enum_name) = self
+            .arena
+            .get(enum_stmt)
+            .and_then(|node| self.arena.get_enum(node))
+            .and_then(|enum_data| self.get_identifier_text(enum_data.name))
+        else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec) = self
+                    .arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                else {
+                    continue;
+                };
+                if spec.is_type_only || spec.property_name.is_some() {
+                    continue;
+                }
+                if self.get_identifier_text(spec.name).as_deref() == Some(enum_name.as_str()) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Parse `module.exports.X = Y` and return `(export_name, local_name, stmt_idx)`.
