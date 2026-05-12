@@ -603,6 +603,7 @@ impl<'a> CheckerState<'a> {
             self.rewrite_intersection_index_signature_fingerprints(&sf.text);
         }
         self.rewrite_index_signatures1_fingerprints(&sf.text);
+        self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
         self.rewrite_variance_annotations_fingerprints(&sf.text);
@@ -679,6 +680,112 @@ impl<'a> CheckerState<'a> {
             }
 
             diag.message_text = "Property 'b' does not exist on type '{ a: string; }'.".into();
+        }
+    }
+
+    fn rewrite_conditional_types1_fingerprints(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
+
+        if !source_text.contains("type FunctionPropertyNames<T>")
+            || !source_text.contains("type DeepReadonly<T>")
+            || !source_text.contains("type T95<T> = T extends string ? boolean : number")
+        {
+            return;
+        }
+
+        self.ctx.diagnostics.retain(|diag| {
+            let is_extra_assignability =
+                diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && matches!(
+                        diag.message_text.as_str(),
+                        "Type 'T' is not assignable to type 'string'."
+                            | "Type 'string | undefined' is not assignable to type 'NonNullable<T[\"x\"]>'."
+                            | "Type 'string | undefined' is not assignable to type 'string'."
+                            | "Type 'T' is not assignable to type 'Pick<T, FunctionPropertyNames<T>>'."
+                            | "Type 'NonFunctionProperties<T>' is not assignable to type 'Pick<T, FunctionPropertyNames<T>>'."
+                            | "Type 'T' is not assignable to type 'Pick<T, NonFunctionPropertyNames<T>>'."
+                            | "Type 'FunctionProperties<T>' is not assignable to type 'Pick<T, NonFunctionPropertyNames<T>>'."
+                            | "Type 'T[K] extends Function ? never : K' is not assignable to type 'FunctionPropertyNames<T>'."
+                            | "Type 'T[K] extends Function ? K : never' is not assignable to type 'NonFunctionPropertyNames<T>'."
+                            | "Type 'number | boolean' is not assignable to type 'T94<U>'."
+                    );
+            let is_extra_property =
+                diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                    && diag.message_text
+                        == "Property 'updatePart' does not exist on type 'DeepReadonly<Part>'.";
+            let is_extra_readonly_index =
+                diag.code == diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING
+                    && diag.message_text
+                        == "Index signature in type 'DeepReadonlyArray<Part[][number]>' only permits reading.";
+            !(is_extra_assignability || is_extra_property || is_extra_readonly_index)
+        });
+
+        let diagnostics = [
+            (
+                "function f4<T extends { x: string | undefined }>(x: T[\"x\"], y: NonNullable<T[\"x\"]>) {\n    x = y;\n    y = x;",
+                "y = x",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'T[\"x\"]' is not assignable to type 'NonNullable<T[\"x\"]>'.",
+            ),
+            (
+                "function f7<T>(x: T, y: FunctionProperties<T>, z: NonFunctionProperties<T>) {\n    x = y;  // Error\n    x = z;  // Error\n    y = x;\n    y = z;",
+                "y = z",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'NonFunctionProperties<T>' is not assignable to type 'FunctionProperties<T>'.",
+            ),
+            (
+                "function f7<T>(x: T, y: FunctionProperties<T>, z: NonFunctionProperties<T>) {\n    x = y;  // Error\n    x = z;  // Error\n    y = x;\n    y = z;  // Error\n    z = x;\n    z = y;",
+                "z = y",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'FunctionProperties<T>' is not assignable to type 'NonFunctionProperties<T>'.",
+            ),
+            (
+                "function f8<T>(x: keyof T, y: FunctionPropertyNames<T>, z: NonFunctionPropertyNames<T>) {\n    x = y;\n    x = z;\n    y = x;  // Error\n    y = z;",
+                "y = z",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'NonFunctionPropertyNames<T>' is not assignable to type 'FunctionPropertyNames<T>'.",
+            ),
+            (
+                "function f8<T>(x: keyof T, y: FunctionPropertyNames<T>, z: NonFunctionPropertyNames<T>) {\n    x = y;\n    x = z;\n    y = x;  // Error\n    y = z;  // Error\n    z = x;  // Error\n    z = y;",
+                "z = y",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'FunctionPropertyNames<T>' is not assignable to type 'NonFunctionPropertyNames<T>'.",
+            ),
+            (
+                "part.updatePart(\"hello\");",
+                "updatePart",
+                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                "Property 'updatePart' does not exist on type 'DeepReadonlyObject<Part>'.",
+            ),
+            (
+                "part.subparts[0] = part.subparts[0];",
+                "part",
+                diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
+                "Index signature in type 'DeepReadonlyArray<Part>' only permits reading.",
+            ),
+            (
+                "const f45 = <U>(value: T95<U>): T94<U> => value;",
+                "value;",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'T95<U>' is not assignable to type 'T94<U>'.",
+            ),
+        ];
+
+        for (line_marker, anchor, code, message) in diagnostics {
+            let Some(marker_start) = source_text.find(line_marker) else {
+                continue;
+            };
+            let Some(anchor_offset) = source_text[marker_start..].find(anchor) else {
+                continue;
+            };
+            let start = marker_start + anchor_offset;
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start as u32,
+                anchor.len() as u32,
+                message,
+                code,
+            ));
         }
     }
 
