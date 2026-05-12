@@ -1,16 +1,19 @@
 //! Interface heritage index-signature compatibility helpers.
 
 use crate::state::CheckerState;
+use tsz_binder::{BinderState, SymbolId};
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn is_direct_this_type(&self, type_id: TypeId) -> bool {
+    pub(super) fn is_direct_this_type(&self, type_id: TypeId) -> bool {
         crate::query_boundaries::common::is_this_type(self.ctx.types, type_id)
     }
 
-    pub(crate) fn function_type_returns_current_interface_family(
+    pub(super) fn function_type_returns_current_interface_family(
         &self,
         source: TypeId,
         target: TypeId,
@@ -48,7 +51,7 @@ impl<'a> CheckerState<'a> {
         self.type_base_def_id(source_return) == Some(current_iface_def_id)
     }
 
-    pub(crate) fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {
+    pub(super) fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {
         crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).or_else(|| {
             let app_id = crate::query_boundaries::common::application_id(self.ctx.types, type_id)?;
             let app = self.ctx.types.type_application(app_id);
@@ -61,7 +64,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
     }
 
-    pub(crate) fn index_value_assignable_for_interface_extends(
+    pub(super) fn index_value_assignable_for_interface_extends(
         &mut self,
         derived_value: TypeId,
         base_value: TypeId,
@@ -179,7 +182,15 @@ impl<'a> CheckerState<'a> {
                         } else {
                             type_idx
                         };
-                    let Some(parent_sym) = self.resolve_heritage_symbol(expr_idx) else {
+                    let heritage_binder = self
+                        .ctx
+                        .get_binder_for_arena(decl_arena)
+                        .unwrap_or(self.ctx.binder);
+                    let Some(parent_sym) = self.resolve_heritage_symbol_in_arena(
+                        decl_arena,
+                        heritage_binder,
+                        expr_idx,
+                    ) else {
                         continue;
                     };
                     if self.symbol_heritage_includes_base(parent_sym, base_sym, visited) {
@@ -190,5 +201,33 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn resolve_heritage_symbol_in_arena(
+        &self,
+        arena: &NodeArena,
+        binder: &BinderState,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let node = arena.get(expr_idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return binder.resolve_identifier(arena, expr_idx);
+        }
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME
+            && node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+
+        let access = arena.get_access_expr_at(expr_idx)?;
+        let left_sym = self.resolve_heritage_symbol_in_arena(arena, binder, access.expression)?;
+        let name = arena
+            .get_identifier_at(access.name_or_argument)
+            .map(|ident| ident.escaped_text.clone())?;
+        binder
+            .get_symbol(left_sym)?
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(&name))
     }
 }

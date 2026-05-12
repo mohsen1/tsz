@@ -1904,36 +1904,28 @@ impl<'a> CheckerState<'a> {
 
                 if let (Some((derived_val, _)), Some(base_val)) =
                     (derived_string_index_type, base_string_index_value)
+                    && !self.index_value_assignable_for_interface_extends(derived_val, base_val)
                 {
-                    let derived_check = self.evaluate_type_with_env(derived_val);
-                    let base_check = self.evaluate_type_with_env(base_val);
-                    if !self.index_value_assignable_for_interface_extends(derived_check, base_check)
-                    {
-                        self.error_at_node(
-                            iface_data.name,
-                            &format!(
-                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
-                            ),
-                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                        );
-                    }
+                    self.error_at_node(
+                        iface_data.name,
+                        &format!(
+                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                        ),
+                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                    );
                 }
 
                 if let (Some((derived_val, _)), Some(base_val)) =
                     (derived_number_index_type, base_number_index_value)
+                    && !self.index_value_assignable_for_interface_extends(derived_val, base_val)
                 {
-                    let derived_check = self.evaluate_type_with_env(derived_val);
-                    let base_check = self.evaluate_type_with_env(base_val);
-                    if !self.index_value_assignable_for_interface_extends(derived_check, base_check)
-                    {
-                        self.error_at_node(
-                            iface_data.name,
-                            &format!(
-                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
-                            ),
-                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                        );
-                    }
+                    self.error_at_node(
+                        iface_data.name,
+                        &format!(
+                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                        ),
+                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                    );
                 }
             }
 
