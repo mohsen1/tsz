@@ -1,0 +1,235 @@
+name: Release
+
+# Triggered when a semver tag is pushed (vX.Y.Z) or manually.
+# Builds tsz + tsz-lsp for every supported target, then publishes a single
+# GitHub Release with all the assets that scripts/install.sh expects.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (must already exist as a git tag)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: short
+  RUSTFLAGS: "-D warnings"
+  # Override the in-repo `.cargo/config.toml` `target-dir = ".target"`, so we
+  # use the conventional `target/` layout. That matches Swatinem/rust-cache's
+  # default cache paths and keeps the stage-artifacts shell snippets short.
+  CARGO_TARGET_DIR: target
+
+jobs:
+  resolve-tag:
+    name: Resolve tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag="${{ inputs.tag }}"
+          fi
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag (version $version)"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: resolve-tag
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          # NOTE: x86_64-apple-darwin (Intel Mac) is intentionally omitted.
+          # GitHub Actions macos-13 (Intel) runners are heavily capacity-
+          # constrained and reliably queue for 30+ minutes; Apple Silicon
+          # covers the modern Mac fleet, and Intel users can fall back to
+          # `cargo install --git ...` or build from source. Restore this
+          # matrix entry if macos-13 capacity becomes reliable.
+          - target: aarch64-apple-darwin
+            os: macos-14
+            cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Swatinem/rust-cache keys on Cargo.lock + rustc + target + workflow,
+      # so each target gets its own warm cache without cross-poisoning. The
+      # `prefix-key` includes the matrix target so parallel jobs don't fight
+      # over the same cache slot.
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "release-${{ matrix.target }}"
+          shared-key: "release-${{ matrix.target }}"
+          cache-on-failure: true
+          # Keep the cache small: we only need the workspace target dir for
+          # the dist profile, not the whole `target/` tree.
+          cache-targets: true
+
+      - name: Install cross (Linux cross targets)
+        if: matrix.cross == true
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (native)
+        if: matrix.cross == false
+        shell: bash
+        run: |
+          cargo build \
+            --profile dist \
+            --target ${{ matrix.target }} \
+            --target-dir target \
+            -p tsz-cli \
+            --bin tsz \
+            --bin tsz-lsp
+
+      - name: Build (cross)
+        if: matrix.cross == true
+        shell: bash
+        run: |
+          cross build \
+            --profile dist \
+            --target ${{ matrix.target }} \
+            --target-dir target \
+            -p tsz-cli \
+            --bin tsz \
+            --bin tsz-lsp
+
+      - name: Stage artifacts (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          staging="tsz-${TAG}-${TARGET}"
+          mkdir -p "dist/${staging}"
+          cp "target/${TARGET}/dist/tsz" "dist/${staging}/"
+          cp "target/${TARGET}/dist/tsz-lsp" "dist/${staging}/"
+          cp README.md LICENSE 2>/dev/null "dist/${staging}/" || true
+          tar -C dist -czf "dist/${staging}.tar.gz" "${staging}"
+          shasum -a 256 "dist/${staging}.tar.gz" | awk '{print $1}' > "dist/${staging}.tar.gz.sha256"
+          ls -la "dist/"
+
+      - name: Stage artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $staging = "tsz-$env:TAG-$env:TARGET"
+          New-Item -ItemType Directory -Force -Path "dist/$staging" | Out-Null
+          Copy-Item "target/$env:TARGET/dist/tsz.exe" "dist/$staging/"
+          Copy-Item "target/$env:TARGET/dist/tsz-lsp.exe" "dist/$staging/"
+          if (Test-Path "README.md") { Copy-Item "README.md" "dist/$staging/" }
+          if (Test-Path "LICENSE")   { Copy-Item "LICENSE"   "dist/$staging/" }
+          Compress-Archive -Path "dist/$staging" -DestinationPath "dist/$staging.zip" -Force
+          $hash = (Get-FileHash -Algorithm SHA256 "dist/$staging.zip").Hash.ToLower()
+          $hash | Out-File -NoNewline "dist/$staging.zip.sha256"
+          Get-ChildItem dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsz-${{ needs.resolve-tag.outputs.tag }}-${{ matrix.target }}
+          path: |
+            dist/tsz-${{ needs.resolve-tag.outputs.tag }}-${{ matrix.target }}.tar.gz
+            dist/tsz-${{ needs.resolve-tag.outputs.tag }}-${{ matrix.target }}.tar.gz.sha256
+            dist/tsz-${{ needs.resolve-tag.outputs.tag }}-${{ matrix.target }}.zip
+            dist/tsz-${{ needs.resolve-tag.outputs.tag }}-${{ matrix.target }}.zip.sha256
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [resolve-tag, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-tag.outputs.tag }}
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: tsz-${{ needs.resolve-tag.outputs.tag }}-*
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -la dist/
+
+      - name: Aggregate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          if compgen -G "*.sha256" > /dev/null; then
+            for f in *.sha256; do
+              base="${f%.sha256}"
+              hash="$(cat "$f")"
+              printf "%s  %s\n" "$hash" "$base"
+            done | sort > SHA256SUMS
+            cat SHA256SUMS
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
+          name: ${{ needs.resolve-tag.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(needs.resolve-tag.outputs.tag, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/tsz-*.tar.gz
+            dist/tsz-*.tar.gz.sha256
+            dist/tsz-*.zip
+            dist/tsz-*.zip.sha256
+            dist/SHA256SUMS

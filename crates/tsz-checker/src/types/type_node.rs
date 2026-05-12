@@ -1059,7 +1059,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         let is_symbol_named = self.is_symbol_property_name(sig.name);
 
                         if member.kind == METHOD_SIGNATURE {
-                            let (_type_params, type_param_updates) = self
+                            let (type_params, type_param_updates) = self
                                 .push_type_parameters_for_type_literal_signature(
                                     &sig.type_parameters,
                                 );
@@ -1069,7 +1069,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 &params,
                             );
                             let shape = FunctionShape {
-                                type_params: Vec::new(),
+                                type_params,
                                 params,
                                 this_type,
                                 return_type,
