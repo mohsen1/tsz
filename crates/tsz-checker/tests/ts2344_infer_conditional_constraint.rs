@@ -369,3 +369,84 @@ type StyledComponentPropsWithRef<C extends keyof JSX.IntrinsicElements | React.C
         "Expected TS2344 for narrowed C not satisfying ComponentType<any>. Got: {ts2344_errors:?}"
     );
 }
+
+#[test]
+fn test_function_rest_infer_satisfies_array_constraint_no_ts2344() {
+    // When `infer A` appears in a function rest-parameter position
+    // (`...args: infer A`), `A` is implicitly constrained to `unknown[]`.
+    // Using `A` as a type argument to a generic that requires `T extends unknown[]`
+    // must NOT produce TS2344 — TSC defers the check to conditional type evaluation.
+    // Regression test for https://github.com/mohsen1/tsz/issues/5796.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> { length: number; [n: number]: T; }
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type Reverse<T extends unknown[]> =
+    T extends [infer First, ...infer Rest]
+        ? [...Reverse<Rest>, First]
+        : [];
+
+type FlipArguments<T extends (...args: any) => any> =
+    T extends (...args: infer A) => infer R
+        ? (...args: Reverse<A>) => R
+        : never;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should NOT emit TS2344 for infer from function rest parameter used as array-constrained type arg. Got: {ts2344_errors:?}"
+    );
+}
+
+#[test]
+fn test_function_rest_infer_multiple_names_no_ts2344() {
+    // Same fix verified with different infer variable names (not just `A`).
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> { length: number; [n: number]: T; }
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type Reverse<T extends unknown[]> =
+    T extends [infer First, ...infer Rest]
+        ? [...Reverse<Rest>, First]
+        : [];
+
+type FlipArguments1<T extends (...args: any) => any> =
+    T extends (...args: infer Params) => infer Ret
+        ? (...args: Reverse<Params>) => Ret
+        : never;
+
+type FlipArguments2<T extends (...args: any) => any> =
+    T extends (...args: infer X) => infer Y
+        ? (...args: Reverse<X>) => Y
+        : never;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should NOT emit TS2344 regardless of infer variable name. Got: {ts2344_errors:?}"
+    );
+}

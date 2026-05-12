@@ -1836,9 +1836,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
                     && param.type_annotation != NodeIndex::NONE
-                    && self.extends_clause_has_constrained_infer_named(param.type_annotation, name)
                 {
-                    return true;
+                    // Rest parameters (...args: infer A) have the annotation as bare
+                    // INFER_TYPE (no REST_TYPE wrapper). The rest position implies an
+                    // implicit `unknown[]` constraint — treat it as constrained.
+                    if param.dot_dot_dot_token
+                        && let Some(annotation_node) = self.ctx.arena.get(param.type_annotation)
+                        && annotation_node.kind == syntax_kind_ext::INFER_TYPE
+                        && let Some(infer_data) = self.ctx.arena.get_infer_type(annotation_node)
+                        && self.infer_type_param_has_name(infer_data, name)
+                    {
+                        return true;
+                    }
+                    if self.extends_clause_has_constrained_infer_named(param.type_annotation, name)
+                    {
+                        return true;
+                    }
                 }
             }
             if func_type.type_annotation.is_some()
@@ -1898,20 +1911,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a class extends a type parameter and is "transparent" (adds no new instance members).
-    ///
-    /// When a class expression extends a generic type parameter but adds no new instance properties
-    /// or methods (only has a constructor), it should be typed as that type parameter to maintain
-    /// generic compatibility. This is common in simple wrapper patterns.
-    ///
-    /// # Returns
-    /// - `Some(TypeId)` if the class extends a type parameter and has no additional instance members
-    /// - `None` otherwise
+    /// Returns the type parameter a class extends if the class adds no new instance members.
     pub(crate) fn get_extends_type_parameter_if_transparent(
         &mut self,
         class: &tsz_parser::parser::node::ClassData,
     ) -> Option<TypeId> {
-        // Check if class has an extends clause with a type parameter
         let heritage_clauses = class.heritage_clauses.as_ref()?;
 
         let mut extends_type_param = None;
@@ -1919,7 +1923,6 @@ impl<'a> CheckerState<'a> {
             let clause_node = self.ctx.arena.get(clause_idx)?;
             let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
 
-            // Only process extends clauses
             if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
                 continue;
             }
@@ -1935,10 +1938,8 @@ impl<'a> CheckerState<'a> {
                     type_idx
                 };
 
-            // Get the type of the extends expression
             let base_type = self.get_type_of_node(expr_idx);
 
-            // Check if this is a type parameter
             if query::is_type_parameter_like(self.ctx.types, base_type) {
                 extends_type_param = Some(base_type);
                 break;

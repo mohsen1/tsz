@@ -1954,6 +1954,26 @@ module.exports["bar"] = "x";
 }
 
 #[test]
+fn test_js_commonjs_element_access_invalid_export_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function D() {}
+exports["D"] = D;
+exports["Does not work yet"] = D;
+"#,
+    );
+
+    assert!(
+        output.contains("export function D(): void;"),
+        "Expected valid element access export to emit the local function: {output}"
+    );
+    assert!(
+        output.contains("export { D as _Does_not_work_yet };"),
+        "Expected invalid element access export name to emit a sanitized alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_skips_chained_void_zero_preinit() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
