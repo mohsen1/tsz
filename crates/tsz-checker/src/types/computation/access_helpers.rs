@@ -1,7 +1,7 @@
 //! Element access helper methods: index type validation, generic index detection,
 //! numeric index extraction, and union/tuple diagnostic support.
 
-use crate::state::{CheckerState, EnumKind};
+use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -59,7 +59,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.literal_number(index as f64)
         } else if self
             .enum_symbol_from_type(index_type)
-            .is_some_and(|sym_id| self.enum_kind(sym_id) == Some(EnumKind::Numeric))
+            .is_some_and(|sym_id| self.enum_has_reverse_mapping(sym_id))
         {
             // Numeric enum values are number-like at runtime.
             TypeId::NUMBER
@@ -174,7 +174,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.literal_number(index as f64)
         } else if self
             .enum_symbol_from_type(index_type)
-            .is_some_and(|sym_id| self.enum_kind(sym_id) == Some(EnumKind::Numeric))
+            .is_some_and(|sym_id| self.enum_has_reverse_mapping(sym_id))
         {
             TypeId::NUMBER
         } else {

@@ -234,6 +234,14 @@ impl<'a> CheckerState<'a> {
         saw_enum_decl.then_some(result)
     }
 
+    /// Whether the enum generates runtime reverse mappings (e.g., `Enum[0]` is valid).
+    pub(crate) fn enum_has_reverse_mapping(&self, sym_id: SymbolId) -> bool {
+        matches!(
+            self.enum_kind(sym_id),
+            Some(EnumKind::Numeric) | Some(EnumKind::Mixed)
+        )
+    }
+
     /// Determine the kind of enum (string, numeric, or mixed).
     ///
     /// Returns None if the symbol is not an enum or has no members.

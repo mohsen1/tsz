@@ -321,3 +321,78 @@ let other: A.X = a;
 ";
     test_enum_assignability(source, 1);
 }
+
+fn count_errors_with_code(source: &str, code: u32) -> usize {
+    check_source_diagnostics(source)
+        .iter()
+        .filter(|d| d.code == code)
+        .count()
+}
+
+#[test]
+fn test_mixed_enum_numeric_index_no_ts7053() {
+    // Numeric members of a mixed enum generate reverse mappings at runtime.
+    // `Mixed[0]` must be valid (no TS7053). The typeof Mixed type must include
+    // a { [x: number]: string } index signature for the numeric members.
+    let source = r#"
+enum Mixed {
+    A = 0,
+    B = "B",
+    C = 1,
+    D = "D",
+}
+const value = Mixed[0];
+"#;
+    assert_eq!(
+        count_errors_with_code(source, 7053),
+        0,
+        "Mixed[0] must not emit TS7053"
+    );
+}
+
+#[test]
+fn test_mixed_enum_multiple_numeric_indices_no_ts7053() {
+    // Both numeric members of a mixed enum allow reverse lookup.
+    let source = r#"
+enum Status {
+    Active = 1,
+    Disabled = "DISABLED",
+    Pending = 2,
+}
+const a = Status[1];
+const b = Status[2];
+"#;
+    assert_eq!(
+        count_errors_with_code(source, 7053),
+        0,
+        "Mixed enum numeric index lookups must not emit TS7053"
+    );
+}
+
+#[test]
+fn test_pure_numeric_enum_reverse_lookup_still_works() {
+    // Pure numeric enums already worked; make sure the fix doesn't break them.
+    let source = r#"
+enum Color { Red = 0, Green = 1, Blue = 2 }
+const name = Color[0];
+"#;
+    assert_eq!(
+        count_errors_with_code(source, 7053),
+        0,
+        "Pure numeric enum reverse lookup must not emit TS7053"
+    );
+}
+
+#[test]
+fn test_pure_string_enum_no_reverse_lookup() {
+    // String enums have no reverse mapping. Using a number index should be TS7053.
+    let source = r#"
+enum Direction { Up = "UP", Down = "DOWN" }
+const x = Direction[0];
+"#;
+    assert_eq!(
+        count_errors_with_code(source, 7053),
+        1,
+        "String enum numeric index lookup must emit TS7053"
+    );
+}

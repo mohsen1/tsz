@@ -3,7 +3,7 @@
 
 use crate::query_boundaries::common::SourceLocation;
 use crate::query_boundaries::state::type_environment as query;
-use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
+use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use std::cell::Cell;
@@ -147,7 +147,7 @@ impl<'a> CheckerState<'a> {
         } else {
             tsz_solver::ObjectFlags::empty()
         };
-        if self.enum_kind(sym_id) == Some(EnumKind::Numeric) {
+        if self.enum_has_reverse_mapping(sym_id) {
             let number_index = Some(IndexSignature {
                 key_type: TypeId::NUMBER,
                 value_type: TypeId::STRING,
