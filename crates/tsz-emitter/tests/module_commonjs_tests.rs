@@ -3,10 +3,14 @@ use crate::transforms::ir::IRNode;
 use crate::transforms::module_commonjs::*;
 use crate::transforms::module_commonjs_ir::CommonJsTransformContext;
 use tsz_parser::parser::{NodeIndex, ParserState};
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn parse_collect_exports(source: &str) -> Vec<String> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let source_file = parser
         .arena
         .get_source_file(parser.arena.get(root).expect("root node must exist"))
@@ -18,8 +22,7 @@ fn parse_collect_exports(source: &str) -> Vec<String> {
 /// top-level statement. Used by tests that exercise per-statement
 /// transforms (e.g. `get_import_bindings`).
 fn parse_first_statement(source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let stmt_idx = {
         let root_node = parser
             .arena
@@ -39,8 +42,7 @@ fn parse_first_statement(source: &str) -> (ParserState, NodeIndex) {
 }
 
 fn parse_transform_cjs(source: &str) -> Vec<IRNode> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("root node must exist");
     let source_file = parser
         .arena
@@ -405,8 +407,7 @@ export function foo(a: number): number;
 export function foo(a: any): any { return a; }
 export const bar = 42;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(source_file) = parser.arena.get_source_file(
         parser
@@ -439,8 +440,7 @@ export const bar = 42;
 #[test]
 fn collect_export_names_categorized_skips_marked_type_only_specifiers() {
     let source = "export { I, I as II };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let source_file = parser
         .arena
         .get_source_file(parser.arena.get(root).expect("root node must exist"))
@@ -479,8 +479,7 @@ fn collect_export_names_categorized_skips_marked_type_only_specifiers() {
 #[test]
 fn collect_export_names_categorized_skips_marked_type_only_reexports() {
     let source = "export { I, I as II } from \"./ambient\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let source_file = parser
         .arena
         .get_source_file(parser.arena.get(root).expect("root node must exist"))

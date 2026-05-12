@@ -1,9 +1,12 @@
 use super::*;
-use tsz_parser::parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn emit_namespace(source: &str) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     // Find the namespace declaration
     if let Some(root_node) = parser.arena.get(root)
@@ -121,8 +124,7 @@ fn test_cjs_exported_namespace_iife_tail_folding() {
     // When a namespace is exported in CJS, exports.Name should be folded
     // into the IIFE tail: (N || (exports.N = N = {}))
     let source = "export namespace Models { export function test(): void {} }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -167,8 +169,7 @@ fn test_cjs_exported_namespace_uninitialized_var_qualifies_references() {
         export var i = new c();
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -210,8 +211,7 @@ fn test_cjs_exported_namespace_uninitialized_var_qualifies_references() {
 fn test_nested_namespace_uses_var_at_es5_target() {
     // At ES5 target, nested namespaces inside IIFEs must use `var`, not `let`
     let source = "namespace m { namespace m2 { export class c { } } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
@@ -236,8 +236,7 @@ fn test_nested_namespace_uses_var_at_es5_target() {
 fn test_nested_namespace_uses_let_at_es2015_target() {
     // At ES2015+ target, nested namespaces inside IIFEs should use `let`
     let source = "namespace m { namespace m2 { export class c { } } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
