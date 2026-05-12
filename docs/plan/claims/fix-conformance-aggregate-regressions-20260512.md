@@ -80,6 +80,7 @@ The assignability diagnostic formatter now allows enum-member union bodies to re
 Verification:
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo fmt --all -- --check` -> passed
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --lib enum_member_union_alias_display_preserves_alias_name_in_ts2322 -- --nocapture` -> passed
+- `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target cargo test -p tsz-checker --test ts2322_tests test_ts2322_same_enum_member_union_source_display_preserved -- --nocapture` -> passed
 - `CARGO_TARGET_DIR=/Users/mohsen/code/tsz/.target ./scripts/conformance/conformance.sh run --filter "enumLiteralAssignableToEnumInsideUnion" --verbose` -> 1/1 passed
 - `./scripts/conformance/conformance.sh run --filter "enumLiteralTypes3" --verbose` -> 1/1 passed
 - `./scripts/conformance/conformance.sh run --filter "stringEnumLiteralTypes3" --verbose` -> 1/1 passed
