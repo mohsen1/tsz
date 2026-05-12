@@ -29,6 +29,10 @@ use tsz_scanner::SyntaxKind;
 
 use super::{JsdocParamDecl, JsdocTypeAliasDecl};
 
+type JsdocFunctionTypeParam = String;
+type JsdocFunctionParam = (String, String);
+type JsdocFunctionTypeSignature = (Vec<JsdocFunctionTypeParam>, Vec<JsdocFunctionParam>, String);
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn statement_has_attached_jsdoc(
         &self,
@@ -819,6 +823,9 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(rest) = line.strip_prefix("@type") else {
                 continue;
             };
+            if rest.starts_with("def") {
+                continue;
+            }
             let rest = rest.trim();
             let (type_expr, _) = Self::parse_jsdoc_braced_type_and_name(rest)?;
             let text = Self::normalize_jsdoc_type_text(type_expr, false);
@@ -838,6 +845,120 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn jsdoc_type_text_for_node(&self, idx: NodeIndex) -> Option<String> {
         let jsdoc = self.function_like_jsdoc_for_node(idx)?;
         Self::parse_jsdoc_type_text(&jsdoc)
+    }
+
+    pub(crate) fn jsdoc_function_type_signature_for_node(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<JsdocFunctionTypeSignature> {
+        let jsdoc = self.function_like_jsdoc_for_node(idx)?;
+        let type_name = Self::parse_jsdoc_type_text(&jsdoc)?;
+        if !Self::is_simple_jsdoc_type_name(&type_name) {
+            return None;
+        }
+
+        for comment in self.leading_jsdoc_comment_chain_for_node_or_ancestors(idx) {
+            let Some((name, type_text)) = Self::parse_jsdoc_typedef_alias(&comment) else {
+                continue;
+            };
+            if name != type_name {
+                continue;
+            }
+            if let Some(signature) = Self::parse_jsdoc_function_type_signature(&type_text) {
+                return Some(signature);
+            }
+        }
+
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn statement_jsdoc_type_function_signature_node(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let func_idx = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            stmt_idx
+        } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let export = self.arena.get_export_decl(stmt_node)?;
+            let clause_node = self.arena.get(export.export_clause)?;
+            (clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+                .then_some(export.export_clause)?
+        } else {
+            return None;
+        };
+        self.jsdoc_function_type_signature_for_node(func_idx)
+            .map(|_| func_idx)
+    }
+
+    pub(crate) fn emit_jsdoc_function_type_signature(
+        &mut self,
+        type_params: &[String],
+        params: &[(String, String)],
+        return_type: &str,
+    ) {
+        self.emit_jsdoc_template_parameters(type_params);
+        self.write("(");
+        for (idx, (name, type_text)) in params.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write(name);
+            self.write(": ");
+            self.write(type_text);
+        }
+        self.write("): ");
+        self.write(return_type);
+    }
+
+    fn parse_jsdoc_function_type_signature(type_text: &str) -> Option<JsdocFunctionTypeSignature> {
+        let mut rest = type_text.trim();
+        let mut type_params = Vec::new();
+        if let Some(after_open) = rest.strip_prefix('<') {
+            let close = after_open.find('>')?;
+            type_params = after_open[..close]
+                .split(',')
+                .map(str::trim)
+                .filter(|param| !param.is_empty())
+                .map(str::to_string)
+                .collect();
+            rest = after_open[close + 1..].trim_start();
+        }
+
+        let after_params = rest.strip_prefix('(')?;
+        let close = after_params.find(')')?;
+        let params_text = &after_params[..close];
+        let after_close = after_params[close + 1..].trim_start();
+        let return_type = after_close.strip_prefix("=>")?.trim();
+        if return_type.is_empty() {
+            return None;
+        }
+
+        let mut params = Vec::new();
+        for raw_param in params_text.split(',') {
+            let raw_param = raw_param.trim();
+            if raw_param.is_empty() {
+                continue;
+            }
+            let colon = raw_param.find(':')?;
+            let name = raw_param[..colon].trim();
+            let type_text = raw_param[colon + 1..].trim();
+            if name.is_empty() || type_text.is_empty() {
+                return None;
+            }
+            params.push((name.to_string(), type_text.to_string()));
+        }
+
+        Some((type_params, params, return_type.to_string()))
+    }
+
+    fn is_simple_jsdoc_type_name(type_text: &str) -> bool {
+        let mut chars = type_text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     pub(crate) fn jsdoc_template_params_for_node(&self, idx: NodeIndex) -> Vec<String> {

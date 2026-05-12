@@ -1117,6 +1117,35 @@ export function id(x) {
 }
 
 #[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(m : T) => T} IFn
+ */
+
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs<T>(m: T): T;"),
+        "Expected JSDoc @type function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("export type IFn = <T>(m: T) => T;"),
+        "Expected the JSDoc typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@type {IFn}"),
+        "Did not expect implementation-only @type comment in declaration output: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_exports_fold_into_declarations() {
     let source = r#"
 const x = 1;
