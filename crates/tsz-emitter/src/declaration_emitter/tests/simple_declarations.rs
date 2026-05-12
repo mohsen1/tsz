@@ -4688,3 +4688,40 @@ fn strip_type_argument_overshoot_balances_nested_angle_brackets() {
         "`>` inside string literals must not affect the balance count"
     );
 }
+
+#[test]
+fn test_js_exported_class_emits_documented_constructor_assignment_field() {
+    let source = r#"
+export class Aleph {
+    /**
+     * Impossible to construct.
+     * @param {Aleph} a
+     * @param {null} b
+     */
+    constructor(a, b) {
+        /**
+         * Field is always null
+         */
+        this.field = b;
+    }
+
+    /**
+     * Doesn't actually do anything
+     * @returns {void}
+     */
+    doIt() {}
+}
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(
+            "/**\n     * Field is always null\n     */\n    field: any;\n    /**\n     * Doesn't actually do anything"
+        ),
+        "Expected documented constructor assignment field before method declaration: {output}"
+    );
+}

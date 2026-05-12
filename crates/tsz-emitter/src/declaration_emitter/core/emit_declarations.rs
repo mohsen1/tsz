@@ -1472,6 +1472,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Members
+        let mut emitted_js_constructor_assignment_properties = false;
         for member_idx in self.class_member_emit_order(&class.members) {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
@@ -1488,6 +1489,16 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(mn) = self.arena.get(member_idx) {
                     self.skip_comments_in_node(mn.pos, mn.end);
                 }
+            }
+            if !emitted_js_constructor_assignment_properties
+                && self.source_is_js_file
+                && self
+                    .arena
+                    .get(member_idx)
+                    .is_some_and(|member_node| member_node.kind == syntax_kind_ext::CONSTRUCTOR)
+            {
+                self.emit_js_inferred_constructor_assignment_properties(&class.members);
+                emitted_js_constructor_assignment_properties = true;
             }
         }
 
