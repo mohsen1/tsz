@@ -691,6 +691,29 @@ export const useBox = () => {
 }
 
 #[test]
+fn test_generic_function_return_keeps_outer_type_param_over_later_alias() {
+    let output = emit_dts_with_binding(
+        r#"
+function makeBox<T>(value: T) {
+    return { value };
+}
+
+type Box<T> = ReturnType<typeof makeBox<T>>;
+type StringBox = Box<string>;
+"#,
+    );
+
+    assert!(
+        output.contains("declare function makeBox<T>(value: T): {\n    value: T;\n};"),
+        "Expected inferred object return to preserve the function type parameter: {output}"
+    );
+    assert!(
+        !output.contains("declare function makeBox<T>(value: T): Box<string>;"),
+        "Did not expect a later instantiated alias to replace the generic return: {output}"
+    );
+}
+
+#[test]
 fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
     let output = emit_dts(
         r#"
