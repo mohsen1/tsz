@@ -428,10 +428,11 @@ pub struct CliArgs {
     )]
     pub no_fallthrough_cases_in_switch: bool,
 
-    /// Enable Sound Mode for stricter type checking beyond TypeScript's defaults.
-    /// Catches common unsoundness like mutable array covariance, method bivariance,
-    /// `any` escapes, and excess properties via sticky freshness.
-    /// Uses `TS9xxx` diagnostic codes (TS9001-TS9008).
+    /// Enable experimental Sound Mode for stricter checking beyond TypeScript's defaults.
+    ///
+    /// This hidden flag currently tightens relation policy and sticky freshness
+    /// behavior. It still emits ordinary TypeScript diagnostics; dedicated TSZ
+    /// sound diagnostics, report-only mode, and config support are planned work.
     #[arg(long, hide = true)]
     pub sound: bool,
 
