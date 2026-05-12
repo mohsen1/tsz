@@ -385,6 +385,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
+                self.emit_js_cjs_export_aliases();
                 continue;
             }
             if self.js_module_exports_object_stmts.contains(&stmt_idx) {
@@ -1067,6 +1071,11 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let (Some(return_type_text), true) =
+            self.function_body_return_hint(func, func_body)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let Some(return_type_text) = self
             .js_function_body_preferred_return_text_for_declaration(
                 func.body,
@@ -1523,6 +1532,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
+        self.emit_js_array_subclass_constructor_overloads_if_needed(
+            &class.members,
+            class.heritage_clauses.as_ref(),
+        );
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);

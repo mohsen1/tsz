@@ -446,6 +446,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.emitted_scope_marker = true;
         self.emitted_module_indicator = true;
+        self.js_cjs_export_aliases.clear();
     }
 
     pub(crate) fn emit_js_local_export_aliases(&mut self) {
@@ -819,6 +820,13 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(type_text) = preferred_return.as_ref()
+            && direct_function_return
+        {
+            let (type_text, _) =
+                self.function_return_type_text_for_declaration_scope(func, type_text);
+            self.write(": ");
+            self.write(&type_text);
         } else if let Some(return_type_text) = self
             .js_function_body_preferred_return_text_for_declaration(
                 func.body,
@@ -1086,6 +1094,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
+        self.emit_js_array_subclass_constructor_overloads_if_needed(
+            &class.members,
+            class.heritage_clauses.as_ref(),
+        );
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);
@@ -1654,6 +1666,13 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(type_text) = preferred_return.as_ref()
+            && direct_function_return
+        {
+            let (type_text, _) =
+                self.function_return_type_text_for_declaration_scope(func, type_text);
+            self.write(": ");
+            self.write(&type_text);
         } else if let Some(return_type_text) = self
             .js_function_body_preferred_return_text_for_declaration(
                 func.body,

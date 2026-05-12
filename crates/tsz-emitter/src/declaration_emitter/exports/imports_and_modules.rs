@@ -1503,6 +1503,11 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" | undefined");
                         }
                     }
+                } else if let Some(type_text) =
+                    self.jsdoc_object_binding_param_type_literal(param_idx, i)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some(jsdoc_param) = effective_jsdoc_param
                     && !Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                 {
@@ -2368,9 +2373,63 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(", ");
                 }
                 first = false;
+                if heritage.token == SyntaxKind::ExtendsKeyword as u16
+                    && self.source_is_js_file
+                    && self.heritage_type_is_bare_array(type_idx)
+                {
+                    self.write("Array<any>");
+                    continue;
+                }
                 self.emit_type(type_idx);
             }
         }
+    }
+
+    pub(in crate::declaration_emitter) fn heritage_clauses_extend_bare_array(
+        &self,
+        clauses: Option<&NodeList>,
+    ) -> bool {
+        let Some(clauses) = clauses else {
+            return false;
+        };
+        clauses.nodes.iter().copied().any(|clause_idx| {
+            let Some(heritage) = self.arena.get_heritage_clause_at(clause_idx) else {
+                return false;
+            };
+            heritage.token == SyntaxKind::ExtendsKeyword as u16
+                && heritage
+                    .types
+                    .nodes
+                    .iter()
+                    .copied()
+                    .any(|type_idx| self.heritage_type_is_bare_array(type_idx))
+        })
+    }
+
+    fn heritage_type_is_bare_array(&self, type_idx: NodeIndex) -> bool {
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        if self.get_identifier_text(type_idx).as_deref() == Some("Array")
+            && let Some(identifier) = self.arena.get_identifier(type_node)
+        {
+            return identifier
+                .type_arguments
+                .as_ref()
+                .is_none_or(|args| args.nodes.is_empty());
+        }
+
+        let Some(expr) = self.arena.get_expr_type_args(type_node) else {
+            return false;
+        };
+        if expr
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        self.get_identifier_text(expr.expression).as_deref() == Some("Array")
     }
 
     /// Check if a heritage type expression is an entity name (identifier or

@@ -3,28 +3,28 @@
   "mode": "timing",
   "tsz": {
     "version": "0.1.9",
-    "commit": null,
+    "commit": "ba1db057bb",
     "profile": "release"
   },
   "fixture": {
-    "name": null,
-    "repo": null,
-    "ref": null,
-    "actual_commit": null,
-    "path": null,
+    "name": "monorepo-004",
+    "repo": "mohsen1/tsz",
+    "ref": "ba1db057bb",
+    "actual_commit": "ba1db057bb",
+    "path": "scripts/bench/scale-cliff/fixtures/monorepo-004",
     "local_override": false
   },
   "command_line": [
-    "/Users/mohsen/code/tsz/.target/release/tsz",
+    "tsz",
     "--project",
     "tsconfig.json",
     "--pretty",
     "false",
     "--noEmit",
     "--diagnostics-json",
-    "/tmp/perf-runs/monorepo-004-diag.json",
+    "monorepo-004-diag.json",
     "--perf-counters-json",
-    "/tmp/perf-runs/monorepo-004-pc.json"
+    "monorepo-004-pc.json"
   ],
   "phases_ms": {
     "config_discovery": 0.0,

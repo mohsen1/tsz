@@ -18,6 +18,25 @@ use crate::types::{
     CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationCacheKind, RelationFlags,
 };
 
+/// Assert that two `RelationPolicy` configurations produce distinct
+/// assignability cache keys for the same `(STRING, NUMBER)` pair. Centralises
+/// the build-two-keys / `assert_ne!` shape used by the per-flag partition
+/// regression tests below.
+fn assert_assignability_partitions(name: &str, on: RelationPolicy, off: RelationPolicy) {
+    let key_on =
+        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, on.cache_config());
+    let key_off =
+        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, off.cache_config());
+    assert_ne!(key_on, key_off, "{name} must partition the cache");
+}
+
+/// Subtype-cache counterpart of [`assert_assignability_partitions`].
+fn assert_subtype_partitions(name: &str, on: RelationPolicy, off: RelationPolicy) {
+    let key_on = RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, on.cache_config());
+    let key_off = RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, off.cache_config());
+    assert_ne!(key_on, key_off, "{name} must partition the cache");
+}
+
 // =============================================================================
 // 1. Every behavior-affecting setting must change the key
 // =============================================================================
@@ -102,102 +121,55 @@ fn any_propagation_mode_differences_produce_distinct_keys() {
 
 #[test]
 fn skip_weak_type_checks_partitions_cache_entries() {
-    let with_weak = RelationPolicy::default().with_skip_weak_type_checks(false);
-    let without_weak = RelationPolicy::default().with_skip_weak_type_checks(true);
-
-    let key_on = RelationCacheKey::for_assignability(
-        TypeId::STRING,
-        TypeId::NUMBER,
-        with_weak.cache_config(),
-    );
-    let key_off = RelationCacheKey::for_assignability(
-        TypeId::STRING,
-        TypeId::NUMBER,
-        without_weak.cache_config(),
-    );
-    assert_ne!(
-        key_on, key_off,
-        "skip_weak_type_checks must partition the cache",
+    assert_assignability_partitions(
+        "skip_weak_type_checks",
+        RelationPolicy::default().with_skip_weak_type_checks(false),
+        RelationPolicy::default().with_skip_weak_type_checks(true),
     );
 }
 
 #[test]
 fn erase_generics_partitions_cache_entries() {
-    let erase = RelationPolicy::default().with_erase_generics(true);
-    let no_erase = RelationPolicy::default().with_erase_generics(false);
-
-    let key_erase =
-        RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, erase.cache_config());
-    let key_no_erase =
-        RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, no_erase.cache_config());
-
-    assert_ne!(
-        key_erase, key_no_erase,
-        "erase_generics must partition the cache",
+    assert_subtype_partitions(
+        "erase_generics",
+        RelationPolicy::default().with_erase_generics(true),
+        RelationPolicy::default().with_erase_generics(false),
     );
 }
 
 #[test]
 fn strict_subtype_checking_partitions_cache_entries() {
-    let lax = RelationPolicy::default().with_strict_subtype_checking(false);
-    let strict = RelationPolicy::default().with_strict_subtype_checking(true);
-
-    let key_lax =
-        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, lax.cache_config());
-    let key_strict =
-        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, strict.cache_config());
-
-    assert_ne!(
-        key_lax, key_strict,
-        "strict_subtype_checking must partition the cache",
+    assert_assignability_partitions(
+        "strict_subtype_checking",
+        RelationPolicy::default().with_strict_subtype_checking(false),
+        RelationPolicy::default().with_strict_subtype_checking(true),
     );
 }
 
 #[test]
 fn strict_any_propagation_partitions_cache_entries() {
-    let lax = RelationPolicy::default().with_strict_any_propagation(false);
-    let strict = RelationPolicy::default().with_strict_any_propagation(true);
-
-    let key_lax =
-        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, lax.cache_config());
-    let key_strict =
-        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, strict.cache_config());
-
-    assert_ne!(
-        key_lax, key_strict,
-        "strict_any_propagation must partition the cache",
+    assert_assignability_partitions(
+        "strict_any_propagation",
+        RelationPolicy::default().with_strict_any_propagation(false),
+        RelationPolicy::default().with_strict_any_propagation(true),
     );
 }
 
 #[test]
 fn assume_related_on_cycle_partitions_cache_entries() {
-    let assume = RelationPolicy::default().with_assume_related_on_cycle(true);
-    let no_assume = RelationPolicy::default().with_assume_related_on_cycle(false);
-
-    let key_assume =
-        RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, assume.cache_config());
-    let key_no_assume =
-        RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, no_assume.cache_config());
-
-    assert_ne!(
-        key_assume, key_no_assume,
-        "assume_related_on_cycle must partition the cache",
+    assert_subtype_partitions(
+        "assume_related_on_cycle",
+        RelationPolicy::default().with_assume_related_on_cycle(true),
+        RelationPolicy::default().with_assume_related_on_cycle(false),
     );
 }
 
 #[test]
 fn any_propagation_mode_partitions_cache_entries_via_policy() {
-    let all = RelationPolicy::default().with_any_propagation_mode(AnyPropagationMode::All);
-    let top_only =
-        RelationPolicy::default().with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
-
-    let key_all = RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, all.cache_config());
-    let key_top =
-        RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, top_only.cache_config());
-
-    assert_ne!(
-        key_all, key_top,
-        "any_propagation_mode must partition the cache",
+    assert_subtype_partitions(
+        "any_propagation_mode",
+        RelationPolicy::default().with_any_propagation_mode(AnyPropagationMode::All),
+        RelationPolicy::default().with_any_propagation_mode(AnyPropagationMode::TopLevelOnly),
     );
 }
 

@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
                 | tsz_binder::symbol_flags::INTERFACE
                 | tsz_binder::symbol_flags::TYPE_PARAMETER;
             let is_pure_type = symbol.is_type_only
-                || ((symbol.flags & pure_type_flags) != 0
+                || (symbol.has_any_flags(pure_type_flags)
                     && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
             if is_pure_type {
                 return record_and_return(sym_id);
@@ -168,7 +168,7 @@ impl<'a> CheckerState<'a> {
                 | tsz_binder::symbol_flags::INTERFACE
                 | tsz_binder::symbol_flags::TYPE_PARAMETER;
             let is_pure_type = symbol.is_type_only
-                || ((symbol.flags & pure_type_flags) != 0
+                || (symbol.has_any_flags(pure_type_flags)
                     && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
             if is_pure_type {
                 return Some(sym_id);
@@ -800,7 +800,7 @@ impl<'a> CheckerState<'a> {
                             .get_symbol_with_libs(sym_id, &lib_binders)
                             .is_some_and(|sym| {
                                 sym.is_type_only
-                                    || ((sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0)
+                                    || (sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE))
                             })
                     };
 

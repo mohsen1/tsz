@@ -99,6 +99,42 @@ fn test_no_ts2456_when_typeof_self_referencing_var_is_value() {
 }
 
 #[test]
+fn test_no_ts2456_merged_const_type_alias_indexed_access() {
+    // `const X = {...} as const` + `type X = typeof X[keyof typeof X]` is the
+    // canonical "enum-like object" pattern. `typeof X` refers to the VALUE
+    // namespace; the type alias is NOT circularly referencing itself.
+    // tsc resolves this fine and emits no TS2456.
+    let src = r#"
+        const Direction = {
+            Up: 0,
+            Down: 1,
+            Left: 2,
+            Right: 3,
+        } as const;
+        type Direction = typeof Direction[keyof typeof Direction];
+    "#;
+    let codes = get_error_codes(src);
+    assert!(
+        !codes.contains(&2456),
+        "Expected no TS2456 for merged const+type-alias indexed access, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2456_merged_const_type_alias_indexed_access_alternate_varname() {
+    // Same as above but with a different name to guard against name-hardcoding.
+    let src = r#"
+        const Status = { Active: 1, Inactive: 0 } as const;
+        type Status = typeof Status[keyof typeof Status];
+    "#;
+    let codes = get_error_codes(src);
+    assert!(
+        !codes.contains(&2456),
+        "Expected no TS2456 for merged const+type-alias (Status), got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_no_ts2456_when_typeof_target_references_alias_inside_type_literal() {
     // Repro from `unionTypeWithRecursiveSubtypeReduction3.ts`:
     //

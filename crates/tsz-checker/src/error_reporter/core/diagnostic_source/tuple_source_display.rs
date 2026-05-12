@@ -28,6 +28,7 @@ impl<'a> CheckerState<'a> {
 
         let target_elements =
             crate::query_boundaries::common::tuple_elements(self.ctx.types, target);
+        let literal_len = literal.elements.nodes.len();
         let mut parts = Vec::with_capacity(literal.elements.nodes.len());
         for (element_position, element_idx) in literal.elements.nodes.iter().copied().enumerate() {
             let element_node = self.ctx.arena.get(element_idx)?;
@@ -41,6 +42,7 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.array_literal_tuple_element_source_display(
                 element_idx,
                 element_position,
+                literal_len,
                 &target_elements,
             ) {
                 parts.push(display);
@@ -59,13 +61,16 @@ impl<'a> CheckerState<'a> {
         &mut self,
         element_idx: NodeIndex,
         element_position: usize,
+        literal_len: usize,
         target_elements: &Option<Vec<tsz_solver::TupleElement>>,
     ) -> Option<String> {
         let display_element_idx = self.ctx.arena.skip_parenthesized(element_idx);
         let display_element_node = self.ctx.arena.get(display_element_idx)?;
-        let target_element = target_elements
-            .as_ref()
-            .and_then(|elements| elements.get(element_position));
+        let target_element = self.target_tuple_element_for_literal_position(
+            target_elements,
+            element_position,
+            literal_len,
+        );
 
         // Boolean literals are preserved only for positions that are actually
         // contextually typed by the target tuple. Extra elements past a fixed
@@ -83,6 +88,29 @@ impl<'a> CheckerState<'a> {
             return self.literal_expression_display(element_idx);
         }
         None
+    }
+
+    fn target_tuple_element_for_literal_position<'b>(
+        &self,
+        target_elements: &'b Option<Vec<tsz_solver::TupleElement>>,
+        element_position: usize,
+        literal_len: usize,
+    ) -> Option<&'b tsz_solver::TupleElement> {
+        let elements = target_elements.as_ref()?;
+        if let Some(rest_index) = elements.iter().position(|element| element.rest) {
+            let suffix_len = elements.len().saturating_sub(rest_index + 1);
+            let suffix_start_in_source = literal_len.saturating_sub(suffix_len);
+            if element_position < rest_index {
+                return elements.get(element_position);
+            }
+            if suffix_len > 0 && element_position >= suffix_start_in_source {
+                let suffix_offset = element_position.saturating_sub(suffix_start_in_source);
+                return elements.get(rest_index + 1 + suffix_offset);
+            }
+            return elements.get(rest_index);
+        }
+
+        elements.get(element_position)
     }
 
     fn type_includes_literal_type(&self, type_id: TypeId) -> bool {

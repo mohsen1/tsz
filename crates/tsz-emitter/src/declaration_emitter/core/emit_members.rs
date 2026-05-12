@@ -1,7 +1,7 @@
 use crate::enums::evaluator::EnumEvaluator;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::MethodDeclData;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
@@ -760,6 +760,33 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(ctor_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_array_subclass_constructor_overloads_if_needed(
+        &mut self,
+        members: &NodeList,
+        heritage_clauses: Option<&NodeList>,
+    ) {
+        if !self.source_is_js_file || !self.heritage_clauses_extend_bare_array(heritage_clauses) {
+            return;
+        }
+        if members.nodes.iter().copied().any(|member_idx| {
+            self.arena
+                .get(member_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
+        }) {
+            return;
+        }
+
+        self.write_indent();
+        self.write("constructor();");
+        self.write_line();
+        self.write_indent();
+        self.write("constructor(arrayLength: number);");
+        self.write_line();
+        self.write_indent();
+        self.write("constructor(...items: any[]);");
+        self.write_line();
     }
 
     /// Emit parameter properties from constructor as class properties
@@ -2063,6 +2090,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 decl.name,
                                 decl.initializer,
                                 decl.type_annotation,
+                            )
+                            && !self.js_local_bare_require_alias_without_export_surface(
+                                decl.initializer,
                             )
                     });
                 }

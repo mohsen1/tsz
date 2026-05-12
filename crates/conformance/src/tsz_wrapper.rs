@@ -2,6 +2,7 @@
 //!
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
+use crate::compiler_options::canonical_option_name;
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
@@ -317,6 +318,7 @@ pub fn prepare_test_dir_with_lib_dir(
     // files. This preserves the "no inputs" condition for tests whose fixture files
     // should remain undiscoverable under the harness defaults.
     let tsc_expects_no_inputs = expected_error_codes.is_some_and(|codes| codes.contains(&18003));
+    let tsc_expects_ts2883 = expected_error_codes.is_some_and(|codes| codes.contains(&2883));
     let needs_explicit_root_files = !filenames.is_empty()
         && filenames.iter().any(|(name, _)| {
             let lower = name.to_lowercase().replace('\\', "/");
@@ -354,6 +356,17 @@ pub fn prepare_test_dir_with_lib_dir(
                 .filter_map(|(name, _)| {
                     let lower = name.to_lowercase().replace('\\', "/");
                     if lower.ends_with("tsconfig.json") || lower.ends_with("package.json") {
+                        return None;
+                    }
+                    // Keep authored package declarations available on disk for
+                    // module resolution, but do not make them root files. The
+                    // TypeScript harness resolves these through the importing
+                    // source; listing nested package declarations as roots can
+                    // change declaration-portability diagnostics such as TS2883.
+                    if tsc_expects_ts2883
+                        && (lower.contains("/node_modules/") || lower.starts_with("node_modules/"))
+                        && lower.ends_with(".d.ts")
+                    {
                         return None;
                     }
                     // When noTypesAndSymbols is set, tsc's harness does NOT
@@ -1294,143 +1307,6 @@ fn convert_options_to_tsconfig(
     opts.sort_keys();
 
     serde_json::Value::Object(opts)
-}
-
-/// Map lowercase option names to canonical camelCase, matching the TSC cache generator.
-///
-/// Options NOT in this map stay lowercase, which causes TS5025 "Did you mean?" diagnostics.
-/// This must match the cache generator's map exactly so that tsz emits the same TS5025
-/// diagnostics that TSC emitted when the cache was built.
-fn canonical_option_name(key_lower: &str) -> &str {
-    // Must stay in sync with known_compiler_option() in src/config.rs.
-    // Missing entries cause the conformance runner to write lowercase keys into
-    // tsconfig.json, triggering false TS5025 diagnostics ("Unknown compiler option").
-    match key_lower {
-        "allowarbitraryextensions" => "allowArbitraryExtensions",
-        "allowimportingtsextensions" => "allowImportingTsExtensions",
-        "allowjs" => "allowJs",
-        "allowsyntheticdefaultimports" => "allowSyntheticDefaultImports",
-        "allowumdglobalaccess" => "allowUmdGlobalAccess",
-        "allowunreachablecode" => "allowUnreachableCode",
-        "allowunusedlabels" => "allowUnusedLabels",
-        "alwaysstrict" => "alwaysStrict",
-        "baseurl" => "baseUrl",
-        "charset" => "charset",
-        "checkjs" => "checkJs",
-        "composite" => "composite",
-        "customconditions" => "customConditions",
-        "declaration" => "declaration",
-        "declarationdir" => "declarationDir",
-        "declarationmap" => "declarationMap",
-        "diagnostics" => "diagnostics",
-        "disablereferencedprojectload" => "disableReferencedProjectLoad",
-        "disablesizelimt" => "disableSizeLimit",
-        "disablesolutioncaching" => "disableSolutionCaching",
-        "disablesolutiontypecheck" => "disableSolutionTypeCheck",
-        "disablesolutiontypechecking" => "disableSolutionTypeChecking",
-        "disablesourceofreferencedprojectload" => "disableSourceOfReferencedProjectLoad",
-        "downleveliteration" => "downlevelIteration",
-        "emitbom" => "emitBOM",
-        "emitdeclarationonly" => "emitDeclarationOnly",
-        "emitdecoratormetadata" => "emitDecoratorMetadata",
-        "erasablesyntaxonly" => "erasableSyntaxOnly",
-        "esmoduleinterop" => "esModuleInterop",
-        "exactoptionalpropertytypes" => "exactOptionalPropertyTypes",
-        "experimentaldecorators" => "experimentalDecorators",
-        "extendeddiagnostics" => "extendedDiagnostics",
-        "forceconsecinferfaces" | "forceconsistentcasinginfilenames" => {
-            "forceConsistentCasingInFileNames"
-        }
-        "generatecputrace" | "generatecpuprofile" => "generateCpuProfile",
-        "generatetrace" => "generateTrace",
-        "ignoredeprecations" => "ignoreDeprecations",
-        "importhelpers" => "importHelpers",
-        "importsnotusedasvalues" => "importsNotUsedAsValues",
-        "incremental" => "incremental",
-        "inlineconstants" => "inlineConstants",
-        "inlinesourcemap" => "inlineSourceMap",
-        "inlinesources" => "inlineSources",
-        "isolateddeclarations" => "isolatedDeclarations",
-        "isolatedmodules" => "isolatedModules",
-        "jsx" => "jsx",
-        "jsxfactory" => "jsxFactory",
-        "jsxfragmentfactory" => "jsxFragmentFactory",
-        "jsximportsource" => "jsxImportSource",
-        "keyofstringsonly" => "keyofStringsOnly",
-        "lib" => "lib",
-        "libreplacement" => "libReplacement",
-        "listemittedfiles" => "listEmittedFiles",
-        "listfiles" => "listFiles",
-        "listfilesonly" => "listFilesOnly",
-        "locale" => "locale",
-        "maproot" => "mapRoot",
-        "maxnodemodulejsdepth" => "maxNodeModuleJsDepth",
-        "module" => "module",
-        "moduledetection" => "moduleDetection",
-        "moduleresolution" => "moduleResolution",
-        "modulesuffixes" => "moduleSuffixes",
-        "newline" => "newLine",
-        "nocheck" => "noCheck",
-        "noemit" => "noEmit",
-        "noemithelpers" => "noEmitHelpers",
-        "noemitonerror" => "noEmitOnError",
-        "noerrortruncation" => "noErrorTruncation",
-        "nofallthrough" | "nofallthroughcasesinswitch" => "noFallthroughCasesInSwitch",
-        "noimplicitany" => "noImplicitAny",
-        "noimplicitoverride" => "noImplicitOverride",
-        "noimplicitreturns" => "noImplicitReturns",
-        "noimplicitthis" => "noImplicitThis",
-        "noimplicitusestrict" => "noImplicitUseStrict",
-        "nolib" => "noLib",
-        "nopropertyaccessfromindexsignature" => "noPropertyAccessFromIndexSignature",
-        "noresolve" => "noResolve",
-        "nostrictgenericchecks" => "noStrictGenericChecks",
-        "notypesandsymbols" => "noTypesAndSymbols",
-        "nouncheckedindexedaccess" => "noUncheckedIndexedAccess",
-        "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
-        "nounusedlocals" => "noUnusedLocals",
-        "nounusedparameters" => "noUnusedParameters",
-        "out" => "out",
-        "outdir" => "outDir",
-        "outfile" => "outFile",
-        "paths" => "paths",
-        "plugins" => "plugins",
-        "preserveconstenums" => "preserveConstEnums",
-        "preservesymlinks" => "preserveSymlinks",
-        "preservevalueimports" => "preserveValueImports",
-        "preservewatchoutput" => "preserveWatchOutput",
-        "pretty" => "pretty",
-        "reactnamespace" => "reactNamespace",
-        "removecomments" => "removeComments",
-        "resolvejsonmodule" => "resolveJsonModule",
-        "resolvepackagejsonexports" => "resolvePackageJsonExports",
-        "resolvepackagejsonimports" => "resolvePackageJsonImports",
-        "rewriterelativeimportextensions" => "rewriteRelativeImportExtensions",
-        "rootdir" => "rootDir",
-        "rootdirs" => "rootDirs",
-        "skipdefaultlibcheck" => "skipDefaultLibCheck",
-        "skiplibcheck" => "skipLibCheck",
-        "sourcemap" => "sourceMap",
-        "sourceroot" => "sourceRoot",
-        "strict" => "strict",
-        "strictbindcallapply" => "strictBindCallApply",
-        "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn",
-        "strictfunctiontypes" => "strictFunctionTypes",
-        "strictnullchecks" => "strictNullChecks",
-        "strictpropertyinitialization" => "strictPropertyInitialization",
-        "stripinternal" => "stripInternal",
-        "suppressexcesspropertyerrors" => "suppressExcessPropertyErrors",
-        "suppressimplicitanyindexerrors" => "suppressImplicitAnyIndexErrors",
-        "target" => "target",
-        "traceresolution" => "traceResolution",
-        "tsbuildinfofile" => "tsBuildInfoFile",
-        "typeroots" => "typeRoots",
-        "types" => "types",
-        "usedefineforclassfields" => "useDefineForClassFields",
-        "useunknownincatchvariables" => "useUnknownInCatchVariables",
-        "verbatimmodulesyntax" => "verbatimModuleSyntax",
-        _ => key_lower,
-    }
 }
 
 fn copy_tsconfig_to_root_if_needed(

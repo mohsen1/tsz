@@ -1417,7 +1417,7 @@ impl<'a> CheckerState<'a> {
         if sym.is_type_only {
             return true;
         }
-        if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+        if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
             return true;
         }
         if sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module.is_none() {
@@ -1449,8 +1449,8 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
                 {
                     return resolved_sym.is_type_only
-                        || ((resolved_sym.flags & PURE_TYPE) != 0
-                            && (resolved_sym.flags & VALUE) == 0);
+                        || (resolved_sym.has_any_flags(PURE_TYPE)
+                            && !resolved_sym.has_any_flags(VALUE));
                 }
             }
         }
@@ -1479,7 +1479,7 @@ impl<'a> CheckerState<'a> {
         if sym.is_type_only {
             return true;
         }
-        if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+        if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
             return true;
         }
         if sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)

@@ -33,6 +33,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source scripts/ci/suite-metadata.sh
 
 CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:?_TSZ_CI_CACHE_BUCKET is required}"
 CACHE_BUCKET="${CACHE_BUCKET%/}"
@@ -324,143 +325,19 @@ save_archive() {
 }
 
 suite_needs_rust_compile() {
-  local suite
-  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
-  case "$suite" in
-    all|full|bench|build|lint|unit|wasm|wasm-web|wasm-all|dist-binaries|unit-archive) return 0 ;;
-    *) return 1 ;;
-  esac
+  ci_suite_needs_rust_compile "${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
 }
 
-# Per-suite list of "cache feature" tags this suite needs restored.
-# Restoring features the suite doesn't use is pure runner-minute and GCS
-# bandwidth cost. Lint, for instance, never reads the TypeScript source
-# tree, npm cache, or scripts/node_modules — only its Rust state.
-#
-# Recognized tags:
-#   cargo-home               — Cargo registry/git cache (.ci-cache/cargo-home)
-#   typescript-source        — TypeScript source tree (lib + tests/cases)
-#   npm                      — global npm cache (.ci-cache/npm)
-#   scripts-node-modules     — scripts/node_modules
-#   typescript-harness       — TypeScript/built/local
-#   typescript-node-modules  — TypeScript/node_modules
-#   wasm-pack-cache          — wasm-pack's wasm-bindgen CLI install cache
-#   dist-fast-commit         — commit-keyed dist-fast binary tarball
-#
-# Per-profile cargo target-dir caches (cargo-target-deps, etc.) are
-# selected separately via suite_target_caches() and gated implicitly by
-# cargo-home (no point restoring a target without registry).
 suite_caches() {
-  local suite
-  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
-  case "$suite" in
-    all|full)
-      echo "cargo-home typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
-      ;;
-    lint)
-      # Only `cargo clippy` on workspace crates. Doesn't run cargo build,
-      # doesn't read TypeScript/ at compile time, doesn't run any Node
-      # tooling. cargo-home (registry) is the only useful restore.
-      echo "cargo-home"
-      ;;
-    build|unit)
-      # Full local build/unit flows may run tests that reference
-      # TypeScript/src/lib and tests/cases at runtime.
-      echo "cargo-home typescript-source"
-      ;;
-    dist-binaries|unit-archive)
-      # Rust compile/archive only. These suites do not read TypeScript/ at
-      # compile time; downstream conformance/emit/fourslash jobs restore the
-      # corpus or harness when they actually need it.
-      echo "cargo-home"
-      ;;
-    bench)
-      # Bench builds the optimized tsz binary in .target-bench, reads the
-      # TypeScript source corpus for file-level cases/PGO training, and uses
-      # npm's cache for pinned tsgo/tsc installs.
-      echo "cargo-home typescript-source npm"
-      ;;
-    wasm|wasm-web|wasm-all)
-      # wasm-pack installs the matching wasm-bindgen CLI into
-      # ~/.cache/.wasm-pack on demand. Without an explicit cache, some
-      # runners spend ~2 minutes compiling that host CLI from scratch.
-      echo "cargo-home typescript-source wasm-pack-cache"
-      ;;
-    unit-shard)
-      # Downloads the nextest archive directly from GCS. No cache restore.
-      echo ""
-      ;;
-    conformance)
-      # tsz-conformance binary comes from the dist-fast-commit blob, the
-      # corpus comes from TypeScript source. No npm/harness needed.
-      echo "typescript-source dist-fast-commit"
-      ;;
-    conformance-aggregate|emit-aggregate|fourslash-aggregate)
-      # Aggregates pull per-shard JSONs from GCS via gsutil only.
-      # No cargo-home, no TS source, no Node modules.
-      # Mirror in gcp-full-ci.sh:suite_needs_typescript_source().
-      echo ""
-      ;;
-    emit|fourslash)
-      # Full Node-driven test run: TypeScript source + harness + tsz binary.
-      echo "typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
-      ;;
-    emit-shard)
-      # Shards get scripts/node_modules, scripts/emit/dist, TypeScript/built,
-      # and TypeScript/node_modules via the node-harness artifact, and tsz via
-      # the dist-fast-binaries artifact. Restore only TypeScript source here;
-      # restoring npm/scripts-node_modules from GCS is redundant artifact I/O.
-      echo "typescript-source"
-      ;;
-    fourslash-shard)
-      # Fourslash shards get the compiled harness, runtime deps, and
-      # TypeScript/tests/cases/fourslash via the node-harness artifact.
-      # Avoid restoring the full TypeScript source tree in every shard.
-      echo ""
-      ;;
-    node-harness-prep)
-      # Builds TypeScript/built/local + scripts/emit/dist for downstream
-      # shards.
-      echo "typescript-source npm scripts-node-modules typescript-harness typescript-node-modules"
-      ;;
-    *)
-      # Unknown suite: conservative default is empty. Caller should
-      # extend this case if a new suite is added.
-      echo ""
-      ;;
-  esac
+  ci_suite_caches "${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
 }
 
 suite_has_cache() {
-  local needle="$1"
-  local needles=" $(suite_caches) "
-  [[ "$needles" == *" $needle "* ]]
+  ci_suite_has_cache "${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}" "$1"
 }
 
-# Which cargo-target-* GCS archives a suite actually needs.
-# Restoring archives a job will not use is pure overhead. Each suite lists
-# only the profile(s) it compiles into; sccache GCS handles cross-commit
-# rustc-level reuse for all profiles.
-#
-# lint deliberately gets nothing: the ci-lint profile lives in
-# .target/ci-lint/ and the cost of archiving + transferring +
-# fingerprint-revalidating that target dir routinely exceeded the
-# wall-clock saved by skipping recompilation. sccache GCS is the right
-# tool for cross-commit lint — it keys on actual rustc inputs and can't
-# go stale silently. See the prior "cargo-target-debug stale forever"
-# bug fixed in this redesign.
 suite_target_caches() {
-  local suite
-  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
-  case "$suite" in
-    all|full)              echo "cargo-target-deps cargo-target-unit cargo-target-wasm" ;;
-    build)                 echo "cargo-target-deps cargo-target-unit" ;;
-    dist-binaries)         echo "cargo-target-deps" ;;
-    unit-archive|unit)     echo "cargo-target-unit" ;;
-    lint)                  echo "" ;;
-    wasm|wasm-web|wasm-all) echo "cargo-target-wasm" ;;
-    *)                     echo "" ;;
-  esac
+  ci_suite_target_caches "${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
 }
 
 wasm_bindgen_version() {

@@ -8,7 +8,7 @@
  * Protocol:
  *   SharedArrayBuffer layout:
  *     controlArray (Int32Array, 4 elements):
- *       [0] state:  0=idle, 1=request_ready, 2=response_ready, 3=shutdown, 4=error
+ *       [0] state: one of the STATE_* constants from bridge-protocol.cjs
  *       [1] data length (bytes) for request or response
  *       [2] reserved
  *       [3] reserved
@@ -36,12 +36,13 @@
 
 const { workerData, parentPort } = require("worker_threads");
 const { spawn } = require("child_process");
-
-const STATE_IDLE = 0;
-const STATE_REQUEST_READY = 1;
-const STATE_RESPONSE_READY = 2;
-const STATE_SHUTDOWN = 3;
-const STATE_ERROR = 4;
+const {
+    STATE_IDLE,
+    STATE_REQUEST_READY,
+    STATE_RESPONSE_READY,
+    STATE_SHUTDOWN,
+    STATE_ERROR,
+} = require("./bridge-protocol.cjs");
 
 const { controlBuffer, dataBuffer, tszServerBinary } = workerData;
 const controlArray = new Int32Array(controlBuffer);

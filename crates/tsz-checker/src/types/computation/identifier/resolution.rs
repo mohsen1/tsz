@@ -468,7 +468,7 @@ impl<'a> CheckerState<'a> {
         //    In this case, the symbol retains `is_umd_export = true` but gains
         //    VARIABLE flags from the global augmentation.
         let is_non_umd_value = |sym: &tsz_binder::Symbol| -> bool {
-            let has_real_value = (sym.flags & real_value_flags) != 0;
+            let has_real_value = sym.has_any_flags(real_value_flags);
             if !has_real_value {
                 return false;
             }

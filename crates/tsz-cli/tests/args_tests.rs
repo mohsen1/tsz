@@ -6,6 +6,10 @@ use super::args::{
     PollingWatchKind, Target, WatchDirectoryKind, WatchFileKind,
 };
 
+fn option_len<T>(values: Option<&[T]>) -> Option<usize> {
+    values.map(<[_]>::len)
+}
+
 #[test]
 fn parses_defaults() {
     let args = CliArgs::try_parse_from(["tsz"]).expect("default args should parse");
@@ -376,12 +380,12 @@ fn parses_module_flags() {
 
     assert_eq!(args.module_resolution, Some(ModuleResolution::Bundler));
     assert_eq!(args.base_url.as_deref(), Some(std::path::Path::new(".")));
-    assert_eq!(args.type_roots.as_ref().map(|v| v.len()), Some(2));
+    assert_eq!(option_len(args.type_roots.as_deref()), Some(2));
     assert_eq!(
         args.types,
         Some(vec!["node".to_string(), "jest".to_string()])
     );
-    assert_eq!(args.root_dirs.as_ref().map(|v| v.len()), Some(2));
+    assert_eq!(option_len(args.root_dirs.as_deref()), Some(2));
     assert!(args.resolve_json_module);
     assert_eq!(args.resolve_package_json_exports, Some(true));
     assert_eq!(args.resolve_package_json_imports, Some(true));
@@ -599,8 +603,8 @@ fn parses_watch_flags() {
     assert_eq!(args.watch_directory, Some(WatchDirectoryKind::UseFsEvents));
     assert_eq!(args.fallback_polling, Some(PollingWatchKind::FixedInterval));
     assert!(args.synchronous_watch_directory);
-    assert_eq!(args.exclude_directories.as_ref().map(|v| v.len()), Some(2));
-    assert_eq!(args.exclude_files.as_ref().map(|v| v.len()), Some(2));
+    assert_eq!(option_len(args.exclude_directories.as_deref()), Some(2));
+    assert_eq!(option_len(args.exclude_files.as_deref()), Some(2));
 }
 
 #[test]

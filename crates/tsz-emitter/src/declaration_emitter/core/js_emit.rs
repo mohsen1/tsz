@@ -744,6 +744,11 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let (Some(return_type_text), true) =
+            self.function_body_return_hint(func, func.body)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let Some(return_type_text) = self
             .js_function_body_preferred_return_text_for_declaration(
                 func.body,
@@ -1130,6 +1135,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
+        self.emit_js_array_subclass_constructor_overloads_if_needed(
+            &class.members,
+            class.heritage_clauses.as_ref(),
+        );
         for &member_idx in &class.members.nodes {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
@@ -1221,6 +1230,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
+        self.emit_js_array_subclass_constructor_overloads_if_needed(
+            &class.members,
+            class.heritage_clauses.as_ref(),
+        );
         for &member_idx in &class.members.nodes {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
@@ -1880,6 +1893,16 @@ impl<'a> DeclarationEmitter<'a> {
             let type_text = self
                 .jsdoc_type_text_for_node(stmt_idx)
                 .or_else(|| {
+                    if self.js_constructor_assignment_rhs_is_jsdoc_null_parameter(
+                        rhs_idx,
+                        &ctor.parameters,
+                    ) {
+                        Some("any".to_string())
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
                     resolved_type
                         .as_ref()
                         .filter(|resolved| {
@@ -1916,6 +1939,42 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(";");
             self.write_line();
         }
+    }
+
+    fn js_constructor_assignment_rhs_is_jsdoc_null_parameter(
+        &self,
+        rhs_idx: NodeIndex,
+        params: &NodeList,
+    ) -> bool {
+        let rhs_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(rhs_idx);
+        let Some(rhs_node) = self.arena.get(rhs_idx) else {
+            return false;
+        };
+        if rhs_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(rhs_name) = self.get_identifier_text(rhs_idx) else {
+            return false;
+        };
+
+        for (position, param_idx) in params.nodes.iter().copied().enumerate() {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if self.get_identifier_text(param.name).as_deref() != Some(rhs_name.as_str()) {
+                continue;
+            }
+            return self
+                .jsdoc_param_decl_for_parameter(param_idx, position)
+                .is_some_and(|decl| decl.type_text.trim() == "null");
+        }
+
+        false
     }
 
     pub(in crate::declaration_emitter) fn emit_ordered_class_members_with_js_constructor_assignment_properties(
