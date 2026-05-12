@@ -101,6 +101,19 @@ pub(crate) struct JsClassLikePrototypeMembers {
     pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
 }
 
+#[derive(Clone)]
+pub(crate) struct JsClassDefinePropertyAccessor {
+    pub(crate) property_name: String,
+    pub(crate) getter: Option<NodeIndex>,
+    pub(crate) setter: Option<JsClassDefinePropertySetter>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct JsClassDefinePropertySetter {
+    pub(crate) initializer: NodeIndex,
+    pub(crate) preserve_param_name: bool,
+}
+
 type JsStaticMethodKey = (String, String);
 type JsStaticMethodInfo = (NodeIndex, NodeIndex, bool);
 type JsStaticMethodAugmentationEntry = (

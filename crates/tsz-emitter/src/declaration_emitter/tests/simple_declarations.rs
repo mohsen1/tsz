@@ -2965,6 +2965,40 @@ class C {
 }
 
 #[test]
+fn test_js_class_define_property_prototype_accessors_emit() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export class D {}
+Object.defineProperty(D.prototype, "x", {
+    get() {
+        return 12;
+    },
+    /** @param {number} _arg */
+    set(_arg) {}
+});
+
+/** @param {number} v */
+const setter = (v) => {};
+export class E {}
+Object.defineProperty(E.prototype, "x", { set: setter });
+"#,
+    );
+
+    assert!(
+        output.contains("export class D {\n    set x(_arg: number);\n    get x(): number;\n}"),
+        "Expected descriptor getter/setter to fold into class D: {output}"
+    );
+    assert!(
+        output.contains("export class E {\n    set x(value: number);\n}"),
+        "Expected descriptor setter alias to fold into class E: {output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty"),
+        "Descriptor statements should not leak to declaration output: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_export_equals_class_expression_shadowing_preserves_root_name() {
     let output = emit_js_dts(
         r#"
