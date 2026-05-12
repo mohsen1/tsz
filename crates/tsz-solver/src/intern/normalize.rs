@@ -11,7 +11,7 @@
 use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
     CallableShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId,
-    ParamInfo, PropertyInfo, TypeData, TypeId, Visibility,
+    ParamInfo, PropertyInfo, TemplateLiteralId, TemplateSpan, TypeData, TypeId, Visibility,
 };
 use crate::visitor::is_literal_type;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -876,17 +876,16 @@ impl TypeInterner {
                 return false;
             }
 
-            if matches!(
-                (&s_data, &t_data),
-                (
-                    Some(TypeData::Literal(LiteralValue::String(_))),
-                    Some(TypeData::TemplateLiteral(_))
-                )
-            ) {
+            if let (
+                Some(TypeData::Literal(LiteralValue::String(literal))),
+                Some(TypeData::TemplateLiteral(template_id)),
+            ) = (&s_data, &t_data)
+            {
                 // Union normalization must stay shallow. Full template-literal
                 // matching may evaluate and intern large intermediate unions,
                 // turning normalization into a project-scale hotspot.
-                return false;
+                return self
+                    .literal_string_matches_template_literal_shallow(*literal, *template_id);
             }
 
             // Check if target is a union containing a compatible primitive
@@ -952,6 +951,124 @@ impl TypeInterner {
             ) => self.is_object_shape_subtype_shallow_depth(s_id, t_id, 0),
             (Some(TypeData::Function(s_id)), Some(TypeData::Function(t_id))) => {
                 self.is_function_subtype_shallow(s_id, t_id, depth)
+            }
+            _ => false,
+        }
+    }
+
+    fn literal_string_matches_template_literal_shallow(
+        &self,
+        literal: Atom,
+        template_id: TemplateLiteralId,
+    ) -> bool {
+        let literal = self.resolve_atom(literal);
+        if literal.len() > 128 {
+            return false;
+        }
+
+        let spans = self.template_list(template_id);
+        if spans.len() > 8 {
+            return false;
+        }
+
+        self.match_template_literal_shallow(literal.as_str(), &spans, 0)
+    }
+
+    fn match_template_literal_shallow(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+    ) -> bool {
+        let Some(span) = spans.get(span_idx) else {
+            return remaining.is_empty();
+        };
+
+        match span {
+            TemplateSpan::Text(text) => {
+                let text = self.resolve_atom(*text);
+                remaining
+                    .strip_prefix(text.as_str())
+                    .is_some_and(|remaining| {
+                        self.match_template_literal_shallow(remaining, spans, span_idx + 1)
+                    })
+            }
+            TemplateSpan::Type(type_id) => {
+                self.match_template_type_span_shallow(remaining, spans, span_idx, *type_id)
+            }
+        }
+    }
+
+    fn match_template_type_span_shallow(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+        type_id: TypeId,
+    ) -> bool {
+        match self.lookup(type_id) {
+            Some(TypeData::Intrinsic(IntrinsicKind::Number)) => {
+                let num_len =
+                    crate::relations::subtype::rules::literals::find_number_length(remaining);
+                if num_len == 0 {
+                    return false;
+                }
+                for len in (1..=num_len).rev() {
+                    if crate::relations::subtype::rules::literals::is_valid_number(
+                        &remaining[..len],
+                    ) && self.match_template_literal_shallow(
+                        &remaining[len..],
+                        spans,
+                        span_idx + 1,
+                    ) {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeData::Intrinsic(IntrinsicKind::Bigint)) => {
+                let len =
+                    crate::relations::subtype::rules::literals::find_integer_length(remaining);
+                len > 0
+                    && self.match_template_literal_shallow(&remaining[len..], spans, span_idx + 1)
+            }
+            Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => {
+                ["true", "false"].into_iter().any(|prefix| {
+                    remaining.strip_prefix(prefix).is_some_and(|remaining| {
+                        self.match_template_literal_shallow(remaining, spans, span_idx + 1)
+                    })
+                })
+            }
+            Some(TypeData::Literal(literal)) => {
+                let literal_text = match literal {
+                    LiteralValue::String(atom) | LiteralValue::BigInt(atom) => {
+                        self.resolve_atom(atom)
+                    }
+                    LiteralValue::Number(num) => {
+                        crate::relations::subtype::rules::literals::format_number_for_template(
+                            num.0,
+                        )
+                    }
+                    LiteralValue::Boolean(value) => {
+                        if value {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }
+                    }
+                };
+                remaining
+                    .strip_prefix(literal_text.as_str())
+                    .is_some_and(|remaining| {
+                        self.match_template_literal_shallow(remaining, spans, span_idx + 1)
+                    })
+            }
+            Some(TypeData::Union(list_id)) => {
+                let members = self.type_list(list_id);
+                members.len() <= 8
+                    && members.iter().any(|member| {
+                        self.match_template_type_span_shallow(remaining, spans, span_idx, *member)
+                    })
             }
             _ => false,
         }
