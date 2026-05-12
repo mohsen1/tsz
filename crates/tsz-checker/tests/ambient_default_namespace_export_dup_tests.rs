@@ -13,14 +13,8 @@
 //! (`namespaceNotMergedWithFunctionDefaultExport.ts`).
 
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_source_codes_named;
 use tsz_common::common::{ModuleKind, ScriptTarget};
-
-fn diagnostics(source: &str, file_name: &str) -> Vec<u32> {
-    tsz_checker::test_utils::check_source(source, file_name, CheckerOptions::default())
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
-}
 
 fn diagnostics_for_entry(
     files: &[(&str, &str)],
@@ -44,7 +38,7 @@ fn diagnostics_for_entry(
 #[test]
 fn export_default_with_sibling_function_no_extra_ts2300() {
     let source = "declare module 'replace-in-file' {\n  export function replaceInFile(config: unknown): Promise<unknown[]>;\n  export default replaceInFile;\n\n  namespace replaceInFile {\n    export function sync(config: unknown): unknown[];\n  }\n}\n";
-    let codes = diagnostics(source, "test.d.ts");
+    let codes = check_source_codes_named(source, "test.d.ts");
     assert!(
         !codes.contains(&2300),
         "did not expect TS2300 when an exported function provides the value side of the merge conflict; got: {codes:?}"
@@ -61,7 +55,7 @@ fn export_default_with_sibling_function_no_extra_ts2300() {
 #[test]
 fn type_only_namespace_export_default_still_emits_ts2300() {
     let source = "declare module '@truffle/contract' {\n  namespace TruffleContract { export type Contract = {} }\n  export default TruffleContract;\n}\n";
-    let codes = diagnostics(source, "test.d.ts");
+    let codes = check_source_codes_named(source, "test.d.ts");
     assert!(
         codes.contains(&2300),
         "expected TS2300 for type-only namespace + export default identifier; got: {codes:?}"

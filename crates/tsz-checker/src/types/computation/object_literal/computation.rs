@@ -2140,11 +2140,25 @@ impl<'a> CheckerState<'a> {
                             let return_context = contextual_type.and_then(|ctx| {
                                 self.contextual_object_property_type_for_lookup(ctx, &name)
                             });
-                            self.infer_return_type_from_body(
+                            // Clear `preserve_literal_types` around the body walk so the
+                            // getter's literal-widening decision is independent of the
+                            // outer `return_expression_type` scope. When the enclosing
+                            // expression is itself a function's return statement
+                            // (`function f() { return { get x() { return 1 } } }`), the
+                            // outer scope sets the flag to preserve the obj literal's
+                            // property literals, but the getter body must make its own
+                            // widening decision — otherwise `readonly x: 1` leaks out
+                            // where tsc emits `readonly x: number`. Mirrors the
+                            // nested-function clearing already in `return_expression_type`.
+                            let prev_preserve_literals = self.ctx.preserve_literal_types;
+                            self.ctx.preserve_literal_types = false;
+                            let result = self.infer_return_type_from_body(
                                 tsz_parser::parser::NodeIndex::NONE,
                                 accessor.body,
                                 return_context,
-                            )
+                            );
+                            self.ctx.preserve_literal_types = prev_preserve_literals;
+                            result
                         } else {
                             self.get_type_from_type_node(accessor.type_annotation)
                         }

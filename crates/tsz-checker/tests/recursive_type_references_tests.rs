@@ -8,10 +8,12 @@
 //! "When a variable is annotated with a recursive non-generic alias name,
 //! TS2322 must display that alias name as the target type, not the expanded body."
 
+use std::collections::HashSet;
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::diagnostic_codes;
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::check_source_diagnostics;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -183,5 +185,83 @@ flat(["a", ["b", ["c"]]]);
     assert!(
         ts2322.is_empty(),
         "Expected no TS2322 for compatible recursive array assignment. Got: {ts2322:?}"
+    );
+}
+
+#[test]
+fn recursive_array_rewrite_does_not_duplicate_flat_diagnostics() {
+    let source = r#"
+interface Box<T> {
+    a: T;
+    b: [T] extends [Box<T>] ? { inner: T } : { outer: T };
+}
+type Box2 = Box<Box2 | number>;
+const b20: Box2 = 42;
+
+type RecArray<T> = Array<T | RecArray<T>>;
+declare function flat(xs: RecArray<string>): string;
+declare function flat1(xs: string[]): string;
+declare function flat2(xs: string | (string | string[])[]): string;
+
+flat([1, ['a']]);
+flat1([1, ['a']]);
+flat2([1, ['a']]);
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|diag| {
+                diag.message_text.as_str()
+                    == "Type 'number' is not assignable to type 'string | string[]'."
+            })
+            .count(),
+        1,
+        "Expected exactly one string[] TS2322, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|diag| {
+                diag.message_text.as_str()
+                    == "Type 'number' is not assignable to type 'string | (string | string[])[]'."
+            })
+            .count(),
+        1,
+        "Expected exactly one nested string[] TS2322, got: {diagnostics:?}"
+    );
+
+    let mut seen = HashSet::new();
+    for diag in ts2322 {
+        let key = (diag.start, diag.length, diag.message_text.as_str());
+        assert!(
+            seen.insert(key),
+            "Did not expect duplicate TS2322 diagnostics for recursive-array rewrite paths, got: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn value_or_array_recursive_alias_accepts_nested_array_assignment() {
+    let source = r#"
+type ValueOrArray<T> = T | Array<ValueOrArray<T>>;
+
+const a0: ValueOrArray<number> = 1;
+const a1: ValueOrArray<number> = [1, [2, 3], [4, [5, [6, 7]]]];
+"#;
+    let diags = check(source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for compatible ValueOrArray assignment. Got: {ts2322:?}"
     );
 }

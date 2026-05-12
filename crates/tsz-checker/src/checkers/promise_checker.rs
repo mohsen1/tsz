@@ -1772,7 +1772,7 @@ impl<'a> CheckerState<'a> {
         self.evaluate_awaited_application_for_assignability_inner(type_id, 0)
     }
 
-    fn evaluate_awaited_application_for_assignability_inner(
+    pub(super) fn evaluate_awaited_application_for_assignability_inner(
         &mut self,
         type_id: TypeId,
         depth: u8,
@@ -1828,6 +1828,11 @@ impl<'a> CheckerState<'a> {
                 if changed {
                     return self.ctx.types.factory().tuple(evaluated_elems);
                 }
+            }
+            if let Some(evaluated) =
+                self.evaluate_awaited_object_properties_for_assignability(type_id, depth)
+            {
+                return evaluated;
             }
             return type_id;
         }

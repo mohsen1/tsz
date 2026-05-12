@@ -14,11 +14,12 @@ and limitations under the License.
 ***************************************************************************** */
 
 
-/// <reference lib="es2020.intl" />
 declare namespace Intl {
     interface DateTimeFormatPartTypesRegistry {
         fractionalSecond: any;
     }
+
+    type DateTimeFormatPartTypes = keyof DateTimeFormatPartTypesRegistry;
 
     interface DateTimeFormatOptions {
         formatMatcher?: "basic" | "best fit" | "best fit" | undefined;
@@ -29,9 +30,8 @@ declare namespace Intl {
     }
 
     // `DateTimeFormatPart` is declared in `lib.es2017.intl.d.ts`. Forward-declare
-    // it here so this file is self-contained for tsz's per-file checker —
-    // declaration-merging across the bundled lib files does not yet rediscover
-    // sibling-file types when a forward reference appears in the same namespace.
+    // it here so the embedded lib file is self-contained for tsz's per-file
+    // checker during benchmarks and zero-I/O startup.
     interface DateTimeFormatPart {
         type: DateTimeFormatPartTypes;
         value: string;

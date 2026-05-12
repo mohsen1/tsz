@@ -19,6 +19,18 @@ use tsz_parser::parser::ParserState;
 /// Uses the given `CheckerOptions` and file name. Calls `set_lib_contexts(Vec::new())`
 /// so tests run without lib definitions (preventing spurious TS2318 errors).
 pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    check_source_with_file_is_esm(source, file_name, options, None)
+}
+
+/// Parse, bind, and type-check a source string with no lib contexts, source
+/// file test pragmas enabled, and an explicit Node module file-format
+/// classification.
+pub fn check_source_with_file_is_esm(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+    file_is_esm: Option<bool>,
+) -> Vec<Diagnostic> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let source_file = parser.parse_source_file();
 
@@ -36,6 +48,7 @@ pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> V
     checker.enable_source_file_test_pragmas();
 
     checker.ctx.set_lib_contexts(Vec::new());
+    checker.ctx.file_is_esm = file_is_esm;
     checker.check_source_file(source_file);
     checker.ctx.diagnostics.clone()
 }
@@ -61,12 +74,41 @@ pub fn check_js_source_diagnostics(source: &str) -> Vec<Diagnostic> {
     )
 }
 
+/// Parse, bind, and type-check JavaScript source, returning only diagnostic codes.
+///
+/// The caller supplies the test file name and any additional checker options.
+/// This enables both `check_js` and `allow_js` for tests that want to model a
+/// checked JavaScript file even when the surrounding options are TS-oriented.
+pub fn check_js_source_codes_with_options(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<u32> {
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        ..options
+    };
+    check_source(source, file_name, options)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
+
 /// Parse, bind, and type-check source, returning only diagnostic codes.
 ///
 /// Convenience wrapper for tests that only inspect error codes.
 pub fn check_source_codes(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
         .iter()
+        .map(|d| d.code)
+        .collect()
+}
+
+/// Parse, bind, and type-check a named TypeScript source string, returning only diagnostic codes.
+pub fn check_source_codes_named(source: &str, file_name: &str) -> Vec<u32> {
+    check_source(source, file_name, CheckerOptions::default())
+        .into_iter()
         .map(|d| d.code)
         .collect()
 }
@@ -163,6 +205,15 @@ pub fn check_source_strict_codes(source: &str) -> Vec<u32> {
 pub fn check_source_strict_messages(source: &str) -> Vec<(u32, String)> {
     check_source_strict(source)
         .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+/// Strict `(code, message_text)` diagnostics excluding TS2318 missing-default-lib noise.
+pub fn check_source_strict_messages_without_missing_libs(source: &str) -> Vec<(u32, String)> {
+    check_source_strict(source)
+        .into_iter()
+        .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text))
         .collect()
 }

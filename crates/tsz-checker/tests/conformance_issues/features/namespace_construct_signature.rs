@@ -604,6 +604,33 @@ const e1: X.Foo | boolean = Z.Foo.A;
 }
 
 #[test]
+fn test_enum_member_union_display_collapses_members_to_enum_name() {
+    let source = r#"
+namespace X {
+    export enum Foo {
+        A, B
+    }
+}
+namespace Z {
+    export enum Foo {
+        A = 1 << 1,
+        B = 1 << 2,
+    }
+}
+const e2: X.Foo.A | X.Foo.B | boolean = Z.Foo.A;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let message = diagnostic_message(&diagnostics, 2322)
+        .expect("expected TS2322 for assigning computed enum member into X.Foo member union");
+
+    assert!(
+        message.contains("Type 'Foo.A' is not assignable to type 'boolean | Foo'."),
+        "Expected enum member union display to collapse to the enum name. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_modules_same_file_const_numeric_no_ts18056() {
     // tsc traces through same-file const variables: `const foo = 2` evaluates to
     // value=2, resolvedOtherFiles=false, so auto-increment works and TS18056 does
