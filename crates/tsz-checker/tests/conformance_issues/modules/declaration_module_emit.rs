@@ -1279,6 +1279,62 @@ type T = typeof import("./foo").bar.missing;
     );
 }
 
+#[test]
+fn test_import_type_export_equals_namespace_name_omits_export_equals_suffix() {
+    // When a module uses `export = Ns`, import("./mod").Missing should report
+    // TS2694 as `Namespace '"mod"' has no exported member 'Missing'.`
+    // NOT `Namespace '"mod".export=' has no exported member 'Missing'.`
+    // The `.export=` binder key is an implementation detail, not user-visible.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "mod.d.ts",
+                r#"
+declare namespace Ns {
+    export const existing: number;
+}
+export = Ns;
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+type T = import("./mod").Missing;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2020,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2694_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2694)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2694_messages.len(),
+        1,
+        "Expected exactly one TS2694 for missing member in export= namespace. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2694_messages[0].contains("Namespace '\"mod\"' has no exported member 'Missing'."),
+        "Expected no '.export=' suffix in TS2694 namespace name (issue #5433). Actual: {:?}",
+        ts2694_messages[0]
+    );
+    assert!(
+        !ts2694_messages[0].contains(".export="),
+        "TS2694 message must not contain binder-internal '.export=' suffix. Actual: {:?}",
+        ts2694_messages[0]
+    );
+}
+
 // ============================================================
 // TS1294: erasableSyntaxOnly
 // ============================================================
