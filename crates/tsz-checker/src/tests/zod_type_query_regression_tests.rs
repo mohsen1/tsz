@@ -505,3 +505,180 @@ function createRootContext(params: Partial<ParseParamsNoData>) {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn zod_reexport_cycle_keeps_in_progress_class_method_placeholders() {
+    let diags = check_multi_file(
+        &[
+            (
+                "src/index.ts",
+                r#"
+export * from "./external";
+"#,
+            ),
+            (
+                "src/external.ts",
+                r#"
+export * from "./types";
+"#,
+            ),
+            (
+                "src/helpers/partialUtil.ts",
+                r#"
+import type {
+  ZodArray,
+  ZodNullable,
+  ZodObject,
+  ZodOptional,
+  ZodTuple,
+  ZodTupleItems,
+  ZodTypeAny,
+} from "../index";
+
+export namespace partialUtil {
+  export type DeepPartial<T extends ZodTypeAny> = T extends ZodObject<
+    infer Shape,
+    infer Params,
+    infer Catchall
+  >
+    ? ZodObject<
+        { [K in keyof Shape]: ZodOptional<DeepPartial<Shape[K]>> },
+        Params,
+        Catchall
+      >
+    : T extends ZodArray<infer Type>
+    ? ZodArray<DeepPartial<Type>>
+    : T extends ZodOptional<infer Type>
+    ? ZodOptional<DeepPartial<Type>>
+    : T extends ZodNullable<infer Type>
+    ? ZodNullable<DeepPartial<Type>>
+    : T extends ZodTuple<infer Items>
+    ? {
+        [K in keyof Items]: Items[K] extends ZodTypeAny
+          ? DeepPartial<Items[K]>
+          : never;
+      } extends infer PartialItems
+      ? PartialItems extends ZodTupleItems
+        ? ZodTuple<PartialItems>
+        : never
+      : never
+    : T;
+}
+"#,
+            ),
+            (
+                "src/types.ts",
+                r#"
+import { partialUtil } from "./helpers/partialUtil";
+
+type ParseReturnType<T> = T;
+type SyncParseReturnType<T> = T;
+type AsyncParseReturnType<T> = Promise<T>;
+type Partial<T> = { [K in keyof T]?: T[K] };
+interface Promise<T> {}
+declare var Promise: {
+  resolve<T>(value: T): Promise<T>;
+};
+type ZodParsedType = "string";
+interface ParseContext {}
+interface ParseParamsNoData {
+  async?: boolean;
+}
+interface ZodTypeDef {}
+
+export abstract class ZodType<
+  Output,
+  Def extends ZodTypeDef = ZodTypeDef,
+  Input = Output
+> {
+  readonly _type!: Output;
+  readonly _output!: Output;
+  readonly _input!: Input;
+  readonly _def!: Def;
+
+  abstract _parse(
+    _ctx: ParseContext,
+    _data: unknown,
+    _parsedType: ZodParsedType
+  ): ParseReturnType<Output>;
+
+  _parseSync(
+    _ctx: ParseContext,
+    _data: unknown,
+    _parsedType: ZodParsedType
+  ): SyncParseReturnType<Output> {
+    return this._parse(_ctx, _data, _parsedType);
+  }
+
+  _parseAsync(
+    _ctx: ParseContext,
+    _data: unknown,
+    _parsedType: ZodParsedType
+  ): AsyncParseReturnType<Output> {
+    return Promise.resolve(this._parse(_ctx, _data, _parsedType));
+  }
+
+  safeParse(_data: unknown, _params?: Partial<ParseParamsNoData>): { success: true; data: Output } {
+    return { success: true, data: this._parseSync({}, _data, "string") };
+  }
+}
+
+export type ZodTypeAny = ZodType<any, any, any>;
+export type ZodTupleItems = [ZodTypeAny, ...ZodTypeAny[]];
+export class ZodObject<Shape, Params, Catchall> extends ZodType<Shape> {
+  _parse(_ctx: ParseContext, _data: unknown, _parsedType: ZodParsedType): Shape {
+    return {} as Shape;
+  }
+}
+export class ZodArray<Type extends ZodTypeAny> extends ZodType<Type[]> {
+  _parse(_ctx: ParseContext, _data: unknown, _parsedType: ZodParsedType): Type[] {
+    return [];
+  }
+}
+export class ZodOptional<Type extends ZodTypeAny> extends ZodType<Type | undefined> {
+  _parse(_ctx: ParseContext, _data: unknown, _parsedType: ZodParsedType): Type | undefined {
+    return undefined;
+  }
+}
+export class ZodNullable<Type extends ZodTypeAny> extends ZodType<Type | null> {
+  _parse(_ctx: ParseContext, _data: unknown, _parsedType: ZodParsedType): Type | null {
+    return null;
+  }
+}
+export class ZodTuple<Items extends ZodTupleItems> extends ZodType<Items> {
+  _parse(_ctx: ParseContext, _data: unknown, _parsedType: ZodParsedType): Items {
+    return [] as unknown as Items;
+  }
+}
+
+type ForceCycle = partialUtil.DeepPartial<ZodTypeAny>;
+"#,
+            ),
+        ],
+        "src/types.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let missing_this_methods: Vec<_> = diags
+        .iter()
+        .filter(|d| {
+            d.code == 2339
+                && (d.message_text.contains("Property '_parse'")
+                    || d.message_text.contains("Property '_parseSync'")
+                    || d.message_text.contains("Property 'safeParse'"))
+        })
+        .collect();
+    assert!(
+        missing_this_methods.is_empty(),
+        "Expected re-entrant ZodType class construction to keep method placeholders on `this`, got: {:?}",
+        missing_this_methods
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
