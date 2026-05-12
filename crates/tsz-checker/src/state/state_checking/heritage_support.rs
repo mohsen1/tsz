@@ -9,7 +9,7 @@ impl<'a> CheckerState<'a> {
     pub(super) fn enclosing_interface_type_param_names(&self, idx: NodeIndex) -> FxHashSet<String> {
         let mut names = FxHashSet::default();
         let mut current = idx;
-        while !current.is_none() {
+        while current.is_some() {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 break;
             };
