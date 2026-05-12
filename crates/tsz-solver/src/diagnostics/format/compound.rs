@@ -538,10 +538,9 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            parts.push(format!(
-                "{ro}[{key_name}: string]: {}",
-                self.format_index_signature_value(idx.value_type)
-            ));
+            let key_type_str = self.format(idx.key_type).into_owned();
+            let value_str = self.format_index_signature_value(idx.value_type);
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         if let Some(ref idx) = shape.number_index {
             let key_name = idx
@@ -549,10 +548,9 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            parts.push(format!(
-                "{ro}[{key_name}: number]: {}",
-                self.format_index_signature_value(idx.value_type)
-            ));
+            let key_type_str = self.format(idx.key_type).into_owned();
+            let value_str = self.format_index_signature_value(idx.value_type);
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         // Sort properties by declaration_order for display (preserves source order)
         let mut display_props = self.visible_object_properties(shape.properties.as_slice());
@@ -1923,10 +1921,9 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            parts.push(format!(
-                "{ro}[{key_name}: string]: {}",
-                self.format(idx.value_type)
-            ));
+            let key_type_str = self.format(idx.key_type).into_owned();
+            let value_str = self.format(idx.value_type).into_owned();
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         if let Some(ref idx) = shape.number_index {
             let key_name = idx
@@ -1934,10 +1931,9 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            parts.push(format!(
-                "{ro}[{key_name}: number]: {}",
-                self.format(idx.value_type)
-            ));
+            let key_type_str = self.format(idx.key_type).into_owned();
+            let value_str = self.format(idx.value_type).into_owned();
+            parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
         // Sort by declaration_order (same logic as format_object)

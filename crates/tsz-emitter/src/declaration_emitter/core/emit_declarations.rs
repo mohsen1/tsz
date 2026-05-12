@@ -294,6 +294,7 @@ impl<'a> DeclarationEmitter<'a> {
         // reaches it because `emit_export_declaration` checks
         // `emitted_js_export_default_names`.
         if self.source_is_js_file && !self.js_export_default_names.is_empty() {
+            self.emit_jsdoc_default_typedef_aliases_for_hoisted_default_exports(source_file);
             self.emit_hoisted_js_export_default_statements(source_file);
         }
 
@@ -684,7 +685,12 @@ impl<'a> DeclarationEmitter<'a> {
         let saved_comment_idx = self.comment_emit_idx;
         self.current_statement_jsdoc_chain =
             self.emittable_jsdoc_comment_chain_for_pos(stmt_node.pos);
-        self.emit_leading_jsdoc_comments(stmt_node.pos);
+        let has_jsdoc_type_function_signature = self
+            .statement_jsdoc_type_function_signature_node(stmt_idx)
+            .is_some();
+        if !has_jsdoc_type_function_signature {
+            self.emit_leading_jsdoc_comments(stmt_node.pos);
+        }
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
         self.suppress_current_statement_jsdoc_comments = false;
@@ -831,7 +837,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain =
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
-        if jsdoc_chain.len() == 1
+        let has_jsdoc_type_function_signature = self
+            .statement_jsdoc_type_function_signature_node(stmt_idx)
+            .is_some();
+        if has_jsdoc_type_function_signature {
+        } else if jsdoc_chain.len() == 1
             && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
         {
             self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
@@ -943,6 +953,33 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Function name
         self.emit_node(func.name);
+
+        if self.source_is_js_file
+            && let Some((type_params, params, return_type)) =
+                self.jsdoc_function_type_signature_for_node(func_idx)
+        {
+            self.emit_jsdoc_function_type_signature(&type_params, &params, &return_type);
+            self.write(";");
+            self.write_line();
+            if should_emit_late_bound_namespace {
+                self.emit_ts_late_bound_function_namespace_from_members(
+                    func.name,
+                    is_exported,
+                    &late_bound_members,
+                );
+            }
+            if !self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                is_exported,
+                func_idx,
+            ) {
+                self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+            }
+            self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+            return;
+        }
 
         // Type parameters
         let jsdoc_template_params = if func
@@ -1152,6 +1189,12 @@ impl<'a> DeclarationEmitter<'a> {
                                 func,
                                 &printed_type_text,
                             );
+                        let printed_type_text = self
+                            .expand_rest_tuple_parameters_in_function_type_text(
+                                func_body,
+                                &printed_type_text,
+                            )
+                            .unwrap_or(printed_type_text);
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
@@ -1172,6 +1215,12 @@ impl<'a> DeclarationEmitter<'a> {
                                 func,
                                 &printed_type_text,
                             );
+                        let printed_type_text = self
+                            .expand_rest_tuple_parameters_in_function_type_text(
+                                func_body,
+                                &printed_type_text,
+                            )
+                            .unwrap_or(printed_type_text);
                         self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)

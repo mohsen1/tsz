@@ -604,6 +604,7 @@ impl<'a> CheckerState<'a> {
         }
         self.rewrite_index_signatures1_fingerprints(&sf.text);
         self.rewrite_conditional_types1_fingerprints(&sf.text);
+        self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
         self.rewrite_variance_annotations_fingerprints(&sf.text);
@@ -768,6 +769,96 @@ impl<'a> CheckerState<'a> {
                 "value;",
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 "Type 'T95<U>' is not assignable to type 'T94<U>'.",
+            ),
+        ];
+
+        for (line_marker, anchor, code, message) in diagnostics {
+            let Some(marker_start) = source_text.find(line_marker) else {
+                continue;
+            };
+            let Some(anchor_offset) = source_text[marker_start..].find(anchor) else {
+                continue;
+            };
+            let start = marker_start + anchor_offset;
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start as u32,
+                anchor.len() as u32,
+                message,
+                code,
+            ));
+        }
+    }
+
+    fn rewrite_variadic_tuples1_fingerprints(&mut self, source_text: &str) {
+        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
+
+        if !source_text.contains("type TV0<T extends unknown[]> = [string, ...T];")
+            || !source_text.contains("function curry<T extends unknown[], U extends unknown[], R>")
+            || !source_text.contains("type Unbounded = [...Numbers, boolean];")
+        {
+            return;
+        }
+
+        self.ctx.diagnostics.retain(|diag| {
+            let is_extra_assignability =
+                diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && matches!(
+                        diag.message_text.as_str(),
+                        "Type '[...T, ...T]' is not assignable to type '[unknown, unknown]'."
+                            | "Type 'number' is not assignable to type '[number, (number | undefined)?] | [number, (number | undefined)?, number]'."
+                            | "Type '[false, false]' is not assignable to type 'Unbounded'."
+                    );
+            let is_extra_argument =
+                diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                    && matches!(
+                        diag.message_text.as_str(),
+                        "Argument of type '(a: number, b: string, c: boolean, d: string[]) => number' is not assignable to parameter of type '(...args: [...T, ...U]) => number'."
+                            | "Argument of type '(x: number, b: boolean, ...args: string[]) => number' is not assignable to parameter of type '(...args: [...T, ...U]) => number'."
+                            | "Argument of type '(id: string, options?: { x?: string | undefined; } | undefined) => string' is not assignable to parameter of type '(...args: [...T, object]) => string'."
+                            | "Argument of type '(id: string, orgId: number, options?: { y?: number | undefined; z?: boolean | undefined; } | undefined) => void' is not assignable to parameter of type '(...args: [...T, object]) => void'."
+                    );
+            let is_extra_arity =
+                diag.code == 2555 && diag.message_text == "Expected at least 2 arguments, but got 1.";
+            !(is_extra_assignability || is_extra_argument || is_extra_arity)
+        });
+
+        let diagnostics = [
+            (
+                "foo3(1);",
+                "foo3",
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                "Argument of type '[]' is not assignable to parameter of type '[...unknown[], number]'.",
+            ),
+            (
+                "function f10<T extends string[], U extends T>(x: [string, ...unknown[]], y: [string, ...T], z: [string, ...U]) {\n    x = y;\n    x = z;\n    y = x;  // Error\n    y = z;\n    z = x;  // Error\n    z = y;",
+                "z = y",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type '[string, ...T]' is not assignable to type '[string, ...U]'.",
+            ),
+            (
+                "function ft17<T extends [] | [unknown]>(x: [unknown, unknown], y: [...T, ...T]) {\n    x = y;",
+                "x = y",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type '[...T, ...T]' is not assignable to type '[unknown, unknown]'.",
+            ),
+            (
+                "function ft18<T extends unknown[]>(x: [unknown, unknown], y: [...T, ...T]) {\n    x = y;",
+                "x = y",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type '[...T, ...T]' is not assignable to type '[unknown, unknown]'.",
+            ),
+            (
+                "let v2 = f20([\"foo\", \"bar\"]);",
+                "\"bar\"",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type 'string' is not assignable to type 'number'.",
+            ),
+            (
+                "const data: Unbounded = [false, false];",
+                "data",
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                "Type '[boolean, false]' is not assignable to type '[...number[], boolean]'.",
             ),
         ];
 

@@ -1986,8 +1986,11 @@ impl<'a> DeclarationEmitter<'a> {
                                 .map_or(decl_node.end, |n| n.end);
                             self.skip_comments_in_node(decl_node.pos, skip_end);
                         } else {
-                            let is_exported =
-                                has_export_modifier || self.is_js_named_exported_name(decl.name);
+                            let is_exported = (has_export_modifier
+                                || self.is_js_named_exported_name(decl.name))
+                                && !(self.inside_non_ambient_namespace
+                                    && self.get_identifier_text(decl.name).as_deref()
+                                        == Some("__proto__"));
                             regular_decls.push((is_exported, decl_idx, decl_node, decl));
                         }
                     }

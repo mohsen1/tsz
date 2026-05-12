@@ -1622,6 +1622,31 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("function ");
         self.emit_node(func.name);
 
+        if self.source_is_js_file
+            && let Some((type_params, params, return_type)) =
+                self.jsdoc_function_type_signature_for_node(func_idx)
+        {
+            self.emit_jsdoc_function_type_signature(&type_params, &params, &return_type);
+            self.write(";");
+            self.write_line();
+            if should_emit_late_bound_namespace {
+                self.emit_ts_late_bound_function_namespace_from_members(
+                    func.name,
+                    true,
+                    &late_bound_members,
+                );
+            }
+            self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                true,
+                func_idx,
+            );
+            self.emit_js_namespace_export_aliases_for_name(func.name, true);
+            return;
+        }
+
         let jsdoc_template_params = if func
             .type_parameters
             .as_ref()
@@ -2004,8 +2029,12 @@ impl<'a> DeclarationEmitter<'a> {
 
                 // Emit all regular declarations together on one line
                 if !regular_decls.is_empty() {
+                    let suppress_namespace_proto_export = self.inside_non_ambient_namespace
+                        && regular_decls.iter().all(|(_, decl)| {
+                            self.get_identifier_text(decl.name).as_deref() == Some("__proto__")
+                        });
                     self.write_indent();
-                    if self.should_emit_export_keyword() {
+                    if self.should_emit_export_keyword() && !suppress_namespace_proto_export {
                         self.write("export ");
                     }
                     if self.should_emit_declare_keyword(true) {
