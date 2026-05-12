@@ -1862,6 +1862,40 @@ module.exports = { bar };
 }
 
 #[test]
+fn test_js_commonjs_object_export_preserves_documented_source_order() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * const doc comment
+ */
+const x = (a) => {
+    return "";
+};
+
+/**
+ * function doc comment
+ */
+function b() {
+    return 0;
+}
+
+module.exports = { x, b };
+"#,
+    );
+
+    let x_pos = output
+        .find("/**\n * const doc comment\n */\nexport function x(a: any): string;")
+        .unwrap_or_else(|| panic!("Expected documented exported function x: {output}"));
+    let b_pos = output
+        .find("/**\n * function doc comment\n */\nexport function b(): number;")
+        .unwrap_or_else(|| panic!("Expected documented exported function b: {output}"));
+    assert!(
+        x_pos < b_pos,
+        "Expected module.exports object declarations to preserve source order: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_default_function_export_is_renamed_to_default_alias() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -4740,5 +4774,43 @@ fn strip_type_argument_overshoot_balances_nested_angle_brackets() {
     assert_eq!(
         quoted_gt, "\"a>b\"",
         "`>` inside string literals must not affect the balance count"
+    );
+}
+
+#[test]
+fn test_js_exported_class_emits_documented_constructor_assignment_field() {
+    let source = r#"
+export class Aleph {
+    /**
+     * Impossible to construct.
+     * @param {Aleph} a
+     * @param {null} b
+     */
+	    constructor(a, b) {
+	        /**
+	         * Field is always null
+	         */
+	        this.field = b;
+	        /**
+	         * Explicitly typed count.
+	         * @type {number}
+	         */
+	        this.count = 1;
+	    }
+
+    /**
+     * Doesn't actually do anything
+     * @returns {void}
+     */
+    doIt() {}
+	}
+	"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        output.contains(
+            "/**\n     * Field is always null\n     */\n    field: null;\n    /**\n     * Explicitly typed count.\n     * @type {number}\n     */\n    count: number;\n    /**\n     * Doesn't actually do anything"
+        ),
+        "Expected documented constructor assignment field before method declaration: {output}"
     );
 }
