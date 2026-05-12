@@ -69,11 +69,6 @@ impl<'a> Printer<'a> {
             if stmt_is_top_level_using {
                 seen_top_level_using = true;
             }
-            if let Some(dep_var) = system_plan.import_vars.get(&stmt_node.pos)
-                && seen.insert(dep_var.clone())
-            {
-                names.push(dep_var.clone());
-            }
             if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
                 if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
                     && let Some(class_decl) = self.arena.get_class(stmt_node)
