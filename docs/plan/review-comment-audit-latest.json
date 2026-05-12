@@ -13,6 +13,7 @@
     4960,
     4967,
     4973,
+    4977,
     4982,
     4988,
     4989,
@@ -53,7 +54,7 @@
     5899,
     5901
   ],
-  "candidate_count": 57,
+  "candidate_count": 56,
   "candidates": [
     {
       "pr_number": 4944,
@@ -130,22 +131,6 @@
       "line": 240,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the other. Consider extracting a small helper (e.g., `recover_after_unknown_token(&mut self, previous_statement_was_block: &mut bool) -> bool`) so the two loops share the exact same recovery behavior.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4977,
-      "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4977",
-      "merged_at": "2026-05-10T12:08:51Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A5Zjq",
-      "path": "crates/tsz-checker/src/types/type_checking/type_alias_checking.rs",
-      "line": 318,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`conditional_body_has_unresolved_computed_recursive_alias_ref(...)` is called unconditionally here, even when `body_is_conditional` is false. Since the TS2589 definition-site check is intended to apply only to conditional aliases, consider gating this computation behind `body_is_conditional` (or otherwise ensuring the unresolved-computed path can\u2019t trigger for non-conditional aliases).",
       "score": 1,
       "reasons": [
         "detailed-thread"

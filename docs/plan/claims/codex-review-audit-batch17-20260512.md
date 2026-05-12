@@ -50,6 +50,10 @@ initializer relation path performs an additional raw initializer re-check.
     `Into<String>` instead of `&str + to_string()`, removing an avoidable clone
     when tests already own a `String` fixture.
   - updated the joined-source test call site to pass owned `String` directly.
+- review comments left on #4977:
+  - verified `conditional_body_has_unresolved_computed_recursive_alias_ref(...)`
+    is now guarded by `body_is_conditional` in `type_alias_checking.rs`, so
+    non-conditional aliases no longer pay/trigger that path.
 
 ## Files Touched
 

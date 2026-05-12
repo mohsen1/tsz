@@ -2,12 +2,12 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 46
-- Potential important unresolved threads: 57
+- PRs excluded as already followed-up: 47
+- Potential important unresolved threads: 56
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 22
+- `crates/tsz-checker`: 21
 - `crates/tsz-emitter`: 11
 - `docs`: 10
 - `crates/tsz-parser`: 4
@@ -35,10 +35,10 @@
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
 - [#4951](https://github.com/mohsen1/tsz/pull/4951) fix(checker): preserve literal constraint display for generic calls: 1
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
-- [#4977](https://github.com/mohsen1/tsz/pull/4977) fix(checker): defer parameter-dependent recursive alias TS2589: 1
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg: 1
 - [#4990](https://github.com/mohsen1/tsz/pull/4990) fix(checker): preserve declared alias application display: 1
 - [#4991](https://github.com/mohsen1/tsz/pull/4991) test: cover nested object playground shape: 1
+- [#4997](https://github.com/mohsen1/tsz/pull/4997) fix(solver): preserve normalized object literal display: 1
 
 ## Candidate Threads (Top 100 by score)
 
@@ -52,8 +52,6 @@
   - The candidate deduplication uses `candidates.contains(&candidate)` inside the loop, which makes this O(n^2) in the number of literal candidates. Consider tracking seen candidates with a small `FxHashSet`/`IndexSet` (o...
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) `crates/tsz-parser/src/parser/state_statements.rs:240` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the...
-- [#4977](https://github.com/mohsen1/tsz/pull/4977) `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:318` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `conditional_body_has_unresolved_computed_recursive_alias_ref(...)` is called unconditionally here, even when `body_is_conditional` is false. Since the TS2589 definition-site check is intended to apply only to conditi...
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) `crates/tsz-common/src/perf_counters.rs:593` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` “compile out entirely”, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inlin...
 - [#4990](https://github.com/mohsen1/tsz/pull/4990) `crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs:1896` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
