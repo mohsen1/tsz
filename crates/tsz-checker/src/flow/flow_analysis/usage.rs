@@ -167,12 +167,16 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        // Mark already-narrowed nodes so `get_type_of_node` won't apply a second
-        // round of flow narrowing to the narrowed result. Replaying the same
-        // condition over an already-refined type can over-narrow, e.g.
-        // `unknown` -> `object & Record<"foo", unknown>` -> `never` when an
-        // `in`-operator condition is evaluated again for the same identifier.
-        if narrowed_type != declared_type && narrowed_type != TypeId::ERROR {
+        // Mark any/unknown narrowed nodes so `get_type_of_node` won't apply a
+        // second round of flow narrowing to the narrowed result. Replaying the
+        // same condition over an already-refined unknown can over-narrow, e.g.
+        // `unknown` -> `object & Record<"foo", unknown>` -> `never` for an
+        // `in`-operator condition. Other declared types still need the second
+        // pass for loop fixed-point rechecks.
+        if matches!(declared_type, TypeId::ANY | TypeId::UNKNOWN)
+            && narrowed_type != declared_type
+            && narrowed_type != TypeId::ERROR
+        {
             self.ctx.flow_narrowed_nodes.insert(idx.0);
         }
 
