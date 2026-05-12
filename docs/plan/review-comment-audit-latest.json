@@ -25,6 +25,7 @@
     4993,
     4994,
     4997,
+    4999,
     5002,
     5003,
     5051,
@@ -61,7 +62,7 @@
     5899,
     5901
   ],
-  "candidate_count": 45,
+  "candidate_count": 44,
   "candidates": [
     {
       "pr_number": 4944,
@@ -106,22 +107,6 @@
       "line": 593,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` \u201ccompile out entirely\u201d, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inline wrapper). Consider rewording to avoid implying the symbol is removed, and instead state that the timing/recording path is compiled out when the feature is off.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 4999,
-      "pr_title": "fix(checker): preserve strict callback assignability diagnostics",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/4999",
-      "merged_at": "2026-05-10T14:13:12Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A548P",
-      "path": "crates/tsz-checker/src/error_reporter/render_failure.rs",
-      "line": 946,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`callable_type_after_display_evaluation` can trigger multiple evaluation passes (`evaluate_type_with_resolution`, `evaluate_type_for_assignability`, etc.). In this hunk it\u2019s invoked unconditionally, even when `depth != 0` (where `strict_callback_case` can never be true). Consider guarding these calls behind `if depth == 0 { ... }` (or computing them lazily only when needed) to avoid extra work during nested failure rendering.",
       "score": 1,
       "reasons": [
         "detailed-thread"

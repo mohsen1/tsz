@@ -105,6 +105,26 @@ initializer relation path performs an additional raw initializer re-check.
     function expando namespace members under export-equals roots.
   - added regression coverage for `function send() {}; send.extra = 1; export = send;`
     to ensure `declare namespace send { export { extra }; }` remains emitted.
+- review comments left on #4999:
+  - in `SubtypeFailureReason::ParameterTypeMismatch` diagnostic rendering, the
+    strict-callback display fast-path now avoids
+    `callable_type_after_display_evaluation(...)` work when `depth != 0`.
+  - preserves behavior while skipping redundant evaluation passes in nested
+    mismatch rendering where strict-callback elision cannot trigger.
+- supporting harness stability while touching checker paths:
+  - `load_compiled_lib_files(...)` now falls back to bundled lib assets by
+    stripping the `lib.` prefix when compiled TypeScript `lib.*.d.ts` roots
+    are unavailable (common in worktrees), while preserving the original
+    `LibFile.file_name` with `lib.` prefix.
+  - updated `generic_alias_assignability_pollution_tests` to load bundled
+    stripped libs via `load_lib_files(...)` instead of compiled `lib.*.d.ts`
+    paths, keeping the test hermetic in worktrees without
+    `scripts/node_modules/typescript/lib`.
+  - updated `global_this_const_property_tests` to load bundled `es5.d.ts`
+    via `load_lib_files(...)` instead of compiled `lib.es5.d.ts`, removing
+    non-hermetic dependency on TypeScript `node_modules` layouts.
+  - updated `intersection_primitive_member_assignability_tests` to use bundled
+    lib loading instead of ad-hoc compiled-lib path probing.
 
 ## Files Touched
 
@@ -128,6 +148,11 @@ initializer relation path performs an additional raw initializer re-check.
 - `crates/tsz-emitter/src/emitter/declarations/namespace/tests.rs`
 - `crates/tsz-emitter/src/declaration_emitter/helpers/emit_node.rs`
 - `crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs`
+- `crates/tsz-checker/src/error_reporter/render_failure.rs`
+- `crates/tsz-checker/tests/generic_alias_assignability_pollution_tests.rs`
+- `crates/tsz-checker/tests/global_this_const_property_tests.rs`
+- `crates/tsz-checker/src/test_utils.rs`
+- `crates/tsz-checker/tests/intersection_primitive_member_assignability_tests.rs`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
 
@@ -150,5 +175,10 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-checker --test this_type_tests test_nonexistent_property_still_errors -- --nocapture`
 - `cargo test -p tsz-emitter namespace_recovered_arrow_object_literal_is_parenthesized -- --nocapture`
 - `cargo test -p tsz-emitter test_js_export_equals_ -- --nocapture`
+- `cargo test -p tsz-checker --test promise_callback_variance_tests -- --nocapture`
+- `cargo test -p tsz-checker --test covariant_callbacks_tests -- --nocapture`
+- `cargo test -p tsz-checker --test generic_alias_assignability_pollution_tests -- --nocapture`
+- `cargo test -p tsz-checker --test global_this_const_property_tests -- --nocapture`
+- `cargo test -p tsz-checker --test intersection_primitive_member_assignability_tests -- --nocapture`
 - `cargo fmt --all --check`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=45`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=44`)

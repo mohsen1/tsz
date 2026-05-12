@@ -28,22 +28,23 @@ use tsz_checker::diagnostics::Diagnostic;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 
 fn check_with_iterable_libs(source: &str) -> Vec<Diagnostic> {
-    // The minimum set required to make `IteratorResult<T>`,
-    // `Promise<T>`, and `AsyncIterator<T, ...>` resolvable.
-    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&[
-        "lib.es5.d.ts",
-        "lib.es2015.core.d.ts",
-        "lib.es2015.collection.d.ts",
-        "lib.es2015.iterable.d.ts",
-        "lib.es2015.symbol.d.ts",
-        "lib.es2015.symbol.wellknown.d.ts",
-        "lib.es2015.promise.d.ts",
-        "lib.es2015.proxy.d.ts",
-        "lib.es2015.reflect.d.ts",
-        "lib.es2015.generator.d.ts",
-        "lib.es2016.array.include.d.ts",
-        "lib.es2018.asynciterable.d.ts",
-        "lib.es2018.asyncgenerator.d.ts",
+    // The minimum bundled set required to make `IteratorResult<T>`,
+    // `Promise<T>`, and `AsyncIterator<T, ...>` resolvable in hermetic
+    // worktree environments.
+    let lib_files = tsz_checker::test_utils::load_lib_files(&[
+        "es5.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.generator.d.ts",
+        "es2016.array.include.d.ts",
+        "es2018.asynciterable.d.ts",
+        "es2018.asyncgenerator.d.ts",
     ]);
 
     tsz_checker::test_utils::check_source_with_libs(

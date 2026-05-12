@@ -2,12 +2,12 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 54
-- Potential important unresolved threads: 45
+- PRs excluded as already followed-up: 55
+- Potential important unresolved threads: 44
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 19
+- `crates/tsz-checker`: 18
 - `docs`: 10
 - `crates/tsz-emitter`: 7
 - `crates/tsz-parser`: 3
@@ -31,13 +31,13 @@
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg: 1
-- [#4999](https://github.com/mohsen1/tsz/pull/4999) fix(checker): preserve strict callback assignability diagnostics: 1
 - [#5001](https://github.com/mohsen1/tsz/pull/5001) fix(checker): preserve variance alias display: 1
 - [#5004](https://github.com/mohsen1/tsz/pull/5004) perf(checker): gate-once the hottest checker perf-counter inc() sites: 1
 - [#5009](https://github.com/mohsen1/tsz/pull/5009) perf(solver): gate-once the intern_* helper counter sites: 1
 - [#5040](https://github.com/mohsen1/tsz/pull/5040) perf(checker): T2.1.A.2 — empty lifetime-class shell types: 1
 - [#5048](https://github.com/mohsen1/tsz/pull/5048) perf(checker): T2.2 prep — typed CrossFileQueryKey + Answer: 1
 - [#5060](https://github.com/mohsen1/tsz/pull/5060) perf(solver): T2.4 — wrap auxiliary-interner write-locks with time_shard_write: 1
+- [#5064](https://github.com/mohsen1/tsz/pull/5064) perf(checker): close cache-hits counter coverage gap for cross-arena delegations: 1
 
 ## Candidate Threads (Top 100 by score)
 
@@ -47,8 +47,6 @@
   - The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the...
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) `crates/tsz-common/src/perf_counters.rs:593` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` “compile out entirely”, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inlin...
-- [#4999](https://github.com/mohsen1/tsz/pull/4999) `crates/tsz-checker/src/error_reporter/render_failure.rs:946` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `callable_type_after_display_evaluation` can trigger multiple evaluation passes (`evaluate_type_with_resolution`, `evaluate_type_for_assignability`, etc.). In this hunk it’s invoked unconditionally, even when `depth !...
 - [#5001](https://github.com/mohsen1/tsz/pull/5001) `crates/tsz-solver/src/evaluation/evaluate.rs:1155` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `store_intermediate_application_display_alias` stores a *global* display_alias mapping from `instantiated` (an Application like `Inner<1>`) to `original_type_id` (e.g. `Outer<1>`). Because Application TypeIds are inte...
 - [#5004](https://github.com/mohsen1/tsz/pull/5004) `docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md:8` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread

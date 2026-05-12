@@ -19,10 +19,10 @@
 use tsz_checker::context::CheckerOptions;
 
 fn diagnostic_codes_with_lib(source: &str) -> Vec<u32> {
-    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"]);
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
     assert!(
         !lib_files.is_empty(),
-        "lib.es5.d.ts not found — required for this regression test"
+        "es5.d.ts not found — required for this regression test"
     );
     tsz_checker::test_utils::check_source_with_libs(
         source,

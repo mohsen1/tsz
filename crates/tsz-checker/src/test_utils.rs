@@ -293,19 +293,41 @@ fn compiled_lib_test_roots() -> Vec<PathBuf> {
 /// verbatim, preserving the `lib.` prefix.
 pub fn load_compiled_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
     let roots = compiled_lib_test_roots();
+    let bundled_roots = lib_test_roots();
     let mut out = Vec::new();
     let mut seen: FxHashSet<&str> = FxHashSet::default();
     for &name in names {
         if !seen.insert(name) {
             continue;
         }
+        let mut resolved = false;
         for root in &roots {
             let p = root.join(name);
             if p.exists()
                 && let Ok(content) = std::fs::read_to_string(&p)
             {
                 out.push(Arc::new(LibFile::from_source(name.to_string(), content)));
+                resolved = true;
                 break;
+            }
+        }
+        if resolved {
+            continue;
+        }
+
+        // Hermetic fallback: when compiled `lib.*.d.ts` trees are unavailable
+        // (common in worktrees without scripts/node_modules), read bundled
+        // stripped/full assets by stripping the `lib.` prefix while preserving
+        // the original `LibFile.file_name`.
+        if let Some(stripped_name) = name.strip_prefix("lib.") {
+            for root in &bundled_roots {
+                let p = root.join(stripped_name);
+                if p.exists()
+                    && let Ok(content) = std::fs::read_to_string(&p)
+                {
+                    out.push(Arc::new(LibFile::from_source(name.to_string(), content)));
+                    break;
+                }
             }
         }
     }

@@ -934,19 +934,22 @@ impl<'a> CheckerState<'a> {
                 let contains_type_params = |ty| {
                     crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
                 };
-                let source_callable = self.callable_type_after_display_evaluation(source);
-                let target_callable = self.callable_type_after_display_evaluation(target);
-                let source_param_callable =
-                    self.callable_type_after_display_evaluation(*source_param);
-                let target_param_callable =
-                    self.callable_type_after_display_evaluation(*target_param);
-                let strict_callback_case = depth == 0
-                    && source_callable.is_some()
-                    && target_callable.is_some()
-                    && source_param_callable.is_some()
-                    && target_param_callable.is_some()
-                    && !contains_type_params(source_param_callable.unwrap_or(*source_param))
-                    && !contains_type_params(target_param_callable.unwrap_or(*target_param));
+                let strict_callback_case = if depth == 0 {
+                    let source_callable = self.callable_type_after_display_evaluation(source);
+                    let target_callable = self.callable_type_after_display_evaluation(target);
+                    let source_param_callable =
+                        self.callable_type_after_display_evaluation(*source_param);
+                    let target_param_callable =
+                        self.callable_type_after_display_evaluation(*target_param);
+                    source_callable.is_some()
+                        && target_callable.is_some()
+                        && source_param_callable.is_some()
+                        && target_param_callable.is_some()
+                        && !contains_type_params(source_param_callable.unwrap_or(*source_param))
+                        && !contains_type_params(target_param_callable.unwrap_or(*target_param))
+                } else {
+                    false
+                };
                 let inner_failed_on_return = matches!(
                     inner_reason.as_deref(),
                     Some(SubtypeFailureReason::ReturnTypeMismatch { .. })
