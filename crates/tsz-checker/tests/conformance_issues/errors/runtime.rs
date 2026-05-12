@@ -1224,6 +1224,38 @@ type DeepPickWeakSet<Type, Filter> = Type extends WeakSet<infer Values>
 }
 
 #[test]
+fn test_weak_collection_infer_constraint_flows_through_recursive_alias() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let accepted = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+type Primitive = string | number | boolean | bigint | symbol | undefined | null;
+type Builtin = Primitive | Function | Date | Error | RegExp;
+
+type DeepPartial<T> = T extends Exclude<Builtin, Error>
+  ? T
+  : T extends WeakSet<infer V>
+  ? WeakSet<DeepPartial<V>>
+  : T extends {}
+  ? { [K in keyof T]?: DeepPartial<T[K]> }
+  : Partial<T>;
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&accepted, 2344),
+        "Recursive aliases should preserve hidden WeakKey constraints from WeakSet infer variables.\nActual: {accepted:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2344_for_imported_record_indexed_access_key_constraint() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
