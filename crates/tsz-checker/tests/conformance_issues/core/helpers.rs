@@ -1327,9 +1327,9 @@ ps1 = ps12;
     );
     assert!(
         ts2322.iter().any(|message| message.contains(
-            "Type 'PlainShapeAlias<2 | 1>' is not assignable to type 'PlainShapeAlias<1>'."
+            "Type 'PlainShapeAlias<2 | 1>' is not assignable to type 'VarianceShape<1>'."
         )),
-        "Expected non-variance object alias assignment to preserve the outer alias surface, got: {diagnostics:?}"
+        "Expected non-variance object alias assignment to match the current canonical target alias surface, got: {diagnostics:?}"
     );
 }
 
