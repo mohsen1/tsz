@@ -77,6 +77,46 @@ const point: Point = { x: 1, y: 2, z: 3 } as const;
     );
 }
 
+#[test]
+fn parenthesized_const_assertion_assignment_reports_excess_property() {
+    let source = r#"
+interface Point {
+    x: number;
+    y: number;
+}
+
+const point: Point = ({ x: 1, y: 2, z: 3 } as const);
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 through parenthesized as const, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'z'") && ts2353[0].1.contains("'Point'"),
+        "Expected TS2353 to mention excess property z and target Point, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn plain_type_assertion_assignment_keeps_excess_property_opaque() {
+    let source = r#"
+interface Point {
+    x: number;
+    y: number;
+}
+
+const point: Point = { x: 1, y: 2, z: 3 } as Point;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Did not expect TS2353 through plain type assertion, got: {diags:?}",
+    );
+}
+
 // --- Discriminated union excess property checking ---
 
 #[test]

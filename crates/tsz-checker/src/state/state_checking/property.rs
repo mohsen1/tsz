@@ -4,7 +4,6 @@ use crate::symbol_resolver::TypeSymbolResolution;
 use std::collections::HashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -247,8 +246,8 @@ impl<'a> CheckerState<'a> {
                 })
             {
                 let report_idx = self
-                    .find_object_literal_property_element(idx, source_prop.name)
-                    .unwrap_or(idx);
+                    .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                    .unwrap_or(object_literal_idx);
                 self.track_earliest_excess(
                     &mut generic_mapped_excess,
                     source_prop.name,
@@ -329,8 +328,8 @@ impl<'a> CheckerState<'a> {
 
                 if !accepted && checked_any_member && !uncertain {
                     let report_idx = self
-                        .find_object_literal_property_element(idx, source_prop.name)
-                        .unwrap_or(idx);
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
                     self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 }
             }
@@ -542,8 +541,8 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let report_idx = self
-                        .find_object_literal_property_element(idx, source_prop.name)
-                        .unwrap_or(idx);
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
                     let concrete_diagnostic_members = effective_members
                         .iter()
                         .filter(|(member, _)| {
@@ -729,8 +728,8 @@ impl<'a> CheckerState<'a> {
 
                 if !is_known {
                     let report_idx = self
-                        .find_object_literal_property_element(idx, source_prop.name)
-                        .unwrap_or(idx);
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
                     self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 } else {
                     // Combine named property types with index signature value types
@@ -818,8 +817,11 @@ impl<'a> CheckerState<'a> {
                         ..
                     } => {
                         let report_idx = self
-                            .find_object_literal_property_element(idx, source_prop.name)
-                            .unwrap_or(idx);
+                            .find_object_literal_property_element(
+                                object_literal_idx,
+                                source_prop.name,
+                            )
+                            .unwrap_or(object_literal_idx);
                         self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                     }
                     _ => return,
@@ -974,8 +976,8 @@ impl<'a> CheckerState<'a> {
                     && (boundary_excess_is_authoritative || dynamic_target_prop_type.is_none());
                 if is_excess {
                     let report_idx = self
-                        .find_object_literal_property_element(idx, source_prop.name)
-                        .unwrap_or(idx);
+                        .find_object_literal_property_element(object_literal_idx, source_prop.name)
+                        .unwrap_or(object_literal_idx);
                     self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 } else {
                     // Property exists in target — check nested object literals.
@@ -2060,6 +2062,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn const_assertion_object_literal_expression(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let idx = self.ctx.arena.skip_parenthesized(idx);
         let node = self.ctx.arena.get(idx)?;
         if node.kind != syntax_kind_ext::AS_EXPRESSION
             && node.kind != syntax_kind_ext::TYPE_ASSERTION
@@ -2070,34 +2073,12 @@ impl<'a> CheckerState<'a> {
         if !self.is_const_assertion_type_node(assertion.type_node) {
             return None;
         }
-        let expression = self.ctx.arena.get(assertion.expression)?;
+        let expression_idx = self.ctx.arena.skip_parenthesized(assertion.expression);
+        let expression = self.ctx.arena.get(expression_idx)?;
         if expression.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return Some(assertion.expression);
+            return Some(expression_idx);
         }
         None
-    }
-
-    fn is_const_assertion_type_node(&self, type_node_idx: NodeIndex) -> bool {
-        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
-            return false;
-        };
-        if type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16 {
-            return true;
-        }
-        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
-        {
-            return self
-                .ctx
-                .arena
-                .get_identifier_text(type_ref.type_name)
-                .is_some_and(|name| name == "const")
-                && type_ref
-                    .type_arguments
-                    .as_ref()
-                    .is_none_or(|args| args.nodes.is_empty());
-        }
-        false
     }
 
     /// Check nested object literal properties for excess properties.
