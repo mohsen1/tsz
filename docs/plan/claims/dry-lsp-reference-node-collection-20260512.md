@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `dry-lsp-reference-node-collection-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5819
+- **Status**: ready
 - **Workstream**: DRY audit P1 §3 (LSP Provider Context And Reference Occurrence Model)
 
 ## Intent
@@ -21,4 +21,7 @@ share one ordering and deduplication contract.
 
 ## Verification
 
-- Pending
+- `cargo fmt -p tsz-lsp`
+- `cargo test -p tsz-lsp references_tests -- --nocapture` (104 passed)
+- `cargo test -p tsz-lsp -- --nocapture` (3739 passed, 5 ignored; doctests ignored)
+- `cargo clippy -p tsz-lsp --all-targets -- -D warnings`
