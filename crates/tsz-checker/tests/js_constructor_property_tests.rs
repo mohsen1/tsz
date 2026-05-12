@@ -177,7 +177,13 @@ fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, Str
 }
 
 fn check_js_with_es5_and_dom_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
-    check_js_with_lib_files(source, options, load_es5_and_dom_lib_for_test())
+    let lib_files = load_es5_and_dom_lib_for_test();
+    assert!(
+        lib_files.len() == 2,
+        "expected ES5+DOM libs for this test helper; loader returned {} file(s)",
+        lib_files.len()
+    );
+    check_js_with_lib_files(source, options, lib_files)
 }
 
 fn check_js_with_lib_files(
