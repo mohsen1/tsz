@@ -2,12 +2,12 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 47
-- Potential important unresolved threads: 50
+- PRs excluded as already followed-up: 48
+- Potential important unresolved threads: 49
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 27
+- `crates/tsz-checker`: 26
 - `crates/tsz-emitter`: 10
 - `crates/tsz-solver`: 4
 - `docs`: 3
@@ -30,7 +30,6 @@
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
 - [#4988](https://github.com/mohsen1/tsz/pull/4988) test(checker): cover mapped key TS2322 anchors: 1
 - [#4994](https://github.com/mohsen1/tsz/pull/4994) test(checker): cover max constraints diagnostic display: 1
-- [#5051](https://github.com/mohsen1/tsz/pull/5051) fix(checker): preserve conditional keyof variance: 1
 - [#5057](https://github.com/mohsen1/tsz/pull/5057) fix(checker): preserve higher-order generic call inference: 1
 - [#5063](https://github.com/mohsen1/tsz/pull/5063) docs(checker): clarify cross-file-query helper module docstring: 1
 - [#5067](https://github.com/mohsen1/tsz/pull/5067) fix(checker): widen overflow tuple boolean display: 1
@@ -45,8 +44,6 @@
   - The wording "the optimizer folds into the no-op path" overstates what the compiler can guarantee here. Since `pc` depends on a runtime `enabled_fast()` result, the `if let Some(c) = pc` checks still compile to an Opti...
 - [#4994](https://github.com/mohsen1/tsz/pull/4994) `crates/tsz-checker/tests/generic_call_inference_tests.rs:350` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - This test picks the first diagnostic with code 2345 via `find`, which doesn’t guarantee it’s the diagnostic for `max2(1, 2)` if additional TS2345s ever appear (ordering can change as the checker evolves). To make the ...
-- [#5051](https://github.com/mohsen1/tsz/pull/5051) `crates/tsz-checker/tests/conditional_infer_tests.rs:632` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
-  - The test only asserts that there are 8 TS2322 diagnostics, but it would still pass if additional non-TS2322 diagnostics are emitted (which would indicate a regression unrelated to variance). To ensure this remains a t...
 - [#5057](https://github.com/mohsen1/tsz/pull/5057) `crates/tsz-solver/src/operations/generic_call/return_context.rs:99` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread
   - `collect_all_types` returns an `FxHashSet`, so iterating it here makes the order of `hoisted` (and therefore the synthesized function `type_params`) depend on hash iteration order. Since `type_params` ordering is part...
 - [#5063](https://github.com/mohsen1/tsz/pull/5063) `crates/tsz-checker/src/context/cross_file_query.rs:19` score=4 reviewer=`copilot-pull-request-reviewer` reasons=important-keyword,detailed-thread

@@ -26,6 +26,7 @@
     5034,
     5040,
     5048,
+    5051,
     5060,
     5061,
     5062,
@@ -54,7 +55,7 @@
     5901,
     5954
   ],
-  "candidate_count": 50,
+  "candidate_count": 49,
   "candidates": [
     {
       "pr_number": 4988,
@@ -101,23 +102,6 @@
       "line": 350,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "This test picks the first diagnostic with code 2345 via `find`, which doesn’t guarantee it’s the diagnostic for `max2(1, 2)` if additional TS2345s ever appear (ordering can change as the checker evolves). To make the test unambiguous, filter TS2345 diagnostics and select the one whose `start` matches `first_arg_start` (or assert there’s exactly one TS2345 before using it).",
-      "score": 4,
-      "reasons": [
-        "important-keyword",
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5051,
-      "pr_title": "fix(checker): preserve conditional keyof variance",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5051",
-      "merged_at": "2026-05-10T20:11:23Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A7VTl",
-      "path": "crates/tsz-checker/tests/conditional_infer_tests.rs",
-      "line": 632,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "The test only asserts that there are 8 TS2322 diagnostics, but it would still pass if additional non-TS2322 diagnostics are emitted (which would indicate a regression unrelated to variance). To ensure this remains a tight TSC-conformance check, also assert that the total diagnostics count is 8 (or that all diagnostics are TS2322) so unexpected errors can’t slip through.",
       "score": 4,
       "reasons": [
         "important-keyword",
