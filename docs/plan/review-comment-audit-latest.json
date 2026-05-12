@@ -50,27 +50,11 @@
     5753,
     5811,
     5830,
+    5899,
     5901
   ],
-  "candidate_count": 58,
+  "candidate_count": 57,
   "candidates": [
-    {
-      "pr_number": 5899,
-      "pr_title": "chore(emitter,binder-tests): share parse_test_source helper across src-mounted test modules",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5899",
-      "merged_at": "2026-05-12T14:42:21Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6Bc1iQ",
-      "path": "crates/tsz-emitter/src/emitter/literals/core.rs",
-      "line": 865,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`parse_test_source` takes `&str` and then immediately allocates via `source.to_string()`. In tests that already build a `String` (e.g. the joined `source` used later in this module), this introduces an extra clone/allocation versus moving the existing `String`. Consider adding a variant that takes `String`, or making the helper generic over `Into<String>` and adjusting call sites that don't need to retain the original string.",
-      "score": 3,
-      "reasons": [
-        "action-language",
-        "detailed-thread"
-      ]
-    },
     {
       "pr_number": 4944,
       "pr_title": "fix(checker): expand index-signature alias receiver display",

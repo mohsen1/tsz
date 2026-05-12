@@ -2,13 +2,13 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 45
-- Potential important unresolved threads: 58
+- PRs excluded as already followed-up: 46
+- Potential important unresolved threads: 57
 
 ## Top Subsystems
 
 - `crates/tsz-checker`: 22
-- `crates/tsz-emitter`: 12
+- `crates/tsz-emitter`: 11
 - `docs`: 10
 - `crates/tsz-parser`: 4
 - `scripts`: 3
@@ -32,18 +32,16 @@
 - [#5712](https://github.com/mohsen1/tsz/pull/5712) fix(checker): align recursiveTypeReferences1 array diagnostics: 2
 - [#5845](https://github.com/mohsen1/tsz/pull/5845) fix(dts): ignore cjs exports in esm js modules: 2
 - [#5867](https://github.com/mohsen1/tsz/pull/5867) fix(dts): emit js function keyword property aliases: 2
-- [#5899](https://github.com/mohsen1/tsz/pull/5899) chore(emitter,binder-tests): share parse_test_source helper across src-mounted test modules: 1
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) fix(checker): expand index-signature alias receiver display: 1
 - [#4951](https://github.com/mohsen1/tsz/pull/4951) fix(checker): preserve literal constraint display for generic calls: 1
 - [#4956](https://github.com/mohsen1/tsz/pull/4956) fix(parser): recover unicode escaped astral identifiers: 1
 - [#4977](https://github.com/mohsen1/tsz/pull/4977) fix(checker): defer parameter-dependent recursive alias TS2589: 1
 - [#4987](https://github.com/mohsen1/tsz/pull/4987) perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg: 1
 - [#4990](https://github.com/mohsen1/tsz/pull/4990) fix(checker): preserve declared alias application display: 1
+- [#4991](https://github.com/mohsen1/tsz/pull/4991) test: cover nested object playground shape: 1
 
 ## Candidate Threads (Top 100 by score)
 
-- [#5899](https://github.com/mohsen1/tsz/pull/5899) `crates/tsz-emitter/src/emitter/literals/core.rs:865` score=3 reviewer=`copilot-pull-request-reviewer` reasons=action-language,detailed-thread
-  - `parse_test_source` takes `&str` and then immediately allocates via `source.to_string()`. In tests that already build a `String` (e.g. the joined `source` used later in this module), this introduces an extra clone/all...
 - [#4944](https://github.com/mohsen1/tsz/pull/4944) `crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs:19` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `diagnostic_messages` calls `load_default_lib_files()` on every invocation, and this helper is used by multiple tests in this file. Since `load_default_lib_files()` reads and parses lib assets from disk, consider cach...
 - [#4949](https://github.com/mohsen1/tsz/pull/4949) `crates/tsz-cli/src/driver/check_utils.rs:2172` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread

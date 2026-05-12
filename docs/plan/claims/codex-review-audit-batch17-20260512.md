@@ -45,6 +45,11 @@ initializer relation path performs an additional raw initializer re-check.
     `type_alias_checking.rs`.
   - reran `ts2589_tests` suite to confirm the intended definition-site vs
     instantiation-site TS2589 behavior remains covered.
+- review comments left on #5899:
+  - updated emitter literal tests helper `parse_test_source` to accept
+    `Into<String>` instead of `&str + to_string()`, removing an avoidable clone
+    when tests already own a `String` fixture.
+  - updated the joined-source test call site to pass owned `String` directly.
 
 ## Files Touched
 
@@ -53,6 +58,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs` (verified current behavior; no edit needed)
 - `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs` (verified current behavior; no edit needed)
 - `docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md` (verified current status token)
+- `crates/tsz-emitter/src/emitter/literals/core.rs`
 - `docs/plan/claims/codex-review-audit-batch17-20260512.md`
 - `docs/plan/review-comment-audit-latest.json`
 - `docs/plan/review-comment-audit-latest.md`
@@ -64,5 +70,7 @@ initializer relation path performs an additional raw initializer re-check.
 - `cargo test -p tsz-checker --test generic_call_primitive_widening_display_tests -- --nocapture`
 - `cargo test -p tsz-checker --test ts2315_explicit_any_type_alias_tests -- --nocapture`
 - `cargo test -p tsz-checker --lib ts2589_tests -- --nocapture`
+- `cargo test -p tsz-emitter regex_literal_preserves_non_ascii_flags -- --nocapture`
+- `cargo test -p tsz-emitter decimal_numeric_separators_with_exponents_downlevel_to_number_text -- --nocapture`
 - `cargo fmt --all --check`
 - `python3 scripts/session/audit_missed_review_comments.py --limit 500`
