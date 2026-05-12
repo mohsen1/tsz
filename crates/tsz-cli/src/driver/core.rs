@@ -1033,17 +1033,23 @@ fn compile_inner(
         });
     }
 
+    let has_removed_option_value_diagnostic = config_diagnostics
+        .iter()
+        .any(|d| is_removed_option_value_diagnostic_code(d.code));
+
     // TS5103 (invalid ignoreDeprecations value) and TS5102 (removed option) are fatal
     // in tsc when they come from configuration: they stop compilation and report
-    // only config-level errors. Direct CLI TS5102 is still reported, but we let
-    // emit continue so baseline emit invocations for removed-but-parsed flags
+    // only config-level errors. TS5108 (removed option value) is fatal from either
+    // config or direct CLI validation. Direct CLI TS5102 is still reported, but we
+    // let emit continue so baseline emit invocations for removed-but-parsed flags
     // can compare generated JS/DTS instead of failing before output exists.
-    if config_diagnostics.iter().any(|d| {
+    let has_fatal_config_diagnostic = config_diagnostics.iter().any(|d| {
         d.code == diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS
             || d.code
                 == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || (config_has_removed_option_diagnostic && is_removed_option_diagnostic_code(d.code))
-    }) {
+    });
+    if has_removed_option_value_diagnostic || has_fatal_config_diagnostic {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
             emitted_files: Vec::new(),
@@ -1402,13 +1408,14 @@ fn compile_inner(
             ));
         }
     } else if !resolved.no_emit
+        && resolved.emit_declarations
         && (out_dir.is_some() || declaration_dir.is_some())
         && let Some(tsconfig) = tsconfig_path.as_deref()
     {
-        // TS5011: outDir/declarationDir is set without rootDir, and the inferred
-        // common source directory differs from the tsconfig directory, so emit
-        // would land in an unexpected layout. tsc reports this so the user can
-        // pin rootDir explicitly.
+        // TS5011: declaration emit with outDir/declarationDir set but no rootDir,
+        // and the inferred common source directory differs from the tsconfig
+        // directory. In that case declaration output would land in an unexpected
+        // layout, so tsc asks the user to pin rootDir explicitly.
         if let Some(common) = implicit_common_source_directory(&root_file_paths, &base_dir, &cwd) {
             let tsconfig_display = display_relative_to_dir(tsconfig, &cwd);
             let common_display = display_relative_to_dir(&common, &base_dir);
@@ -3861,6 +3868,10 @@ const fn is_removed_option_diagnostic_code(code: u32) -> bool {
     code == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
         || code
             == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
+}
+
+const fn is_removed_option_value_diagnostic_code(code: u32) -> bool {
+    code == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
 }
 
 const fn cli_target_value(target: Target) -> &'static str {

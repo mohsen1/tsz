@@ -20887,6 +20887,31 @@ fn ts5011_emitted_when_out_dir_without_root_dir_and_inferred_subdir() {
 }
 
 #[test]
+fn ts5011_not_emitted_for_js_emit_only_out_dir_without_root_dir() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist"
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/main.ts"), "export const x = 1;");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&5011),
+        "Should NOT emit TS5011 for outDir-only JS emit, got: {codes:?}"
+    );
+}
+
+#[test]
 fn ts5011_not_emitted_when_root_dir_set() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
