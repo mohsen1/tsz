@@ -11,9 +11,7 @@
 //! tsc reference: `Unable to resolve signature of parameter decorator
 //! when called as an expression.`
 
-use tsz_checker::test_utils::{
-    check_source_codes, check_source_codes_experimental_decorators,
-};
+use tsz_checker::test_utils::{check_source_codes, check_source_codes_experimental_decorators};
 
 fn check(source: &str) -> Vec<u32> {
     check_source_codes_experimental_decorators(source).to_vec()
