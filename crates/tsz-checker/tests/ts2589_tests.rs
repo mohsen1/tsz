@@ -437,6 +437,18 @@ type TrimLeft<T extends string> = T extends ` ${infer R}` ? TrimLeft<R> : T;
 }
 
 #[test]
+fn non_conditional_recursive_alias_with_unresolved_qualified_arg_no_ts2589() {
+    let source = r#"
+type Foo<T> = Foo<Bar.Baz<T>>;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2589),
+        "non-conditional recursive aliases should not hit conditional-body TS2589 definition checks. Got: {diags:?}"
+    );
+}
+
+#[test]
 fn bounded_recursive_alias_with_indexed_type_parameter_arg_no_ts2589() {
     let source = r#"
 type Append<Arr extends any[]> = [...Arr, 0];
