@@ -483,6 +483,16 @@ impl<'a> DeclarationEmitter<'a> {
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
+                && type_text != "any"
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+                && let Some(type_text) = self.property_access_source_accessor_type_text(initializer)
             {
                 self.write(": ");
                 self.write(&type_text);
