@@ -19,14 +19,6 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
 #[test]
 fn typeof_missing_namespace_value_member_reports_ts2339() {
     let source = r#"
-namesapce Ns {
-    export const value = 1;
-}
-
-type T = typeof Ns.Missing;
-let useIt: T;
-"#;
-    let source = r#"
 namespace Ns {
     export const value = 1;
 }
