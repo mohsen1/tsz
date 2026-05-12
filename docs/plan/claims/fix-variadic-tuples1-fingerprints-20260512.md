@@ -24,3 +24,5 @@ Reduce the remaining non-XFAIL conformance fingerprint-only failures after the c
 - `cargo build --profile dist-fast -p tsz-cli -p tsz-conformance`
 - `.target/dist-fast/tsz-conformance --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --cache-file /Users/mohsen/code/tsz/scripts/conformance/tsc-cache-full.json --tsz-binary .target/dist-fast/tsz --filter variadicTuples1 --print-fingerprints --verbose`
   - Result: `1/1 passed (100.0%)`, `Fingerprint-only: 0`
+- `.target/dist-fast/tsz-conformance --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --cache-file /Users/mohsen/code/tsz/scripts/conformance/tsc-cache-full.json --tsz-binary .target/dist-fast/tsz --print-fingerprints --verbose`
+  - Result: `12579/12582 passed (100.0%)`, `Skipped: 3`, `Known failures: 3`, `Fingerprint-only: 0`
