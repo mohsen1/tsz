@@ -198,6 +198,38 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn same_file_value_symbol_for_type_symbol(
+        &self,
+        type_sym_id: tsz_binder::SymbolId,
+    ) -> Option<(tsz_binder::SymbolId, NodeIndex, usize)> {
+        let type_symbol = self.get_symbol_globally(type_sym_id)?;
+        if (type_symbol.flags & tsz_binder::symbol_flags::VALUE) != 0 {
+            return None;
+        }
+        let file_idx = self.ctx.resolve_symbol_file_index(type_sym_id)?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        for &candidate_id in binder
+            .get_symbols()
+            .find_all_by_name(&type_symbol.escaped_name)
+        {
+            if candidate_id == type_sym_id {
+                continue;
+            }
+            let Some(candidate) = binder.get_symbol(candidate_id) else {
+                continue;
+            };
+            if candidate.escaped_name != type_symbol.escaped_name
+                || (candidate.flags & tsz_binder::symbol_flags::VALUE) == 0
+                || !candidate.value_declaration.is_some()
+            {
+                continue;
+            }
+            self.ctx.register_symbol_file_target(candidate_id, file_idx);
+            return Some((candidate_id, candidate.value_declaration, file_idx));
+        }
+        None
+    }
+
     fn has_recursive_alias_shape_for_flow_compare(&self, type_id: TypeId) -> bool {
         common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), type_id)
     }
@@ -956,6 +988,23 @@ impl<'a> CheckerState<'a> {
             }
 
             let has_alias = (flags & tsz_binder::symbol_flags::ALIAS) != 0;
+            if !self.is_identifier_in_type_position(idx)
+                && (flags
+                    & (tsz_binder::symbol_flags::INTERFACE | tsz_binder::symbol_flags::TYPE_ALIAS))
+                    != 0
+                && (flags & tsz_binder::symbol_flags::VALUE) == 0
+                && let Some((value_sym_id, value_decl, value_file_idx)) =
+                    self.same_file_value_symbol_for_type_symbol(sym_id)
+            {
+                let value_type = self.type_of_value_declaration_for_cross_file_symbol(
+                    value_sym_id,
+                    value_decl,
+                    value_file_idx,
+                );
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, value_type, sym_id);
+                }
+            }
             // When a symbol has both TYPE_ALIAS and VALUE flags (e.g.,
             // `type FAILURE = "FAILURE"; const FAILURE = "FAILURE";`),
             // the merged binder symbol has both flags. In value/expression
@@ -1160,6 +1209,13 @@ impl<'a> CheckerState<'a> {
                             let target_file_idx =
                                 self.ctx.resolve_symbol_file_index(target_sym_id)?;
                             Some((target_sym_id, target_value_decl, target_file_idx))
+                        } else if (tflags
+                            & (tsz_binder::symbol_flags::INTERFACE
+                                | tsz_binder::symbol_flags::TYPE_ALIAS))
+                            != 0
+                            && (tflags & tsz_binder::symbol_flags::VALUE) == 0
+                        {
+                            self.same_file_value_symbol_for_type_symbol(target_sym_id)
                         } else {
                             None
                         }
@@ -1206,6 +1262,14 @@ impl<'a> CheckerState<'a> {
                             target_sym_id,
                             target_value_decl,
                             target_file_idx,
+                        )
+                    } else if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+                        && file_idx != self.ctx.current_file_idx
+                    {
+                        self.type_of_value_declaration_for_cross_file_symbol(
+                            sym_id,
+                            preferred_value_decl,
+                            file_idx,
                         )
                     } else {
                         self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl)
