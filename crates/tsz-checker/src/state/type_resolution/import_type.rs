@@ -204,21 +204,15 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         segments: &[String],
     ) -> String {
-        let display_name = self.import_type_display_name(module_specifier);
         if segments.is_empty() {
-            // Simple direct-member missing: tsc includes `.export=` for export= modules.
-            // e.g. `import("mod").Q` missing → `"mod".export=`
-            if self.target_module_has_export_equals(module_specifier) {
-                format!("\"{display_name}\".export=")
-            } else {
-                format!("\"{display_name}\"")
-            }
-        } else {
-            // Nested access: segments already traverse into the export= namespace,
-            // so `.export=` must not appear in the display string.
-            // e.g. `import("mod").Bar.Q` missing → `"mod".Bar` (not `"mod".export=.Bar`)
-            format!("\"{display_name}\".{}", segments.join("."))
+            return self.import_type_namespace_name(module_specifier);
         }
+
+        // Nested access: segments already traverse into the export= namespace,
+        // so `.export=` must not appear in the display string.
+        // e.g. `import("mod").Bar.Q` missing → `"mod".Bar` (not `"mod".export=.Bar`)
+        let display_name = self.import_type_display_name(module_specifier);
+        format!("\"{display_name}\".{}", segments.join("."))
     }
 
     fn resolve_import_type_member_via_export_equals_type(
