@@ -376,6 +376,7 @@ impl<'a> DeclarationEmitter<'a> {
                     || k == syntax_kind_ext::EXPORT_ASSIGNMENT
                     || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                     || self.stmt_has_export_modifier(stmt_node)
+                    || (self.source_is_js_file && self.statement_has_bare_require_call(stmt_idx))
                     || self
                         .js_supported_commonjs_named_export_for_statement(stmt_idx)
                         .is_some()
@@ -400,6 +401,72 @@ impl<'a> DeclarationEmitter<'a> {
                     || self.stmt_has_export_modifier(stmt_node)
             })
         })
+    }
+
+    fn statement_has_bare_require_call(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+        var_stmt
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .any(|decl_list_idx| {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    return false;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    return false;
+                };
+                decl_list
+                    .declarations
+                    .nodes
+                    .iter()
+                    .copied()
+                    .any(|decl_idx| {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            return false;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            return false;
+                        };
+                        self.initializer_is_bare_require_call(decl.initializer)
+                    })
+            })
+    }
+
+    pub(in crate::declaration_emitter) fn initializer_is_bare_require_call(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.arena.get_call_expr(init_node) else {
+            return false;
+        };
+        if self.get_identifier_text(call.expression).as_deref() != Some("require") {
+            return false;
+        }
+        let Some(args) = call.arguments.as_ref() else {
+            return false;
+        };
+        let [arg_idx] = args.nodes.as_slice() else {
+            return false;
+        };
+        self.arena
+            .get(*arg_idx)
+            .is_some_and(|arg_node| arg_node.kind == SyntaxKind::StringLiteral as u16)
     }
 
     pub(crate) fn source_file_is_js(
