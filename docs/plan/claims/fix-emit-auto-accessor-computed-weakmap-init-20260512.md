@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/emit-auto-accessor-computed-weakmap-init-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #6032
+- **Status**: ready
 - **Workstream**: 2 (JS Emit And Declaration Emit Pass Rate)
 
 ## Intent
@@ -18,8 +18,11 @@ uninitialized WeakMap.
 
 - `crates/tsz-emitter/src/emitter/declarations/class/emit_es6.rs`
 - `crates/tsz-emitter/src/transforms/class_es5_ir.rs`
-- focused emitter tests under `crates/tsz-emitter/tests/`
+- `crates/tsz-emitter/src/transforms/class_es5_ir_members.rs`
+- `crates/tsz-emitter/src/transforms/ir.rs`
 
 ## Verification
 
-- Planned: `env CARGO_INCREMENTAL=0 ./scripts/emit/run.sh --filter=autoAccessor5 --js-only --verbose --concurrency=1`
+- Passed: `env CARGO_INCREMENTAL=0 cargo check -p tsz-emitter`
+- Passed: `env CARGO_INCREMENTAL=0 TSZ_BIN=/Users/dutchess/Documents/tsz/.target/release/tsz ./scripts/emit/run.sh --filter=autoAccessor5 --js-only --verbose --concurrency=1`
+- Broader slice: `env CARGO_INCREMENTAL=0 TSZ_BIN=/Users/dutchess/Documents/tsz/.target/release/tsz ./scripts/emit/run.sh --filter=autoAccessor --js-only --concurrency=4` still has 5 decorator-related failures outside this claim (`esDecorators-classDeclaration-missingEmitHelpers-*`, `staticAutoAccessorsWithDecorators`).

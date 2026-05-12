@@ -122,6 +122,16 @@ impl<'a> Printer<'a> {
                 let alias_name = needs_alias.then(|| format!("{class_name}_1"));
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+                let externally_hoisted_decls =
+                    self.es5_computed_auto_accessor_hoisted_decls(idx, &class_name);
+                if !externally_hoisted_decls.is_empty() {
+                    for decl in &externally_hoisted_decls {
+                        if !self.hoisted_assignment_temps.contains(decl) {
+                            self.hoisted_assignment_temps.push(decl.clone());
+                        }
+                    }
+                    es5_emitter.set_externally_hoisted_decls(externally_hoisted_decls);
+                }
                 es5_emitter.set_indent_level(self.writer.indent_level());
                 es5_emitter.set_transforms(self.transforms.clone());
                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
@@ -604,5 +614,118 @@ impl<'a> Printer<'a> {
         self.write(&output);
         self.skip_comments_for_erased_node(node);
         true
+    }
+
+    pub(in crate::emitter) fn es5_computed_auto_accessor_hoisted_decls(
+        &self,
+        class_idx: NodeIndex,
+        class_name: &str,
+    ) -> Vec<String> {
+        if !self.ctx.target_es5 {
+            return Vec::new();
+        }
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return Vec::new();
+        };
+        let Some(class_data) = self.arena.get_class(class_node) else {
+            return Vec::new();
+        };
+        let has_static_auto_accessor = class_data.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            self.arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                && self.arena.is_static(&prop.modifiers)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                && self
+                    .arena
+                    .get(prop.name)
+                    .is_none_or(|name| name.kind != SyntaxKind::PrivateIdentifier as u16)
+        });
+        if has_static_auto_accessor {
+            return Vec::new();
+        }
+
+        let generated_name_index = 0u32;
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if !self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                || self.arena.is_static(&prop.modifiers)
+            {
+                continue;
+            }
+            let Some(name_node) = self.arena.get(prop.name) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                continue;
+            }
+            if name_node.kind == SyntaxKind::Identifier as u16 {
+                continue;
+            }
+
+            let storage_name = format!(
+                "_{class_name}_{}_accessor_storage",
+                es5_generated_auto_accessor_name(generated_name_index)
+            );
+            let mut decls = vec![storage_name];
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.arena.get_computed_property(name_node)
+                && self.arena.get(computed.expression).is_some_and(|expr| {
+                    expr.kind != SyntaxKind::StringLiteral as u16
+                        && expr.kind != SyntaxKind::NumericLiteral as u16
+                        && expr.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                })
+            {
+                decls.push(es5_temp_name(self.ctx.destructuring_state.temp_var_counter));
+            }
+            return decls;
+        }
+
+        Vec::new()
+    }
+}
+
+fn es5_generated_auto_accessor_name(index: u32) -> String {
+    if index < 26 {
+        format!("_{}", (b'a' + index as u8) as char)
+    } else {
+        format!("_{}", index - 26)
+    }
+}
+
+fn es5_temp_name(index: u32) -> String {
+    if index < 26 {
+        format!("_{}", (b'a' + index as u8) as char)
+    } else {
+        format!("_{index}")
     }
 }
