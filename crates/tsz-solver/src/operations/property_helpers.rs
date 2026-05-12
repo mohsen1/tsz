@@ -413,9 +413,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
     /// - `Type(t)` spans where `t` is `number` consume a numeric token.
     ///
     /// More exotic Type span contents (intersections, generic intrinsics,
-    /// constrained type parameters) are not handled here — they require the
+    /// constrained type parameters) are not handled here; they require the
     /// solver's full subtype context and are not reachable through ordinary
-    /// `{ [K in \`prefix-${string}\`]: V }`-style mapped constraints.
+    /// string-pattern mapped constraints.
     fn literal_matches_template_pattern(
         &self,
         prop_name: &str,
