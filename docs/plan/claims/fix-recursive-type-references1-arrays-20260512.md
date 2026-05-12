@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `fix/recursive-type-references1-arrays-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: https://github.com/mohsen1/tsz/pull/5712
+- **Status**: ready
 - **Workstream**: conformance
 
 ## Intent
@@ -12,8 +12,12 @@ Continue the `recursiveTypeReferences1.ts` conformance cleanup after the merged 
 
 ## Files Touched
 
+- `crates/tsz-checker/src/state/state_checking/source_file.rs`
 - `docs/plan/claims/fix-recursive-type-references1-arrays-20260512.md`
 
 ## Verification
 
-- Pending focused baseline on current `origin/main`.
+- Baseline on current `origin/main`: focused `recursiveTypeReferences1` reported `0/1 passed`, fingerprint-only `1`, with three missing TSC array diagnostics and multiple extra nested array-element TS2322 diagnostics.
+- `cargo fmt --all && git diff --check` passed.
+- `cargo build --profile dist-fast -p tsz-cli -p tsz-conformance` passed in 58.20s.
+- `.target/dist-fast/tsz-conformance --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --cache-file scripts/conformance/tsc-cache-full.json --tsz-binary .target/dist-fast/tsz --filter recursiveTypeReferences1 --print-fingerprints --verbose` reports `1/1 passed`, fingerprint-only `0`.
