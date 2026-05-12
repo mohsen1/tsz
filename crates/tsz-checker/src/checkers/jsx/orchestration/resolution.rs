@@ -821,12 +821,7 @@ impl<'a> CheckerState<'a> {
                     let skip_react_class_return_check = class_props_from_construct
                         .as_ref()
                         .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
-                    let component_type_is_union = crate::query_boundaries::common::union_members(
-                        self.ctx.types,
-                        resolved_component_type,
-                    )
-                    .is_some();
-                    if !skip_react_class_return_check && !component_type_is_union {
+                    if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                     }
                     let props_type = self
