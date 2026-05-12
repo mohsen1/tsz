@@ -13,6 +13,7 @@ mod index_signature_validity;
 mod interface_checks;
 mod member_access;
 mod member_declaration_checks;
+mod mixin_member_access;
 mod overload_compatibility;
 mod statement_callback_bridge;
 mod statement_checks;

@@ -1,5 +1,4 @@
 use super::*;
-
 // Helper to parse, bind, and compute an ExportSignature for a source string.
 fn compute_sig(source: &str) -> ExportSignature {
     let file_name = "test.ts";

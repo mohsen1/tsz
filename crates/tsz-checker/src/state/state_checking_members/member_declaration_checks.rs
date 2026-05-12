@@ -1,7 +1,7 @@
 //! Class member declaration and accessibility validation helpers.
 
 use crate::context::TypingRequest;
-use crate::state::{CheckerState, MemberAccessInfo, MemberAccessLevel, MemberLookup};
+use crate::state::{CheckerState, MemberAccessLevel, MemberLookup};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -368,38 +368,6 @@ impl<'a> CheckerState<'a> {
             }
             // Has the assignment but no JSDoc accessibility tag → public
             return Some(MemberLookup::Public);
-        }
-
-        None
-    }
-
-    pub(crate) fn find_member_access_info(
-        &self,
-        class_idx: NodeIndex,
-        name: &str,
-        is_static: bool,
-    ) -> Option<MemberAccessInfo> {
-        use rustc_hash::FxHashSet;
-
-        let mut current = class_idx;
-        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
-
-        while visited.insert(current) {
-            match self.lookup_member_access_in_class(current, name, is_static) {
-                MemberLookup::Restricted(level) => {
-                    return Some(MemberAccessInfo {
-                        level,
-                        declaring_class_idx: current,
-                        declaring_class_name: self
-                            .get_class_name_with_type_params_from_decl(current),
-                    });
-                }
-                MemberLookup::Public => return None,
-                MemberLookup::NotFound => {
-                    let base_idx = self.get_base_class_idx(current)?;
-                    current = base_idx;
-                }
-            }
         }
 
         None

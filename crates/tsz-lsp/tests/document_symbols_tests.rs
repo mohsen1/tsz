@@ -1,12 +1,15 @@
 use super::*;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_document_symbols_class_with_members() {
     let source = "class Foo {\n  bar() {}\n  prop: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -27,8 +30,7 @@ fn test_document_symbols_class_with_members() {
 #[test]
 fn test_document_symbols_function_and_variable() {
     let source = "function baz() {}\nconst x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -46,8 +48,7 @@ fn test_document_symbols_function_and_variable() {
 #[test]
 fn test_document_symbols_interface() {
     let source = "interface Point {\n  x: number;\n  y: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -61,8 +62,7 @@ fn test_document_symbols_interface() {
 #[test]
 fn test_document_symbols_enum() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -80,8 +80,7 @@ fn test_document_symbols_enum() {
 #[test]
 fn test_document_symbols_multiple_variables() {
     let source = "const a = 1, b = 2;\nlet c = 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -104,8 +103,7 @@ fn test_document_symbols_multiple_variables() {
 #[test]
 fn test_kind_modifiers_export() {
     let source = "export function greet() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -124,8 +122,7 @@ fn test_kind_modifiers_export() {
 #[test]
 fn test_kind_modifiers_declare() {
     let source = "declare function nativeFn(): void;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -143,8 +140,7 @@ fn test_kind_modifiers_declare() {
 #[test]
 fn test_kind_modifiers_abstract_class() {
     let source = "export abstract class Base {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -168,8 +164,7 @@ fn test_kind_modifiers_abstract_class() {
 #[test]
 fn test_kind_modifiers_static_method() {
     let source = "class Foo {\n  static bar() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -188,8 +183,7 @@ fn test_kind_modifiers_static_method() {
 #[test]
 fn test_container_name_for_class_members() {
     let source = "class MyClass {\n  myMethod() {}\n  myProp: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -210,8 +204,7 @@ fn test_container_name_for_class_members() {
 #[test]
 fn test_name_span_separate_from_range() {
     let source = "function hello() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -241,8 +234,7 @@ fn test_name_span_separate_from_range() {
 #[test]
 fn test_enum_members_as_children() {
     let source = "enum Direction { Up, Down, Left, Right }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -263,8 +255,7 @@ fn test_enum_members_as_children() {
 #[test]
 fn test_namespace_with_children() {
     let source = "namespace Utils {\n  function helper() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -285,8 +276,7 @@ fn test_namespace_with_children() {
 #[test]
 fn test_export_default_expression() {
     let source = "export default 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -300,8 +290,7 @@ fn test_export_default_expression() {
 #[test]
 fn test_get_set_accessors() {
     let source = "class Obj {\n  get val() { return 1; }\n  set val(v: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -324,8 +313,7 @@ fn test_get_set_accessors() {
 #[test]
 fn test_interface_members() {
     let source = "interface IFoo {\n  x: number;\n  doStuff(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -350,8 +338,7 @@ fn test_interface_members() {
 #[test]
 fn test_export_const_variable() {
     let source = "export const MAX = 100;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -370,8 +357,7 @@ fn test_export_const_variable() {
 #[test]
 fn test_type_alias() {
     let source = "type Point = { x: number; y: number };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -417,8 +403,7 @@ fn test_to_script_element_kind() {
 #[test]
 fn test_document_symbols_empty_file() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -430,8 +415,7 @@ fn test_document_symbols_empty_file() {
 #[test]
 fn test_document_symbols_only_comments() {
     let source = "// This is a comment\n/* Block comment */";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -446,8 +430,7 @@ fn test_document_symbols_only_comments() {
 #[test]
 fn test_document_symbols_arrow_function_variable() {
     let source = "const greet = (name: string) => `Hello ${name}`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -461,8 +444,7 @@ fn test_document_symbols_arrow_function_variable() {
 #[test]
 fn test_document_symbols_class_with_constructor() {
     let source = "class Point {\n  constructor(public x: number, public y: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -481,8 +463,7 @@ fn test_document_symbols_class_with_constructor() {
 #[test]
 fn test_document_symbols_multiple_exports() {
     let source = "export const A = 1;\nexport function B() {}\nexport class C {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -504,8 +485,7 @@ fn test_document_symbols_multiple_exports() {
 #[test]
 fn test_document_symbols_enum_with_members() {
     let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -524,8 +504,7 @@ fn test_document_symbols_enum_with_members() {
 #[test]
 fn test_document_symbols_interface_with_methods() {
     let source = "interface Shape {\n  area(): number;\n  perimeter(): number;\n  name: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -544,8 +523,7 @@ fn test_document_symbols_interface_with_methods() {
 fn test_document_symbols_namespace() {
     let source =
         "namespace MyApp {\n  export function init() {}\n  export const VERSION = '1.0';\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -562,8 +540,7 @@ fn test_document_symbols_namespace() {
 #[test]
 fn test_document_symbols_type_alias() {
     let source = "type StringOrNumber = string | number;\ntype Callback = (x: number) => void;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -578,8 +555,7 @@ fn test_document_symbols_type_alias() {
 #[test]
 fn test_document_symbols_nested_classes() {
     let source = "class Outer {\n  static Inner = class {\n    method() {}\n  };\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -596,8 +572,7 @@ fn test_document_symbols_nested_classes() {
 #[test]
 fn test_document_symbols_getter_setter() {
     let source = "class Store {\n  get value() { return 0; }\n  set value(v: number) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -616,8 +591,7 @@ fn test_document_symbols_getter_setter() {
 #[test]
 fn test_document_symbols_ranges_are_valid() {
     let source = "function hello() {\n  return 'world';\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -637,8 +611,7 @@ fn test_document_symbols_ranges_are_valid() {
 #[test]
 fn test_document_symbols_module_declaration() {
     let source = "module MyModule {\n  export function init() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -655,8 +628,7 @@ fn test_document_symbols_module_declaration() {
 #[test]
 fn test_document_symbols_abstract_class_with_abstract_method() {
     let source = "abstract class Shape {\n  abstract area(): number;\n  concrete() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -678,8 +650,7 @@ fn test_document_symbols_abstract_class_with_abstract_method() {
 #[test]
 fn test_document_symbols_static_property() {
     let source = "class Config {\n  static readonly MAX = 100;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -703,8 +674,7 @@ fn test_document_symbols_static_property() {
 #[test]
 fn test_document_symbols_private_method() {
     let source = "class Foo {\n  private secret() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -725,8 +695,7 @@ fn test_document_symbols_private_method() {
 #[test]
 fn test_document_symbols_protected_property() {
     let source = "class Base {\n  protected value: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -745,8 +714,7 @@ fn test_document_symbols_protected_property() {
 #[test]
 fn test_document_symbols_const_enum() {
     let source = "const enum Direction { Up, Down }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -765,8 +733,7 @@ fn test_document_symbols_const_enum() {
 #[test]
 fn test_document_symbols_declare_module() {
     let source = "declare module 'my-module' {\n  export function foo(): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -783,8 +750,7 @@ fn test_document_symbols_declare_module() {
 #[test]
 fn test_document_symbols_export_default_class() {
     let source = "export default class Widget {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -805,8 +771,7 @@ fn test_document_symbols_export_default_class() {
 #[test]
 fn test_document_symbols_export_default_function() {
     let source = "export default function main() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -825,8 +790,7 @@ fn test_document_symbols_export_default_function() {
 #[test]
 fn test_document_symbols_export_default_anonymous_class() {
     let source = "export default class {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -843,8 +807,7 @@ fn test_document_symbols_export_default_anonymous_class() {
 #[test]
 fn test_document_symbols_async_function() {
     let source = "async function fetchData() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -859,8 +822,7 @@ fn test_document_symbols_async_function() {
 #[test]
 fn test_document_symbols_export_async_function() {
     let source = "export async function load() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -875,8 +837,7 @@ fn test_document_symbols_export_async_function() {
 #[test]
 fn test_document_symbols_nested_namespace() {
     let source = "namespace A {\n  namespace B {\n    function inner() {}\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -895,8 +856,7 @@ fn test_document_symbols_nested_namespace() {
 #[test]
 fn test_document_symbols_let_variable_modifier() {
     let source = "let counter = 0;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -915,8 +875,7 @@ fn test_document_symbols_let_variable_modifier() {
 #[test]
 fn test_document_symbols_export_let_variable() {
     let source = "export let count = 0;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -932,8 +891,7 @@ fn test_document_symbols_export_let_variable() {
 #[test]
 fn test_document_symbols_var_variable() {
     let source = "var legacy = true;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -947,8 +905,7 @@ fn test_document_symbols_var_variable() {
 #[test]
 fn test_document_symbols_export_type_alias() {
     let source = "export type ID = string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -963,8 +920,7 @@ fn test_document_symbols_export_type_alias() {
 #[test]
 fn test_document_symbols_declare_function() {
     let source = "declare function readFile(path: string): string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -979,8 +935,7 @@ fn test_document_symbols_declare_function() {
 #[test]
 fn test_document_symbols_declare_class() {
     let source = "declare class Buffer {\n  length: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -997,8 +952,7 @@ fn test_document_symbols_declare_class() {
 #[test]
 fn test_document_symbols_export_enum() {
     let source = "export enum Status { Active, Inactive }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1014,8 +968,7 @@ fn test_document_symbols_export_enum() {
 #[test]
 fn test_document_symbols_nested_function_in_function() {
     let source = "function outer() {\n  function inner() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1037,8 +990,7 @@ fn test_document_symbols_nested_function_in_function() {
 #[test]
 fn test_document_symbols_export_interface() {
     let source = "export interface Config {\n  host: string;\n  port: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1054,8 +1006,7 @@ fn test_document_symbols_export_interface() {
 #[test]
 fn test_document_symbols_constructor_container_name() {
     let source = "class Service {\n  constructor() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1074,8 +1025,7 @@ fn test_document_symbols_constructor_container_name() {
 #[test]
 fn test_document_symbols_multiple_interfaces() {
     let source = "interface A { x: number; }\ninterface B { y: string; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1095,8 +1045,7 @@ fn test_document_symbols_multiple_interfaces() {
 #[test]
 fn test_document_symbols_function_expression_variable() {
     let source = "const fn1 = function() {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1110,8 +1059,7 @@ fn test_document_symbols_function_expression_variable() {
 #[test]
 fn test_document_symbols_multiple_classes() {
     let source = "class A {}\nclass B {}\nclass C {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1129,8 +1077,7 @@ fn test_document_symbols_multiple_classes() {
 #[test]
 fn test_document_symbols_class_with_multiple_methods() {
     let source = "class Calc {\n  add() {}\n  sub() {}\n  mul() {}\n  div() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1153,8 +1100,7 @@ fn test_document_symbols_class_with_multiple_methods() {
 #[test]
 fn test_document_symbols_enum_with_string_initializers() {
     let source = "enum Fruit {\n  Apple = 'apple',\n  Banana = 'banana'\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1171,8 +1117,7 @@ fn test_document_symbols_enum_with_string_initializers() {
 #[test]
 fn test_document_symbols_interface_with_optional_members() {
     let source = "interface Options {\n  verbose?: boolean;\n  output?: string;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1189,8 +1134,7 @@ fn test_document_symbols_interface_with_optional_members() {
 #[test]
 fn test_document_symbols_generic_function() {
     let source = "function identity<T>(x: T): T { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1204,8 +1148,7 @@ fn test_document_symbols_generic_function() {
 #[test]
 fn test_document_symbols_generic_class() {
     let source = "class Box<T> {\n  value: T;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1221,8 +1164,7 @@ fn test_document_symbols_generic_class() {
 #[test]
 fn test_document_symbols_generic_interface() {
     let source = "interface Comparable<T> {\n  compareTo(other: T): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1238,8 +1180,7 @@ fn test_document_symbols_generic_interface() {
 #[test]
 fn test_document_symbols_multiple_function_declarations() {
     let source = "function a() {}\nfunction b() {}\nfunction c() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1257,8 +1198,7 @@ fn test_document_symbols_multiple_function_declarations() {
 #[test]
 fn test_document_symbols_class_extends() {
     let source = "class Animal {}\nclass Dog extends Animal {\n  bark() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1274,8 +1214,7 @@ fn test_document_symbols_class_extends() {
 #[test]
 fn test_document_symbols_interface_extends() {
     let source = "interface Base { x: number; }\ninterface Derived extends Base { y: number; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1290,8 +1229,7 @@ fn test_document_symbols_interface_extends() {
 #[test]
 fn test_document_symbols_class_with_index_signature() {
     let source = "class Dict {\n  [key: string]: any;\n  get(key: string) { return this[key]; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1311,8 +1249,7 @@ fn test_document_symbols_class_with_index_signature() {
 fn test_document_symbols_mixed_declarations() {
     let source =
         "const x = 1;\nfunction f() {}\nclass C {}\ninterface I {}\nenum E { A }\ntype T = string;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1336,8 +1273,7 @@ fn test_document_symbols_mixed_declarations() {
 #[test]
 fn test_document_symbols_empty_class() {
     let source = "class Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1355,8 +1291,7 @@ fn test_document_symbols_empty_class() {
 #[test]
 fn test_document_symbols_empty_interface() {
     let source = "interface Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1374,8 +1309,7 @@ fn test_document_symbols_empty_interface() {
 #[test]
 fn test_document_symbols_empty_enum() {
     let source = "enum Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1393,8 +1327,7 @@ fn test_document_symbols_empty_enum() {
 #[test]
 fn test_document_symbols_whitespace_only() {
     let source = "   \n   \n   ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1409,8 +1342,7 @@ fn test_document_symbols_whitespace_only() {
 #[test]
 fn test_document_symbols_const_enum_members() {
     let source = "const enum Direction {\n  Up = 0,\n  Down = 1,\n  Left = 2,\n  Right = 3\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1426,8 +1358,7 @@ fn test_document_symbols_const_enum_members() {
 #[test]
 fn test_document_symbols_class_with_private_protected() {
     let source = "class Secured {\n  private secret: string;\n  protected guard(): void {}\n  public visible: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1440,8 +1371,7 @@ fn test_document_symbols_class_with_private_protected() {
 #[test]
 fn test_document_symbols_interface_with_index_and_call() {
     let source = "interface Indexable {\n  [key: string]: any;\n  (arg: number): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1455,8 +1385,7 @@ fn test_document_symbols_interface_with_index_and_call() {
 #[test]
 fn test_document_symbols_unicode_identifiers() {
     let source = "const café = 1;\nfunction naïve() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1470,8 +1399,7 @@ fn test_document_symbols_unicode_identifiers() {
 #[test]
 fn test_document_symbols_deeply_nested_namespaces() {
     let source = "namespace A {\n  namespace B {\n    namespace C {\n      function deep() {}\n    }\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1486,8 +1414,7 @@ fn test_document_symbols_deeply_nested_namespaces() {
 #[test]
 fn test_document_symbols_class_with_static_and_instance() {
     let source = "class Counter {\n  static count: number = 0;\n  value: number;\n  static reset() {}\n  increment() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1505,8 +1432,7 @@ fn test_document_symbols_class_with_static_and_instance() {
 #[test]
 fn test_document_symbols_multiple_function_overloads() {
     let source = "function process(x: string): string;\nfunction process(x: number): number;\nfunction process(x: any): any { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1523,8 +1449,7 @@ fn test_document_symbols_multiple_function_overloads() {
 #[test]
 fn test_document_symbols_class_implements_multiple() {
     let source = "interface Readable {}\ninterface Writable {}\nclass Stream implements Readable, Writable {\n  read() {}\n  write() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1539,8 +1464,7 @@ fn test_document_symbols_class_implements_multiple() {
 #[test]
 fn test_document_symbols_type_alias_conditional() {
     let source = "type IsString<T> = T extends string ? true : false;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1554,8 +1478,7 @@ fn test_document_symbols_type_alias_conditional() {
 #[test]
 fn test_document_symbols_type_alias_mapped() {
     let source = "type Readonly<T> = {\n  readonly [K in keyof T]: T[K];\n};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1569,8 +1492,7 @@ fn test_document_symbols_type_alias_mapped() {
 #[test]
 fn test_document_symbols_single_line_declarations() {
     let source = "const a = 1; let b = 2; var c = 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1590,8 +1512,7 @@ fn test_document_symbols_single_line_declarations() {
 #[test]
 fn test_document_symbols_async_generator_function() {
     let source = "async function* gen() { yield 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1605,8 +1526,7 @@ fn test_document_symbols_async_generator_function() {
 #[test]
 fn test_document_symbols_class_with_readonly_property() {
     let source = "class Config {\n  readonly host: string = 'localhost';\n  readonly port: number = 8080;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1622,8 +1542,7 @@ fn test_document_symbols_class_with_readonly_property() {
 #[test]
 fn test_document_symbols_interface_with_readonly() {
     let source = "interface Point {\n  readonly x: number;\n  readonly y: number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1638,8 +1557,7 @@ fn test_document_symbols_interface_with_readonly() {
 #[test]
 fn test_document_symbols_multiple_type_aliases() {
     let source = "type A = string;\ntype B = number;\ntype C = boolean;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1654,8 +1572,7 @@ fn test_document_symbols_multiple_type_aliases() {
 #[test]
 fn test_document_symbols_class_with_accessor_keyword() {
     let source = "class Greeter {\n  get message(): string { return 'hi'; }\n  set message(val: string) {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1670,8 +1587,7 @@ fn test_document_symbols_class_with_accessor_keyword() {
 #[test]
 fn test_document_symbols_enum_with_computed_values() {
     let source = "enum Bits {\n  A = 1 << 0,\n  B = 1 << 1,\n  C = 1 << 2\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1686,8 +1602,7 @@ fn test_document_symbols_enum_with_computed_values() {
 #[test]
 fn test_document_symbols_arrow_function_const() {
     let source = "const add = (a: number, b: number) => a + b;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1700,8 +1615,7 @@ fn test_document_symbols_arrow_function_const() {
 #[test]
 fn test_document_symbols_class_with_method_overloads() {
     let source = "class Parser {\n  parse(input: string): void;\n  parse(input: number): void;\n  parse(input: any): void {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1716,8 +1630,7 @@ fn test_document_symbols_class_with_method_overloads() {
 #[test]
 fn test_document_symbols_declare_global() {
     let source = "declare global {\n  interface Window { custom: string; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1731,8 +1644,7 @@ fn test_document_symbols_declare_global() {
 fn test_document_symbols_export_class_with_generics() {
     let source =
         "export class Container<T> {\n  value: T;\n  constructor(val: T) { this.value = val; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1746,8 +1658,7 @@ fn test_document_symbols_export_class_with_generics() {
 #[test]
 fn test_document_symbols_function_with_destructured_params() {
     let source = "function draw({ x, y }: { x: number; y: number }) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1761,8 +1672,7 @@ fn test_document_symbols_function_with_destructured_params() {
 #[test]
 fn test_document_symbols_interface_with_generics() {
     let source = "interface Repository<T> {\n  find(id: string): T;\n  save(entity: T): void;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1778,8 +1688,7 @@ fn test_document_symbols_interface_with_generics() {
 fn test_document_symbols_abstract_method() {
     let source =
         "abstract class Shape {\n  abstract area(): number;\n  abstract perimeter(): number;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1795,8 +1704,7 @@ fn test_document_symbols_abstract_method() {
 #[test]
 fn test_document_symbols_type_alias_union() {
     let source = "type StringOrNumber = string | number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1809,8 +1717,7 @@ fn test_document_symbols_type_alias_union() {
 #[test]
 fn test_document_symbols_type_alias_intersection() {
     let source = "type Combined = { a: number } & { b: string };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1823,8 +1730,7 @@ fn test_document_symbols_type_alias_intersection() {
 #[test]
 fn test_document_symbols_multiple_enum_declarations() {
     let source = "enum Color { Red, Green, Blue }\nenum Size { Small, Medium, Large }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1840,8 +1746,7 @@ fn test_document_symbols_multiple_enum_declarations() {
 #[test]
 fn test_document_symbols_class_with_computed_property() {
     let source = "class Foo {\n  ['computed']() {}\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1856,8 +1761,7 @@ fn test_document_symbols_class_with_computed_property() {
 #[test]
 fn test_document_symbols_generator_function() {
     let source = "function* counter() {\n  let i = 0;\n  while (true) yield i++;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1871,8 +1775,7 @@ fn test_document_symbols_generator_function() {
 #[test]
 fn test_document_symbols_declare_const() {
     let source = "declare const PI: number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1885,8 +1788,7 @@ fn test_document_symbols_declare_const() {
 #[test]
 fn test_document_symbols_declare_enum() {
     let source = "declare enum Direction {\n  Up,\n  Down\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1900,8 +1802,7 @@ fn test_document_symbols_declare_enum() {
 #[test]
 fn test_document_symbols_newline_only_file() {
     let source = "\n\n\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
@@ -1916,8 +1817,7 @@ fn test_document_symbols_newline_only_file() {
 #[test]
 fn test_document_symbols_symbol_ranges_non_overlapping() {
     let source = "const a = 1;\nconst b = 2;\nconst c = 3;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let line_map = LineMap::build(source);
 
     let provider = DocumentSymbolProvider::new(parser.get_arena(), &line_map, source);
