@@ -473,6 +473,29 @@ STRUCT_FIELD_COUNT_CHECKS = [
     ),
 ]
 
+VALID_CHECKER_CONTEXT_LIFETIMES = {
+    "ProgramStable",
+    "WorkerReusable",
+    "FileLocalReset",
+    "SpeculationScoped",
+    "DiagnosticsOnly",
+    "LspPersistent",
+}
+
+CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS = [
+    (
+        "Checker boundary: CheckerContext lifetime inventory (T2.1.A)",
+        ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
+        "CheckerContext",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "context"
+        / "checker_context_lifetimes.toml",
+    ),
+]
+
 # Pin the count of files that construct full independent parse→bind→check
 # pipelines (architecture health metric 4 in `docs/plan/ROADMAP.md`).  A
 # "full pipeline" is any non-test source file that calls all three of
@@ -1018,24 +1041,38 @@ def scan_struct_field_count(
     """
     if not path.exists():
         return []
-    try:
-        rel = path.relative_to(ROOT).as_posix()
-    except ValueError:
-        rel = path.as_posix()
+    rel = relative_path(path)
+    body = find_struct_body(path, struct_name)
+    if body is None:
+        return [f"{rel}:0 struct {struct_name!r} not found"]
 
+    field_count = len(extract_struct_field_names_from_body(body))
+
+    if field_count > max_fields:
+        return [
+            f"{rel}:struct {struct_name} has {field_count} fields "
+            f"(cap {max_fields}; bump cap intentionally and update ROADMAP.md)"
+        ]
+    return []
+
+
+def relative_path(path: pathlib.Path) -> str:
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def find_struct_body(path: pathlib.Path, struct_name: str):
     text = path.read_text(encoding="utf-8", errors="ignore")
     stripped = strip_rust_comments(text)
-
-    # Find `pub struct <struct_name><...generic args...> {` and the matching
-    # closing brace via depth counting (not regex over braces, which would
-    # miss nested types like `FxHashMap<K, V>` inside fields).
     header_pattern = re.compile(
         rf"\bpub\s+struct\s+{re.escape(struct_name)}\b[^{{]*\{{",
         re.MULTILINE,
     )
     match = header_pattern.search(stripped)
     if match is None:
-        return [f"{rel}:0 struct {struct_name!r} not found"]
+        return None
 
     body_start = match.end()
     depth = 1
@@ -1049,17 +1086,169 @@ def scan_struct_field_count(
             if depth == 0:
                 body_end = i
                 break
-    body = stripped[body_start:body_end]
+    return stripped[body_start:body_end]
 
-    field_pattern = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?[a-z_][a-zA-Z0-9_]*\s*:")
-    field_count = sum(1 for line in body.splitlines() if field_pattern.match(line))
 
-    if field_count > max_fields:
-        return [
-            f"{rel}:struct {struct_name} has {field_count} fields "
-            f"(cap {max_fields}; bump cap intentionally and update ROADMAP.md)"
-        ]
-    return []
+STRUCT_FIELD_PATTERN = re.compile(
+    r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?P<name>[a-z_][a-zA-Z0-9_]*)\s*:"
+)
+
+
+def extract_struct_field_names_from_body(body: str) -> list[str]:
+    names = []
+    for line in body.splitlines():
+        match = STRUCT_FIELD_PATTERN.match(line)
+        if match:
+            names.append(match.group("name"))
+    return names
+
+
+def extract_struct_field_names(path: pathlib.Path, struct_name: str) -> list[str]:
+    if not path.exists():
+        return []
+    body = find_struct_body(path, struct_name)
+    if body is None:
+        return []
+    return extract_struct_field_names_from_body(body)
+
+
+def parse_checker_context_lifetime_manifest(
+    path: pathlib.Path,
+) -> tuple[dict[str, dict[str, object]], list[str]]:
+    rel = relative_path(path)
+    if not path.exists():
+        return {}, [f"{rel}:0 lifetime manifest is missing"]
+
+    entries: dict[str, dict[str, object]] = {}
+    errors: list[str] = []
+    current = None
+    section_pattern = re.compile(r"^\s*\[([A-Za-z_][A-Za-z0-9_]*)\]\s*(?:#.*)?$")
+    inline_entry_pattern = re.compile(
+        r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*'
+        r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+        r'reason\s*=\s*"([^"]*)"\s*'
+        r'\}\s*(?:#.*)?$'
+    )
+    key_value_pattern = re.compile(
+        r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"\s*(?:#.*)?$'
+    )
+
+    for line_no, line in enumerate(
+        path.read_text(encoding="utf-8", errors="ignore").splitlines(),
+        start=1,
+    ):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        inline_entry_match = inline_entry_pattern.match(line)
+        if inline_entry_match and current is None:
+            field, lifetime, reason = inline_entry_match.groups()
+            if field in entries:
+                errors.append(f"{rel}:{line_no} duplicate manifest entry [{field}]")
+            else:
+                entries[field] = {
+                    "line": line_no,
+                    "lifetime": lifetime,
+                    "reason": reason,
+                }
+            continue
+
+        section_match = section_pattern.match(line)
+        if section_match:
+            current = section_match.group(1)
+            if current in entries:
+                errors.append(f"{rel}:{line_no} duplicate manifest section [{current}]")
+            else:
+                entries[current] = {"line": line_no}
+            continue
+
+        key_value_match = key_value_pattern.match(line)
+        if key_value_match and current is not None:
+            key, value = key_value_match.groups()
+            entries[current][key] = value
+            continue
+
+        if key_value_match:
+            errors.append(f"{rel}:{line_no} key/value entry appears before any section")
+        else:
+            errors.append(f"{rel}:{line_no} unsupported manifest line")
+
+    return entries, errors
+
+
+def scan_checker_context_lifetime_manifest(
+    struct_path: pathlib.Path,
+    struct_name: str,
+    manifest_path: pathlib.Path,
+) -> list[str]:
+    if not struct_path.exists():
+        return []
+    struct_rel = relative_path(struct_path)
+    manifest_rel = relative_path(manifest_path)
+    body = find_struct_body(struct_path, struct_name)
+    if body is None:
+        return [f"{struct_rel}:0 struct {struct_name!r} not found"]
+
+    fields = extract_struct_field_names_from_body(body)
+    field_set = set(fields)
+    entries, hits = parse_checker_context_lifetime_manifest(manifest_path)
+    entry_set = set(entries.keys())
+
+    for field in fields:
+        if field not in entries:
+            hits.append(
+                f"{manifest_rel}:0 missing CheckerContext lifetime for field [{field}]"
+            )
+
+    for field in sorted(entry_set - field_set):
+        line = entries[field].get("line", 0)
+        hits.append(
+            f"{manifest_rel}:{line} stale manifest entry [{field}] "
+            f"not found in {struct_name}"
+        )
+
+    for field, entry in sorted(
+        entries.items(), key=lambda item: item[1].get("line", 0)
+    ):
+        line = entry.get("line", 0)
+        lifetime = entry.get("lifetime")
+        reason = entry.get("reason")
+        if lifetime is None:
+            hits.append(f"{manifest_rel}:{line} [{field}] missing lifetime")
+        elif lifetime == "Unknown":
+            hits.append(f"{manifest_rel}:{line} [{field}] lifetime must not be Unknown")
+        elif lifetime not in VALID_CHECKER_CONTEXT_LIFETIMES:
+            hits.append(
+                f"{manifest_rel}:{line} [{field}] invalid lifetime {lifetime!r}"
+            )
+        if not isinstance(reason, str) or not reason.strip():
+            hits.append(f"{manifest_rel}:{line} [{field}] missing reason")
+
+    return hits
+
+
+def escape_markdown_cell(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def checker_context_lifetime_markdown(
+    struct_path: pathlib.Path,
+    struct_name: str,
+    manifest_path: pathlib.Path,
+) -> str:
+    fields = extract_struct_field_names(struct_path, struct_name)
+    entries, _errors = parse_checker_context_lifetime_manifest(manifest_path)
+    lines = [
+        "| Field | Lifetime | Reason |",
+        "| --- | --- | --- |",
+    ]
+    for field in fields:
+        entry = entries.get(field, {})
+        lifetime = escape_markdown_cell(entry.get("lifetime", "MISSING"))
+        reason = escape_markdown_cell(entry.get("reason", "MISSING"))
+        lines.append(f"| `{field}` | `{lifetime}` | {reason} |")
+    return "\n".join(lines)
 
 
 def scan_file_line_limit(path: pathlib.Path, limit: int):
@@ -1268,7 +1457,27 @@ def main() -> int:
         default="",
         help="Write machine-readable report to this path (still exits non-zero on failures).",
     )
+    parser.add_argument(
+        "--checker-context-lifetime-table",
+        action="store_true",
+        help="Print the CheckerContext lifetime manifest as a markdown table.",
+    )
     args = parser.parse_args()
+
+    if args.checker_context_lifetime_table:
+        name, struct_path, struct_name, manifest_path = (
+            CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS[0]
+        )
+        hits = scan_checker_context_lifetime_manifest(
+            struct_path, struct_name, manifest_path
+        )
+        if hits:
+            print(name)
+            for hit in hits:
+                print(f"  {hit}")
+            return 1
+        print(checker_context_lifetime_markdown(struct_path, struct_name, manifest_path))
+        return 0
 
     failures = []
     total_hits = 0
@@ -1310,6 +1519,19 @@ def main() -> int:
 
     for name, path, struct_name, max_fields in STRUCT_FIELD_COUNT_CHECKS:
         hits = scan_struct_field_count(path, struct_name, max_fields)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        struct_path,
+        struct_name,
+        manifest_path,
+    ) in CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS:
+        hits = scan_checker_context_lifetime_manifest(
+            struct_path, struct_name, manifest_path
+        )
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

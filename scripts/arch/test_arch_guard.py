@@ -520,6 +520,171 @@ class ArchGuardStructFieldCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
+    """Cover the T2.1.A CheckerContext lifetime inventory guard."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, struct_body: str, manifest_body: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            struct_path = root / "context.rs"
+            manifest_path = root / "checker_context_lifetimes.toml"
+            struct_path.write_text(struct_body, encoding="utf-8")
+            manifest_path.write_text(manifest_body, encoding="utf-8")
+            return self.arch_guard.scan_checker_context_lifetime_manifest(
+                struct_path, "CheckerContext", manifest_path
+            )
+
+    def test_valid_manifest_passes(self):
+        struct_body = "\n".join(
+            [
+                "pub struct CheckerContext<'a> {",
+                "    pub arena: &'a NodeArena,",
+                "    request_node_types: FxHashMap<u32, TypeId>,",
+                "}",
+            ]
+        )
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'reason = "borrowed current-file arena"',
+                "",
+                "[request_node_types]",
+                'lifetime = "SpeculationScoped"',
+                'reason = "snapshot by speculative return-type inference"',
+            ]
+        )
+        self.assertEqual(self._write_and_scan(struct_body, manifest_body), [])
+
+    def test_inline_manifest_entries_pass(self):
+        struct_body = "\n".join(
+            [
+                "pub struct CheckerContext {",
+                "    pub arena: NodeArena,",
+                "    pub binder: BinderState,",
+                "}",
+            ]
+        )
+        manifest_body = "\n".join(
+            [
+                'arena = { lifetime = "FileLocalReset", reason = "current arena" }',
+                'binder = { lifetime = "FileLocalReset", reason = "current binder" }',
+            ]
+        )
+        self.assertEqual(self._write_and_scan(struct_body, manifest_body), [])
+
+    def test_missing_struct_field_is_reported(self):
+        struct_body = "\n".join(
+            [
+                "pub struct CheckerContext {",
+                "    pub arena: NodeArena,",
+                "    pub binder: BinderState,",
+                "}",
+            ]
+        )
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing CheckerContext lifetime for field [binder]", hits[0])
+
+    def test_stale_manifest_entry_is_reported(self):
+        struct_body = "\n".join(
+            [
+                "pub struct CheckerContext {",
+                "    pub arena: NodeArena,",
+                "}",
+            ]
+        )
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'reason = "borrowed current-file arena"',
+                "",
+                "[removed_field]",
+                'lifetime = "FileLocalReset"',
+                'reason = "old field"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("stale manifest entry [removed_field]", hits[0])
+
+    def test_unknown_lifetime_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "Unknown"',
+                'reason = "unclassified"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("lifetime must not be Unknown", hits[0])
+
+    def test_invalid_lifetime_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "ForeverCache"',
+                'reason = "invalid class"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("invalid lifetime 'ForeverCache'", hits[0])
+
+    def test_missing_reason_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] missing reason", hits[0])
+
+    def test_checker_context_lifetime_check_is_registered(self):
+        for entry in self.arch_guard.CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS:
+            name, struct_path, struct_name, manifest_path = entry
+            if struct_name == "CheckerContext":
+                self.assertTrue(
+                    struct_path.exists(),
+                    f"CheckerContext lifetime check points at missing path: {struct_path}",
+                )
+                self.assertIn("CheckerContext", name)
+                self.assertTrue(
+                    manifest_path.parent.exists(),
+                    f"CheckerContext lifetime manifest parent is missing: {manifest_path}",
+                )
+                return
+        self.fail(
+            "CheckerContext lifetime check is missing from "
+            "CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS"
+        )
+
+    def test_real_checker_context_lifetime_manifest_passes(self):
+        for entry in self.arch_guard.CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS:
+            name, struct_path, struct_name, manifest_path = entry
+            hits = self.arch_guard.scan_checker_context_lifetime_manifest(
+                struct_path, struct_name, manifest_path
+            )
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+
 class ArchGuardIndependentPipelineTests(unittest.TestCase):
     """Cover `INDEPENDENT_PIPELINE_CHECKS` + `scan_independent_pipelines`.
 
