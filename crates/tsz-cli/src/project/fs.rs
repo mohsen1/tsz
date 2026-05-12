@@ -61,6 +61,7 @@ impl FileDiscoveryOptions {
 
 pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>> {
     let mut files = BTreeSet::new();
+    let mut explicit_files = Vec::new();
 
     for file in &options.files {
         let path = resolve_file_path(&options.base_dir, file);
@@ -69,11 +70,11 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
         // are always compiled, including .js/.jsx/.mjs/.cjs files, regardless of
         // the allowJs setting. This matches tsc behavior where allowJs only controls
         // pattern-matched file discovery (include/exclude), not explicit file lists.
-        if is_ts_file(&path)
+        let is_valid_explicit_file = is_ts_file(&path)
             || is_js_file(&path)
-            || (options.resolve_json_module && is_json_file(&path))
-        {
-            files.insert(path);
+            || (options.resolve_json_module && is_json_file(&path));
+        if is_valid_explicit_file && files.insert(path.clone()) {
+            explicit_files.push(path);
         }
     }
 
@@ -125,10 +126,15 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     // tsc excludes `.d.ts` files from the program when a corresponding `.ts`
     // (or `.tsx`) source file exists in the same directory.  This prevents the
     // declaration file from shadowing the source file's exports.
-    let files = exclude_shadowed_declaration_files(files);
+    let mut files = exclude_shadowed_declaration_files(files);
 
-    let mut list: Vec<PathBuf> = files.into_iter().collect();
-    list.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+    let mut list = Vec::with_capacity(files.len());
+    for path in explicit_files {
+        if files.remove(&path) {
+            list.push(path);
+        }
+    }
+    list.extend(files);
     Ok(list)
 }
 
@@ -722,6 +728,36 @@ mod tests {
             result.iter().any(|p| p.ends_with("lib.js")),
             "explicitly listed .js file should be included even without allowJs"
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_explicit_files_preserves_list_order() {
+        let dir = std::env::temp_dir().join("tsz_fs_test_explicit_order");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("b.js"), "let a = 10;").unwrap();
+        fs::write(dir.join("a.ts"), "let b = 30;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![PathBuf::from("b.js"), PathBuf::from("a.ts")],
+            files_explicitly_set: true,
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+            resolve_json_module: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        let names: Vec<_> = result
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["b.js", "a.ts"]);
 
         let _ = fs::remove_dir_all(&dir);
     }
