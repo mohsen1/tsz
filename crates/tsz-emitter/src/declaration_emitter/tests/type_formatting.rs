@@ -359,6 +359,24 @@ function f() {
 }
 
 #[test]
+fn test_direct_returned_function_expression_expands_unlabeled_rest_tuple_alias_elements() {
+    let output = emit_dts(
+        r#"
+function f() {
+    type T = [string, number];
+
+    return function fn(...args: T) { }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f(): (arg0: string, arg1: number) => void;"),
+        "expected unlabeled rest tuple alias elements to expand into synthesized positional parameters: {output}"
+    );
+}
+
+#[test]
 fn test_returned_class_expression_preserves_extends_type_parameter() {
     let source = r#"
 export type Constructor<T = {}> = new (...args: any[]) => T;

@@ -637,14 +637,25 @@ impl<'a> DeclarationEmitter<'a> {
                 )?);
                 continue;
             }
-            let (name, ty) = part.split_once(':')?;
-            let name = name.trim().trim_start_matches("...");
-            let name = name.strip_suffix('?').unwrap_or(name).trim();
-            let ty = ty.trim();
-            if name.is_empty() || ty.is_empty() {
+            if let Some((name, ty)) = part.split_once(':') {
+                let name = name.trim().trim_start_matches("...");
+                let name = name.strip_suffix('?').unwrap_or(name).trim();
+                let ty = ty.trim();
+                if name.is_empty() || ty.is_empty() {
+                    return None;
+                }
+                elements.push((name.to_string(), ty.to_string()));
+                continue;
+            }
+
+            // Unlabeled tuple elements are valid TypeScript (e.g. `[string, number]`).
+            // Synthesize stable parameter names so tuple rest expansion still works.
+            let ty = part.strip_suffix('?').unwrap_or(part).trim();
+            if ty.is_empty() {
                 return None;
             }
-            elements.push((name.to_string(), ty.to_string()));
+            let synthesized = format!("arg{}", elements.len());
+            elements.push((synthesized, ty.to_string()));
         }
         Some(elements)
     }

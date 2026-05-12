@@ -14,7 +14,7 @@ Close five declaration-emitter missed-review clusters from the last-500-PR audit
 - `#5845` (`export =` JS files misclassified as native ESM)
 - `#5867` (JS late-bound function namespace alias collisions and scope leakage)
 - `#5694` (JSDoc generic/reference parser edge cases in quotes and same-line tags)
-- `#5677` (rest tuple expansion can collide with pre-existing parameter names)
+- `#5677` (rest tuple expansion can collide with pre-existing parameter names and skip unlabeled tuple elements)
 
 ## Changes
 
@@ -75,10 +75,15 @@ Close five declaration-emitter missed-review clusters from the last-500-PR audit
     parameters that already exist in the same signature.
   - apply the same collision-safe naming in function-type-text rest tuple
     expansion by seeding existing parameter names before expansion.
+  - support unlabeled tuple elements during rest expansion by synthesizing
+    stable parameter names (`arg0`, `arg1`, ...) instead of bailing out to the
+    unexpanded rest parameter.
 
 - regression coverage:
   - added a regression proving `return function (a: number, ...args: [a: string, ...])`
     expands as `a, a_1, ...` rather than emitting duplicate `a` declarations.
+  - added a regression proving unlabeled tuple aliases (e.g. `[string, number]`)
+    expand to synthesized positional parameters.
 
 ## Files Touched
 
@@ -107,6 +112,8 @@ Close five declaration-emitter missed-review clusters from the last-500-PR audit
 - `cargo test -p tsz-emitter test_direct_returned_function_expression_expands_rest_tuple_aliases -- --nocapture`
   - result: `1 passed; 0 failed`
 - `cargo test -p tsz-emitter test_direct_returned_function_expression_rest_tuple_alias_avoids_existing_param_name_collision -- --nocapture`
+  - result: `1 passed; 0 failed`
+- `cargo test -p tsz-emitter test_direct_returned_function_expression_expands_unlabeled_rest_tuple_alias_elements -- --nocapture`
   - result: `1 passed; 0 failed`
 - `cargo fmt --all`
   - result: success
