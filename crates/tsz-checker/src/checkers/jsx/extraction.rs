@@ -11,6 +11,50 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn is_react_jsx_component_alias_application(&self, type_id: TypeId) -> bool {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+            .or_else(|| {
+                self.ctx.types.get_display_alias(type_id).and_then(|alias| {
+                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                })
+            });
+        let Some(app) = app else {
+            return false;
+        };
+        matches!(
+            self.format_type(app.base).as_str(),
+            "React.ComponentType" | "ComponentType" | "React.ReactType" | "ReactType"
+        )
+    }
+
+    fn is_react_jsx_component_alias_display(&self, type_id: TypeId) -> bool {
+        let display = self.format_type(type_id);
+        display == "React.ComponentType"
+            || display == "ComponentType"
+            || display == "React.ReactType"
+            || display == "ReactType"
+            || display.starts_with("React.ComponentType<")
+            || display.starts_with("ComponentType<")
+            || display.starts_with("React.ReactType<")
+            || display.starts_with("ReactType<")
+    }
+
+    fn is_react_jsx_component_branch_display(&self, type_id: TypeId) -> bool {
+        let display = self.format_type(type_id);
+        let base = display.split('<').next().unwrap_or(display.as_str());
+        matches!(
+            base,
+            "React.ComponentClass"
+                | "ComponentClass"
+                | "React.FunctionComponent"
+                | "FunctionComponent"
+                | "React.StatelessComponent"
+                | "StatelessComponent"
+                | "React.SFC"
+                | "SFC"
+        )
+    }
+
     fn jsx_class_component_props_alias_hint(&self, instance_type: TypeId) -> Option<TypeId> {
         let app = crate::query_boundaries::common::type_application(self.ctx.types, instance_type)
             .or_else(|| {
@@ -703,12 +747,15 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn jsx_component_return_check_types(&mut self, component_type: TypeId) -> Vec<TypeId> {
-        let mut stack = vec![component_type];
+    fn jsx_component_return_check_types(
+        &mut self,
+        component_type: TypeId,
+    ) -> Vec<(TypeId, TypeId)> {
+        let mut stack = vec![(component_type, component_type)];
         let mut seen = rustc_hash::FxHashSet::default();
         let mut types = Vec::new();
 
-        while let Some(type_id) = stack.pop() {
+        while let Some((raw_type_id, type_id)) = stack.pop() {
             let resolved = if crate::query_boundaries::common::needs_evaluation_for_merge(
                 self.ctx.types,
                 type_id,
@@ -717,15 +764,21 @@ impl<'a> CheckerState<'a> {
             } else {
                 type_id
             };
-            if !seen.insert(resolved) {
+            if !seen.insert((raw_type_id, resolved)) {
                 continue;
             }
             if let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, resolved)
             {
-                stack.extend(members);
+                if raw_type_id != type_id
+                    && self.is_react_jsx_component_alias_application(raw_type_id)
+                {
+                    types.push((raw_type_id, resolved));
+                } else {
+                    stack.extend(members.into_iter().map(|member| (member, member)));
+                }
             } else {
-                types.push(resolved);
+                types.push((raw_type_id, resolved));
             }
         }
 
@@ -923,12 +976,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let is_union =
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
+                .is_some();
         let types_to_check = self.jsx_component_return_check_types(component_type);
 
         let mut any_checked = false;
         let mut all_valid = true;
+        let is_react_component_alias_union =
+            is_union && self.is_react_jsx_component_alias_display(component_type);
 
-        for member_type in types_to_check {
+        for (raw_member_type, member_type) in types_to_check {
             if self.is_jsx_string_tag_type(member_type) {
                 continue;
             }
@@ -940,6 +998,16 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 member_type,
             ) {
+                continue;
+            }
+            if is_union
+                && (self.is_react_jsx_component_alias_application(raw_member_type)
+                    || (is_react_component_alias_union
+                        && self.is_react_jsx_component_branch_display(raw_member_type)))
+                && self
+                    .get_jsx_props_type_for_component_member(member_type, None)
+                    .is_some()
+            {
                 continue;
             }
             let is_unresolved = |t: TypeId| -> bool {
