@@ -121,6 +121,21 @@ function* f(): Generator<"outer", number, unknown> {
     );
 }
 
+#[test]
+fn yield_star_allows_unknown_containing_next_type() {
+    let source = r#"
+declare const gen: Generator<string, void, string>;
+function* f(): Generator<string, void, unknown> {
+    yield* gen;
+}
+"#;
+    let diags = codes_with_strict(source);
+    assert!(
+        !diags.contains(&2766),
+        "yield* should not emit TS2766 when the containing generator TNext is unknown, got: {diags:?}"
+    );
+}
+
 // =========================================================================
 // yield* in unannotated generators
 // =========================================================================
