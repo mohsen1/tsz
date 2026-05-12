@@ -1992,8 +1992,8 @@ function A() {
     assert!(
         ts7008_messages
             .iter()
-            .all(|msg| !msg.contains("Member 'unknown' implicitly has an 'any' type.")),
-        "Did not expect TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
+            .any(|msg| msg.contains("Member 'unknown' implicitly has an 'any' type.")),
+        "Expected TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
     );
     assert!(
         ts7008_messages
