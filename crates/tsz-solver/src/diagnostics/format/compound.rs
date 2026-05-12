@@ -538,7 +538,7 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type).into_owned();
+            let key_type_str = self.format(idx.key_type);
             let value_str = self.format_index_signature_value(idx.value_type);
             parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
@@ -548,7 +548,7 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type).into_owned();
+            let key_type_str = self.format(idx.key_type);
             let value_str = self.format_index_signature_value(idx.value_type);
             parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
@@ -1921,8 +1921,8 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type).into_owned();
-            let value_str = self.format(idx.value_type).into_owned();
+            let key_type_str = self.format(idx.key_type);
+            let value_str = self.format(idx.value_type);
             parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         if let Some(ref idx) = shape.number_index {
@@ -1931,8 +1931,8 @@ impl<'a> TypeFormatter<'a> {
                 .map(|a| self.atom(a).to_string())
                 .unwrap_or_else(|| "x".to_owned());
             let ro = if idx.readonly { "readonly " } else { "" };
-            let key_type_str = self.format(idx.key_type).into_owned();
-            let value_str = self.format(idx.value_type).into_owned();
+            let key_type_str = self.format(idx.key_type);
+            let value_str = self.format(idx.value_type);
             parts.push(format!("{ro}[{key_name}: {key_type_str}]: {value_str}"));
         }
         let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
