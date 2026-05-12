@@ -54,3 +54,51 @@ C.g(3);
         "Expected NO doubly-wrapped parameter (typeof should not be expanded inside its own value type), got: {msg}"
     );
 }
+
+fn diagnostics_for(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
+}
+
+#[test]
+fn recursive_typeof_function_target_display_elides_nested_return_cycle() {
+    let diagnostics = diagnostics_for(
+        r#"
+var f4: () => typeof f4;
+f4 = 3;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for assigning number to recursive function type");
+    assert!(
+        diag.message_text
+            .contains("Type 'number' is not assignable to type '() => ...'."),
+        "recursive typeof function target should elide the nested return cycle, got: {diag:?}"
+    );
+}
+
+#[test]
+fn recursive_overloaded_typeof_parameter_display_uses_callable_surface() {
+    let diagnostics = diagnostics_for(
+        r#"
+function f6(): typeof f6;
+function f6(a: typeof f6): () => number;
+function f6(a?: any) { return f6; }
+
+f6("");
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345 for string argument");
+    assert!(
+        diag.message_text.contains(
+            "Argument of type 'string' is not assignable to parameter of type '{ (): typeof f6; (a: typeof f6): () => number; }'."
+        ),
+        "recursive overloaded typeof parameter should use callable object surface, got: {diag:?}"
+    );
+}
