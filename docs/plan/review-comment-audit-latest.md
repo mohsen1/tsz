@@ -2,12 +2,12 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 12
-- Potential important unresolved threads: 137
+- PRs excluded as already followed-up: 13
+- Potential important unresolved threads: 136
 
 ## Top Subsystems
 
-- `crates/tsz-checker`: 50
+- `crates/tsz-checker`: 49
 - `crates/tsz-emitter`: 34
 - `docs`: 23
 - `crates/tsz-parser`: 11
@@ -204,8 +204,6 @@
   - This script imports `tomllib`, which requires Python 3.11+. `scripts/arch/check-checker-boundaries.sh` is run in CI (including self-hosted runners via `scripts/ci/gcp-full-ci.sh`), so if any runner or contributor mach...
 - [#5034](https://github.com/mohsen1/tsz/pull/5034) `scripts/arch/checker_field_inventory.py:43` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The module docstring says wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2), but this PR already wires the script into `check-checker-boundaries.sh` (and the claim file states the pre-commit hook runs i...
-- [#5040](https://github.com/mohsen1/tsz/pull/5040) `crates/tsz-checker/src/context/mod.rs:25` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
-  - `pub mod lifetime_shells` makes the entire submodule part of the public `tsz_checker::context` API surface. If external callers only need the shell types via the existing re-exports, consider making the module private...
 - [#5048](https://github.com/mohsen1/tsz/pull/5048) `docs/plan/claims/perf-t2.2-cross-file-query-key-answer-2026-05-10.md:72` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - The nextest filter here doesn’t match the actual test module/file name (`cross_file_query_types`). As written, `-E 'test(cross_file_query_key_answer)'` won’t select these tests, so the verification command is misleadi...
 - [#5060](https://github.com/mohsen1/tsz/pull/5060) `docs/plan/claims/perf-t2.4-wrap-aux-interner-locks-2026-05-10.md:63` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
@@ -242,3 +240,5 @@
   - `precompute_symbol_named_computed_property_names` re-traverses the same declarations as `precompute_computed_property_names` and recomputes `get_type_of_node` for each computed property expression. This duplicates pot...
 - [#5110](https://github.com/mohsen1/tsz/pull/5110) `crates/tsz-checker/src/state/state_checking_members/ambient_signature_checks.rs:389` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
   - `get_type_of_node_with_request` already performs class-expression member checking in `dispatch.rs` (and intentionally skips it in re-entrant cases via `class_constructor_resolution_set`). Calling `check_direct_class_e...
+- [#5110](https://github.com/mohsen1/tsz/pull/5110) `crates/tsz-checker/src/types/queries/class.rs:1811` score=1 reviewer=`copilot-pull-request-reviewer` reasons=detailed-thread
+  - This new cached-instance-`this` guard avoids returning `ANY`/`ERROR` for the general instance-member path, but the earlier explicit `this: CurrentClass` fast path still returns `cached_instance_this_type` without filt...

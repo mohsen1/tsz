@@ -33,6 +33,9 @@ Close remaining high-signal parser review-audit threads by:
   - verified the historical `perf-counters-timing` docstring wording about
     `time_shard_write` compiling out entirely is no longer present in current
     `perf_counters.rs`; the stale thread no longer corresponds to current code.
+- review comments left on #5040:
+  - verified `context/mod.rs` no longer exports `pub mod lifetime_shells`; the
+    module-surface concern in the original thread is already resolved in current code.
 
 ## Files Touched
 
@@ -48,9 +51,10 @@ Close remaining high-signal parser review-audit threads by:
 - `crates/tsz-parser/src/parser/state.rs`
 - `crates/tsz-parser/tests/parser_improvement_tests.rs`
 - `crates/tsz-common/src/perf_counters.rs`
+- `crates/tsz-checker/src/context/mod.rs`
 
 ## Verification
 
 - `cargo fmt --check`
 - `cargo test -p tsz-parser`
-- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=137`)
+- `python3 scripts/session/audit_missed_review_comments.py --limit 500` (latest successful run: `candidate_count=136`)

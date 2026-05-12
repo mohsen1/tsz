@@ -12,6 +12,7 @@
     4960,
     4987,
     5003,
+    5040,
     5094,
     5743,
     5753,
@@ -19,7 +20,7 @@
     5830,
     5901
   ],
-  "candidate_count": 137,
+  "candidate_count": 136,
   "candidates": [
     {
       "pr_number": 5089,
@@ -1361,22 +1362,6 @@
       "line": 43,
       "reviewer": "copilot-pull-request-reviewer",
       "body": "The module docstring says wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2), but this PR already wires the script into `check-checker-boundaries.sh` (and the claim file states the pre-commit hook runs it). Please update the docstring to match current behavior to avoid confusion about when/where the guard runs.",
-      "score": 1,
-      "reasons": [
-        "detailed-thread"
-      ]
-    },
-    {
-      "pr_number": 5040,
-      "pr_title": "perf(checker): T2.1.A.2 \u2014 empty lifetime-class shell types",
-      "pr_url": "https://github.com/mohsen1/tsz/pull/5040",
-      "merged_at": "2026-05-10T18:18:50Z",
-      "base_ref": "main",
-      "thread_id": "PRRT_kwDOQ7o9zc6A63tD",
-      "path": "crates/tsz-checker/src/context/mod.rs",
-      "line": 25,
-      "reviewer": "copilot-pull-request-reviewer",
-      "body": "`pub mod lifetime_shells` makes the entire submodule part of the public `tsz_checker::context` API surface. If external callers only need the shell types via the existing re-exports, consider making the module private (`mod lifetime_shells;`) and keeping the `pub use ...` line, or alternatively making both the module and re-export `pub(crate)` until the shells are actually consumed outside the crate.",
       "score": 1,
       "reasons": [
         "detailed-thread"
