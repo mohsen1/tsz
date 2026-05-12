@@ -1044,7 +1044,8 @@ impl Server {
         current_file: &str,
         item: &CompletionItem,
     ) -> Option<CompletionItemKind> {
-        if !item.has_action || item.source.as_ref().is_none() {
+        let has_auto_import_source = item.has_action && item.source.is_some();
+        if !has_auto_import_source {
             return None;
         }
         let export_name = Self::auto_import_export_name(item)?;
@@ -3139,7 +3140,7 @@ impl Server {
                     let is_default_auto_import_item =
                         auto_import_export_name.as_deref() == Some("default");
                     let mut display_item_owned = None;
-                    if item.is_some_and(|i| i.has_action && i.source.as_ref().is_some())
+                    if item.is_some_and(|i| i.has_action && i.source.is_some())
                         && let Some(found_item) = item
                     {
                         let mut adjusted_item = found_item.clone();
@@ -3198,7 +3199,7 @@ impl Server {
                     );
                     detail.insert("displayParts".to_string(), display_parts);
                     let is_auto_import_item =
-                        item.is_some_and(|i| i.has_action && i.source.as_ref().is_some());
+                        item.is_some_and(|i| i.has_action && i.source.is_some());
                     if !is_auto_import_item && documentation != serde_json::json!([]) {
                         detail.insert("documentation".to_string(), documentation);
                     }
