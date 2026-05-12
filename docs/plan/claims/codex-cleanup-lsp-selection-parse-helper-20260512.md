@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-12
 - **Branch**: `codex/cleanup-lsp-selection-parse-helper-20260512`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #5929
+- **Status**: ready
 - **Workstream**: DRY cleanup
 
 ## Intent
@@ -18,4 +18,6 @@ This PR keeps the slice focused by moving that setup behind a small helper in th
 
 ## Verification
 
-- Pending
+- `cargo fmt --check`
+- `cargo clippy -p tsz-lsp --lib -- -D warnings`
+- `cargo nextest run -p tsz-lsp selection_range_tests --no-fail-fast` (103 passed)
