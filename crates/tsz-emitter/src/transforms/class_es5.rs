@@ -79,6 +79,7 @@ pub struct ClassES5Emitter<'a> {
     tslib_import_binding: String,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     printer_options: Option<crate::emitter::PrinterOptions>,
+    externally_hoisted_decls: rustc_hash::FxHashSet<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -97,6 +98,7 @@ impl<'a> ClassES5Emitter<'a> {
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             printer_options: None,
+            externally_hoisted_decls: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -119,6 +121,10 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer
             .set_commonjs_import_substitutions(subs.clone());
         self.commonjs_import_substitutions = subs;
+    }
+
+    pub fn set_externally_hoisted_decls(&mut self, decls: Vec<String>) {
+        self.externally_hoisted_decls = decls.into_iter().collect();
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
@@ -228,6 +234,15 @@ impl<'a> ClassES5Emitter<'a> {
             Some(ir) => ir,
             None => return String::new(),
         };
+
+        if !self.externally_hoisted_decls.is_empty()
+            && let IRNode::ES5ClassIIFE {
+                ref mut weakmap_decls,
+                ..
+            } = ir
+        {
+            weakmap_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
+        }
 
         // Inject leading comment from the main emitter's comment system.
         if let Some(comment) = self.leading_comment.take()
