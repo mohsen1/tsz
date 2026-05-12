@@ -1,0 +1,2304 @@
+{
+  "repo": "mohsen1/tsz",
+  "limit": 500,
+  "summary": {
+    "scanned_prs": 500,
+    "truncated_thread_prs": []
+  },
+  "excluded_followed_up_prs": [
+    4954,
+    4955,
+    4960
+  ],
+  "candidate_count": 140,
+  "candidates": [
+    {
+      "pr_number": 5089,
+      "pr_title": "fix(parser): guard u32/u16 conversion panics with better error messages",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5089",
+      "merged_at": "2026-05-11T07:47:19Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A_5hM",
+      "path": "crates/tsz-parser/src/parser/state.rs",
+      "line": 265,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Same concern here: this conversion still panics via `expect`, so out-of-range flags will crash the process. If #4782 is meant to be resolved/closed, this likely needs to become a non-panicking conversion with error propagation (e.g., return `Result<u16, ...>` and surface a parser error) rather than a message-only change.",
+      "score": 6,
+      "reasons": [
+        "important-keyword",
+        "action-language",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5089,
+      "pr_title": "fix(parser): guard u32/u16 conversion panics with better error messages",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5089",
+      "merged_at": "2026-05-11T07:47:19Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A_5g4",
+      "path": "crates/tsz-parser/src/parser/state.rs",
+      "line": 257,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The updated panic message is a bit imprecise: `u32::MAX` is a value, not a type/range. Consider wording like \u201cparser offsets must be <= u32::MAX\u201d (optionally including the actual `value`) so the overflow condition is unambiguous.",
+      "score": 5,
+      "reasons": [
+        "important-keyword",
+        "action-language"
+      ]
+    },
+    {
+      "pr_number": 5102,
+      "pr_title": "fix(parser): recover invalid arrow conditional tails",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5102",
+      "merged_at": "2026-05-11T09:48:04Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BB_BR",
+      "path": "crates/tsz-parser/tests/parser_improvement_tests.rs",
+      "line": 130,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The new conditional-tail recovery tests don\u2019t cover the case where the skipped conditional branch contains nested semicolons (e.g. `? (() => { foo(); }) : bar;`). Given the recovery logic scans token-by-token, adding a regression test for a block-bodied arrow/function inside the stray conditional tail would help ensure the scan doesn\u2019t stop early at an inner `;` and still anchors diagnostics at the outer `:`.",
+      "score": 5,
+      "reasons": [
+        "important-keyword",
+        "open-question",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAV",
+      "path": "docs/plan/claims/perf-t0.4-attribution-decision-record.md",
+      "line": 22,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This claim's Approach section says the run will include a representative `large-ts-repo` slice, but this PR\u2019s decision record explicitly defers `large-ts-repo` due to OOM/stack overflow. Please update the claim to match what was actually measured in this PR so the claim file remains an accurate coordination record.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAu",
+      "path": "docs/plan/perf-runs/raw/monorepo-006-diag.json",
+      "line": 10,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "All `fixture.*` provenance fields are `null` in this checked-in run. Since this data is used as a baseline/decision record, it would be more useful to populate at least `fixture.name` (and ideally repo/ref/path) via the documented `TSZ_BENCH_FIXTURE_*` env vars so the raw JSON remains attributable and comparable later.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4958,
+      "pr_title": "fix(parser): align reachability recovery diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4958",
+      "merged_at": "2026-05-10T10:47:31Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5FOu",
+      "path": "crates/tsz-parser/src/parser/state_statements_class.rs",
+      "line": 226,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`pending_const_binding_name_colon` is set when encountering `const`, but it\u2019s only cleared when the *next* token is an identifier/in/out. If `const` is followed by a binding pattern (e.g. `const { a } = \u2026` / `const [a] = \u2026`) or anything else, the flag will remain true and later identifiers can incorrectly trigger a \"':' expected.\" diagnostic far away from the `const`. Consider either (a) lookahead before setting the flag, or (b) clearing it when the next token isn\u2019t a simple binding name, so the state doesn\u2019t leak across unrelated tokens.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4967,
+      "pr_title": "fix(solver): preserve literal constraint display candidates",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4967",
+      "merged_at": "2026-05-10T11:30:06Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5QBc",
+      "path": "crates/tsz-solver/src/operations/generic_call/resolve.rs",
+      "line": 2353,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Storing a display alias for `constraint_ty` here can overwrite an existing `display_alias` for the same evaluated constraint type (e.g. the normal alias produced when evaluating `Comparable<number>`). Because `display_alias` is a global interner mapping, this can leak the literal-union provenance into unrelated later diagnostics that happen to format the same `constraint_ty`. Consider avoiding mutation of the global alias map for shared evaluated types (e.g. by attaching the display application to a call-scoped wrapper/diagnostic value, or only storing when you can guarantee the evaluated type was produced specifically for this call site).",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4973,
+      "pr_title": "fix(checker): preserve object literal normalization diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4973",
+      "merged_at": "2026-05-10T12:41:10Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5V0J",
+      "path": "crates/tsz-checker/src/types/computation/call_finalize.rs",
+      "line": 569,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`declared_type_of_identifier_argument` only looks up declaration nodes via `self.ctx.arena.get(decl_idx)`. If the identifier resolves to a symbol declared in a different arena/file (e.g. imported binding, lib declaration, or multi-file binder), these NodeIndex lookups can fail and the function will incorrectly return `None`, skipping the sibling-annotation check. Consider iterating `symbol.stable_declarations`/`stable_value_declaration` and using `ctx.node_at_stable_location(..)` (as done in `call_arg_source_is_typed_identifier`) so typed identifiers are detected across arenas.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4982,
+      "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4982",
+      "merged_at": "2026-05-10T12:58:33Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5eOF",
+      "path": "crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs",
+      "line": 163,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`decl_node` may come from `ctx.arena`, `symbol_arenas`, or `declaration_arenas`, but the subsequent `get_type_alias(decl_node)` calls probe multiple arenas (starting with `ctx.arena`) using a `Node` value whose `data_index` is arena-relative. Because `NodeIndex`/`data_index` values can overlap across arenas, this can accidentally resolve the wrong alias (or the wrong body node) and incorrectly classify unrelated symbols as an explicit-`any` alias. Prefer selecting the correct arena once per `decl_idx` (e.g. via `binder.arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena)`) and then performing *all* lookups (`get`, `get_type_alias`, `get(alias.type_node)`) against that arena.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4982,
+      "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4982",
+      "merged_at": "2026-05-10T12:58:33Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5eOZ",
+      "path": "scripts/conformance/conformance-baseline.txt",
+      "line": 5,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The PR description claims conformance has \u201cnew failures: 0\u201d and \u201cchanged failures: 0\u201d, but the checked-in conformance baseline now includes new failing tests (e.g. `.../excessPropertyCheckIntersectionWithRecursiveType.ts`, `.../narrowingMutualSubtypes.ts`, `.../contextualTypeWithTuple.ts`) and also shows previously failing tests now passing (e.g. `.../maxConstraints.ts`). Please reconcile this with the PR description (update the description or regenerate snapshots from the intended base).",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4988,
+      "pr_title": "test(checker): cover mapped key TS2322 anchors",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4988",
+      "merged_at": "2026-05-10T13:14:29Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5oIc",
+      "path": "crates/tsz-checker/tests/mapped_type_errors_conformance_tests.rs",
+      "line": 23,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`diagnostic_anchor_text` slices `source` using unchecked byte indices derived from `diagnostic.start`/`length`. If a diagnostic ever points into a different file (e.g. lib) or reports a span outside `source`, this will panic with an unhelpful \u201cbyte index out of bounds\u201d/\u201cnot a char boundary\u201d message. Consider using `source.get(start..end).expect(...)` (and optionally asserting `diagnostic.file == \"test.ts\"`) so failures produce a clear message and avoid panics on invalid spans.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4989,
+      "pr_title": "fix(checker): harden object normalization review paths",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4989",
+      "merged_at": "2026-05-10T13:36:42Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5o6J",
+      "path": "crates/tsz-checker/src/types/computation/call_finalize.rs",
+      "line": 580,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`decl_idx` is obtained from `node_at_stable_location` (potentially from a different arena/file), but `type_of_value_declaration_for_symbol(sym_id, decl_idx)` re-enters the arena-selection logic and can take the wrong fast path if the current arena happens to have a node at the same `NodeIndex` mapped to `sym_id` (cross-arena collision). Since this loop already knows the declaration\u2019s stable location, prefer the explicit cross-file delegation path when `stable_location.file_idx` is stamped / differs from the current file (e.g. `type_of_value_declaration_for_cross_file_symbol`), or otherwise ensure the resolution uses the same arena returned by `node_at_stable_location`.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4992,
+      "pr_title": "fix(checker): harden explicit-any alias detection",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4992",
+      "merged_at": "2026-05-10T13:21:55Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5qrh",
+      "path": "crates/tsz-checker/tests/ts2315_explicit_any_type_alias_tests.rs",
+      "line": 71,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The new parenthesized-alias test only asserts that TS2315 appears, but it doesn\u2019t assert that cascading TS2344 is suppressed (unlike the canonical explicit-any test above). Adding a `!codes.contains(&2344)` assertion here would prevent regressions where the parenthesized path reintroduces the TS2344 cascade.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4992,
+      "pr_title": "fix(checker): harden explicit-any alias detection",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4992",
+      "merged_at": "2026-05-10T13:21:55Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5qr1",
+      "path": "scripts/conformance/conformance-detail.json",
+      "line": 1,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This file\u2019s recorded failing set changes (adds/removes failures) even though the PR\u2019s verification doesn\u2019t mention re-running conformance. If the intent is only checker hardening + unit tests, consider reverting this regenerated detail; otherwise, please note the conformance snapshot command used so reviewers can trust the updated data.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4993,
+      "pr_title": "docs(solver): clarify interner perf-counter cost summary",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4993",
+      "merged_at": "2026-05-10T13:37:58Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5uq8",
+      "path": "crates/tsz-solver/src/intern/core/interner.rs",
+      "line": 1060,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The wording \"the optimizer folds into the no-op path\" overstates what the compiler can guarantee here. Since `pc` depends on a runtime `enabled_fast()` result, the `if let Some(c) = pc` checks still compile to an Option discriminant test + branch; they\u2019re just predictable/cheap when `pc` is `None`. Consider rephrasing to describe the actual runtime shape (predictable branch, body skipped), without implying it is optimized away.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4994,
+      "pr_title": "test(checker): cover max constraints diagnostic display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4994",
+      "merged_at": "2026-05-10T13:38:11Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5vJ8",
+      "path": "crates/tsz-checker/tests/generic_call_inference_tests.rs",
+      "line": 350,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This test picks the first diagnostic with code 2345 via `find`, which doesn\u2019t guarantee it\u2019s the diagnostic for `max2(1, 2)` if additional TS2345s ever appear (ordering can change as the checker evolves). To make the test unambiguous, filter TS2345 diagnostics and select the one whose `start` matches `first_arg_start` (or assert there\u2019s exactly one TS2345 before using it).",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5002,
+      "pr_title": "fix(parser): recover incomplete constructor annotations",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5002",
+      "merged_at": "2026-05-10T14:56:54Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5-F9",
+      "path": "crates/tsz-parser/src/parser/state_statements.rs",
+      "line": 690,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`recover_orphan_case_assignment_before_if` currently advances tokens until `;` or EOF only. If the orphan `case = ...` statement is terminated by ASI (line break) or the end of a block (`}`) without an explicit semicolon, this loop can consume the following statement/block close and prevent correct recovery. Consider also stopping on `CloseBraceToken` and/or a preceding line break boundary while skipping the orphan assignment tail.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5051,
+      "pr_title": "fix(checker): preserve conditional keyof variance",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5051",
+      "merged_at": "2026-05-10T20:11:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A7VTl",
+      "path": "crates/tsz-checker/tests/conditional_infer_tests.rs",
+      "line": 632,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The test only asserts that there are 8 TS2322 diagnostics, but it would still pass if additional non-TS2322 diagnostics are emitted (which would indicate a regression unrelated to variance). To ensure this remains a tight TSC-conformance check, also assert that the total diagnostics count is 8 (or that all diagnostics are TS2322) so unexpected errors can\u2019t slip through.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5057,
+      "pr_title": "fix(checker): preserve higher-order generic call inference",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5057",
+      "merged_at": "2026-05-10T21:09:13Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A7jLg",
+      "path": "crates/tsz-solver/src/operations/generic_call/return_context.rs",
+      "line": 99,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`collect_all_types` returns an `FxHashSet`, so iterating it here makes the order of `hoisted` (and therefore the synthesized function `type_params`) depend on hash iteration order. Since `type_params` ordering is part of the `FunctionShape` identity and affects diagnostics, this can introduce non-deterministic behavior/flaky snapshots. Consider collecting the referenced `__infer_src_*` params into a Vec and sorting deterministically (e.g., by `Atom`/name) before assigning to `shape.type_params`.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5063,
+      "pr_title": "docs(checker): clarify cross-file-query helper module docstring",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5063",
+      "merged_at": "2026-05-10T23:00:25Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A79Yo",
+      "path": "crates/tsz-checker/src/context/cross_file_query.rs",
+      "line": 19,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The module-level docstring implies that the helpers in this module collapse `TypeId::UNKNOWN` to `None`, but that isn\u2019t true for all helpers here (e.g. `cached_cross_file_class_instance_type` explicitly does *not* filter `ERROR`/`UNKNOWN`/`ANY`; see the note on that function). Consider tightening this wording to refer specifically to the `cached_cross_file_symbol_type`/`SymbolType` path (or say \u201csome/most helpers\u201d) so the module docs don\u2019t conflict with the behavior documented below.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5067,
+      "pr_title": "fix(checker): widen overflow tuple boolean display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5067",
+      "merged_at": "2026-05-11T05:44:39Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A-fVa",
+      "path": "crates/tsz-checker/src/error_reporter/core/diagnostic_source/tuple_source_display.rs",
+      "line": 73,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`target_element` is looked up only via `elements.get(element_position)`, so for tuple targets with a rest element (variadic tuples) any element past `elements.len()` is treated as \u201coverflow\u201d with no contextual slot. That loses the fact those positions are still contextually typed by the tuple\u2019s rest element, which can change the intended literal-preservation / display behavior.\n\nConsider resolving `target_element` for out-of-range positions via the tuple\u2019s rest element (e.g. `elements.iter().rev().find(|e| e.rest)`) so rest-backed positions are treated as target-backed too.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5081,
+      "pr_title": "fix(checker): contextually type empty arrays in logical OR",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5081",
+      "merged_at": "2026-05-11T07:34:04Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A_SPv",
+      "path": "crates/tsz-checker/src/tests/zod_type_query_regression_tests.rs",
+      "line": 387,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This new regression test relies on standard-library utility types (`Omit`, `Partial`), but `check_source_diagnostics` runs with lib definitions disabled (see `test_utils.rs`), so the snippet will produce TS2304/TS2552-style \u201ccannot find name\u201d errors and the test can still pass because it only asserts on TS2345. Define minimal `Partial`/`Omit` (and any dependencies like `Pick`/`Exclude`) in the snippet, or broaden the assertion to fail on unexpected diagnostics so the test actually validates the intended behavior.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5086,
+      "pr_title": "fix(binder): guard persistent scope count overflow with better error message",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5086",
+      "merged_at": "2026-05-11T08:55:12Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A_r90",
+      "path": "crates/tsz-binder/src/state/core.rs",
+      "line": 921,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This still panics on overflow via `expect(...)` (only the message changed). Since the PR description/linked issue describes the crash as the bug to fix (and suggests returning/propagating an internal error or hard-capping), consider making this path non-panicking (e.g., change this API to return `Result` and bubble an internal diagnostic) or update the PR/issue linkage to reflect that this is only an improved panic message, not a behavioral fix.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5089,
+      "pr_title": "fix(parser): guard u32/u16 conversion panics with better error messages",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5089",
+      "merged_at": "2026-05-11T07:47:19Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A_5gX",
+      "path": "crates/tsz-parser/src/parser/state.rs",
+      "line": 258,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "These helpers still use `try_from(...).expect(...)`, so inputs above `u32::MAX` will continue to hard-panic (now with a different message). Since this PR claims to close #4782 (panic vs recoverable bounds error), consider changing this helper to return a `Result`/`Option` and converting the overflow into a parser diagnostic (or another non-panicking error path) instead of panicking.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5095,
+      "pr_title": "fix(parser): guard NodeArena::len_u32 overflow with better error message",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5095",
+      "merged_at": "2026-05-11T08:53:18Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BAu62",
+      "path": "crates/tsz-parser/src/parser/node_arena.rs",
+      "line": 200,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "There are existing tests elsewhere that assert overflow panic messages contain a specific constant (e.g., `SOURCE_FILE_LEN_OVERFLOW_MESSAGE` in `crates/tsz-core/src/source_file/mod.rs`). Since this PR changes the NodeArena overflow message, it would be good to add a similar regression test in this file\u2019s `#[cfg(test)]` module to lock in the new wording and avoid accidental message regressions.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5096,
+      "pr_title": "Fix generic union in-operand diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5096",
+      "merged_at": "2026-05-11T09:08:16Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BA0Lh",
+      "path": "crates/tsz-checker/tests/in_chain_narrows_unconstrained_type_param_tests.rs",
+      "line": 277,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The TS2322 assertion is order-dependent on the printed union type (`\"T | { a: string; }\"`). Union member ordering appears to be non-deterministic elsewhere in the test suite (some tests accept either `A | B` or `B | A`), so this can make the test flaky. Consider matching both orderings or asserting on smaller substrings (e.g., that the message contains both `\"T\"` and `\"{ a: string; }\"`) instead of the full union rendering.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5108,
+      "pr_title": "fix(checker): widen overflow tuple boolean display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5108",
+      "merged_at": "2026-05-11T10:31:09Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BCqDG",
+      "path": "crates/tsz-checker/src/error_reporter/core/diagnostic_source/tuple_source_display.rs",
+      "line": 72,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`target_element` is computed via `elements.get(element_position)`, which only works for fixed tuple slots. For target tuples with a `...rest` element, positions beyond `elements.len()` are still contextually typed by the rest element, but this code will treat them as overflow and force the widened fallback (dropping `true`/`false` preservation and skipping `literal_expression_display`). Consider resolving the contextual element with a rest fallback (e.g., when `element_position >= len`, use the last `rest` element if present) so rest-typed positions behave like other contextually typed tuple slots, while fixed-length overflow still widens.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5114,
+      "pr_title": "fix(checker): cover intersection index signature display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5114",
+      "merged_at": "2026-05-11T10:54:54Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BDNIU",
+      "path": "crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs",
+      "line": 121,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The TS2322 assertions here use full string equality for the entire diagnostic message. In this repo, TS2322 tests typically assert on key substrings (e.g., `contains(...)`) to avoid brittleness from incidental formatting changes (property ordering, spacing/semicolon tweaks, or additional details). Consider loosening this to substring checks that still guarantee the intersection + alias surfaces you care about.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5640,
+      "pr_title": "fix(checker): preserve enum member union diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5640",
+      "merged_at": "2026-05-11T23:07:07Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BPYUv",
+      "path": "crates/tsz-checker/src/error_reporter/core_formatting.rs",
+      "line": 1189,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`format_union_with_collapsed_enum_display` now pushes formatted enum member names into `rendered` but still returns `None` unless `collapsed_enum` is set. For unions composed entirely of enum members (the case this change targets), this causes the code to fall back to the diagnostic `TypeFormatter`, which (per `tsz-solver/src/diagnostics/format/compound.rs:909+`) collapses same-enum member unions back to the parent enum name, so the member names won\u2019t actually be preserved. Consider returning `Some(rendered.join(\" | \"))` when you\u2019ve rendered any enum member names (or otherwise short-circuiting before the formatter runs) so the preservation behavior takes effect.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5658,
+      "pr_title": "fix(emit): align nested async class expression emit",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5658",
+      "merged_at": "2026-05-12T00:13:41Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQXjd",
+      "path": "crates/tsz-emitter/src/transforms/class_es5_ir_members.rs",
+      "line": 883,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`NON_NULL_EXPRESSION` nodes are not type assertions, so `self.arena.get_type_assertion(node)` will always return `None` here. If you want to unwrap `expr!`, use the unary accessor (e.g. `get_unary_expr_ex`) to reach the inner `expression` instead of `get_type_assertion`.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5660,
+      "pr_title": "fix(checker): align jsxComponentTypeErrors TS2786 fingerprint",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5660",
+      "merged_at": "2026-05-12T00:36:37Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQdrZ",
+      "path": "crates/tsz-checker/src/checkers/jsx/tests.rs",
+      "line": 788,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The test name says TS2786 should be emitted **at** `MixedComponent`, but the assertion only checks the message text. To catch the fingerprint/anchor regression this PR is about, consider also asserting `diag.start` (and/or `length`) matches the `MixedComponent` tag name location (similar to other anchor-focused tests in this file).",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5662,
+      "pr_title": "fix(emit): wrap automatic JSX runtime in system modules",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5662",
+      "merged_at": "2026-05-12T01:31:21Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQiKP",
+      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
+      "line": 307,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "In System `react-jsxdev` emit, `jsx_dev_file_name` is only set when it is currently `None`. If the same `Printer` instance is reused across multiple files, this can reuse a previous file\u2019s `_jsxFileName` value for later emits. Consider setting `jsx_dev_file_name` unconditionally for the current source (and restoring afterward) instead of only when `None`.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5663,
+      "pr_title": "fix(checker): align recursiveFunctionTypes display fingerprints",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5663",
+      "merged_at": "2026-05-12T02:03:22Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQqz9",
+      "path": "crates/tsz-solver/src/diagnostics/format/compound.rs",
+      "line": 467,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`should_elide_recursive_typeof_function_return` currently returns true for any nested Function/Callable return type that contains a `TypeQuery` anywhere in its signature, regardless of whether it\u2019s actually part of a self-referential recursion. That means diagnostic-mode formatting can collapse non-recursive higher-order returns to `...` as well. If the intent is to match tsc\u2019s recursive-cycle elision only, consider tightening the predicate (or adding a regression test proving non-recursive `typeof` nested returns should/shouldn\u2019t elide).",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5666,
+      "pr_title": "fix(emit): align decl file comment placement",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5666",
+      "merged_at": "2026-05-12T06:01:31Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQqCG",
+      "path": "crates/tsz-emitter/src/emitter/expressions/access.rs",
+      "line": 235,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`dot_pos` is derived via a raw byte search for `'.'` in the source span. This can match a `.` inside a block/line comment between the base expression and the real property-access dot (e.g. `obj/*has . here*/.prop`), which can cause the split comment emission to write parts of the original source (including the real `.`) via `leading_text`, resulting in duplicated dots / incorrect spacing and mapping. Consider locating the dot token while skipping comment ranges (similar to `source_tail_contains_equals_outside_comments`) or otherwise ensuring the found `.` is outside comments/trivia.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5666,
+      "pr_title": "fix(emit): align decl file comment placement",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5666",
+      "merged_at": "2026-05-12T06:01:31Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQqCc",
+      "path": "crates/tsz-emitter/src/emitter/expressions/access.rs",
+      "line": 1185,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The new regression test is named `decl_file_...` but uses `emit_js()` without enabling declaration emit (`set_declaration_emit(true)`). As written, it only asserts JS emit behavior and won\u2019t catch regressions specific to `.d.ts` emission that the PR description focuses on. Either enable declaration emit in the helper/test or rename the test to reflect that it targets JS/type-erasure emit.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5690,
+      "pr_title": "fix(checker): report JS @type subclass assignment mismatch",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5690",
+      "merged_at": "2026-05-12T03:20:03Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BR9N2",
+      "path": "crates/tsz-checker/src/state/variable_checking/core.rs",
+      "line": 1193,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The raw initializer re-check in the `jsdoc_new_expression_relation` branch clears the initializer cache and then calls `get_type_of_node_with_request(..., TypingRequest::NONE)`, which will repopulate `ctx.node_types` for the initializer with the non-contextual (raw) type. That overwrites the earlier contextually-typed initializer entry you intentionally seeded into `node_types` (to prevent later context-free lookups from widening/losing inference), and can change downstream behavior/fingerprints. Consider preserving/restoring the contextual cached initializer type after the raw check (e.g., save the current cached type and re-insert `init_type`), or compute the raw type under a snapshot/rollback that also restores `node_types`/request caches rather than only diagnostics.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5691,
+      "pr_title": "fix(dts): inline semicolon class typedef tags",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5691",
+      "merged_at": "2026-05-12T06:00:59Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BRyAj",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 843,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This change introduces new behavior for resolving `@type {Name}` on class properties via nearby semicolon-only `@typedef` tags, but there\u2019s no regression test covering the semicolon-class-element scenario. Please add a focused test case (similar to the existing JSDoc/type alias tests) that demonstrates the previous leak and asserts the inlined base type in the emitted `.d.ts`.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5693,
+      "pr_title": "fix(dts): emit js function type tag signatures",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5693",
+      "merged_at": "2026-05-12T06:00:35Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BR38C",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 945,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Parameter splitting in `parse_jsdoc_function_type_signature` uses `params_text.split(',')`, which will split inside nested types that contain commas (tuples, generics, function types, object types, etc.) and can produce incorrect `name/type` pairs that still pass validation, leading to invalid emitted signatures. Consider reusing the existing `split_jsdoc_params` + `parse_function_type_param_decl`/`find_top_level_colon` helpers (already used elsewhere in this file) to split only on top-level commas and locate the top-level colon safely.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5694,
+      "pr_title": "fix(dts): preserve generic jsdoc type tags",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5694",
+      "merged_at": "2026-05-12T06:00:02Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BR8O3",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 253,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`jsdoc_generic_name_like_type_reference` will return true for the legacy JSDoc dot-generic form `Array.<T>` because the base `Array.` passes the current base-name character filter. Since `jsdoc_name_like_type_expr_for_pos` later emits the expression verbatim, this can produce invalid `.d.ts` output (`Array.<string>` is not valid TypeScript; it should be `Array<string>`). Consider rejecting bases that end with `.` (or normalizing by stripping the trailing dot before `<`) and add a regression test for `@type {Array.<string>}`.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5717,
+      "pr_title": "fix(emit): decorate system class exports",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
+      "merged_at": "2026-05-12T05:59:35Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BTElv",
+      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
+      "line": 1501,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`emit_system_legacy_class_decorator_export` emits mapped output, then truncates and rewrites it. `SourceWriter::truncate` recomputes line/column but does not roll back any source-map mappings already added, so this can produce incorrect sourcemaps when source map generation is enabled. Prefer emitting into a temporary buffer (and merging mappings with offsets), or avoid speculative emission/truncation for this path when sourcemaps are enabled.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5717,
+      "pr_title": "fix(emit): decorate system class exports",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
+      "merged_at": "2026-05-12T05:59:35Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BTEmQ",
+      "path": "crates/tsz-emitter/src/emitter/module_wrapper/tests/system_emit.rs",
+      "line": 227,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The assertion for the `__decorate` helper only checks that the helper text exists somewhere in the output, but the test message claims it is inlined inside the `System.register` callback. To make this a regression test for placement, consider asserting relative ordering (e.g., helper appears after `System.register(... function (exports_1, context_1) {` and the callback's `\"use strict\";`).",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5720,
+      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
+      "merged_at": "2026-05-12T05:29:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BTIDy",
+      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
+      "line": 977,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This rewrite unconditionally appends new `Diagnostic::error` entries without checking whether an equivalent diagnostic (same code/start/length/message) already exists. If the checker later starts emitting any of these diagnostics naturally, this function will introduce duplicates and break conformance again. Consider making the rewrite idempotent by rewriting existing matching diagnostics in-place or by checking for an existing `(start, code)` (and possibly message) before pushing.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5720,
+      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
+      "merged_at": "2026-05-12T05:29:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BTIEF",
+      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
+      "line": 969,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The span lookup falls back to `source_text.find(anchor_marker)` if `line_marker` isn't found. That can attach a newly injected diagnostic to the wrong occurrence of the anchor (e.g. a declaration earlier in the file) if the test file changes slightly. It would be safer to skip emitting that diagnostic when the `line_marker` isn't found (or to search relative to a more stable surrounding marker) rather than falling back to a potentially unrelated match.",
+      "score": 4,
+      "reasons": [
+        "important-keyword",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5100,
+      "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
+      "merged_at": "2026-05-11T09:42:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BBwz8",
+      "path": "docs/plan/claims/fix-declaration-recursive-alias-ts2589-2026-05-10.md",
+      "line": 6,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The claim format in docs/plan/claims/README.md specifies Status values like `claim`, `ready`, `shipped`, `abandoned`. Using `in progress` here appears to deviate from that convention and may break any tooling/grep workflows that expect the documented values.",
+      "score": 3,
+      "reasons": [
+        "important-keyword"
+      ]
+    },
+    {
+      "pr_number": 5114,
+      "pr_title": "fix(checker): cover intersection index signature display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5114",
+      "merged_at": "2026-05-11T10:54:54Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BDNJB",
+      "path": "crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs",
+      "line": 141,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Same concern as the previous TS2322 test: asserting full message equality is likely to be brittle for TS2322 diagnostics. Prefer checking specific required substrings (e.g., that the source prints as an intersection and that the target prints as an index signature) while allowing other diagnostic text to evolve.",
+      "score": 3,
+      "reasons": [
+        "action-language",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5717,
+      "pr_title": "fix(emit): decorate system class exports",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
+      "merged_at": "2026-05-12T05:59:35Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BTEmY",
+      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
+      "line": 26,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This inlines only `DECORATE_HELPER`, but legacy decorator emit can also reference `__param` (constructor/method parameter decorators) and `__metadata` (when `emit_decorator_metadata` is enabled). In the no-transform System wrapper path, those helpers won\u2019t be emitted elsewhere, so decorated output can call `__param`/`__metadata` without definitions. Consider emitting the full required legacy-decorator helper set (decorate/param/metadata) based on a scan (or a shared helper-needed computation) rather than only `__decorate`.",
+      "score": 3,
+      "reasons": [
+        "action-language",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5089,
+      "pr_title": "fix(parser): guard u32/u16 conversion panics with better error messages",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5089",
+      "merged_at": "2026-05-11T07:47:19Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A_5hf",
+      "path": "crates/tsz-parser/src/parser/state.rs",
+      "line": 265,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "As with the u32 helper, the phrase \u201cmust fit in u16::MAX\u201d is awkward/ambiguous because `u16::MAX` is a single value. Consider \u201cmust be <= u16::MAX\u201d and/or include the actual `value` that overflowed for easier debugging.",
+      "score": 2,
+      "reasons": [
+        "action-language"
+      ]
+    },
+    {
+      "pr_number": 5102,
+      "pr_title": "fix(parser): recover invalid arrow conditional tails",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5102",
+      "merged_at": "2026-05-11T09:48:04Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BB_Ar",
+      "path": "crates/tsz-parser/src/parser/state_declarations_exports.rs",
+      "line": 2793,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "In `skip_invalid_conditional_branch_to_colon`, the loop stops when encountering any `SemicolonToken` (see the `while !matches!(..., EndOfFileToken | SemicolonToken)` condition). This will prematurely terminate scanning if the true-branch contains a nested semicolon (e.g. a block-bodied arrow/function expression `? (() => { foo(); }) : ...`), leaving the parser positioned at an inner `;` and preventing recovery from finding the outer `:`. Consider treating `;` as a terminator only when `paren_depth == 0 && brace_depth == 0 && bracket_depth == 0` (similar to `skip_invalid_conditional_branch_to_statement_end`), and otherwise continuing to scan.",
+      "score": 2,
+      "reasons": [
+        "open-question",
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4944,
+      "pr_title": "fix(checker): expand index-signature alias receiver display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4944",
+      "merged_at": "2026-05-10T08:53:40Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4kzn",
+      "path": "crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs",
+      "line": 19,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`diagnostic_messages` calls `load_default_lib_files()` on every invocation, and this helper is used by multiple tests in this file. Since `load_default_lib_files()` reads and parses lib assets from disk, consider caching the loaded libs (e.g., a `OnceLock<Vec<Arc<LibFile>>>`) so the test suite doesn\u2019t repeatedly reload the same lib bundle.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4949,
+      "pr_title": "fix(cli): anchor TS2578 at comment range, not at line start",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4949",
+      "merged_at": "2026-05-10T07:59:33Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4kap",
+      "path": "crates/tsz-cli/src/driver/check_utils.rs",
+      "line": 2172,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`find_directive_in_text` still returns a `(DirectiveKind, usize)` but the `usize` (relative offset) is no longer used now that `directive_text_start` was removed. Consider changing the helper to return only `DirectiveKind` (or otherwise using the offset) to avoid carrying an unused value through the API and to make the intent clearer.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4949,
+      "pr_title": "fix(cli): anchor TS2578 at comment range, not at line start",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4949",
+      "merged_at": "2026-05-10T07:59:33Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4ka2",
+      "path": "scripts/conformance/conformance-snapshot.json",
+      "line": 747,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The PR description claims \u201cnew failures: 0\u201d and a category delta of `false_positive 0`, but the updated conformance snapshot shows `false_positive: 1` with `TS2589` listed under extra/false-positive codes. Please either update the PR description to reflect the new TS2589 false positive (and any related baseline/detail changes) or regenerate the conformance artifacts if this is unintended/stale.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4951,
+      "pr_title": "fix(checker): preserve literal constraint display for generic calls",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4951",
+      "merged_at": "2026-05-10T08:29:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4ohR",
+      "path": "crates/tsz-checker/src/types/computation/call_result.rs",
+      "line": 578,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The candidate deduplication uses `candidates.contains(&candidate)` inside the loop, which makes this O(n^2) in the number of literal candidates. Consider tracking seen candidates with a small `FxHashSet`/`IndexSet` (or similar) while building `candidates` to keep this linear and simpler to reason about as argument counts grow (e.g., large rest-arg calls).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAa",
+      "path": "docs/plan/claims/perf-t0.4-attribution-decision-record.md",
+      "line": 6,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Since this PR is already opened with a final (non-WIP) title, the claim header should be updated to reflect reality (e.g. set the PR number instead of `TBD`, and consider flipping `Status` from `claim` to `ready` per the claims workflow) so the coordination record stays accurate after merge.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAb",
+      "path": "docs/plan/claims/perf-t0.4-attribution-decision-record.md",
+      "line": 44,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The \u201cFindings (to fill)\u201d section is still template text with placeholders. Because this PR is merging the decision record + raw JSON, please replace these placeholders with the actual measured fixture(s)/wall/RSS and chosen tier (or remove the section) to avoid shipping incomplete documentation.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAf",
+      "path": "docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md",
+      "line": 27,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The checked-in raw diagnostics JSON captures `command_line[0]` as an absolute local path (see `raw/*-diag.json`), which doesn't match the reproducer here (`tsz` on PATH) and is not portable. Consider either re-running with `tsz` invoked by name (so argv[0] is stable) or post-processing the committed JSON to redact user-specific paths.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAg",
+      "path": "docs/plan/perf-runs/raw/monorepo-001-diag.json",
+      "line": 27,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This committed raw JSON includes an absolute user-specific path in `command_line[0]` (`/Users/.../.target/release/tsz`). That leaks local filesystem details and makes the checked-in artifact less portable/reproducible. Please consider redacting/sanitizing `command_line` before committing (e.g., replace argv[0] with `tsz` and avoid absolute output paths).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAi",
+      "path": "docs/plan/perf-runs/raw/monorepo-002-diag.json",
+      "line": 27,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This committed raw JSON includes an absolute user-specific path in `command_line[0]` (`/Users/.../.target/release/tsz`). That leaks local filesystem details and makes the checked-in artifact less portable/reproducible. Please consider redacting/sanitizing `command_line` before committing (e.g., replace argv[0] with `tsz` and avoid absolute output paths).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAj",
+      "path": "docs/plan/perf-runs/raw/monorepo-003-diag.json",
+      "line": 27,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This committed raw JSON includes an absolute user-specific path in `command_line[0]` (`/Users/.../.target/release/tsz`). That leaks local filesystem details and makes the checked-in artifact less portable/reproducible. Please consider redacting/sanitizing `command_line` before committing (e.g., replace argv[0] with `tsz` and avoid absolute output paths).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAl",
+      "path": "docs/plan/perf-runs/raw/monorepo-004-diag.json",
+      "line": 27,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This committed raw JSON includes an absolute user-specific path in `command_line[0]` (`/Users/.../.target/release/tsz`). That leaks local filesystem details and makes the checked-in artifact less portable/reproducible. Please consider redacting/sanitizing `command_line` before committing (e.g., replace argv[0] with `tsz` and avoid absolute output paths).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAp",
+      "path": "docs/plan/perf-runs/raw/monorepo-005-diag.json",
+      "line": 27,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This committed raw JSON includes an absolute user-specific path in `command_line[0]` (`/Users/.../.target/release/tsz`). That leaks local filesystem details and makes the checked-in artifact less portable/reproducible. Please consider redacting/sanitizing `command_line` before committing (e.g., replace argv[0] with `tsz` and avoid absolute output paths).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4952,
+      "pr_title": "perf(docs): T0.4 attribution run + Tier 0 exit decision record",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4952",
+      "merged_at": "2026-05-10T08:27:30Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A4rAq",
+      "path": "docs/plan/perf-runs/raw/monorepo-006-diag.json",
+      "line": 27,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This committed raw JSON includes an absolute user-specific path in `command_line[0]` (`/Users/.../.target/release/tsz`). That leaks local filesystem details and makes the checked-in artifact less portable/reproducible. Please consider redacting/sanitizing `command_line` before committing (e.g., replace argv[0] with `tsz` and avoid absolute output paths).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4956,
+      "pr_title": "fix(parser): recover unicode escaped astral identifiers",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4956",
+      "merged_at": "2026-05-10T10:07:13Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A49qr",
+      "path": "crates/tsz-parser/src/parser/state_statements.rs",
+      "line": 240,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The Unknown-token recovery logic added here is duplicated (with near-identical code) in both `parse_source_file_statements` and `parse_statements`. This raises the risk that future tweaks will fix one path but not the other. Consider extracting a small helper (e.g., `recover_after_unknown_token(&mut self, previous_statement_was_block: &mut bool) -> bool`) so the two loops share the exact same recovery behavior.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4958,
+      "pr_title": "fix(parser): align reachability recovery diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4958",
+      "merged_at": "2026-05-10T10:47:31Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5FOz",
+      "path": "crates/tsz-parser/src/parser/state_statements_class.rs",
+      "line": 192,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Inside the `for await` header recovery, `pending_for_expression_comma` remains true after emitting the first `\",\" expected.\"` on an identifier (it\u2019s only cleared on the closing `)` case). This means a complex `of` expression with multiple identifiers (e.g. `foo + bar`) will emit the same diagnostic repeatedly on each identifier token, which can spam diagnostics and shift anchors. Consider tracking whether the expression-start comma has already been reported (or clearing the flag after the first emission) while still keeping the separate close-paren diagnostic if needed.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4967,
+      "pr_title": "fix(solver): preserve literal constraint display candidates",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4967",
+      "merged_at": "2026-05-10T11:30:06Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5QBY",
+      "path": "crates/tsz-solver/src/operations/generic_call/resolve.rs",
+      "line": 2317,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`un_widened.clone()` allocates just to build a union while `un_widened` is still needed later in the fallback branch. Since the interner has `union_from_slice`, you can avoid the clone by building the union from `&un_widened` (or otherwise restructure to compute `candidate_type` once).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4967,
+      "pr_title": "fix(solver): preserve literal constraint display candidates",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4967",
+      "merged_at": "2026-05-10T11:30:06Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5QBg",
+      "path": "crates/tsz-solver/src/operations/generic_call/resolve.rs",
+      "line": 2351,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`let mut display_subst = final_subst.clone()` clones the entire substitution map in a hot path (constraint validation) just to override a single binding for display-only instantiation. If possible, avoid the full clone by temporarily shadowing `tp.name` (save/restore) or by adding a helper that can instantiate with a single-name override layered on top of an existing substitution.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4973,
+      "pr_title": "fix(checker): preserve object literal normalization diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4973",
+      "merged_at": "2026-05-10T12:41:10Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5Vz-",
+      "path": "crates/tsz-checker/src/error_reporter/assignability.rs",
+      "line": 1584,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`display_has_boolean_member_literal_assignability` uses a raw substring search (\": true\"/\": false\"), which can produce false positives when those characters appear inside string literal member types (e.g. `{ x: \"foo: true\" }`). This can incorrectly trigger the normalized-union display preservation. Consider using the same colon+space token scan as `display_has_member_literals_assignability` (checking the post-\": \" segment starts with `true`/`false` and is not within quotes), or otherwise parsing in a way that only matches boolean literals as member values.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4973,
+      "pr_title": "fix(checker): preserve object literal normalization diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4973",
+      "merged_at": "2026-05-10T12:41:10Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5V0F",
+      "path": "crates/tsz-checker/src/state/state_checking/mapped_object_literals.rs",
+      "line": 529,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Inside the per-property loop, this re-computes `evaluate_type_for_assignability(target)` and re-fetches display properties for every property. Since `target` is constant for the whole call, consider hoisting `let evaluated = self.evaluate_type_for_assignability(target);` and the `get_display_properties(..)` lookup outside the loop to avoid repeated work in this hot diagnostic path.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4977,
+      "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4977",
+      "merged_at": "2026-05-10T12:08:51Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5Zjq",
+      "path": "crates/tsz-checker/src/types/type_checking/type_alias_checking.rs",
+      "line": 318,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`conditional_body_has_unresolved_computed_recursive_alias_ref(...)` is called unconditionally here, even when `body_is_conditional` is false. Since the TS2589 definition-site check is intended to apply only to conditional aliases, consider gating this computation behind `body_is_conditional` (or otherwise ensuring the unresolved-computed path can\u2019t trigger for non-conditional aliases).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4982,
+      "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4982",
+      "merged_at": "2026-05-10T12:58:33Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5eON",
+      "path": "crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs",
+      "line": 181,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`arena_ref` selection uses `self.ctx.arena.get(alias.type_node).is_some()` to guess which arena owns `alias.type_node`, but `NodeIndex` values are not globally unique across arenas. This can pick `ctx.arena` even when the alias came from a lib/declaration arena, leading to reading an unrelated node at the same index. Consider carrying the `decl_arena` used to read the alias forward (or using `arena_for_declaration_or`) instead of probing by index presence.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4982,
+      "pr_title": "fix(checker): emit TS2315 for explicit `type X = any` aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4982",
+      "merged_at": "2026-05-10T12:58:33Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5eOS",
+      "path": "crates/tsz-checker/src/checkers/generic_checker/symbol_declaration_helpers.rs",
+      "line": 200,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The explicit-`any` detection doesn't unwrap wrapped type nodes (notably `syntax_kind_ext::PARENTHESIZED_TYPE`). For `type X = (any)` (or nested parentheses), `alias.type_node` will be a wrapped type whose inner is the `TypeReference` to `any`, so this helper will return false and TS2315 will still be suppressed. Consider skipping through `PARENTHESIZED_TYPE` via `get_wrapped_type` (looping as needed) before checking for `TYPE_REFERENCE`/`AnyKeyword`.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4987,
+      "pr_title": "perf(common,cli,solver): wire interner lock_wait_histogram_ns behind perf-counters-timing cfg",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4987",
+      "merged_at": "2026-05-10T13:04:17Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5myc",
+      "path": "crates/tsz-common/src/perf_counters.rs",
+      "line": 593,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The docstring claims that when `perf-counters-timing` is off, this function *and its only caller* `time_shard_write` \u201ccompile out entirely\u201d, but `time_shard_write` still exists (it becomes the `#[cfg(not(...))]` inline wrapper). Consider rewording to avoid implying the symbol is removed, and instead state that the timing/recording path is compiled out when the feature is off.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4990,
+      "pr_title": "fix(checker): preserve declared alias application display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4990",
+      "merged_at": "2026-05-10T13:19:51Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5qN_",
+      "path": "crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs",
+      "line": 1896,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`recursive_tuple_declared_assignment_types` special-cases by `def.name == \"TupleOf\"` but doesn't verify the definition kind. If a user defines an `interface TupleOf<...>` (or other non-alias DefKind) this branch can incorrectly short-circuit assignability and emit TS2322 unconditionally. Consider also requiring `def.kind == DefKind::TypeAlias` (similar to `declared_same_alias_application_assignment_types`) before applying this shortcut.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4991,
+      "pr_title": "test: cover nested object playground shape",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4991",
+      "merged_at": "2026-05-10T13:19:34Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5qWb",
+      "path": "crates/tsz-wasm/src/wasm_tests.rs",
+      "line": 182,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This assertion only checks that TS2322 is absent; the test would still pass if other semantic diagnostics are emitted (meaning the snippet is not actually diagnostic-free). Consider asserting that the semantic diagnostics array is empty (and optionally that syntactic diagnostics are empty) to match the \u201caccepts \u2026 assignment\u201d expectation.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4992,
+      "pr_title": "fix(checker): harden explicit-any alias detection",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4992",
+      "merged_at": "2026-05-10T13:21:55Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5qrq",
+      "path": "scripts/conformance/conformance-baseline.txt",
+      "line": 11,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This baseline output changes which tests are recorded as FAIL/PASS (e.g. adds new FAIL entries like maxConstraints/reachabilityChecksNoCrash1 and removes others). Since the PR\u2019s verification steps don\u2019t mention re-running conformance, please either regenerate this baseline via `scripts/conformance/conformance.sh snapshot` (and mention it in the PR) or revert these baseline changes if they\u2019re unrelated churn.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4993,
+      "pr_title": "docs(solver): clarify interner perf-counter cost summary",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4993",
+      "merged_at": "2026-05-10T13:37:58Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5urC",
+      "path": "docs/plan/claims/perf-t0-interner-cost-comment-precision-2026-05-10.md",
+      "line": 48,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This repeats the phrase \"optimizer folds into the no-op path\", which can be read as a compile-time guarantee. Because `pc` is determined from a runtime `enabled_fast()` check, the generated code still includes an Option test/branch even when disabled; it\u2019s just predictable and cheap. Recommend mirroring the more precise phrasing used earlier (e.g., \"predictable branch\" / \"body skipped\") rather than claiming it folds away.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4997,
+      "pr_title": "fix(solver): preserve normalized object literal display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4997",
+      "merged_at": "2026-05-10T13:57:42Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A507J",
+      "path": "crates/tsz-solver/src/operations/expression_ops.rs",
+      "line": 315,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`normalized_display_properties` does a linear `.find()` over `original_display` for every normalized property, making this O(n\u00b2) per object. Consider precomputing a name->PropertyInfo map (or index) from `original_display` once and doing O(1) lookups while mapping `normalized_properties`.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 4999,
+      "pr_title": "fix(checker): preserve strict callback assignability diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/4999",
+      "merged_at": "2026-05-10T14:13:12Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A548P",
+      "path": "crates/tsz-checker/src/error_reporter/render_failure.rs",
+      "line": 946,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`callable_type_after_display_evaluation` can trigger multiple evaluation passes (`evaluate_type_with_resolution`, `evaluate_type_for_assignability`, etc.). In this hunk it\u2019s invoked unconditionally, even when `depth != 0` (where `strict_callback_case` can never be true). Consider guarding these calls behind `if depth == 0 { ... }` (or computing them lazily only when needed) to avoid extra work during nested failure rendering.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5001,
+      "pr_title": "fix(checker): preserve variance alias display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5001",
+      "merged_at": "2026-05-10T14:47:27Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A59pF",
+      "path": "crates/tsz-solver/src/evaluation/evaluate.rs",
+      "line": 1155,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`store_intermediate_application_display_alias` stores a *global* display_alias mapping from `instantiated` (an Application like `Inner<1>`) to `original_type_id` (e.g. `Outer<1>`). Because Application TypeIds are interned, this can repaint any other occurrence of the same `instantiated` application later (including cases where the user explicitly referenced `Inner<1>`), potentially producing misleading diagnostics. Consider scoping this mapping to the specific evaluation/diagnostic context (or adding an additional guard so it only applies when you can prove the instantiated Application was introduced solely as an evaluation intermediate).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5003,
+      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
+      "merged_at": "2026-05-10T14:43:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5_5K",
+      "path": "crates/tsz-solver/src/evaluation/evaluate_rules/keyof.rs",
+      "line": 102,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`synthetic_property_name_atom_to_key_type` still treats any atom whose text starts with `__unique_` as a unique-symbol key. That defeats the goal of preserving user-authored/computed string keys like \"__unique_1\" in code paths that feed atoms directly (e.g. finite mapped-type property-name collection) and can reintroduce collisions between source string keys and internal unique-symbol placeholders. Consider carrying explicit \"is symbol-named\" metadata alongside these atoms (or returning `TypeId` keys instead of `Atom` names from the mapped-property-name collection APIs) so only genuinely synthetic unique-symbol atoms are converted to `UniqueSymbol`.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5003,
+      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
+      "merged_at": "2026-05-10T14:43:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5_5O",
+      "path": "crates/tsz-checker/src/types/interface_type.rs",
+      "line": 265,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`is_symbol_named` is derived from `is_symbol_property_name`, which classifies computed names as symbol keys based on the *resolved name text* starting with `__unique_`. That will misclassify computed string keys like `const k = \"__unique_1\" as const; interface X { [k]: ... }` as symbol-named, making them behave like unique symbols downstream. Determine symbol-ness from the computed expression\u2019s type (unique symbol / well-known symbol), not from the resolved name prefix.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5003,
+      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
+      "merged_at": "2026-05-10T14:43:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5_5T",
+      "path": "crates/tsz-checker/src/types/interface_type.rs",
+      "line": 301,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Same issue for method signatures: using `is_symbol_property_name` (name-prefix based) can mark computed string keys that start with `__unique_` as symbol-named, reintroducing collisions with user-authored keys. `is_symbol_named` should be based on the computed expression type being a (unique) symbol, not the resolved name string.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5003,
+      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
+      "merged_at": "2026-05-10T14:43:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5_5X",
+      "path": "crates/tsz-checker/src/types/interface_type.rs",
+      "line": 373,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Same issue for accessors: `is_symbol_named` computed via `is_symbol_property_name` can incorrectly treat computed string keys like \"__unique_1\" as symbol-named due to the `__unique_` prefix check. Prefer checking the computed expression\u2019s type for unique-symbol-ness rather than the resolved name text.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5003,
+      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5003",
+      "merged_at": "2026-05-10T14:43:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A5_5a",
+      "path": "crates/tsz-checker/src/state/type_resolution/symbol_types.rs",
+      "line": 1148,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`precompute_symbol_named_computed_property_names` repeats the same declaration/member traversal and `get_type_of_node` work already done in `precompute_computed_property_names`. This adds an extra full pass over interface members and can be costly on large declaration graphs. Consider computing the name map and the symbol-named set/bit in a single traversal to avoid double evaluation.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5004,
+      "pr_title": "perf(checker): gate-once the hottest checker perf-counter inc() sites",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5004",
+      "merged_at": "2026-05-10T14:49:24Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A6BIr",
+      "path": "docs/plan/claims/perf-t0-checker-hot-counter-gate-2026-05-10.md",
+      "line": 8,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The claim says there are \"Five inline\" perf-counter sites (and refers to \"all five\"), but the Sites list below enumerates 7 call sites. Please reconcile the count (either update the text to 7, or trim the list) to avoid confusion when tracking the migrated sites.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5009,
+      "pr_title": "perf(solver): gate-once the intern_* helper counter sites",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5009",
+      "merged_at": "2026-05-10T15:12:39Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A6Gok",
+      "path": "docs/plan/claims/perf-t0-interner-intern-helpers-gate-2026-05-10.md",
+      "line": 14,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Technical accuracy: this refers to `OnceLock<PerfCounters>::get()`, but `tsz_common::perf_counters::counters()` uses `OnceLock::get_or_init(...)`. Consider updating the text to match the actual API being called (still an unconditional OnceLock deref, but via `get_or_init`).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5034,
+      "pr_title": "perf(checker): T2.1.A.1 \u2014 checker field-lifetime inventory + CI guard",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5034",
+      "merged_at": "2026-05-10T17:34:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A6tXB",
+      "path": "scripts/arch/checker_field_inventory.py",
+      "line": 54,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This script imports `tomllib`, which requires Python 3.11+. `scripts/arch/check-checker-boundaries.sh` is run in CI (including self-hosted runners via `scripts/ci/gcp-full-ci.sh`), so if any runner or contributor machine uses Python 3.10 or older this will fail. Either ensure CI + tooling pins Python >=3.11 (and document it), or add a compatible fallback (e.g., use a vendored TOML parser / switch the manifest to JSON).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5034,
+      "pr_title": "perf(checker): T2.1.A.1 \u2014 checker field-lifetime inventory + CI guard",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5034",
+      "merged_at": "2026-05-10T17:34:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A6tXD",
+      "path": "scripts/arch/checker_field_inventory.py",
+      "line": 43,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The module docstring says wiring into pre-commit + CI happens in a follow-up PR (T2.1.A.2), but this PR already wires the script into `check-checker-boundaries.sh` (and the claim file states the pre-commit hook runs it). Please update the docstring to match current behavior to avoid confusion about when/where the guard runs.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5040,
+      "pr_title": "perf(checker): T2.1.A.2 \u2014 empty lifetime-class shell types",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5040",
+      "merged_at": "2026-05-10T18:18:50Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A63tD",
+      "path": "crates/tsz-checker/src/context/mod.rs",
+      "line": 25,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`pub mod lifetime_shells` makes the entire submodule part of the public `tsz_checker::context` API surface. If external callers only need the shell types via the existing re-exports, consider making the module private (`mod lifetime_shells;`) and keeping the `pub use ...` line, or alternatively making both the module and re-export `pub(crate)` until the shells are actually consumed outside the crate.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5048,
+      "pr_title": "perf(checker): T2.2 prep \u2014 typed CrossFileQueryKey + Answer",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5048",
+      "merged_at": "2026-05-10T19:39:56Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A7Lsd",
+      "path": "docs/plan/claims/perf-t2.2-cross-file-query-key-answer-2026-05-10.md",
+      "line": 72,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The nextest filter here doesn\u2019t match the actual test module/file name (`cross_file_query_types`). As written, `-E 'test(cross_file_query_key_answer)'` won\u2019t select these tests, so the verification command is misleading. Update the expression to match the real test name substring used by this module, and consider updating the pre-commit line to reflect the current PR status (it still says \u201cto be confirmed before push\u201d).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5060,
+      "pr_title": "perf(solver): T2.4 \u2014 wrap auxiliary-interner write-locks with time_shard_write",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5060",
+      "merged_at": "2026-05-10T21:52:45Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A7uPC",
+      "path": "docs/plan/claims/perf-t2.4-wrap-aux-interner-locks-2026-05-10.md",
+      "line": 63,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The Verification section still says the pre-commit hook run is \u201cto be confirmed before push\u201d. Since this claim file is being merged alongside the implementation, this should be updated to the actual outcome (or removed) so the claim doesn\u2019t retain a stale TODO.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5061,
+      "pr_title": "perf(checker): close delegate-counter coverage gap for cross-arena delegations",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5061",
+      "merged_at": "2026-05-10T22:23:53Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A71Cs",
+      "path": "docs/plan/claims/perf-delegate-counter-coverage-2026-05-10.md",
+      "line": 58,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The Verification section still includes placeholder items (\"to be run\" / \"to be confirmed\"), but the PR description indicates these checks already ran clean. Please update these lines to reflect the actual commands/results (or remove the placeholders) so the claim file stays consistent with the PR state.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5061,
+      "pr_title": "perf(checker): close delegate-counter coverage gap for cross-arena delegations",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5061",
+      "merged_at": "2026-05-10T22:23:53Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A71Cv",
+      "path": "crates/tsz-checker/src/state/type_analysis/cross_file.rs",
+      "line": 1148,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This block gates on `enabled_fast()`, then calls `perf_counters::inc(...)`, which checks `enabled_fast()` again. Since the outer gate is needed to avoid initializing `counters()`, consider incrementing the `AtomicU64` directly (or adding a helper that assumes enabled) to avoid the redundant enabled check in perf-enabled runs.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5061,
+      "pr_title": "perf(checker): close delegate-counter coverage gap for cross-arena delegations",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5061",
+      "merged_at": "2026-05-10T22:23:53Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A71Cw",
+      "path": "crates/tsz-checker/src/state/type_analysis/cross_file.rs",
+      "line": 1303,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Same as the class-instance delegate path: `enabled_fast()` is checked here and then `inc(...)` re-checks it. If the goal is avoiding `counters()` initialization when disabled, increment the atomic directly inside the outer gate (or use a helper) to avoid the double gate when counters are enabled.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5062,
+      "pr_title": "docs(perf): plan \u00a72 \u2014 lock-wait increment sites done after #5060+#5061",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5062",
+      "merged_at": "2026-05-10T22:31:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A75Kw",
+      "path": "docs/plan/PERFORMANCE_PLAN.md",
+      "line": 64,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This sentence appears to conflate the interner lock-wait histogram (`lock_wait_histogram_ns` / `interner_lock_wait_histogram_ns`) with the cross-arena delegate counter work in #5061. #5061 wires `delegate_cross_arena_calls`/depth tracking, but it doesn\u2019t wrap any lock-wait increment sites; only #5060 adds `time_shard_write` around interner write-lock acquisition. Suggest rewording to separate \u201clock-wait histogram wiring\u201d (interner write paths) from \u201cdelegate counter wiring\u201d (cross-arena delegate paths).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5062,
+      "pr_title": "docs(perf): plan \u00a72 \u2014 lock-wait increment sites done after #5060+#5061",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5062",
+      "merged_at": "2026-05-10T22:31:28Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A75K2",
+      "path": "docs/plan/PERFORMANCE_PLAN.md",
+      "line": 70,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The phrase \u201clock-wait increment sites are wrapped \u2026 and all cross-arena delegate paths (#5061)\u201d is likely inaccurate: cross-arena delegate paths in #5061 add delegate counter increments / recursion-depth tracking, not `time_shard_write` lock-wait instrumentation. Consider clarifying that lock-wait wrapping applies to interner write-lock sites (#5060), while #5061 closes delegate-counter coverage for cross-arena delegations.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5064,
+      "pr_title": "perf(checker): close cache-hits counter coverage gap for cross-arena delegations",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5064",
+      "merged_at": "2026-05-11T00:09:34Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A8Nc7",
+      "path": "docs/plan/claims/perf-delegate-cache-hits-counter-coverage-2026-05-11.md",
+      "line": 65,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The Verification section still contains placeholders (\"to be run\" / \"confirmed before push\"), but the PR description states these checks have already passed. Please update these lines to reflect the actual commands/results (or remove the placeholders) so the claim file is accurate.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5075,
+      "pr_title": "fix(checker): defer generic construct argument mismatches",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5075",
+      "merged_at": "2026-05-11T06:27:34Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A-8CG",
+      "path": "crates/tsz-checker/src/types/computation/call_finalize.rs",
+      "line": 563,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`construct_signature_flags` calls `common::construct_signatures_for_type`, which builds a fresh `Vec<CallSignature>` (cloning signature data) just to compute two booleans. Even though this is on the mismatch path, it\u2019s still avoidable work.\n\nIt looks like you could use `common::callable_shape_for_type_extended` (or `callable_shape_for_type` + `function_shape_for_type`) and inspect `shape.construct_signatures` directly to avoid allocations/clones while still covering constructor-function shapes and evaluated aliases.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5082,
+      "pr_title": "docs(perf): plan \u00a71 \u2014 refresh \"Diagnostics timing\" and \"Perf counters\" baseline rows",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5082",
+      "merged_at": "2026-05-11T06:47:38Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A_SI7",
+      "path": "docs/plan/PERFORMANCE_PLAN.md",
+      "line": 40,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This row is listing `WiredCounters` field names, but a couple are abbreviated in a way that doesn\u2019t match the actual struct fields (`interner_per_kind` and `resolver_fs_probes` in `crates/tsz-common/src/perf_counters.rs`). Suggest using the exact flag names (and optionally stating explicitly that all are `true` *except* `interner_lock_wait`, which depends on `perf-counters-timing`) to avoid future confusion/search misses.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5083,
+      "pr_title": "fix(checker): skip contravariant slots in same-base constrained-target rejection",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5083",
+      "merged_at": "2026-05-11T07:24:53Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6A_YSO",
+      "path": "crates/tsz-checker/src/assignability/assignability_checker.rs",
+      "line": 930,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Variance lookup here bypasses the QueryDatabase variance cache that `check_application_variance_assignability` just consulted/populated (it only checks declared variances, then recomputes). Consider looking up `self.ctx.types.get_type_param_variance(def_id)` first and inserting the computed result so this heuristic doesn\u2019t repeatedly recompute variances on hot assignability paths.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5092,
+      "pr_title": "fix(checker): report generic rest satisfies TS2345 at argument",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5092",
+      "merged_at": "2026-05-11T09:53:56Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BAZrC",
+      "path": "crates/tsz-checker/src/lib.rs",
+      "line": 434,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The `#[cfg(test)]` attribute is duplicated around this module inclusion. It\u2019s harmless, but redundant and can be collapsed to a single `#[cfg(test)]` for the `generic_rest_satisfies_anchor_tests` module block to keep the test-module list consistent and easier to scan.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5094,
+      "pr_title": "Fix braced unicode escape identifier tail recovery",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5094",
+      "merged_at": "2026-05-11T09:20:42Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BAoMe",
+      "path": "crates/tsz-parser/src/parser/state_declarations.rs",
+      "line": 2943,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`consume_unknown_specifier_identifier_tail` stops when it detects `\\u{...}` debris by consuming only `\\` + `u` and leaving the parser positioned at `{`, relying on the caller to handle the rest of the braced escape. In this PR, that follow-up handling exists in `parse_named_imports`, but other call sites of `parse_import_or_export_specifier` (notably named exports) don\u2019t appear to have equivalent `{...}` consumption, which can leave the `{` in the token stream and prematurely terminate the list/recovery. Consider either consuming through the matching `}` here (when the debris pattern is detected) or adding the same debris-tail handling to the named-exports list logic.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5094,
+      "pr_title": "Fix braced unicode escape identifier tail recovery",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5094",
+      "merged_at": "2026-05-11T09:20:42Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BAoNF",
+      "path": "crates/tsz-parser/src/parser/state.rs",
+      "line": 170,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "New parser state (`current_specifier_recovered_braced_unicode_escape_debris`) is initialized in `new_with_language_version`, but `ParserState::reset()` doesn\u2019t currently clear it. If a `ParserState` instance is reused across parses, this flag could retain a stale value and influence later named-import recovery. Recommend resetting it alongside the other recovery flags in `reset()` for consistency and safety.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5100,
+      "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
+      "merged_at": "2026-05-11T09:42:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BBw0j",
+      "path": "crates/tsz-checker/src/types/type_checking/type_alias_checking.rs",
+      "line": 318,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`conditional_body_has_unresolved_computed_recursive_alias_ref` is now evaluated unconditionally for every type alias, even when `has_stable_recursive_ref` is false. This is an extra full AST walk compared to the previous behavior and could become noticeable on large codebases; consider gating it behind a cheap precheck (e.g. only when the body is a conditional type and/or when the body contains any self-reference) so non-recursive aliases don't pay the cost.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5100,
+      "pr_title": "fix(checker): defer parameter-dependent recursive alias TS2589",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5100",
+      "merged_at": "2026-05-11T09:42:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BBw09",
+      "path": "crates/tsz-checker/src/types/type_checking/type_alias_checking.rs",
+      "line": 632,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The new stability check only looks for identifiers in `type_parameter_scope` via `type_arg_nodes_contain_scoped_type_parameter_for_depth_check`, but `type_node_is_deferred_passthrough_for_depth_check` also treats enclosing `infer` bindings as deferred. This means a recursive call like `Foo<Wrap<U>>` (where `U` is from `infer U`) will be treated as a stable recursive reference because `Wrap<U>` isn't a passthrough node and `U` isn't in `type_parameter_scope`, potentially reintroducing definition-site TS2589 false positives for common conditional-type patterns that wrap `infer` results. Consider extending the \"contains scoped parameter\" check here to also treat `infer`-bound identifiers as dependencies (e.g. a recursive `type_node_contains_deferred_passthrough_identifier_for_depth_check` that recurses and checks both type params and infer bindings).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5104,
+      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5104",
+      "merged_at": "2026-05-11T09:52:50Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BCI1O",
+      "path": "crates/tsz-solver/src/evaluation/evaluate_rules/keyof.rs",
+      "line": 97,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`property_name_to_key_type` treats symbol-named properties as string-literal keys unless the name is a synthetic `__unique_<id>` atom. This means well-known computed symbol keys like `[Symbol.iterator]` (which are marked `is_symbol_named`) will currently contribute a *string* literal key to `keyof`, so `Extract<keyof T, string>` can incorrectly keep symbol keys. Consider mapping non-`__unique_` symbol-named properties to a non-string key type (e.g. `symbol`, or a `UniqueSymbol` when possible) rather than `literal_string_atom`.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5104,
+      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5104",
+      "merged_at": "2026-05-11T09:52:50Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BCI1_",
+      "path": "crates/tsz-checker/src/state/type_resolution/symbol_types.rs",
+      "line": 1136,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`precompute_computed_property_names` currently encodes every `unique symbol` computed name as a synthetic `\"__unique_<id>\"` atom. Elsewhere (e.g. `get_property_name_resolved`) unique symbols that are members of the global `Symbol` object are canonicalized to `[Symbol.<name>]` to keep names stable across different syntactic forms. Without the same canonicalization here, computed names like `[observable]` where `observable: typeof Symbol.iterator` can lower to `__unique_<id>` and fail to match members lowered as `[Symbol.iterator]`. Consider reusing the same `[Symbol.<name>]` canonicalization when the `SymbolRef` resolves to a `Symbol.*` member.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5104,
+      "pr_title": "fix(checker): preserve unique symbol keys in keyof",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5104",
+      "merged_at": "2026-05-11T09:52:50Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BCI2V",
+      "path": "crates/tsz-checker/src/state/type_resolution/symbol_types.rs",
+      "line": 937,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`precompute_symbol_named_computed_property_names` re-traverses the same declarations as `precompute_computed_property_names` and recomputes `get_type_of_node` for each computed property expression. This duplicates potentially expensive work during interface lowering. Consider folding symbol-named metadata into `precompute_computed_property_names` (e.g. returning both the name map and a symbol-named set/flag) to avoid a second full pass.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5110,
+      "pr_title": "fix(checker): report class-expression field this misses",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5110",
+      "merged_at": "2026-05-11T10:41:57Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BC615",
+      "path": "crates/tsz-checker/src/state/state_checking_members/ambient_signature_checks.rs",
+      "line": 389,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`get_type_of_node_with_request` already performs class-expression member checking in `dispatch.rs` (and intentionally skips it in re-entrant cases via `class_constructor_resolution_set`). Calling `check_direct_class_expression_initializer` unconditionally here can (a) double-check the same class expression and duplicate diagnostics, and (b) bypass the re-entrancy guard that avoids false TS2339s. Consider guarding this call to only run when the dispatch path would have skipped member checking (re-entrant), or refactor the dispatch/class-expression typing path so the needed \"this miss\" diagnostics are reported without a second pass.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5110,
+      "pr_title": "fix(checker): report class-expression field this misses",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5110",
+      "merged_at": "2026-05-11T10:41:57Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BC62e",
+      "path": "crates/tsz-checker/src/types/queries/class.rs",
+      "line": 1811,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This new cached-instance-`this` guard avoids returning `ANY`/`ERROR` for the general instance-member path, but the earlier explicit `this: CurrentClass` fast path still returns `cached_instance_this_type` without filtering. Since `cached_instance_this_type` can be set to `TypeId::ANY` (e.g., cycle-breaking in `get_class_instance_type`), the explicit-`this` case can still incorrectly return `ANY` and hide downstream diagnostics. Apply the same `ANY`/`ERROR` filtering (or `type_contains_error`) to the explicit-`this` cached return as well.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5114,
+      "pr_title": "fix(checker): cover intersection index signature display",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5114",
+      "merged_at": "2026-05-11T10:54:54Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BDNJP",
+      "path": "crates/tsz-checker/tests/intersection_index_signature_fingerprint_tests.rs",
+      "line": 111,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "PR description mentions adding test coverage for \"max constraints diagnostic display\", but this change set (as reflected in this diff) only adds intersection/index-signature display tests. Either add the max-constraints coverage in this PR or update the PR description so it matches the actual changes.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5117,
+      "pr_title": "fix(checker): preserve numeric union aliases in TS2322",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5117",
+      "merged_at": "2026-05-11T12:45:24Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BECGU",
+      "path": "crates/tsz-checker/src/error_reporter/render_failure/type_mismatch.rs",
+      "line": 41,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`declared_numeric_literal_union_alias_source_display` lookup chain is repeated here (and again later when computing `source_from_annotation`). Consider computing the declared-display once and reusing it to avoid duplicated AST queries/type evaluation during diagnostic rendering and reduce the chance of the two call sites drifting in behavior.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5647,
+      "pr_title": "fix(cli): allow emit after removed import flags",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5647",
+      "merged_at": "2026-05-11T23:35:46Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQAMb",
+      "path": "crates/tsz-cli/src/driver/core.rs",
+      "line": 3865,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`is_removed_option_diagnostic_code` currently returns true for both TS5102 (removed option key) and TS5108 (removed option value like `target=ES3`). The function name suggests only \"removed option\" keys; consider renaming to reflect that it also covers removed *values* (or split into two helpers) to avoid future misuse.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5655,
+      "pr_title": "fix(emit): recover namespace function arrow bodies",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
+      "merged_at": "2026-05-11T23:56:58Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQNGG",
+      "path": "crates/tsz-parser/src/parser/state_statements.rs",
+      "line": 3042,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`parse_function_declaration` now stores the recovered `=>` expression in `FunctionData.body` (and marks `equals_greater_than_token`). Downstream emitters still treat function-declaration bodies as blocks (e.g., they write `function f(...) ` and then emit `body`), so a non-block body will lead to invalid JS output outside the namespace-special-cases added in this PR. Consider representing this recovery separately (e.g., a dedicated recovery field/kind), or ensure the general function-declaration emit path detects `=>`-recovery (via `equals_greater_than_token` and/or `body.kind != BLOCK`) and emits the expression as an expression statement (matching tsc) instead of emitting a function declaration.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5655,
+      "pr_title": "fix(emit): recover namespace function arrow bodies",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
+      "merged_at": "2026-05-11T23:56:58Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQNGN",
+      "path": "crates/tsz-emitter/src/transforms/namespace_es5_ir.rs",
+      "line": 1252,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`IRNode::ExpressionStatement` printing currently only parenthesizes `FunctionExpr`, but the recovered arrow body can be any expression (notably an object literal like `{ a: 1 }`). Emitting that as a bare expression statement would produce `{ a: 1 };` (a block with a label) instead of `({ a: 1 });`. Either wrap object-literal/function expressions in parentheses when constructing this IR node, or update the IR printer\u2019s `ExpressionStatement` emission to apply the same disambiguation rules as the AST emitter.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5655,
+      "pr_title": "fix(emit): recover namespace function arrow bodies",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5655",
+      "merged_at": "2026-05-11T23:56:58Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQNGV",
+      "path": "crates/tsz-emitter/src/emitter/declarations/namespace.rs",
+      "line": 1985,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`emit_recovered_namespace_function_arrow_body` emits the recovered body via `emit_expression(...)` directly. That bypasses the expression-statement disambiguation logic (parenthesizing leading `{` / `function` / etc.) used by `emit_expression_statement`, so cases like `function f() => { a: 1 }` would likely emit `{ a: 1 };` (parsed as a block) instead of an object-literal expression statement. Consider reusing the same paren/disambiguation rules as `emit_expression_statement` when printing the recovered expression in statement position.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5657,
+      "pr_title": "fix(checker): align objectRestNegative rest assignment fingerprint",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5657",
+      "merged_at": "2026-05-12T00:13:07Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQVWm",
+      "path": "crates/tsz-checker/src/assignability/assignment_checker/destructuring.rs",
+      "line": 444,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This replaces the centralized `check_assignable_or_report_at_exact_anchor` pipeline with a manual `is_assignable_to` + one-line TS2322. That bypasses the normal \u201cexplain\u201d path and can drop related-information elaboration (e.g. \u201cTypes of property 'a' are incompatible.\u201d), as well as other assignability-special cases handled by the reporter (weak-type TS2559 substitution, exactOptionalPropertyTypes variants, etc.). Consider emitting via the standard failure rendering while still forcing the top-level display types to come from the computed `rest_type`/`rest_target_type` (e.g. render the solver failure reason with explicit display types) so we keep both the correct fingerprint and the richer diagnostic details.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5658,
+      "pr_title": "fix(emit): align nested async class expression emit",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5658",
+      "merged_at": "2026-05-12T00:13:41Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQXjN",
+      "path": "crates/tsz-emitter/src/transforms/class_es5_ir_members.rs",
+      "line": 733,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The extra `IRNode::VarDecl` uses `self.generate_temp_name()` but that name is not wired to the temp alias actually used when printing the nested static class expression initializer. If the transformer's temp counter has already advanced (e.g., due to computed property temps or `current_static_class_alias`), this can emit `var _b;` while the nested class-expression emitter still generates `(_a = ...)`, causing an undeclared temp (or an unused var) in the output. Consider deriving the alias name using the same temp-naming scheme as the class-expression emitter and passing it through, or avoid emitting a standalone `var` unless you can guarantee it matches the emitted alias.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5658,
+      "pr_title": "fix(emit): align nested async class expression emit",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5658",
+      "merged_at": "2026-05-12T00:13:41Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQXjj",
+      "path": "crates/tsz-emitter/src/emitter/es5/helpers_async.rs",
+      "line": 22,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`avoid_generator_state_collision` is currently hard-coded to only rewrite `function (_a)` when `class_temp == \"_a\"`, and it only replaces `_a.label` / `_a.sent()`. The async lowering can choose other generator-state names (via `IRPrinter::generator_state_name_for_hoisted`), and generator bodies can reference the state object via other properties (e.g. `_a.trys`, `_a.ops`, etc.). This string-based replacement can therefore miss collisions or produce mixed `_a`/`_b` state references. Consider reusing/porting the structured renaming logic from `IRPrinter::rename_colliding_outer_generator_state` (which detects the actual state param name, avoids nested functions, and rewrites all `<state>.` uses), and make it work for any colliding temp name, not just `_a`.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5662,
+      "pr_title": "fix(emit): wrap automatic JSX runtime in system modules",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5662",
+      "merged_at": "2026-05-12T01:31:21Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQiJZ",
+      "path": "crates/tsz-emitter/src/emitter/jsx/emit.rs",
+      "line": 326,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "System wrapper emission now forces the automatic JSX path to emit `_jsx(...)` / `_jsxDEV(...)` when `original_module_kind` is `System`, but I can't find any code in the System wrapper that declares or initializes `_jsx`/`_jsxDEV`/`_jsxs`/`_Fragment` (there\u2019s no JSX auto-import text emission in `emit_system_execute_body`, and `add_system_jsx_runtime_dependency` only assigns the runtime module temp). This will produce output that can throw `ReferenceError: _jsx is not defined` at runtime. Consider either (a) keeping the member-call form for System (`(0, jsx_runtime_1.jsx)(...)`) or (b) extending the System dependency plan/setter emission to bind the needed helpers (e.g. `_jsx = jsx_runtime_1_1.jsx`, `_Fragment = jsx_runtime_1_1.Fragment`, etc.) and hoist those helper names as vars based on `scan_jsx_usage()`.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5662,
+      "pr_title": "fix(emit): wrap automatic JSX runtime in system modules",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5662",
+      "merged_at": "2026-05-12T01:31:21Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQiKG",
+      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
+      "line": 408,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`emit_system_execute_body` always emits an `_jsxFileName = ...;` assignment in `react-jsxdev` mode once `jsx_dev_file_name` is set, but this isn\u2019t gated on actual JSX runtime usage / presence of a `.../jsx-dev-runtime` dependency. For a System module compiled with `jsx=react-jsxdev` but containing no JSX, this will still emit the assignment while `_jsxFileName` is never hoisted, leading to a runtime `ReferenceError`. Gate this emission on `scan_jsx_usage()` or on whether the System dependency plan includes a `/jsx-dev-runtime` action (similar to the hoist logic in `collect_system_hoisted_names`).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5663,
+      "pr_title": "fix(checker): align recursiveFunctionTypes display fingerprints",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5663",
+      "merged_at": "2026-05-12T02:03:22Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQq0G",
+      "path": "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
+      "line": 2309,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`direct_param_display` is computed before `overloaded_recursive_typeof_parameter_display`, but in the early-return path it\u2019s unused. Since `format_type_diagnostic` can be relatively expensive, consider moving the `direct_param_display` computation below this new fast-path (or compute it lazily only when needed).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5666,
+      "pr_title": "fix(emit): align decl file comment placement",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5666",
+      "merged_at": "2026-05-12T06:01:31Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BQqCR",
+      "path": "crates/tsz-emitter/src/emitter/declarations/core.rs",
+      "line": 106,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This new `skip_comments_in_range(node.pos, open_paren_pos)` will consume *all* comments between the start of the function declaration and the opening `(`, including comments that appear after the function name but before `(` (e.g. `function foo /*c*/(x) {}`). If the intent is only to drop comments in the erased pre-name span, consider narrowing the skipped range (or emitting comments in-place between the name end and `(`) to avoid silently deleting user comments in JS output.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5677,
+      "pr_title": "fix(dts): expand returned rest tuple aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5677",
+      "merged_at": "2026-05-12T06:01:03Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BRFXa",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/returned_function_initializer.rs",
+      "line": 558,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Unlabeled tuple elements (e.g. `[string, number]`) are valid TS, but expansion currently requires `name: type` labels via `split_once(':')`, so it will fail and fall back to the unexpanded rest param. Consider synthesizing stable parameter names for unlabeled tuple elements so this expansion works for common tuple forms.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5677,
+      "pr_title": "fix(dts): expand returned rest tuple aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5677",
+      "merged_at": "2026-05-12T06:01:03Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BRFXm",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/returned_function_initializer.rs",
+      "line": 486,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`unique_parameter_name` only de-dupes within the expanded tuple elements. If earlier parameters in the same signature already use a tuple-element label (e.g. an existing `x` param and a tuple element also labeled `x`), expansion can emit duplicate parameter names. Seed the `seen` list with previously-emitted parameter names when expanding so names are unique across the whole parameter list.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5679,
+      "pr_title": "fix(checker): accept React component type unions",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5679",
+      "merged_at": "2026-05-12T01:43:48Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BRFWX",
+      "path": "crates/tsz-checker/src/checkers/jsx/extraction.rs",
+      "line": 553,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The union-member early-return isn\u2019t gated by `!is_this_tag`, so `<this />` could be incorrectly treated as valid when its `component_type` is a union whose members allow props extraction. This contradicts the earlier \u201cKeep `this` tags strict\u201d behavior\u2014consider adding the same `!is_this_tag` guard around this union shortcut.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5681,
+      "pr_title": "fix(emitter): report symlinked import-ref TS2883",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5681",
+      "merged_at": "2026-05-12T02:12:22Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BRK5q",
+      "path": "crates/tsz-emitter/src/declaration_emitter/tests/enum_template_and_advanced.rs",
+      "line": 1160,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This test only cleans up the temp directory at the very end. If any `expect!`/`assert_eq!` above fails, the temp tree is left behind under the system temp dir. Consider using a guard (e.g., `tempfile::TempDir` or a `Drop` cleanup guard) so cleanup runs even when the test fails/panics.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5688,
+      "pr_title": "fix(checker): emit TS7008 for JS null constructor members",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5688",
+      "merged_at": "2026-05-12T03:05:18Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BRsZ9",
+      "path": "docs/plan/claims/fix-js-null-constructor-ts7008-20260512.md",
+      "line": 18,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The verification command includes an absolute local path (`/Users/...`) which is machine-specific and embeds a username. Prefer a repo-relative path, a variable (e.g. `$TS_TESTS_DIR`), or a short note describing the invocation without hardcoding a local filesystem path.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5691,
+      "pr_title": "fix(dts): inline semicolon class typedef tags",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5691",
+      "merged_at": "2026-05-12T06:00:59Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BRyAd",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 872,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`local_semicolon_class_member_typedef_type_text` builds a `Vec` of matching comments (`collect::<Vec<_>>()`) just to iterate in reverse. This adds an allocation and walks the full comments list for every `@type` on a property. Consider scanning `self.all_comments.iter().rev()` directly (skipping comments with `end > cursor`) and updating `cursor` inside the loop, which preserves the current semantics without allocating.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5691,
+      "pr_title": "fix(dts): inline semicolon class typedef tags",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5691",
+      "merged_at": "2026-05-12T06:00:59Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BRyAt",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 900,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`is_simple_jsdoc_type_name` duplicates the identifier check logic that already exists as `is_jsdoc_property_identifier_name` later in this module. Consider reusing the existing helper (or extracting a shared one) to avoid two subtly divergent implementations over time.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5693,
+      "pr_title": "fix(dts): emit js function type tag signatures",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5693",
+      "merged_at": "2026-05-12T06:00:35Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BR37z",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 933,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`parse_jsdoc_function_type_signature` finds the parameter list close-paren via `after_params.find(')')`, which stops at the first `)` and will mis-parse valid function types when a parameter type contains nested parentheses (e.g. callbacks like `(cb: (x: T) => void) => void`). This can lead to emitting an invalid `.d.ts` signature rather than safely falling back. Use the existing `find_matching_paren` (already in this module) or another balanced-paren scan to locate the matching `)` for the top-level parameter list before extracting `params_text`/`return_type`.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5694,
+      "pr_title": "fix(dts): preserve generic jsdoc type tags",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5694",
+      "merged_at": "2026-05-12T06:00:02Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BR8On",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 290,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`jsdoc_generic_name_like_type_reference` allows quotes in generic arguments, but `jsdoc_angle_brackets_are_balanced` counts `<`/`>` even inside quoted string literals. This can incorrectly reject valid types like `Test<\"a>b\">` (the `>` in the literal will underflow the depth), causing the generic reference to not be preserved. Either remove quote support here or update the balance check to ignore angle brackets inside quoted strings (with escape handling).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5694,
+      "pr_title": "fix(dts): preserve generic jsdoc type tags",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5694",
+      "merged_at": "2026-05-12T06:00:02Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BR8Oz",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 1236,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`trim_jsdoc_same_line_following_tags` only looks for the substring `\" @\"`. If the next tag is separated by a tab (e.g. `@template T\\t@typedef ...`) or other whitespace patterns, the `@typedef` portion will not be trimmed and can be mis-parsed as template parameters. Consider scanning for any whitespace followed by `@` (or detecting `@` that begins a JSDoc tag) rather than matching only `\" @\"`.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5701,
+      "pr_title": "fix(dts): map js default typedef aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5701",
+      "merged_at": "2026-05-12T06:00:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BSQgp",
+      "path": "crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs",
+      "line": 1500,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "Emitting the JSDoc `@typedef ... default` as `export type {alias_name} = ...` can produce an invalid `.d.ts` when `{alias_name}` already has a type declaration (e.g. a `class` creates a type). In the test case here, the output contains both `export type Cls = ...` and `declare class Cls ...`, which would trigger TS2300 (duplicate identifier) in TypeScript. Consider instead emitting a non-conflicting alias name and exporting it as a type-only default export (e.g. `export { type <alias> as default }`), or otherwise avoid generating a type alias that collides with an existing type name.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5701,
+      "pr_title": "fix(dts): map js default typedef aliases",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5701",
+      "merged_at": "2026-05-12T06:00:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BSQhP",
+      "path": "crates/tsz-emitter/src/declaration_emitter/tests/simple_declarations.rs",
+      "line": 4317,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This test currently expects output that includes both `export type Cls = ...` and `declare class Cls ...`. A class declaration introduces a type named `Cls`, so also emitting a type alias named `Cls` would make the generated `.d.ts` fail to type-check with TS2300 (duplicate identifier). If the goal is to model a JSDoc `default` typedef, consider asserting a non-conflicting representation (for example, a type-only default export via an export specifier) rather than a same-name type alias alongside a class.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5703,
+      "pr_title": "fix(checker): stabilize recursive Box2 fingerprint",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5703",
+      "merged_at": "2026-05-12T04:16:13Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BSb2J",
+      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
+      "line": 756,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This rewrite matches via `contains(...)` but then overwrites the entire `message_text`. If the TS2322 message ever includes additional elaboration lines (e.g. \"Type ...\\n  Property ...\" patterns used elsewhere), this would silently drop that extra detail. Consider making the match stricter (e.g. equality/starts_with) and/or doing a targeted replacement of just the target display (replace \"Box<number | Box2>\" \u2192 \"Box2\") so any trailing detail is preserved.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5712,
+      "pr_title": "fix(checker): align recursiveTypeReferences1 array diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5712",
+      "merged_at": "2026-05-12T05:10:14Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BS0oJ",
+      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
+      "line": 775,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "The diagnostic suppression here is based only on exact `message_text` matches, so it will remove *any* TS2322 in this file with one of these messages, even if it comes from an unrelated assignment. To keep this rewrite from masking legitimate diagnostics, consider additionally narrowing the filter by span (e.g., only suppress when `diag.start` is within/near the known `flat/flat1/flat2` call sites, similar to the nearby-source check used in other rewrite helpers in this file).",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5712,
+      "pr_title": "fix(checker): align recursiveTypeReferences1 array diagnostics",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5712",
+      "merged_at": "2026-05-12T05:10:14Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BS0oW",
+      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
+      "line": 799,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This rewrite unconditionally suppresses the listed TS2322 messages once the top-level `source_text.contains(...)` guard passes, but it only re-adds the expected diagnostics if the specific `flat([1, ['a']]);` / `flat1...` / `flat2...` markers are found. If a source file happens to match the guard strings but not these call-site markers (or if the upstream conformance snippet changes), this will drop diagnostics without restoring them. Consider extending the initial guard to include the call markers, or only performing the suppression after confirming all three anchors exist.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5717,
+      "pr_title": "fix(emit): decorate system class exports",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
+      "merged_at": "2026-05-12T05:59:35Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BTElg",
+      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
+      "line": 72,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`system_class_needs_legacy_decorate_helper` only checks class decorators + ctor parameter decorators. Legacy member decorators (method/property/accessor) and method parameter decorators also emit `__decorate(...)` via `emit_legacy_member_decorator_calls`, so this pre-scan can skip inlining `__decorate` and generate System output that calls `__decorate` with no helper defined (runtime ReferenceError). Consider reusing the same member/parameter-decorator detection logic used in `emit_class_declaration` (class/emit_declaration.rs:44-101), and/or rely on the already-populated `transforms.helpers().decorate` instead of a shallow top-level scan so nested decorated classes (e.g. inside namespaces) are covered too.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5717,
+      "pr_title": "fix(emit): decorate system class exports",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5717",
+      "merged_at": "2026-05-12T05:59:35Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BTEl_",
+      "path": "crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs",
+      "line": 1487,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "This clones the entire writer output (`get_output().to_string()`) just to slice out the newly-emitted segment, which is O(n) in the full file size and allocates twice. You can slice directly from `self.writer.get_output()` into an owned `String` before truncating to avoid copying the whole output buffer.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    },
+    {
+      "pr_number": 5720,
+      "pr_title": "fix(checker): align indexSignatures1 fingerprints",
+      "pr_url": "https://github.com/mohsen1/tsz/pull/5720",
+      "merged_at": "2026-05-12T05:29:23Z",
+      "base_ref": "main",
+      "thread_id": "PRRT_kwDOQ7o9zc6BTIDT",
+      "path": "crates/tsz-checker/src/state/state_checking/source_file.rs",
+      "line": 605,
+      "reviewer": "copilot-pull-request-reviewer",
+      "body": "`rewrite_index_signatures1_fingerprints` is invoked even when `ctx.allow_source_file_test_pragmas` is false, which means this conformance-specific diagnostic rewriting could affect normal CLI/LSP checking for any user file that happens to contain the trigger strings. Consider gating this call behind `allow_source_file_test_pragmas` (as is already done for `rewrite_intersection_index_signature_fingerprints`) to ensure fingerprint rewrites only run in conformance/test mode.",
+      "score": 1,
+      "reasons": [
+        "detailed-thread"
+      ]
+    }
+  ]
+}

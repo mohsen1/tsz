@@ -307,6 +307,24 @@ type X<T> = T[keyof T]["foo"];
 }
 
 #[test]
+fn test_ts_toolbelt_boolean_map_type_parameter_indices() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Boolean = 0 | 1;
+type Not<B extends Boolean> = { 0: 1; 1: 0 }[B];
+type And<B1 extends Boolean, B2 extends Boolean> = {
+    0: { 0: 0; 1: 0 };
+    1: { 0: 0; 1: 1 };
+}[B1][B2];
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Boolean map type-parameter indices should be valid numeric keys.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_unknown_control_flow_generic_keyspace_and_overlap_regression() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

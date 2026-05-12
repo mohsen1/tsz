@@ -47,3 +47,35 @@ export function find<T>(value: T): T | undefined {
         "exported alias named undefined from another module must not shadow intrinsic undefined; got {diagnostics:#?}"
     );
 }
+
+#[test]
+fn imported_numeric_boolean_alias_indexes_type_literal_maps() {
+    let diagnostics = compile_entry_file(
+        &[
+            ("Boolean/_Internal.ts", "export type Boolean = 0 | 1;\n"),
+            (
+                "Boolean/And.ts",
+                r#"
+import {Boolean} from './_Internal';
+
+export type And<B1 extends Boolean, B2 extends Boolean> = {
+    0: {
+      0: 0
+      1: 0
+    }
+    1: {
+      0: 0
+      1: 1
+    }
+}[B1][B2];
+"#,
+            ),
+        ],
+        1,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2536),
+        "imported numeric Boolean alias should index Boolean maps without TS2536: {diagnostics:#?}"
+    );
+}

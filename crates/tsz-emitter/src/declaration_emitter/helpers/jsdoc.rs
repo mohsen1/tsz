@@ -248,6 +248,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let base = expr[..open].trim();
         if base.is_empty()
+            || base.ends_with('.')
             || !base
                 .chars()
                 .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
@@ -471,10 +472,14 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
-        let trimmed = type_expr.trim();
+    pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
+        let normalized_legacy_generics = type_expr.trim().replace(".<", "<");
+        let trimmed = normalized_legacy_generics.as_str();
         if trimmed.is_empty() {
             return "any".to_string();
+        }
+        if trimmed == "?" {
+            return Self::normalize_jsdoc_type_atom(trimmed);
         }
         if let Some(inner) = trimmed.strip_prefix('?') {
             return format!("{} | null", Self::normalize_jsdoc_type_expr(inner));
@@ -1173,6 +1178,24 @@ impl<'a> DeclarationEmitter<'a> {
                 .next()
                 .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$')
         })
+    }
+
+    fn jsdoc_contains_type_tag(jsdoc: &str) -> bool {
+        jsdoc.lines().any(|raw_line| {
+            let line = raw_line.trim_start_matches('*').trim();
+            line.strip_prefix("@type")
+                .is_some_and(|rest| !rest.trim_start().starts_with("def"))
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_tags(
+        chain: &[String],
+    ) -> Vec<String> {
+        chain
+            .iter()
+            .filter(|jsdoc| !Self::jsdoc_contains_type_tag(jsdoc))
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn emit_js_function_variable_declaration_if_possible(

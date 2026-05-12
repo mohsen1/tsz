@@ -343,20 +343,9 @@ const PRODUCTION_SUPPRESSION_DEBT_REASON: &str =
 // the matched paths. When a matching test starts passing, the entry becomes
 // dead code (the `mark_known_conformance_debt` branch only fires on `Fail`).
 // Periodically prune patterns whose only matches now PASS — entries below
-// are the live set as of 2026-05-02.
-const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
-    "recursiveConditionalTypes",
-    "moduleAugmentationDoesNamespaceEnumMergeOfReexport",
-    "jsxNamespaceImplicitImportJSXNamespaceFromConfigPickedOverGlobalOne",
-    "jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne",
-    "instantiationExpressionErrorNoCrash",
-    "styledComponentsInstantiaionLimitNotReached",
-    "isolatedModulesReExportType",
-    "isolatedDeclarationErrorsObjects",
-    "mixinAccessModifiers",
-    "typeFromPropertyAssignment39",
-    "promiseTry",
-];
+// are the live set as of 2026-05-12.
+const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] =
+    &["recursiveConditionalTypes", "mixinAccessModifiers"];
 
 fn known_conformance_debt_reason(test_key: &str) -> Option<&'static str> {
     PRODUCTION_SUPPRESSION_DEBT_PATTERNS

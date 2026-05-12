@@ -143,7 +143,10 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
             return false;
         };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
             return false;
         };
         symbol

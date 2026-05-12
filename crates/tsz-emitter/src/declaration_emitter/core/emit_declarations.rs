@@ -715,7 +715,12 @@ impl<'a> DeclarationEmitter<'a> {
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
-        if !has_jsdoc_type_function_signature {
+        if has_jsdoc_type_function_signature {
+            self.emit_leading_jsdoc_comments(stmt_node.pos);
+            self.writer.truncate(before_jsdoc_len);
+            let filtered = Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain);
+            self.emit_jsdoc_comment_chain(&filtered);
+        } else {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
         }
         let before_len = self.writer.len();
@@ -868,6 +873,8 @@ impl<'a> DeclarationEmitter<'a> {
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
         if has_jsdoc_type_function_signature {
+            let filtered = Self::jsdoc_chain_without_type_tags(&jsdoc_chain);
+            self.emit_jsdoc_comment_chain(&filtered);
         } else if jsdoc_chain.len() == 1
             && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
             && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)

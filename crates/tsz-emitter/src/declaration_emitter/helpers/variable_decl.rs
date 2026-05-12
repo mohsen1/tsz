@@ -52,24 +52,8 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn normalize_jsdoc_enum_type_text(type_text: &str) -> String {
         let trimmed = type_text.trim();
-        let Some(params_and_return) = trimmed.strip_prefix("function(") else {
-            return trimmed.to_string();
-        };
-        let Some(params_end) = params_and_return.find(')') else {
-            return trimmed.to_string();
-        };
-        let params = &params_and_return[..params_end];
-        let rest = params_and_return[params_end + 1..].trim();
-        let return_type = rest.strip_prefix(':').map(str::trim).unwrap_or("any");
-        let params = params
-            .split(',')
-            .map(str::trim)
-            .filter(|param| !param.is_empty())
-            .enumerate()
-            .map(|(index, param)| format!("arg{index}: {param}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("({params}) => {return_type}")
+        Self::convert_jsdoc_function_type(trimmed)
+            .unwrap_or_else(|| Self::normalize_jsdoc_type_expr(trimmed))
     }
 
     pub(crate) fn emit_jsdoc_enum_variable_declaration_if_possible(
@@ -257,6 +241,16 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         let has_type_annotation = type_annotation.is_some();
         let has_initializer = initializer.is_some();
+        let jsdoc_type_text = self
+            .source_is_js_file
+            .then(|| {
+                self.jsdoc_name_like_type_expr_for_pos(stmt_pos)
+                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
+                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
+                    .or_else(|| self.jsdoc_type_text_for_node(decl_idx))
+                    .or_else(|| self.jsdoc_type_text_for_node(decl_name))
+            })
+            .flatten();
         let const_asserted_enum_member = has_initializer
             .then(|| self.const_asserted_enum_access_member_text(initializer))
             .flatten();
@@ -267,12 +261,7 @@ impl<'a> DeclarationEmitter<'a> {
             .then(|| self.simple_enum_access_base_name_text(initializer))
             .flatten();
         // For JS files with JSDoc @type, named type takes precedence over literal narrowing.
-        let js_has_jsdoc_type = self.source_is_js_file
-            && self
-                .jsdoc_name_like_type_expr_for_pos(stmt_pos)
-                .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
-                .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
-                .is_some();
+        let js_has_jsdoc_type = jsdoc_type_text.is_some();
         let exported_call_initializer = self.variable_declaration_has_effective_export(decl_idx)
             && self
                 .arena
@@ -368,13 +357,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&enum_type_text);
             } else if self.source_is_js_file
-                && let Some(type_text) = self
-                    .jsdoc_name_like_type_expr_for_pos(stmt_pos)
-                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_idx))
-                    .or_else(|| self.jsdoc_name_like_type_expr_for_node(decl_name))
+                && let Some(type_text) = jsdoc_type_text.as_deref()
             {
                 self.write(": ");
-                self.write(&type_text);
+                self.write(type_text);
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)

@@ -254,6 +254,38 @@ mod tests {
     }
 
     #[test]
+    fn es5_nested_static_class_expression_non_null_wrapper_still_hoists_alias() {
+        let source = "class A {\n    static B = (class B {\n        static func2() { return new Promise((resolve) => { resolve(null); }); }\n        static C = (class C {\n            static async func() { await B.func2(); }\n        })!;\n    })!;\n}\nA.B.C.func();\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;") && output.contains("A.B = ((_a ="),
+            "Non-null-wrapped static class expression should still hoist its alias declaration.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a.C = (/** @class */ (function () {"),
+            "Nested non-null-wrapped static class expression should still emit inline ES5 class IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("function (_b)") && output.contains("yield*/, _a.func2()"),
+            "Async static method should avoid generator-state collision while preserving the outer class alias reference.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn class_expression_static_comma_temp_follows_computed_name_temps() {
         let source = "async function* test(x) {\n    return class {\n        [await x] = await x;\n        static [await x] = await x;\n        [yield 1] = yield 2;\n        static [yield 3] = yield 4;\n    };\n}\n";
 

@@ -200,6 +200,60 @@ type A = __Awaited<DeeplyNested<number>>;
     );
 }
 
+#[test]
+fn recursive_awaited_type_parameter_assignment_keeps_type_parameter_display() {
+    let source = r#"
+type __Awaited<T> =
+    T extends null | undefined ? T :
+    T extends PromiseLike<infer U> ? __Awaited<U> :
+    T;
+
+type MyPromise<T> = {
+    then<U>(f: ((value: T) => U | PromiseLike<U>) | null | undefined): MyPromise<U>;
+}
+type InfinitePromise<T> = Promise<InfinitePromise<T>>;
+
+type P0 = __Awaited<Promise<string | Promise<MyPromise<number> | null> | undefined>>;
+type P1 = __Awaited<any>;
+type P2 = __Awaited<InfinitePromise<number>>;
+
+function f11<T, U extends T>(tx: T, ta: __Awaited<T>, ux: U, ua: __Awaited<U>) {
+    ta = ua;
+    ua = ta;
+    ta = tx;
+    tx = ta;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag
+                    .message_text
+                    .contains("Type 'T' is not assignable to type '__Awaited<T>'")
+        }),
+        "expected T -> __Awaited<T> display, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag
+                    .message_text
+                    .contains("Type '__Awaited<T>' is not assignable to type 'T'")
+        }),
+        "expected __Awaited<T> -> T display, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|diag| {
+            !diag.message_text.contains(
+                "__Awaited<Promise<string | Promise<MyPromise<number> | null> | undefined>>",
+            )
+        }),
+        "concrete __Awaited alias must not repaint scoped type parameter diagnostics: {diagnostics:#?}"
+    );
+}
+
 fn assert_no_ts2589(source: &str) {
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
     assert!(
