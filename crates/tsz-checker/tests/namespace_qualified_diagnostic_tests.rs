@@ -448,7 +448,7 @@ export = ns;
     );
     let msg = &ts2694[0].1;
     assert!(
-        msg.contains("\"mod\".Bar"),
+        msg.contains("Namespace '\"mod\".Bar'"),
         "TS2694 namespace should be '\"mod\".Bar', got: {msg:?}"
     );
     assert!(
