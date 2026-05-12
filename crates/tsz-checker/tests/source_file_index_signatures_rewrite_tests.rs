@@ -1,12 +1,4 @@
-use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
-
-fn diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
-}
+use tsz_checker::test_utils::check_source_code_messages as diagnostics;
 
 const REWRITE_GATE: &str = r#"
 type Pseudo = string;
