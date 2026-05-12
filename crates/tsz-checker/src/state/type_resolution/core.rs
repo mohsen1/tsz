@@ -627,7 +627,7 @@ impl<'a> CheckerState<'a> {
                         // Try resolving from lib binders before falling back to UNKNOWN
                         // First check if the global type exists via binder's get_global_type
                         let lib_binders = self.get_lib_binders();
-                        if let Some(_global_sym) = self
+                        if let Some(global_sym) = self
                             .ctx
                             .binder
                             .get_global_type_with_libs(name, &lib_binders)
@@ -644,12 +644,10 @@ impl<'a> CheckerState<'a> {
                                         .iter()
                                         .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                                         .collect();
-                                    // Create a TypeApplication to instantiate the generic type
-                                    return self
-                                        .ctx
-                                        .types
-                                        .factory()
-                                        .application(type_id, type_args);
+                                    let def_id =
+                                        self.ctx.get_canonical_lib_def_id(name, global_sym);
+                                    let base = self.ctx.types.factory().lazy(def_id);
+                                    return self.ctx.types.factory().application(base, type_args);
                                 }
                                 return type_id;
                             }
@@ -797,6 +795,21 @@ impl<'a> CheckerState<'a> {
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
                 let mut result = lowering.lower_type(idx);
+                if let Some((base, app_args)) = query::get_application_info(self.ctx.types, result)
+                    && !is_builtin_array
+                    && query::get_lazy_def_id(self.ctx.types, base).is_none()
+                    && let Some(sym_id) = sym_id
+                {
+                    let def_id = self
+                        .resolve_def_id_for_lowering(type_name_idx)
+                        .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
+                    let lazy_base = self.ctx.types.factory().lazy(def_id);
+                    result = self
+                        .ctx
+                        .types
+                        .factory()
+                        .application(lazy_base, app_args.to_vec());
+                }
 
                 // Ensure Application types from lib types have their base DefId
                 // fully registered (body + params) in BOTH type environments.
@@ -1211,8 +1224,6 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        self.report_missing_lib_type_name(name, type_name_idx);
-
         if !self.ctx.compiler_options.no_lib
             && self.is_promise_like_name(name)
             && let Some(args) = &type_ref.type_arguments
@@ -1223,13 +1234,39 @@ impl<'a> CheckerState<'a> {
                 .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                 .collect();
             if !type_args.is_empty() {
+                let promise_base = {
+                    let lib_binders = self.get_lib_binders();
+                    crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                        name,
+                        self.ctx.binder,
+                        self.ctx.global_file_locals_index.as_deref(),
+                        self.ctx
+                            .all_binders
+                            .as_ref()
+                            .map(|binders| binders.as_ref().as_slice()),
+                        &self.ctx.lib_contexts,
+                    )
+                    .or_else(|| {
+                        lib_binders
+                            .iter()
+                            .find_map(|binder| binder.file_locals.get(name))
+                    })
+                    .map(|sym_id| {
+                        let _ = self.resolve_lib_type_by_name(name);
+                        let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
+                        self.ctx.types.factory().lazy(def_id)
+                    })
+                    .unwrap_or(TypeId::PROMISE_BASE)
+                };
                 return self
                     .ctx
                     .types
                     .factory()
-                    .application(TypeId::PROMISE_BASE, type_args);
+                    .application(promise_base, type_args);
             }
         }
+
+        self.report_missing_lib_type_name(name, type_name_idx);
 
         if let Some(args) = &type_ref.type_arguments {
             for &arg_idx in &args.nodes {
