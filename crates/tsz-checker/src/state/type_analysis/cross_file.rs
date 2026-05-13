@@ -701,7 +701,8 @@ impl<'a> CheckerState<'a> {
 
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
-                && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
+                && let Some((cached_type, _cached_params)) =
+                    self.ctx.lib_delegation_cache.get(&sym_id).cloned()
             {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_lib
@@ -810,7 +811,9 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
-                    self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
+                    self.ctx
+                        .lib_delegation_cache
+                        .insert(sym_id, (direct_type, direct_params.clone()));
                 }
                 return Some((direct_type, direct_params));
             }
@@ -1040,10 +1043,7 @@ impl<'a> CheckerState<'a> {
             let child_namespace_names: rustc_hash::FxHashMap<TypeId, String> =
                 std::mem::take(&mut checker.ctx.namespace_module_names);
 
-            let child_lib_delegation_cache: Vec<(SymbolId, TypeId)> =
-                std::mem::take(&mut checker.ctx.lib_delegation_cache)
-                    .into_iter()
-                    .collect();
+            let child_lib_delegation_cache = std::mem::take(&mut checker.ctx.lib_delegation_cache);
 
             // Propagate lib type resolution cache from child to parent.
             // Without this, child contexts that resolve lib types (Array, Promise, etc.)
@@ -1082,8 +1082,11 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_module_names
                 .extend(child_namespace_names);
-            for (name, type_id) in child_lib_delegation_cache {
-                self.ctx.lib_delegation_cache.entry(name).or_insert(type_id);
+            for (name, cache_value) in child_lib_delegation_cache {
+                self.ctx
+                    .lib_delegation_cache
+                    .entry(name)
+                    .or_insert(cache_value);
             }
             for (name, type_id) in child_lib_type_cache {
                 self.ctx
@@ -1103,7 +1106,9 @@ impl<'a> CheckerState<'a> {
             // Cache the result for lib delegations by SymbolId.
             // This prevents redundant child checker creation for the same lib symbol.
             if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
-                self.ctx.lib_delegation_cache.insert(sym_id, result);
+                self.ctx
+                    .lib_delegation_cache
+                    .insert(sym_id, (result, result_params.clone()));
             }
 
             // Write through to the canonical cross-file symbol-type cache so
