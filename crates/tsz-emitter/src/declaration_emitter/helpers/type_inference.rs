@@ -8304,11 +8304,9 @@ impl<'a> DeclarationEmitter<'a> {
                 )
             }) {
                 continue;
-            } else {
-                if !exact_exists {
-                    lines.insert(insert_at + actual_insertions, line);
-                    actual_insertions += 1;
-                }
+            } else if !exact_exists {
+                lines.insert(insert_at + actual_insertions, line);
+                actual_insertions += 1;
             }
         }
 
