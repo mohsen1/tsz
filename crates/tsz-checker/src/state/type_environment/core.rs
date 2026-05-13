@@ -1633,7 +1633,14 @@ impl<'a> CheckerState<'a> {
             };
             type_parameters
         } else if flags & symbol_flags::INTERFACE != 0 {
-            let iface = arena.get_interface(node)?;
+            let Some(iface) = arena.get_interface(node) else {
+                // Merged symbols such as `Array` can present a value
+                // declaration before the interface declaration. This candidate
+                // cannot contribute type parameters, but returning `None`
+                // would force a child checker before the later interface decl
+                // gets a chance to provide the real params.
+                return Some(Vec::new());
+            };
             if let Some(name_node) = arena.get(iface.name)
                 && let Some(name_ident) = arena.get_identifier(name_node)
                 && name_ident.escaped_text.as_str() != sym_escaped_name
@@ -1641,6 +1648,8 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             let Some(type_parameters) = iface.type_parameters.as_ref() else {
+                // Interface with no AST type parameters also has an arena-only
+                // result: the slow path returns an empty parameter list.
                 return Some(Vec::new());
             };
             type_parameters

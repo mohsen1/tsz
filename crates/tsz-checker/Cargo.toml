@@ -754,6 +754,10 @@ name = "jsdoc_class_property_target_display"
 path = "tests/jsdoc_class_property_target_display.rs"
 
 [[test]]
+name = "jsdoc_class_template_arena_direct_tests"
+path = "tests/jsdoc_class_template_arena_direct_tests.rs"
+
+[[test]]
 name = "jsdoc_prototype_assignment_target_display"
 path = "tests/jsdoc_prototype_assignment_target_display.rs"
 

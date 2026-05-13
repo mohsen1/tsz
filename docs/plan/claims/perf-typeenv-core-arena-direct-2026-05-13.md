@@ -1,10 +1,11 @@
 # Claim — Arena-direct lowering for `TypeEnvironmentCore` type-param extraction
 
-**Owner:** claude (this session)
+**Owner:** Codex session
 **Branch:** `perf/typeenv-core-arena-direct-2026-05-13`
-**Draft PR:** to be opened with this claim
+**Draft PR:** #6144
 **Sequences after:** #6111 (cache source-file symbol arena delegation)
-**Decision record reference:** [`perf-runs/2026-05-13-attribution-post-6111.md`](../perf-runs/2026-05-13-attribution-post-6111.md)
+**Input decision record:** [`perf-runs/2026-05-13-post-6111-attribution.md`](../perf-runs/2026-05-13-post-6111-attribution.md)
+**Follow-up decision record:** [`perf-runs/2026-05-13-typeenv-arena-direct-attribution.md`](../perf-runs/2026-05-13-typeenv-arena-direct-attribution.md)
 
 ## Goal
 
@@ -60,17 +61,22 @@ this slice.
 
 ## What this slice does
 
-1. Extract a free function `jsdoc_template_type_params_for_decl_in_arena(
-   arena, decl_idx, atom_interner) -> Option<Vec<TypeParamInfo>>` that
-   does the same thing as today's `jsdoc_template_type_params_for_decl`
-   but takes the arena directly.
-2. Change `extract_simple_type_params_from_decl_in_arena` so that when a
-   class or interface has no `type_parameters`, it:
-   - returns `Some(jsdoc_params)` if JSDoc `@template` is present;
-   - returns `Some(Vec::new())` otherwise.
-   (Both match what the slow path does today.)
-3. Keep the existing constraint/default bail-out for now — that's the
-   next slice. No semantic change to that path.
+1. Adds `jsdoc_template_params_in_arena` in
+   `crates/tsz-checker/src/state/type_environment/core.rs`, preserving the
+   existing leading-comment and `export` wrapper behavior while avoiding a
+   child checker for class declarations that have no AST type-parameter list.
+2. Changes `extract_simple_type_params_from_decl_in_arena` so a class with no
+   AST type parameters returns the arena-derived JSDoc `@template` params, or
+   `Some(Vec::new())` when no template is present.
+3. Changes the interface branch so a non-interface declaration candidate for a
+   merged interface/value symbol returns `Some(Vec::new())` instead of bailing
+   out. The candidate cannot contribute type params, and this lets later real
+   interface declarations provide the params without first constructing a child
+   checker.
+4. Registers and extends the focused
+   `jsdoc_class_template_arena_direct_tests` test target.
+5. Keeps the existing constraint/default bail-out for now. Type parameters with
+   constraints or defaults still use the slow path.
 
 ## What this slice does NOT do
 
@@ -85,26 +91,30 @@ this slice.
   `with_parent_cache_by_reason[TypeEnvironmentCore]` counter is the
   before/after signal.
 
-## Correctness plan
+## Verification
 
-- Add a unit test that runs the arena-direct path against:
-  - a plain class `class Foo {}`,
-  - a plain interface `interface Bar {}`,
-  - both with a `JSDoc @template` comment producing one and two params,
-  - both with `is_const` modifier on the JSDoc param,
-  - both placed inside an `EXPORT_DECLARATION` wrapper (the JSDoc
-    leading-comment search-pos adjustment the slow path performs).
-- Conformance must remain at 100%. Diagnostics must be byte-identical.
+- `cargo test -p tsz-checker --test jsdoc_class_template_arena_direct_tests -- --nocapture`
+- `cargo test -p tsz-checker --lib type_environment -- --nocapture`
+- `CARGO_TARGET_DIR=.target cargo build -p tsz-cli --bin tsz --features perf-tools --release`
+- `TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --noEmit -p scripts/bench/scale-cliff/fixtures/monorepo-{001..006}/tsconfig.json --diagnostics-json ... --perf-counters-json ...`
 
-## Expected attribution signal
+## Measured attribution signal
 
-After this slice, on the same scale-cliff fixtures and same
-`--features perf-tools` build, `with_parent_cache_by_reason[
-TypeEnvironmentCore]` should drop. The exact magnitude depends on the
-class/interface vs. type-alias mix in each fixture; the decision record
-recorded 5,259 constructions on monorepo-006 and the slow path's
-"work" is exactly the JSDoc-or-empty branch for the no-typeparams cases.
-The follow-up attribution run will quote the actual delta.
+On the same scale-cliff fixtures and the same `--features perf-tools` build,
+`with_parent_cache_by_reason[TypeEnvironmentCore]` drops from thousands of
+child-checker constructions to one per fixture:
+
+| Fixture | before | after | delta |
+| --- | ---: | ---: | ---: |
+| monorepo-001 | 110 | 1 | -109 |
+| monorepo-002 | 1,019 | 1 | -1,018 |
+| monorepo-003 | 5,108 | 1 | -5,107 |
+| monorepo-004 | 5,160 | 1 | -5,159 |
+| monorepo-005 | 5,210 | 1 | -5,209 |
+| monorepo-006 | 5,259 | 1 | -5,258 |
+
+The follow-up record keeps `DelegateCrossArenaSymbol` unchanged, which matches
+the slice boundary.
 
 ## Coordination
 
@@ -117,13 +127,14 @@ The follow-up attribution run will quote the actual delta.
 
 ## Exit criteria for the PR
 
-1. Arena-direct path covers no-typeparams class and interface
-   (including JSDoc `@template`).
-2. Unit tests added in `crates/tsz-checker` for the no-typeparams +
-   JSDoc cases (covering both name choices, per the anti-hardcoding
-   directive).
-3. Full conformance unchanged (100%).
-4. Lint clean.
-5. Decision-record follow-up under `docs/plan/perf-runs/` with the
-   measured `with_parent_cache_by_reason[TypeEnvironmentCore]` delta on
-   `monorepo-001..006` once CI is green.
+1. Arena-direct path covers no-typeparams class and interface cases that do
+   not require constraint/default lowering.
+2. Focused `crates/tsz-checker` tests cover plain class/interface,
+   JSDoc-template classes including `@template const`, exported
+   JSDoc-template classes, exported plain interfaces, and merged
+   interface/value symbols.
+3. Targeted type-environment tests pass locally.
+4. Lint and formatting are clean.
+5. Decision-record follow-up under `docs/plan/perf-runs/` records the measured
+   `with_parent_cache_by_reason[TypeEnvironmentCore]` delta on
+   `monorepo-001..006`.
