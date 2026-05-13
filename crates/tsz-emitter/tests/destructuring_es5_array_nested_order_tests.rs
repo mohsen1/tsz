@@ -1,12 +1,11 @@
 //! Ordering parity with tsc for ES5 array destructuring that contains a
 //! nested binding pattern.
 //!
-//! When an array pattern like `[{ ...a }, b = a]` is downlevelled to ES5,
-//! all element reads (`_q = _p[0], _r = _p[1]`) must be emitted before any
-//! element's decomposition (`a = __rest(_q, [])`) or defaulted assignment
-//! (`b = _r === void 0 ? a : _r`). Without this, a later element's default
-//! expression can observe a name that has not been bound yet by an earlier
-//! element's decomposition. Source:
+//! When an array pattern like `[{ ...a }, b = a]` is downlevelled to ES5, the
+//! object-rest element is first captured in a temp, then decomposed after later
+//! non-simple elements have captured their own temps. Without this, a later
+//! element's default expression can observe a name that has not been bound yet
+//! by an earlier element's object-rest decomposition. Source:
 //! <https://github.com/microsoft/TypeScript/issues/39181>
 //!
 //! Covers the conformance fixture
@@ -65,36 +64,69 @@ fn array_destructuring_with_object_rest_emits_reads_before_decompositions() {
 }
 
 #[test]
-fn array_destructuring_two_nested_emits_all_reads_first() {
-    // Both elements are nested patterns; reads must batch before any
-    // member-access decomposition.
+fn array_destructuring_plain_nested_patterns_keep_single_pass_order() {
+    // Plain nested patterns do not contain object rest, so member-access
+    // decomposition remains interleaved with array reads.
     let source = "let [{ x }, { y }]: any[] = [{ x: 1 }, { y: 2 }];\n";
     let output = parse_lower_emit(source, es5_opts());
 
     let read_0 = output
         .find("_a[0]")
         .unwrap_or_else(|| panic!("missing `_a[0]` read:\n{output}"));
-    let read_1 = output
-        .find("_a[1]")
-        .unwrap_or_else(|| panic!("missing `_a[1]` read:\n{output}"));
     let dot_x = output
         .find(".x")
         .unwrap_or_else(|| panic!("missing `.x` decomposition:\n{output}"));
+    let read_1 = output
+        .find("_a[1]")
+        .unwrap_or_else(|| panic!("missing `_a[1]` read:\n{output}"));
     let dot_y = output
         .find(".y")
         .unwrap_or_else(|| panic!("missing `.y` decomposition:\n{output}"));
 
     assert!(
-        read_0 < read_1,
-        "Element 0's read must precede element 1's read.\nOutput:\n{output}"
+        read_0 < dot_x,
+        "Element 0's read must precede its property decomposition.\nOutput:\n{output}"
     );
     assert!(
-        read_1 < dot_x,
-        "Both reads must precede any member-access decomposition.\nOutput:\n{output}"
+        dot_x < read_1,
+        "Plain nested element 0 should decompose before element 1 is read.\nOutput:\n{output}"
     );
     assert!(
-        dot_x < dot_y,
-        "Decomposition runs in element order.\nOutput:\n{output}"
+        read_1 < dot_y,
+        "Element 1's read must precede its property decomposition.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn array_destructuring_default_before_object_rest_keeps_single_pass_order() {
+    let source =
+        "declare function f(): any;\nlet arr: any = [];\nlet [a = f(), { ...b }]: any[] = arr;\n";
+    let output = parse_lower_emit(source, es5_opts());
+
+    let first_read = output
+        .find("_a = arr[0]")
+        .unwrap_or_else(|| panic!("missing first element read:\n{output}"));
+    let default_assign = output
+        .find("a = _a === void 0 ? f() : _a")
+        .unwrap_or_else(|| panic!("missing defaulted `a` assignment:\n{output}"));
+    let rest_read = output
+        .find("_b = arr[1]")
+        .unwrap_or_else(|| panic!("missing object-rest element read:\n{output}"));
+    let rest_decomp = output
+        .find("b = __rest(_b")
+        .unwrap_or_else(|| panic!("missing object-rest decomposition:\n{output}"));
+
+    assert!(
+        first_read < default_assign,
+        "Element 0's read must precede its default assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        default_assign < rest_read,
+        "Default initializer before object rest must not be deferred past later reads.\nOutput:\n{output}"
+    );
+    assert!(
+        rest_read < rest_decomp,
+        "Object-rest decomposition runs after its temp capture.\nOutput:\n{output}"
     );
 }
 
