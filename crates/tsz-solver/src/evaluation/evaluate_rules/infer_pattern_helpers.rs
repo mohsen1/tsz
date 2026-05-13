@@ -139,6 +139,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(subst)
     }
 
+    fn erase_return_type_for_infer(
+        &self,
+        return_type: TypeId,
+        type_params: &[TypeParamInfo],
+    ) -> TypeId {
+        let Some(subst) = self.erase_type_params_to_constraints(type_params) else {
+            return return_type;
+        };
+        instantiate_type(self.interner(), return_type, &subst)
+    }
+
     fn instantiate_signature_for_infer(
         &self,
         params: &[ParamInfo],
@@ -717,20 +728,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
-                    match_return(source, source_fn.return_type, bindings)
+                    let return_type = self
+                        .erase_return_type_for_infer(source_fn.return_type, &source_fn.type_params);
+                    match_return(source, return_type, bindings)
                 }
                 Some(TypeData::Callable(source_shape_id)) => {
-                    // Match against the last call signature (TypeScript behavior)
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    if source_shape.call_signatures.is_empty() {
-                        return false;
-                    }
-                    // Safe to use last() here as we've verified the vector is not empty
                     let source_sig = match source_shape.call_signatures.last() {
                         Some(sig) => sig,
                         None => return false,
                     };
-                    match_return(source, source_sig.return_type, bindings)
+                    let return_type = self.erase_return_type_for_infer(
+                        source_sig.return_type,
+                        &source_sig.type_params,
+                    );
+                    match_return(source, return_type, bindings)
                 }
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
@@ -740,29 +752,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
-                                if !match_return(
-                                    member,
+                                let return_type = self.erase_return_type_for_infer(
                                     source_fn.return_type,
-                                    &mut member_bindings,
-                                ) {
+                                    &source_fn.type_params,
+                                );
+                                if !match_return(member, return_type, &mut member_bindings) {
                                     return false;
                                 }
                             }
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                if source_shape.call_signatures.is_empty() {
-                                    return false;
-                                }
-                                // Safe to use last() here as we've verified the vector is not empty
                                 let source_sig = match source_shape.call_signatures.last() {
                                     Some(sig) => sig,
                                     None => return false,
                                 };
-                                if !match_return(
-                                    member,
+                                let return_type = self.erase_return_type_for_infer(
                                     source_sig.return_type,
-                                    &mut member_bindings,
-                                ) {
+                                    &source_sig.type_params,
+                                );
+                                if !match_return(member, return_type, &mut member_bindings) {
                                     return false;
                                 }
                             }
