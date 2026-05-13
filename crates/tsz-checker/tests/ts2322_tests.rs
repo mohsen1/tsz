@@ -5065,6 +5065,33 @@ const r1: number = x;
 }
 
 #[test]
+fn iterator_intersection_return_method_name_is_not_unresolved_identifier() {
+    let source = r#"
+type WithReturn = Iterator<number> & { return(): IteratorReturnResult<void> };
+
+const iter: WithReturn = {
+  next() { return { value: 1, done: false as const }; },
+  return() { return { value: undefined, done: true as const }; }
+};
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|diagnostic| diagnostic.0).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME)
+            && !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "object literal method name `return` should satisfy Iterator intersection without TS2304/TS2322, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_module_local_builtin_iterator_return_alias_shadows_intrinsic() {
     let source = r#"
 export {};
