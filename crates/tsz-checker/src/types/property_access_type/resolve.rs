@@ -502,16 +502,15 @@ impl<'a> CheckerState<'a> {
             // and union2 — eliminating 4+ RefCell borrows and HashMap lookups.
             // Only used when flow narrowing is skipped (skip_result_flow_for_result),
             // which guarantees the result is context-independent.
-            if skip_result_flow_for_result {
-                if let Some(&cached) = self
+            if skip_result_flow_for_result
+                && let Some(&cached) = self
                     .ctx
                     .narrowing_cache
                     .optional_chain_cache
                     .borrow()
                     .get(&(object_type, prop_atom))
-                {
-                    return cached;
-                }
+            {
+                return cached;
             }
 
             let (non_nullish_base, base_nullish) = self.split_nullish_type(object_type);
