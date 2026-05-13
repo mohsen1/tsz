@@ -2198,33 +2198,4 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         true
     }
-
-    /// Match a string type against a template literal pattern.
-    pub(crate) fn match_template_literal_string_type(
-        &self,
-        pattern_spans: &[TemplateSpan],
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> bool {
-        if pattern_spans
-            .iter()
-            .any(|span| matches!(span, TemplateSpan::Text(_)))
-        {
-            return false;
-        }
-
-        for span in pattern_spans {
-            if let TemplateSpan::Type(type_id) = span {
-                if let Some(TypeData::Infer(info)) = self.interner().lookup(*type_id) {
-                    if !self.bind_infer(&info, TypeId::STRING, bindings, checker) {
-                        return false;
-                    }
-                } else if !checker.is_subtype_of(TypeId::STRING, *type_id) {
-                    return false;
-                }
-            }
-        }
-
-        true
-    }
 }
