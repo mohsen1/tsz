@@ -5,38 +5,12 @@
 //! - Binary + / += when one side is symbol and the other is string or any
 //! - Relational operators (<, >, <=, >=) with symbol operands
 
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use crate::test_utils::check_source_code_messages;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let full_source =
         format!("declare var s: symbol;\ndeclare var str: string;\ndeclare var a: any;\n{source}");
-    let mut parser = ParserState::new("test.ts".to_string(), full_source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    check_source_code_messages(&full_source)
 }
 
 fn has_error(source: &str, code: u32) -> bool {
