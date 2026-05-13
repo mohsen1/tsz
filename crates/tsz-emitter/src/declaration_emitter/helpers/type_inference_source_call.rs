@@ -187,6 +187,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
         type_text = Self::replace_whole_words_in_text(&type_text, &substitutions);
         type_text = Self::simplify_string_literal_template_type_text(&type_text);
+        type_text = Self::expand_literal_key_mapped_type_text(&type_text).unwrap_or(type_text);
         if type_param_names
             .iter()
             .any(|name| Self::contains_whole_word_in_text(&type_text, name))
@@ -197,6 +198,35 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(type_text)
+    }
+
+    fn expand_literal_key_mapped_type_text(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
+        let mapped = inner.strip_prefix('[')?;
+        let in_pos = mapped.find(" in ")?;
+        let after_in = mapped.get(in_pos + " in ".len()..)?;
+        let end_bracket = after_in.find(']')?;
+        let keys_text = after_in.get(..end_bracket)?.trim();
+        let after_bracket = after_in.get(end_bracket + 1..)?.trim();
+        let value_text = after_bracket
+            .strip_prefix(':')?
+            .trim()
+            .trim_end_matches(';')
+            .trim();
+        if value_text.is_empty() {
+            return None;
+        }
+        let mut lines = Vec::new();
+        for key in Self::split_top_level_union_type_parts(keys_text) {
+            let key = key.trim();
+            let key = Self::unquoted_string_literal_text(key)?;
+            if !Self::is_simple_identifier_text(&key) {
+                return None;
+            }
+            lines.push(format!("    {key}: {value_text};"));
+        }
+        (!lines.is_empty()).then(|| format!("{{\n{}\n}}", lines.join("\n")))
     }
 
     fn simplify_string_literal_template_type_text(type_text: &str) -> String {
