@@ -270,31 +270,31 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn symbol_arena_symbol_type_cache_is_stable(
-        &self,
-        sym_id: SymbolId,
-        delegate_arena: &tsz_parser::NodeArena,
-    ) -> bool {
-        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
-            return false;
-        };
-        if symbol.declarations.is_empty() {
-            return false;
+    fn program_has_module_augmentations(&self) -> bool {
+        // Module augmentation can make a source-file symbol type depend on the
+        // importer graph, so the shared `(file_idx, SymbolId)` cache key is
+        // only valid when the program has no module augmentation metadata.
+        if self
+            .ctx
+            .global_module_augmentations_index
+            .as_ref()
+            .is_some_and(|index| !index.is_empty())
+            || self
+                .ctx
+                .global_augmentation_targets_index
+                .as_ref()
+                .is_some_and(|index| !index.is_empty())
+        {
+            return true;
         }
 
-        // The `symbol_arenas` map stores one arena for the symbol, but merged
-        // or augmented symbols can also have declarations in other arenas. A
-        // cached symbol type is reusable only when every declaration is proven
-        // to belong solely to the delegated source-file arena.
-        symbol.declarations.iter().all(|&decl_idx| {
-            self.ctx
-                .binder
-                .declaration_arenas
-                .get(&(sym_id, decl_idx))
-                .is_some_and(|arenas| {
-                    arenas.len() == 1 && std::ptr::eq(arenas[0].as_ref(), delegate_arena)
-                })
-        })
+        self.ctx.all_binders.as_ref().is_some_and(|binders| {
+            binders.iter().any(|binder| {
+                !binder.module_augmentations.is_empty()
+                    || !binder.augmentation_target_modules.is_empty()
+            })
+        }) || !self.ctx.binder.module_augmentations.is_empty()
+            || !self.ctx.binder.augmentation_target_modules.is_empty()
     }
 
     fn try_resolve_cross_arena_named_alias_without_child(
@@ -704,9 +704,12 @@ impl<'a> CheckerState<'a> {
         };
 
         if should_delegate {
+            let can_cache_source_file_symbol_arena_type = delegate_arena_source
+                == CrossArenaSymbolMissSource::SymbolArena
+                && !self.program_has_module_augmentations();
             let symbol_type_cache_file_idx = if needs_cross_file_delegation {
                 cross_file_idx
-            } else if delegate_arena_source == CrossArenaSymbolMissSource::SymbolArena {
+            } else if can_cache_source_file_symbol_arena_type {
                 delegate_arena
                     .filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))
                     .filter(|arena| {
@@ -715,7 +718,6 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .is_some_and(|source_file| !source_file.is_declaration_file)
                     })
-                    .filter(|arena| self.symbol_arena_symbol_type_cache_is_stable(sym_id, arena))
                     .and_then(|arena| self.ctx.get_file_idx_for_arena(arena))
             } else {
                 None

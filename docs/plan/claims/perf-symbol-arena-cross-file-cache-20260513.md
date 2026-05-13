@@ -12,13 +12,14 @@ constructs 924 `DelegateCrossArenaSymbol` child checkers, all from
 ## Scope
 
 - For `delegate_cross_arena_symbol_resolution`, detect non-current
-  `symbol_arenas` targets that map to source files and whose declarations
-  are proven to live only in that source-file arena.
+  `symbol_arenas` targets that map to source files.
 - Use the existing `cached_cross_file_symbol_type` /
   `cache_cross_file_symbol_type` helpers for those targets.
-- Keep declaration-file / lib-style delegations, and merged or augmented
-  source-file symbols, on the existing `lib_delegation_cache` / child-checker
-  fallback path.
+- Keep declaration-file / lib-style delegations, and programs with module
+  augmentations, on the existing `lib_delegation_cache` / child-checker
+  fallback path. Module augmentation can change source-file symbol answers
+  based on importer graph state, so the shared `(file_idx, SymbolId)` key is
+  intentionally disabled for those programs.
 - Keep child-checker fallback and diagnostics behavior unchanged.
 
 ## Expected signal
@@ -44,7 +45,7 @@ scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json
 exits non-zero because the generated fixture emits expected diagnostics, but
 it writes perf JSON.
 
-An unguarded prototype observed on `monorepo-006`:
+The module-augmentation-guarded implementation observed on `monorepo-006`:
 
 - `delegate.cache_hits_cross_file = 632` (previous refreshed run: `0`).
 - `DelegateCrossArenaSymbol = 292` child checkers (previous refreshed run:
@@ -53,7 +54,10 @@ An unguarded prototype observed on `monorepo-006`:
 - Remaining `DelegateCrossArenaSymbol` misses: 251 source-file targets plus
   41 declaration-file targets.
 
-That prototype regressed conformance by caching merged or augmented
-source-file symbols. The PR now requires every declaration to be registered
-solely in the delegated arena before using the shared bucket; re-measure this
-guarded version before treating the prototype counters as final.
+The unguarded prototype regressed the
+`moduleAugmentationImportsAndExports*` conformance group by caching
+source-file symbol answers in a program with module augmentation. The PR now
+detects module augmentations through the global augmentation indexes / binders
+and leaves those programs on the old child-checker path. Local targeted
+conformance: `./scripts/conformance/conformance.sh run --workers 4 --filter
+moduleAugmentationImportsAndExports` passes 6/6.
