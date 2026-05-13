@@ -1468,6 +1468,8 @@ impl<'a> InferenceContext<'a> {
             | (TypeData::Function(_), TypeData::Function(_))
             | (TypeData::Tuple(_), TypeData::Tuple(_))
             | (TypeData::Array(_), TypeData::Array(_)) => true,
+            (TypeData::Literal(LiteralValue::String(_)), TypeData::TemplateLiteral(_))
+            | (TypeData::TemplateLiteral(_), TypeData::TemplateLiteral(_)) => true,
             _ => false,
         }
     }
@@ -1819,6 +1821,12 @@ impl<'a> InferenceContext<'a> {
                                 // pos remains unchanged - next infer var starts here
                             }
                         }
+                    } else if let Some(next_pos) =
+                        self.match_template_segment_prefix(source, pos, *type_id)
+                    {
+                        pos = next_pos;
+                    } else {
+                        return None;
                     }
                 }
             }
@@ -1826,6 +1834,47 @@ impl<'a> InferenceContext<'a> {
 
         // Must have consumed the entire source string
         (pos == source.len()).then_some(bindings)
+    }
+
+    /// Match a non-infer template substitution span, such as `${" " | "\t"}`,
+    /// against the source string at the current position.
+    fn match_template_segment_prefix(
+        &self,
+        source: &str,
+        pos: usize,
+        type_id: TypeId,
+    ) -> Option<usize> {
+        let key = self.interner.lookup(type_id)?;
+        match key {
+            TypeData::Literal(LiteralValue::String(atom)) => {
+                let text = self.interner.resolve_atom(atom);
+                source
+                    .get(pos..)?
+                    .starts_with(&text)
+                    .then_some(pos + text.len())
+            }
+            TypeData::Union(list_id) => {
+                let members = self.interner.type_list(list_id);
+                members
+                    .iter()
+                    .find_map(|member| self.match_template_segment_prefix(source, pos, *member))
+            }
+            TypeData::TemplateLiteral(template_id) => {
+                let spans = self.interner.template_list(template_id);
+                let mut text = String::new();
+                for span in spans.iter() {
+                    let TemplateSpan::Text(atom) = span else {
+                        return None;
+                    };
+                    text.push_str(&self.interner.resolve_atom(*atom));
+                }
+                source
+                    .get(pos..)?
+                    .starts_with(&text)
+                    .then_some(pos + text.len())
+            }
+            _ => None,
+        }
     }
 
     /// Find the next text span after a given index to use as a matching anchor.
