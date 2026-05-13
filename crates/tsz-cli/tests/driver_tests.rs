@@ -813,6 +813,111 @@ export const ColumnNode: ColumnNodeFactory = freeze<ColumnNodeFactory>({
     );
 }
 
+#[test]
+fn project_readonly_factory_node_is_assignable_to_source_interface() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2017",
+            "module": "esnext",
+            "strict": true,
+            "lib": ["es2022"],
+            "types": [],
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("object-utils.ts"),
+        r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value
+}
+"#,
+    );
+    write_file(
+        &base.join("operation-node.ts"),
+        r#"
+export interface OperationNode {
+  readonly kind: string
+}
+"#,
+    );
+    write_file(
+        &base.join("drop-index-node.ts"),
+        r#"
+import { freeze } from "./object-utils.js"
+import type { OperationNode } from "./operation-node.js"
+
+export type DropIndexNodeProps = Omit<DropIndexNode, "kind" | "name">
+
+export interface DropIndexNode extends OperationNode {
+  readonly kind: "DropIndexNode"
+  readonly name: string
+  readonly table?: string
+}
+
+type DropIndexNodeFactory = Readonly<{
+  create(name: string, params?: DropIndexNodeProps): Readonly<DropIndexNode>
+  cloneWith(node: DropIndexNode, props: DropIndexNodeProps): Readonly<DropIndexNode>
+}>
+
+export const DropIndexNode: DropIndexNodeFactory = freeze<DropIndexNodeFactory>({
+  create(name, params?) {
+    return freeze({ kind: "DropIndexNode", name, ...params })
+  },
+  cloneWith(node, props) {
+    return freeze({ ...node, ...props })
+  },
+})
+"#,
+    );
+    write_file(
+        &base.join("drop-index-builder.ts"),
+        r#"
+import { DropIndexNode } from "./drop-index-node.js"
+import { freeze } from "./object-utils.js"
+
+interface QueryExecutor {}
+
+export class DropIndexBuilder {
+  readonly #props: DropIndexBuilderProps
+
+  constructor(props: DropIndexBuilderProps) {
+    this.#props = freeze(props)
+  }
+
+  on(table: string): DropIndexBuilder {
+    return new DropIndexBuilder({
+      ...this.#props,
+      node: DropIndexNode.cloneWith(this.#props.node, { table }),
+    })
+  }
+}
+
+export interface DropIndexBuilderProps {
+  readonly queryId: string
+  readonly executor: QueryExecutor
+  readonly node: DropIndexNode
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected Readonly<DropIndexNode> to satisfy DropIndexNode, got: {:?}",
+        result.diagnostics
+    );
+}
+
 fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();

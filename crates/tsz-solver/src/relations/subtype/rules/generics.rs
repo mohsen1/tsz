@@ -13,9 +13,10 @@ use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
-    application_id, contains_type_parameter_named, index_access_parts, intersection_list_id,
-    is_empty_object_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id,
-    object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
+    application_id, array_element_type, contains_type_parameter_named, index_access_parts,
+    intersection_list_id, is_empty_object_type, keyof_inner_type, lazy_def_id, literal_value,
+    mapped_type_id, object_shape_id, object_with_index_shape_id, tuple_list_id, type_param_info,
+    union_list_id,
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
@@ -977,6 +978,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         app_id: TypeApplicationId,
     ) -> SubtypeResult {
+        if self.is_readonly_application_assignable_to_target(app_id, target) {
+            return SubtypeResult::True;
+        }
+
         match self.try_expand_application(app_id) {
             Some(expanded) => self.check_subtype(expanded, target),
             None => {
@@ -988,6 +993,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         }
+    }
+
+    fn is_readonly_application_assignable_to_target(
+        &mut self,
+        app_id: TypeApplicationId,
+        target: TypeId,
+    ) -> bool {
+        if array_element_type(self.interner, target).is_some()
+            || tuple_list_id(self.interner, target).is_some()
+        {
+            return false;
+        }
+
+        let app = self.interner.type_application(app_id);
+        let Some(def_id) = self.application_base_def_id(app.base) else {
+            return false;
+        };
+        let Some(name) = self.resolver.get_def_name(def_id) else {
+            return false;
+        };
+        let name_text = self.interner.resolve_atom(name);
+        if name_text != "Readonly" {
+            return false;
+        }
+        let Some(&inner) = app.args.first() else {
+            return false;
+        };
+
+        self.check_subtype(inner, target).is_true()
     }
 
     /// Check source to Application expansion (one-sided Application case).
