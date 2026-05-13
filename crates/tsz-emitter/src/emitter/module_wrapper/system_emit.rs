@@ -148,6 +148,9 @@ impl<'a> Printer<'a> {
                         .is_empty()
                     {
                         has_decorated_member_call = true;
+                        if self.ctx.options.emit_decorator_metadata {
+                            member_requires_metadata = true;
+                        }
                     }
                 }
                 _ => {}
