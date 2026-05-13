@@ -1304,6 +1304,43 @@ const t1: T1 = { a: 1, b: "x" };
 }
 
 #[test]
+fn explicit_type_arguments_violate_function_constraint() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("explicit_type_arg_constraints").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"
+type AppendArgument<Fn extends (...args: any[]) => any, A> =
+  Fn extends (...args: infer Args) => infer R
+    ? (...args: [...Args, A]) => R
+    : never;
+
+type T1 = AppendArgument<unknown, undefined>;
+type T2 = AppendArgument<string, number>;
+type T3 = AppendArgument<{ a: 1 }, boolean>;
+type T4 = AppendArgument<(value: string) => number, boolean>;
+"#,
+    );
+
+    let args = ["--noEmit", "--strict", "--pretty", "false", "test.ts"];
+    let (_, tsc_output) = run_tsc_with_exit_code(&temp.path, &args).expect("tsc should run");
+    let (_, tsz_output) = run_tsz_with_exit_code(&temp.path, &args).expect("tsz should run");
+    assert_eq!(
+        tsc_output.matches("TS2344").count(),
+        3,
+        "expected tsc fixture to contain three TS2344 diagnostics, got:\n{tsc_output}"
+    );
+    assert_eq!(
+        tsz_output.matches("TS2344").count(),
+        3,
+        "expected three explicit invalid type arguments to emit TS2344, got:\n{tsz_output}"
+    );
+}
+
+#[test]
 fn esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics() {
     let Some(_) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
