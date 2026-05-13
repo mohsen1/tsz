@@ -57,6 +57,16 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
                 );
             }
+            // When the optional-chain receiver has no non-nullish slice
+            // (`property_type` is `None`, i.e. the receiver is exactly `null`,
+            // `undefined`, or `null | undefined`), tsc reports TS2339 at the
+            // property name with the receiver type narrowed to `never` — the
+            // chain always short-circuits, so the property access is
+            // unreachable. Match that diagnostic; the result type still flows
+            // through as `unknown | undefined` to keep downstream typing.
+            if property_type.is_none() {
+                self.error_property_not_exist_at(property_name, TypeId::NEVER, name_or_argument);
+            }
             let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
             return factory.union2(base_type, TypeId::UNDEFINED);
         }

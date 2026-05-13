@@ -351,6 +351,14 @@ impl<'a> CheckerState<'a> {
             object_type
         };
 
+        if access.question_dot_token
+            && let Some(property_name) = literal_string.as_deref()
+            && self.split_nullish_type(object_type).0.is_none()
+        {
+            self.error_property_not_exist_at(property_name, TypeId::NEVER, access.name_or_argument);
+            return TypeId::UNDEFINED;
+        }
+
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
             if skip_flow_narrowing {
                 if write_presence_only {
