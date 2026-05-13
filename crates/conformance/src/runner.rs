@@ -6,6 +6,7 @@ use crate::batch_pool::{BatchOutcome, ProcessPool};
 use crate::cache::{self, load_cache};
 use crate::cli::{Args, RunMode, ShardStrategy};
 use crate::server_pool::{ServerOutcome, ServerPool};
+use crate::test_filter::{is_conformance_source_file, matches_path_filter};
 use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
     should_skip_test,
@@ -1123,37 +1124,15 @@ impl Runner {
                 continue;
             }
 
-            // Check file extension
-            if path
-                .extension()
-                .is_some_and(|ext| ext == "ts" || ext == "tsx" || ext == "js" || ext == "jsx")
-            {
-                let path_str = path.to_string_lossy();
-
-                // Skip .d.ts files (declaration files, not test sources)
-                if path_str.ends_with(".d.ts") || path_str.ends_with(".d.mts") {
-                    continue;
-                }
-
-                // Skip fourslash tests (language service tests with special format)
-                if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
-                    continue;
-                }
-
-                // Skip APISample tests - they require /.ts/typescript.d.ts which is a
-                // virtual mount in TSC's test harness pointing to built/local/typescript.d.ts
-                if path_str.contains("APISample") || path_str.contains("APILibCheck") {
-                    continue;
-                }
-
-                // Apply filter pattern if specified
-                if let Some(ref filter) = self.args.filter {
-                    if !path_str.contains(filter) {
-                        continue;
-                    }
-                }
-                files.push(path.to_path_buf());
+            if !is_conformance_source_file(path) {
+                continue;
             }
+
+            if !matches_path_filter(path, self.args.filter.as_deref()) {
+                continue;
+            }
+
+            files.push(path.to_path_buf());
         }
 
         // Sort for deterministic order

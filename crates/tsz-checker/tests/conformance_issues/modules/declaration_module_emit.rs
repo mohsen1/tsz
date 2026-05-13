@@ -2430,3 +2430,101 @@ class C {
         "Expected TS2403 for var re-declaring optional parameter with different type.\nActual: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_ts2460_no_false_positive_when_renamed_and_star_reexport_both_present() {
+    // When a module does both `export { X as Y }` and `export * from "..."` (which
+    // re-exports X), both Y and X are valid imports. tsc accepts this; tsz must not
+    // emit TS2460 for X just because it was also exported as Y.
+    let files = [
+        (
+            "/source.ts",
+            r#"
+export interface User {
+  id: number;
+}
+"#,
+        ),
+        (
+            "/middle.ts",
+            r#"
+import { User } from "./source";
+export { User as IUser };
+export * from "./source";
+"#,
+        ),
+        (
+            "/test.ts",
+            r#"
+import { IUser, User } from "./middle";
+const u1: User = { id: 1 };
+const u2: IUser = u1;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/test.ts",
+        CheckerOptions {
+            strict: true,
+            module: ModuleKind::ES2020,
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2460),
+        "Expected no TS2460 when symbol is also available via star re-export.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2460_still_fires_when_only_renamed_export_no_star_reexport() {
+    // Sanity-check: when a module ONLY renames the export (no star re-export that
+    // brings the original name back), importing the original name must still be TS2460.
+    let files = [
+        (
+            "/source.ts",
+            r#"
+export interface Widget {
+  id: number;
+}
+"#,
+        ),
+        (
+            "/middle.ts",
+            r#"
+import { Widget } from "./source";
+export { Widget as IWidget };
+"#,
+        ),
+        (
+            "/test.ts",
+            r#"
+import { Widget } from "./middle";
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/test.ts",
+        CheckerOptions {
+            strict: true,
+            module: ModuleKind::ES2020,
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2460),
+        "Expected TS2460 when symbol is only exported under a renamed alias.\nActual: {diagnostics:#?}"
+    );
+}

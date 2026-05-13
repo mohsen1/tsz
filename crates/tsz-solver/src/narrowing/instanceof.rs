@@ -297,10 +297,11 @@ impl<'a> NarrowingContext<'a> {
         } else {
             // Negative: !(x instanceof Constructor) - exclude the instance type
 
-            // `any` stays `any` on the false branch of instanceof — cannot
-            // exclude a specific type from `any`.
-            if resolved_source == TypeId::ANY {
-                return TypeId::ANY;
+            // `any`/`unknown` stay unchanged on the false branch of instanceof:
+            // the checker cannot represent "unknown but not this class" without
+            // losing tsc-compatible defensive subclass checks.
+            if resolved_source == TypeId::ANY || resolved_source == TypeId::UNKNOWN {
+                return source_type;
             }
 
             // For unions, exclude members that are subtypes of the instance type
@@ -636,6 +637,13 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
+        // As with `any`, the false branch of `unknown instanceof C` cannot
+        // usefully exclude `C`; keeping `unknown` matches tsc's permissive
+        // handling of later defensive subclass checks.
+        if resolved_source == TypeId::UNKNOWN {
+            return source_type;
+        }
+
         // When the instance type is a union (e.g., from `a instanceof b` where b has
         // type `typeof A | typeof B`), the false branch cannot narrow because we
         // can't determine which specific constructor was tested at runtime.
@@ -653,6 +661,10 @@ impl<'a> NarrowingContext<'a> {
         // values are also Array instances, so `instanceof Array` false branch
         // should exclude ReadonlyArray members too.
         let is_array_target = crate::type_queries::is_array_type(self.db, instance_type);
+
+        if resolved_source == TypeId::OBJECT && !is_object_target && !is_array_target {
+            return source_type;
+        }
 
         if let Some(members) = union_list_id(self.db, resolved_source) {
             let members = self.db.type_list(members);
@@ -674,16 +686,15 @@ impl<'a> NarrowingContext<'a> {
                     if is_array_target && self.is_array_like(member) {
                         return false;
                     }
-                    // For class-to-class comparisons, use nominal identity.
-                    // Unrelated classes always survive the false branch.
+                    // For class-to-class negative narrowing, match tsc's
+                    // practical behavior: exclude only the exact class tested.
+                    // Subclasses may still appear in defensive follow-up checks
+                    // even though they would pass the superclass check at runtime.
                     let member_is_class = self.get_class_def_id(member).is_some();
                     let instance_is_class = self.get_class_def_id(instance_type).is_some();
                     if member_is_class && instance_is_class {
-                        return match self.nominal_instanceof_relation(member, instance_type) {
-                            Some(true) => false, // member IS or EXTENDS instance → excluded
-                            // instance extends member or unrelated → keep in false branch
-                            Some(false) | None => true,
-                        };
+                        return self.get_class_def_id(member)
+                            != self.get_class_def_id(instance_type);
                     }
                     // Instantiations of the instance type always pass instanceof
                     // at runtime (e.g., Set<string> always passes `instanceof Set`),
@@ -716,15 +727,31 @@ impl<'a> NarrowingContext<'a> {
         if is_array_target && self.is_array_like(resolved_source) {
             return TypeId::NEVER;
         }
-        // For class-to-class comparisons, use nominal identity
-        let source_is_class = self.get_class_def_id(resolved_source).is_some();
-        let target_is_class = self.get_class_def_id(instance_type).is_some();
+        // For class-to-class negative narrowing, exclude only the exact tested
+        // class. Do not transitively exclude subclasses; TypeScript keeps those
+        // checks usable in defensive code after a superclass guard exits.
+        let source_class_def = self
+            .get_class_def_id(source_type)
+            .or_else(|| self.get_class_def_id(resolved_source));
+        let source_is_class = source_class_def.is_some();
+        let target_class_def = self.get_class_def_id(instance_type);
+        let target_is_class = target_class_def.is_some();
         if source_is_class && target_is_class {
-            return match self.nominal_instanceof_relation(resolved_source, instance_type) {
-                Some(true) => TypeId::NEVER, // definitely passes instanceof
-                // instance extends source or unrelated → keeps in false branch
-                Some(false) | None => source_type,
+            return if source_class_def == target_class_def {
+                TypeId::NEVER
+            } else {
+                source_type
             };
+        }
+        if resolved_source == resolved_instance {
+            return TypeId::NEVER;
+        }
+        if self.are_object_like(resolved_source)
+            && self.are_object_like(resolved_instance)
+            && !is_object_target
+            && !is_array_target
+        {
+            return source_type;
         }
         // Instantiations of the instance type always pass instanceof
         if self.is_instantiation_of(source_type, instance_type) {
