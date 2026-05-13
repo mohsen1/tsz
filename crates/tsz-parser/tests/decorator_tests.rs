@@ -218,4 +218,8 @@ fn decorator_after_property_name_produces_ts1436() {
         !has_error_code(&parser, 1146),
         "should not produce generic TS1146 when TS1436 applies"
     );
+    assert!(
+        !has_error_code(&parser, 1005),
+        "late property-name decorator recovery should not add a semicolon error"
+    );
 }
