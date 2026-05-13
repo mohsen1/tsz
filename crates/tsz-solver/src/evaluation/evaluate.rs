@@ -926,7 +926,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             evaluated,
                             &app.args,
                         );
-                    } else {
+                    } else if !is_type_alias_def {
                         // Parametric structural (interface/class) applications:
                         // also record a back-reference from the evaluated
                         // structural form to the original Application so
