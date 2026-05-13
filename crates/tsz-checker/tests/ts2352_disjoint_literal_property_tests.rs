@@ -199,3 +199,21 @@ let y = x as { kind: string; value: number };
         "no TS2352 expected — `\"foo\"` is a subtype of `string`. Got: {codes:?}"
     );
 }
+
+/// Direct primitive literal assertions remain comparable in tsc even when the
+/// literal values differ. The stricter literal value check is only for
+/// structural property overlap like `{ kind: "a" } as { kind: "b" }`.
+#[test]
+fn direct_distinct_literal_assertion_no_ts2352() {
+    let source = r#"
+let x = "foo" as "bar";
+declare let y: string;
+let z = y as "baz";
+"#;
+    let codes = check_strict(source);
+    let ts2352: Vec<&u32> = codes.iter().filter(|c| **c == 2352).collect();
+    assert!(
+        ts2352.is_empty(),
+        "no TS2352 expected for direct primitive literal assertions. Got: {codes:?}"
+    );
+}
