@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `codex/type-display-conflicting-generic-6618-20260513`
-- **PR**: #TBD
+- **PR**: #6619
 - **Status**: ready
 - **Workstream**: checker / crash
 
