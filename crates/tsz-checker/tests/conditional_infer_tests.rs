@@ -153,6 +153,46 @@ const ColumnSelectView2: new <S extends Schema>() => Table<UnrollOnHover<S>> = T
 }
 
 #[test]
+fn distributive_identity_conditional_target_accepts_type_parameter() {
+    let source = r#"
+type Deferred<T> = T extends unknown ? T : never;
+
+function withDeferred<T>(x: T): Deferred<T> {
+    return x;
+}
+
+type DeferredAny<T> = T extends any ? T : never;
+
+function withDeferredAny<T>(x: T): DeferredAny<T> {
+    return x;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "transparent identity conditionals should not emit TS2322. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn extract_like_conditional_target_still_rejects_unconstrained_type_parameter() {
+    let source = r#"
+type OnlyObjects<T> = T extends object ? T : never;
+
+function withObject<T>(x: T): OnlyObjects<T> {
+    return x;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2322),
+        "non-transparent Extract-like conditional must still reject unconstrained T. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn recursive_conditional_index_access_does_not_report_property_missing() {
     let source = r#"
 type Flatten<T extends readonly unknown[]> = T extends unknown[] ? _Flatten<T>[] : readonly _Flatten<T>[];
