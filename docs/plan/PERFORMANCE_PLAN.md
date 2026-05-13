@@ -24,14 +24,36 @@ Current guidance:
    pooling, and migrate child-checker cases into typed cross-file queries one
    reason at a time.
 5. Keep lib snapshot Phase 2/3 and interner redesign counter-gated.
+6. Every project benchmark fixture that currently fails to run (OOM, stack
+   overflow, panic, hang, or any non-zero exit before the runner records a
+   timing) must eventually pass. A failing fixture is a correctness/scaling
+   bug masquerading as a missing data point: it withholds the very baseline
+   the rest of this plan depends on, so "we can't measure it" is never an
+   acceptable end state. Each currently-failing fixture (e.g. `large-ts-repo`
+   OOM/stack-overflow, monorepo-006 cliff failures) must have either an open
+   issue with a root-cause hypothesis or a tier-2 task that is expected to
+   resolve it; once resolved, the fixture rejoins the standard bench matrix
+   and its result is required in PR descriptions that quote large-project
+   numbers.
+
+### Parallel PR Coordination (as of 2026-05-13)
+
+- Open overlap watchlist: [#6260](https://github.com/mohsen1/tsz/pull/6260)
+  (`perf(checker): reduce declaration symbol-arena delegation`) updates the
+  T2.2 declaration-file residue and related status-row numbers in this plan.
+- Until #6260 merges, prefer non-overlapping documentation slices in other PRs
+  (metadata fixes, measurement-model clarifications, and new decision records)
+  rather than editing the same status-row counters.
+- After #6260 merges, rebase and fold its `41 -> 11` declaration-file residue
+  update into any pending local branch before further T2.2 plan edits.
 
 ---
 
 ## 1. Current Main Baseline
 
-This plan is rebased against current `main` as of 2026-05-10. The important
-fact is that the codebase has moved since the original plan. Treat the items
-below as the starting point.
+This plan is rebased against current `main` as of 2026-05-13 (`b745f6aa40`).
+The important fact is that the codebase has moved since the original plan.
+Treat the items below as the starting point.
 
 | Area | Current state | Planning consequence |
 | --- | --- | --- |
@@ -65,7 +87,7 @@ measurement once available.
 | Fresh phase split | Done (refreshed 2026-05-13) | See `docs/plan/perf-runs/2026-05-13-typeenv-arena-direct-attribution.md`. After the #6144 TypeEnvironmentCore arena-direct slice, the cliff remains checker-dominated (monorepo-003..006: check ≈ 97-98 % in attribution mode). `large-ts-repo` remains deferred (previous OOM / stack-overflow blocker); re-measure after one more measured child-checker path is removed or stack behavior is re-audited. |
 | Resolver/source-discovery fast path | **Deferred** | Resolver lookups ~1/file, package.json reads ~1/package on cliff. Not on the hot path. Revisit only after T2.2 lands. |
 | Checker lifetime split | **Promoted** | T0.4 measured `with_parent_cache_constructed = 1.28 × files` on monorepo-006. The 2026-05-11 attribution run, post-#5090 (`reset_for_next_file` boundary), measures 1.22 × files — a ~5 % drop from the same fixture. **T2.1.A** scaffolding (inventory + shells + reset boundary) is on `perf/master`. **T2.1.B** sequential session-reuse path behind `TSZ_FILE_SESSION_REUSE` shipped at `32d1c20bfe`; the `CheckerContext::switch_to_file` boundary in `crates/tsz-checker/src/context/file_session_reset.rs` clears file-local state while preserving the shared `QueryCache` and program-stable caches. **T2.1.C** parallel session reuse (#5842, merged `ee20f50f0e`) extends the same boundary to the rayon-chunked parallel driver path. **T2.1.D** ("replace the hottest child-checker path with an explicit session lease or typed query") is the next concrete code PR; the data driving the target choice should come from the refreshed attribution run that consumes the #5843/#5863 classification + miss-cause buckets. Decision record: [`perf-runs/2026-05-11-attribution-lock-wait.md`](perf-runs/2026-05-11-attribution-lock-wait.md). |
-| Typed cross-file query migration | **Promoted — highest Tier 2 priority** | #6111 landed the first `DelegateCrossArenaSymbol` source-file symbol-arena gateway path. #6144 then removes the dominant `TypeEnvironmentCore` arena-only type-param child-checker path. #6191 converts 96 stable source-file symbol-arena bucket-empty misses into cross-file cache hits on monorepo-006, dropping `DelegateCrossArenaSymbol` from 924 to 828. #6203 classifies the residue: 247 stable source-file keys are cold first reads, 540 are source-file variable symbols outside the current stability proof, and 41 are declaration-file targets. #6212 proves and admits the annotated single-declaration variable slice, dropping the variable-driven `not_class_or_interface` outcome from 540 to 0 and `DelegateCrossArenaSymbol` from 828 to 539 on monorepo-006. #6231 adds a direct source-file interface query for scope-independent stable interfaces, dropping `DelegateCrossArenaSymbol` from 539 to 292 on monorepo-006. #6243 adds a direct source-file variable annotation query for scope-independent annotations and same-file direct interfaces, dropping `DelegateCrossArenaSymbol` from 292 to 41 on monorepo-006. The next target is now the 41 declaration-file symbol-arena misses. Decision records: [`perf-runs/2026-05-13-delegate-bucket-empty-attribution.md`](perf-runs/2026-05-13-delegate-bucket-empty-attribution.md), [`perf-runs/2026-05-13-delegate-residue-classification.md`](perf-runs/2026-05-13-delegate-residue-classification.md), [`perf-runs/2026-05-13-delegate-variable-symbol-cache.md`](perf-runs/2026-05-13-delegate-variable-symbol-cache.md), [`perf-runs/2026-05-13-delegate-source-file-direct-interface.md`](perf-runs/2026-05-13-delegate-source-file-direct-interface.md), [`perf-runs/2026-05-13-delegate-source-file-variable-direct.md`](perf-runs/2026-05-13-delegate-source-file-variable-direct.md). |
+| Typed cross-file query migration | **Promoted — highest Tier 2 priority** | #6111 landed the first `DelegateCrossArenaSymbol` source-file symbol-arena gateway path. #6144 then removes the dominant `TypeEnvironmentCore` arena-only type-param child-checker path. #6191 converts 96 stable source-file symbol-arena bucket-empty misses into cross-file cache hits on monorepo-006, dropping `DelegateCrossArenaSymbol` from 924 to 828. #6203 classifies the residue: 247 stable source-file keys are cold first reads, 540 are source-file variable symbols outside the current stability proof, and 41 are declaration-file targets. #6212 proves and admits the annotated single-declaration variable slice, dropping the variable-driven `not_class_or_interface` outcome from 540 to 0 and `DelegateCrossArenaSymbol` from 828 to 539 on monorepo-006. #6231 adds a direct source-file interface query for scope-independent stable interfaces, dropping `DelegateCrossArenaSymbol` from 539 to 292 on monorepo-006. #6243 adds a direct source-file variable annotation query for scope-independent annotations and same-file direct interfaces, dropping `DelegateCrossArenaSymbol` from 292 to 41 on monorepo-006. #6260 routes a conservative actual bundled-lib option/registry interface slice through the existing lib resolver, dropping `DelegateCrossArenaSymbol` from 41 to 40 and `checker.with_parent_cache_constructed` from 56 to 55 on monorepo-006. The next target is now the remaining 40 declaration-file misses: 16 type aliases plus 24 interfaces that need namespace-qualified, merged-lib, or conformance-backed proof. Decision records: [`perf-runs/2026-05-13-delegate-bucket-empty-attribution.md`](perf-runs/2026-05-13-delegate-bucket-empty-attribution.md), [`perf-runs/2026-05-13-delegate-residue-classification.md`](perf-runs/2026-05-13-delegate-residue-classification.md), [`perf-runs/2026-05-13-delegate-variable-symbol-cache.md`](perf-runs/2026-05-13-delegate-variable-symbol-cache.md), [`perf-runs/2026-05-13-delegate-source-file-direct-interface.md`](perf-runs/2026-05-13-delegate-source-file-direct-interface.md), [`perf-runs/2026-05-13-delegate-source-file-variable-direct.md`](perf-runs/2026-05-13-delegate-source-file-variable-direct.md), [`perf-runs/2026-05-13-delegate-actual-lib-direct.md`](perf-runs/2026-05-13-delegate-actual-lib-direct.md). |
 | Lib snapshot Phase 2/3 | Demoted | Revive only if lib construction/merge is measured as non-trivial. |
 | Interner redesign | **De-prioritised — not contention-bound** | 2026-05-11 attribution run with `--features perf-tools` (transitively enabling `tsz-common/perf-counters-timing`) measured the lock-wait histogram across monorepo-001..006. At the cliff (monorepo-006, 2.4 M intern calls): 97.5 % of waits land in `<100ns`, only 4 observations exceeded `100µs`, and zero exceeded `10ms`. The interner is not contention-bound on the current single-threaded checking workload. Revisit only if a future change introduces parallel checking, multi-worker interning, or a workload that materially shifts the histogram tail. Decision record: [`perf-runs/2026-05-11-attribution-lock-wait.md`](perf-runs/2026-05-11-attribution-lock-wait.md). |
 
@@ -1085,6 +1107,16 @@ cold reads, 540 source-file variable symbols outside the current stability
 proof, and 41 declaration-file targets. The next implementation target remains
 the variable-symbol slice, gated on a requester-independence proof.
 
+**2026-05-13 post-#6260 update:** the actual bundled-lib direct path handles a
+conservative option/registry interface slice of the remaining declaration-file
+residue through the existing lib resolver instead of constructing a child
+checker. On monorepo-006 this drops `DelegateCrossArenaSymbol` from 41 to 40,
+`checker.with_parent_cache_constructed` from 56 to 55, and `delegate.misses`
+from 55 to 54 with unchanged diagnostic count. The next implementation target
+is the 40 remaining declaration-file misses: 16 type aliases plus 24 interfaces
+that need namespace-qualified, merged-lib, or conformance-backed proof before
+admission.
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
@@ -1228,3 +1260,19 @@ numbers move frequently; prefer symbol search over stale line references.
 
 - `crates/tsz-core/src/parallel/lib_snapshot.rs` - existing lib snapshot cache.
 - `crates/tsz-solver/src/types.rs` - `TypeId`, `TypeData`, and layout-sensitive type definitions.
+
+---
+
+## 16. Focused PR Update Contract
+
+Use this contract for changes that update measured claims in this document.
+
+1. One measurable hypothesis per PR.
+2. Update one status-row trajectory at a time unless a second row is directly
+   coupled to the same measurement.
+3. Include a decision record under `docs/plan/perf-runs/` and link it from the
+   updated row or section.
+4. Include raw attribution/diagnostics JSON paths for any new quoted numbers.
+5. When another open PR already edits the same status-row counters, land an
+   additive/non-overlapping docs slice first and rebase the counter edits after
+   that PR merges.

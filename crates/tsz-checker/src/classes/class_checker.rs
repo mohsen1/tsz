@@ -1461,6 +1461,19 @@ impl<'a> CheckerState<'a> {
             if let Some(h_expr_idx) = heritage_expr_idx {
                 let type_arguments =
                     heritage_type_idx.and_then(|tidx| resolve_heritage_type_args(self, tidx));
+                if self.heritage_call_has_invalid_mixin_constructor_constraint(h_expr_idx)
+                    && let Some(base_static_type) =
+                        self.base_constructor_type_from_expression(h_expr_idx, type_arguments)
+                {
+                    self.error_at_node(
+                        class_data.name,
+                        &format!(
+                            "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side '{}'.",
+                            self.format_type(base_static_type)
+                        ),
+                        diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
+                    );
+                }
                 if let Some(instance_type) =
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {

@@ -942,6 +942,57 @@ function getResults2(value: Results | { data: Results }): Results {
     }
 }
 
+#[test]
+fn explicit_type_argument_instantiates_generic_type_predicate() {
+    let source = r#"
+function isArray<T>(x: unknown): x is T[] {
+    return Array.isArray(x);
+}
+
+function useGenericPred(x: unknown) {
+    if (isArray<number>(x)) {
+        const _n: number[] = x;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let relevant: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        !relevant.iter().any(|(code, _)| *code == 2322),
+        "explicit type arguments should instantiate `x is T[]` as `number[]`: {relevant:?}"
+    );
+}
+
 /// Regression test: union type predicate narrowing.
 ///
 /// When a method is called on a union type (e.g., `Entry | Group`) and only

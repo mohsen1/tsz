@@ -178,6 +178,69 @@ class C1 {
 }
 
 #[test]
+fn test_direct_this_access_finds_declared_abstract_method_in_generic_class() {
+    let source = r#"
+abstract class Box<Output, Def extends {} = {}, Input = Output> {
+    readonly _output!: Output;
+    abstract _parse(value: Input): Output;
+    parse(value: Input): Output {
+        return this._parse(value);
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339_errors = errors_with_code(&diagnostics, 2339);
+    assert!(
+        ts2339_errors.is_empty(),
+        "Direct this access should find declared abstract methods: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_direct_this_access_finds_later_declared_method_in_generic_class() {
+    let source = r#"
+abstract class Box<T> {
+    parse(value: T): T {
+        return this.safeParse(value);
+    }
+    safeParse(value: T): T {
+        return value;
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339_errors = errors_with_code(&diagnostics, 2339);
+    assert!(
+        ts2339_errors.is_empty(),
+        "Direct this access should find later declared instance methods: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_direct_this_access_does_not_expose_static_method() {
+    let source = r#"
+class C {
+    static s(): number {
+        return 1;
+    }
+    m() {
+        return this.s();
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2576 && message.contains("static member 'C.s'") }),
+        "Static methods should not be exposed through instance this: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_generic_this_index_assignment_in_base_class_has_no_false_ts2322() {
     let source = r#"
 class Base {

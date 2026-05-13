@@ -11,7 +11,7 @@ use crate::types::{
     TypeApplicationId, TypeListId, TypeParamInfo,
 };
 use crate::visitor::TypeVisitor;
-use crate::{SymbolRef, TypeData, TypeDatabase, TypeId};
+use crate::{SymbolRef, TypeData, TypeDatabase, TypeId, TypeSubstitution, instantiate_type};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 use tsz_common::interner::Atom;
@@ -322,27 +322,35 @@ pub fn resolve_default_type_args(
     types: &dyn TypeDatabase,
     type_params: &[TypeParamInfo],
 ) -> Vec<TypeId> {
-    type_params
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let Some(default) = p.default else {
-                return TypeId::UNKNOWN;
-            };
-            // Check if the default is a type parameter that references itself or a
-            // later-declared type parameter (a forward reference). tsc resolves such
-            // invalid defaults to `any` (cf. fillMissingTypeArguments).
-            if let Some(tp_info) = type_param_info(types, default) {
-                let is_self_or_forward = type_params[i..]
-                    .iter()
-                    .any(|other| other.name == tp_info.name);
-                if is_self_or_forward {
-                    return TypeId::ANY;
+    let mut substitution = TypeSubstitution::new();
+    let mut defaults = Vec::with_capacity(type_params.len());
+
+    for (i, p) in type_params.iter().enumerate() {
+        let default = match p.default {
+            Some(default) => {
+                // Check if the default is a type parameter that references itself or a
+                // later-declared type parameter (a forward reference). tsc resolves such
+                // invalid defaults to `any` (cf. fillMissingTypeArguments).
+                if let Some(tp_info) = type_param_info(types, default) {
+                    let is_self_or_forward = type_params[i..]
+                        .iter()
+                        .any(|other| other.name == tp_info.name);
+                    if is_self_or_forward {
+                        TypeId::ANY
+                    } else {
+                        instantiate_type(types, default, &substitution)
+                    }
+                } else {
+                    instantiate_type(types, default, &substitution)
                 }
             }
-            default
-        })
-        .collect()
+            None => TypeId::UNKNOWN,
+        };
+        defaults.push(default);
+        substitution.insert(p.name, default);
+    }
+
+    defaults
 }
 
 /// Extract the lazy `DefId` if this is a Lazy type.
