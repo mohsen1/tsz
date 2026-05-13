@@ -35,6 +35,7 @@ mod lifetime_scopes;
 mod module_entity;
 mod request_cache;
 mod resolver;
+mod source_file_symbol_type_cache_scope;
 pub(crate) mod speculation;
 mod strict_mode;
 mod symbol_file_targets;
@@ -47,6 +48,7 @@ pub use aliases::*;
 // internal self-test exercises the `WorkerContext` re-exported above) but
 // do not re-export the duplicates from here.
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
+use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
@@ -55,7 +57,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_common::interner::Atom;
 
 use crate::control_flow::FlowGraph;
@@ -81,14 +82,6 @@ use tsz_parser::parser::node::NodeArena;
 /// caller sees the first caller's work.
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
-
-static NEXT_SOURCE_FILE_SYMBOL_TYPE_CACHE_SCOPE: AtomicU64 = AtomicU64::new(1);
-
-fn next_source_file_symbol_type_cache_scope() -> u64 {
-    NEXT_SOURCE_FILE_SYMBOL_TYPE_CACHE_SCOPE
-        .fetch_add(1, Ordering::Relaxed)
-        .max(1)
-}
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
@@ -1031,10 +1024,7 @@ pub struct CheckerContext<'a> {
     /// speculative request-local results across editor operations.
     pub share_owner_symbol_type_results: bool,
 
-    /// Program-local scope for source-file symbol-arena entries in the shared
-    /// symbol-type query cache. This must be an identity token, not a pointer:
-    /// long-lived batch workers may reuse allocator addresses across separate
-    /// virtual programs while the shared query cache still contains old keys.
+    /// Identity scope for source-file symbol-arena shared cache keys.
     pub source_file_symbol_type_cache_scope: u64,
 
     /// Mapping from Binder `SymbolId` to Solver `DefId`.
@@ -1719,6 +1709,8 @@ impl ProgramContext {
     /// so drivers can compute it once and share via `Arc` across all checkers.
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
+        self.source_file_symbol_type_cache_scope = next_source_file_symbol_type_cache_scope();
+
         // Phase 2 step 2: when the driver pre-built
         // `skeleton_module_augmentations_index` from `SkeletonIndex`, skip the
         // per-binder `module_augmentations` loop entirely and reuse the
