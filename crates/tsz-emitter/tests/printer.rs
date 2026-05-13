@@ -1131,6 +1131,43 @@ fn legacy_constructor_param_decorator_static_self_reference_uses_alias() {
 }
 
 #[test]
+fn legacy_late_property_decorator_recovers_onto_following_method() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var decorator: any;\nclass Foo {\n    private prop @decorator\n    foo() {\n        return 0;\n    }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ESNext,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        use_define_for_class_fields: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("prop;"),
+        "The malformed property should still emit as a field.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("], Foo.prototype, \"foo\", null);"),
+        "The late decorator should recover onto the following method.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:type\", Function)"),
+        "Recovered method decorator should still emit metadata.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_exported_object_binding_non_identifier_property_uses_destructuring_path() {
     let source = r#"declare const obj: any;
 export let { "foo": bar } = obj;
