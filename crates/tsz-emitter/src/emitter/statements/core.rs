@@ -1497,6 +1497,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_recovered_private_identifier_array_assignment(node) {
+            return;
+        }
+
         self.emit_expression_in_statement_position(expr_stmt.expression);
         if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
             self.write_line();
@@ -1512,6 +1516,33 @@ impl<'a> Printer<'a> {
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    fn emit_recovered_private_identifier_array_assignment(&mut self, node: &Node) -> bool {
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+        let stmt_start = std::cmp::min(node.pos as usize, source_text.len());
+        let line_start = source_text[..stmt_start]
+            .rfind('\n')
+            .map_or(0, |pos| pos + 1);
+        let mut line_end = stmt_start;
+        let bytes = source_text.as_bytes();
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+        let Some(line) = source_text.get(line_start..line_end) else {
+            return false;
+        };
+        let trimmed = line.trim();
+        if !trimmed.starts_with("[#") || !trimmed.ends_with('=') {
+            return false;
+        }
+        self.write(trimmed.trim_end_matches('=').trim_end());
+        self.write(" =");
+        self.write_line();
+        self.write_semicolon();
+        true
     }
 
     fn expression_statement_consumed_invalid_backslash_semicolon(
