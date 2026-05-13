@@ -2013,16 +2013,14 @@ fn cross_file_commonjs_merge_blocks_all_declaration_outputs() {
         dir.path().join("index.js"),
         r#"const m = require("./exporter");
 
-module.exports = m.default;
+module.exports = m.named;
 module.exports.memberName = "thing";
 "#,
     )
     .expect("write index");
     fs::write(
         dir.path().join("exporter.js"),
-        r#"function validate() {}
-
-export default validate;
+        r#"export function named() {}
 "#,
     )
     .expect("write exporter");
@@ -2061,5 +2059,63 @@ export default validate;
     assert!(
         !dir.path().join("out/exporter.d.ts").exists(),
         "exporter.d.ts should not be emitted after TS6232"
+    );
+}
+
+#[test]
+fn cross_file_commonjs_default_export_merge_emits_declarations() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("index.js"),
+        r#"const m = require("./exporter");
+
+module.exports = m.default;
+module.exports.memberName = "thing";
+"#,
+    )
+    .expect("write index");
+    fs::write(
+        dir.path().join("exporter.js"),
+        r#"function validate() {}
+
+export default validate;
+"#,
+    )
+    .expect("write exporter");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--declaration",
+        "--allowJs",
+        "--checkJs",
+        "--lib",
+        "es6",
+        "--outDir",
+        "out",
+        "--target",
+        "es2015",
+        "--module",
+        "commonjs",
+        "index.js",
+        "exporter.js",
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+
+    assert!(
+        !result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED
+        }),
+        "did not expect TS6232, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        dir.path().join("out/index.d.ts").exists(),
+        "index.d.ts should be emitted for default export merges"
+    );
+    assert!(
+        dir.path().join("out/exporter.d.ts").exists(),
+        "exporter.d.ts should be emitted for default export merges"
     );
 }
