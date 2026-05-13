@@ -1207,6 +1207,13 @@ impl<'a> CheckerContext<'a> {
         self.create_type_formatter()
             .with_diagnostic_mode()
             .with_strict_null_checks(self.compiler_options.strict_null_checks)
+            .with_builtin_iterator_return_type(
+                if self.compiler_options.strict_builtin_iterator_return {
+                    tsz_solver::TypeId::UNDEFINED
+                } else {
+                    tsz_solver::TypeId::ANY
+                },
+            )
             .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
     }
 

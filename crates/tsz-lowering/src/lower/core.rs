@@ -63,6 +63,9 @@ pub struct TypeLowering<'a> {
     /// Optional resolver for lazy type parameter metadata. This is used when
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
+    /// Optional compiler-controlled intrinsic replacement for the lib-only
+    /// `BuiltinIteratorReturn` alias.
+    pub(super) builtin_iterator_return_type: Option<TypeId>,
     /// When true, prefer identifier-text `DefId` resolution over raw NodeIndex-based
     /// resolution. This is needed for cross-arena lowering where the same `NodeIndex`
     /// may refer to different identifiers in different arenas.
@@ -327,6 +330,7 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: None,
             computed_symbol_name_resolver: None,
             lazy_type_params_resolver: None,
+            builtin_iterator_return_type: None,
             prefer_name_def_id_resolution: false,
             preferred_self_name: None,
             preferred_self_def_id: None,
@@ -439,6 +443,7 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: self.computed_name_resolver,
             computed_symbol_name_resolver: self.computed_symbol_name_resolver,
             lazy_type_params_resolver: self.lazy_type_params_resolver,
+            builtin_iterator_return_type: self.builtin_iterator_return_type,
             prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
             preferred_self_name: self.preferred_self_name.clone(),
             preferred_self_def_id: self.preferred_self_def_id,
@@ -713,6 +718,14 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(DefId) -> Option<Vec<TypeParamInfo>>,
     ) -> Self {
         self.lazy_type_params_resolver = Some(resolver);
+        self
+    }
+
+    /// Replace lib `BuiltinIteratorReturn` references while lowering in
+    /// checker-controlled lib/source-file direct paths. Normal user lowering
+    /// leaves this unset so a user alias with the same name can still shadow it.
+    pub const fn with_builtin_iterator_return_type(mut self, ty: TypeId) -> Self {
+        self.builtin_iterator_return_type = Some(ty);
         self
     }
 
