@@ -32,6 +32,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_recovered_function_arrow_body(node, func) {
+            return;
+        }
+
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
@@ -200,6 +204,55 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(func_name);
             }
         }
+    }
+
+    fn emit_recovered_function_arrow_body(
+        &mut self,
+        node: &Node,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        let Some(body_node) = self.arena.get(func.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK || !self.function_decl_source_has_arrow(node) {
+            return false;
+        }
+
+        if !self.function_parameters_have_type_annotations(func) {
+            self.write("function");
+            if func.name.is_some() {
+                self.write_space();
+                self.emit_decl_name(func.name);
+            }
+            self.write("(");
+            self.emit_function_parameters_js(&func.parameters.nodes);
+            self.write(") { }");
+            self.write_line();
+        }
+
+        self.emit_expression_in_statement_position(func.body);
+        self.write_semicolon();
+        true
+    }
+
+    fn function_decl_source_has_arrow(&self, node: &Node) -> bool {
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+        let start = node.pos as usize;
+        let end = node.end as usize;
+        start < end && end <= source_text.len() && source_text[start..end].contains("=>")
+    }
+
+    fn function_parameters_have_type_annotations(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        func.parameters.nodes.iter().copied().any(|param_idx| {
+            self.arena
+                .get_parameter_at(param_idx)
+                .is_some_and(|param| param.type_annotation.is_some())
+        })
     }
 
     pub(in crate::emitter) fn emit_variable_declaration_list(&mut self, node: &Node) {
