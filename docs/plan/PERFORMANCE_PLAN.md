@@ -1207,6 +1207,16 @@ run. As expected, the older interface-fastpath gate matrix is mostly bypassed
 before that block for eligible interfaces. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md).
 
+**2026-05-13 `compute_type_of_symbol` simple-local-interface hit counter:** a
+new checker scalar counter,
+`checker.compute_type_of_symbol_interface_simple_object_fastpath_hits`, now
+records every interface-symbol call that returns through the simple local-object
+shortcut. On monorepo-006 attribution mode this counter reports `24,760` hits
+against `24,796` interface-kind calls (`99.85%`), confirming the shortcut is
+the dominant branch and providing a direct guardrail for future interface
+root-demand or lowering-cost edits. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
