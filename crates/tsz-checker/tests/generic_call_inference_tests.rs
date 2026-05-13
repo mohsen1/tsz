@@ -1847,6 +1847,32 @@ const result = create();
 }
 
 #[test]
+fn default_type_parameter_substitutes_inside_conditional_constraint() {
+    // Regression for issue #6559: using Chainable without explicit type
+    // arguments must substitute Config = {} inside the nested conditional
+    // constraint for option's key parameter.
+    let source = r#"
+type Chainable<Config = {}> = {
+  option<K extends string>(
+    key: K extends keyof Config ? never : K,
+    value: number
+  ): void;
+};
+
+declare const explicit: Chainable<{}>;
+explicit.option('foo', 123);
+
+declare const defaulted: Chainable;
+defaulted.option('foo', 123);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Default type parameter should substitute into conditional constraint. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn contextual_return_instantiates_defaulted_generic_call_result() {
     let source = r#"
 interface Box<T> { value: T | undefined }

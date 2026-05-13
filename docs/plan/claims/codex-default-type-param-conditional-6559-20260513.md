@@ -1,15 +1,19 @@
 # Claim: fix default type parameter substitution in conditional constraints (#6559)
 
-Status: claim
+Status: ready
 Owner: Codex
 Branch: codex/default-type-param-conditional-6559-20260513
-PR: TBD
+PR: #6563
 Issue: #6559
 
 ## Scope
-- Investigate and fix the TS2345 false positive where defaulted generic type parameters are not substituted inside nested conditional constraints.
-- Add focused regression coverage for the `Chainable<Config = {}>` repro.
+- Fixed the TS2345 false positive where bare all-defaulted generic aliases expanded for property access without substituting defaults into nested generic method conditional constraints.
+- Added focused regression coverage for the `Chainable<Config = {}>` repro.
 
-## Validation plan
-- Targeted checker regression for #6559.
-- Broader checker/conformance validation if solver instantiation code changes.
+## Implementation notes
+- `resolve_type_for_property_access_inner` now treats a bare `Lazy(DefId)` with all-defaulted type parameters as an application with filled defaults before resolving members.
+- This aligns property-access resolution with assignability/type-resolution behavior for defaulted generic references.
+
+## Validation
+- `cargo test -p tsz-checker --test generic_call_inference_tests default_type_parameter_substitutes_inside_conditional_constraint -- --nocapture` passed.
+- `cargo test -p tsz-checker --test generic_call_inference_tests` passed: 144 passed.
