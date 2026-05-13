@@ -1913,6 +1913,11 @@ impl<'a> CheckerState<'a> {
                     tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                         Outcome::RejectNonPrimitiveAnnotation,
                     );
+                    tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind(
+                        self.classify_simple_local_interface_non_primitive_annotation_kind(
+                            sig.type_annotation,
+                        ),
+                    );
                     return None;
                 }
                 self.get_type_from_type_node_in_type_literal(sig.type_annotation)
@@ -1967,6 +1972,59 @@ impl<'a> CheckerState<'a> {
                     || kind == SyntaxKind::VoidKeyword as u16
             )
         })
+    }
+
+    fn classify_simple_local_interface_non_primitive_annotation_kind(
+        &self,
+        type_idx: NodeIndex,
+    ) -> tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind
+    {
+        use tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind as Kind;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return Kind::Other;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => Kind::TypeReference,
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                Kind::UnionOrIntersection
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => Kind::TypeLiteral,
+            k if k == syntax_kind_ext::ARRAY_TYPE || k == syntax_kind_ext::TUPLE_TYPE => {
+                Kind::ArrayOrTuple
+            }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                Kind::FunctionOrConstructor
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE || k == syntax_kind_ext::INFER_TYPE => {
+                Kind::ConditionalOrInfer
+            }
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE || k == syntax_kind_ext::MAPPED_TYPE => {
+                Kind::IndexedOrMapped
+            }
+            k if k == syntax_kind_ext::IMPORT_TYPE || k == syntax_kind_ext::TYPE_QUERY => {
+                Kind::ImportOrTypeQuery
+            }
+            k if k == syntax_kind_ext::LITERAL_TYPE
+                || k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE =>
+            {
+                Kind::LiteralOrTemplateLiteral
+            }
+            k if k == syntax_kind_ext::TYPE_OPERATOR
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                Kind::OperatorOrParenthesized
+            }
+            k if k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::THIS_TYPE =>
+            {
+                Kind::OptionalRestOrThis
+            }
+            _ => Kind::Other,
+        }
     }
 }
 
