@@ -2,10 +2,10 @@
   "fixture": "monorepo-006",
   "mode": "attribution",
   "timings": {
-    "total_s": 78.12,
-    "check_s": 76.36,
-    "parse_bind_s": 1.25,
-    "io_read_s": 0.31
+    "total_s": 102.01,
+    "check_s": 98.43,
+    "parse_bind_s": 2.70,
+    "io_read_s": 0.59
   },
   "diagnostics": 10198,
   "compute_type_of_symbol": {
@@ -63,17 +63,8 @@
       "reject_heritage_extends": 1,
       "reject_non_property_member": 0,
       "reject_computed_name": 0,
-      "reject_unresolved_property_name": 0
+      "reject_unresolved_property_name": 0,
+      "reject_non_primitive_annotation": 24760
     }
-  },
-  "rerun_validation": {
-    "timings": {
-      "total_s": 103.68,
-      "check_s": 100.79,
-      "parse_bind_s": 2.29,
-      "io_read_s": 0.38
-    },
-    "interface_simple_object_fastpath_hits": 0,
-    "interface_simple_object_success_outcomes": 0
   }
 }

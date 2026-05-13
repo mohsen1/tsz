@@ -1236,12 +1236,13 @@ spending time on inactive gates. Decision record:
 **2026-05-13 guarded simple-local-object rerun:** monorepo-006 has now been
 remeasured on the guarded branch
 ([`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md)).
-The counter signal is stable across two runs: `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits = 0` and
+The counter signal stays clear: `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits = 0` and
 `compute_type_of_symbol_interface_simple_object_outcomes.success = 0`.
 The active residue remains `reject_out_of_arena_decl=16`,
 `reject_missing_interface_decl=7`, `reject_declaration_count=1`,
-`reject_heritage_extends=1`. Timing varied under shared-runner contention
-(`78.12s/76.36s` then `103.68s/100.79s` total/check), so treat this rerun as a
+`reject_heritage_extends=1`, and
+`reject_non_primitive_annotation=24,760`. Timing remains noisy under
+shared-runner contention (`102.01s/98.43s` total/check in the latest run), so treat this rerun as a
 counter-baseline refresh, not a timing claim. Next step: either conformance-
 proven guard relaxation that restores meaningful `success`, or dead-path
 simplification if the shortcut remains inactive.

@@ -1910,6 +1910,9 @@ impl<'a> CheckerState<'a> {
             };
             let type_id = if sig.type_annotation.is_some() {
                 if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
+                    tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                        Outcome::RejectNonPrimitiveAnnotation,
+                    );
                     return None;
                 }
                 self.get_type_from_type_node_in_type_literal(sig.type_annotation)
