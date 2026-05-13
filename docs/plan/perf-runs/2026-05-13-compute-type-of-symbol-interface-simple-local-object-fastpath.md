@@ -34,6 +34,9 @@ The measurement below is the original broad shortcut run and is kept only as
 historical evidence for why the shortcut was investigated. It must not be quoted
 as the current guarded fast-path result until the guarded branch is remeasured.
 
+Guarded rerun now recorded at:
+`2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md`.
+
 ## Reproducer
 
 | Item | Value |
@@ -76,3 +79,6 @@ Expected branch-shape shift from the new early-return path:
 2. Keep future interface work focused on safe root-call shortcutting and cheap
    direct-lowering cases, not additional tuning of the older interface fast-path
    gate matrix.
+3. On current guarded mainline behavior for monorepo-006, the shortcut is
+   inactive (`simple-object hits=0`, `success=0`), so the next step is either
+   conformance-proven guard relaxation or dead-path cleanup.
