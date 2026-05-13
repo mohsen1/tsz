@@ -1,6 +1,6 @@
 # Claim: dedupe JSDoc readonly diagnostic code projections
 
-Status: WIP
+Status: Ready
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6245
 Branch: `codex/cleanup-jsdoc-readonly-codes-20260513`
@@ -15,4 +15,9 @@ Branch: `codex/cleanup-jsdoc-readonly-codes-20260513`
 ## Verification Plan
 
 - `cargo fmt --check`
-- `cargo nextest run -p tsz-checker --test jsdoc_readonly_tests --no-fail-fast`
+- `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_readonly_tests::)' --no-fail-fast`
+
+## Verification
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_readonly_tests::)' --no-fail-fast` (24 passed)
