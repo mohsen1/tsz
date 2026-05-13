@@ -1190,6 +1190,11 @@ return and still keeps
 generic aliases and `PropertyKey` on fallback. This separates resolver/body
 proof plumbing from the later generic alias application PR. Claim:
 [`claims/perf-actual-lib-alias-body-proof-result-2026-05-13.md`](claims/perf-actual-lib-alias-body-proof-result-2026-05-13.md).
+Branch-local monorepo-006 attribution on this slice records
+`direct_actual_lib_alias_body_outcomes = { success: 2, name_not_admitted: 14 }`,
+with the remaining utility aliases still in the declaration-file residue table;
+see
+[`perf-runs/2026-05-13-actual-lib-alias-proof-result-attribution.md`](perf-runs/2026-05-13-actual-lib-alias-proof-result-attribution.md).
 
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
