@@ -18,6 +18,15 @@ impl<'a> CheckerState<'a> {
         length: u32,
         file_name: String,
     ) -> Diagnostic {
+        let declared_numeric_literal_union_source_display = if depth == 0 {
+            self.direct_diagnostic_source_expression(idx)
+                .or_else(|| self.assignment_source_expression(idx))
+                .and_then(|expr_idx| {
+                    self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+                })
+        } else {
+            None
+        };
         let mut source_str = if depth == 0 {
             let display = self.format_type_for_diagnostic_role(
                 source,
@@ -32,13 +41,10 @@ impl<'a> CheckerState<'a> {
             // (e.g., `Variants` from a parameter annotation), fall back to the
             // TypeFormatter which correctly displays literal union members.
             // This handles both widening and flow-narrowed type alias display.
-            let display_is_declared_identifier_source = self
-                .direct_diagnostic_source_expression(idx)
-                .or_else(|| self.assignment_source_expression(idx))
-                .and_then(|expr_idx| {
-                    self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
-                })
-                .is_some_and(|declared_display| declared_display == display);
+            let display_is_declared_identifier_source =
+                declared_numeric_literal_union_source_display
+                    .as_deref()
+                    .is_some_and(|declared_display| declared_display == display.as_str());
             if crate::query_boundaries::common::union_members(self.ctx.types, source).is_some_and(
                 |members| {
                     !members.is_empty()
@@ -401,19 +407,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let source_from_annotation = if depth == 0 {
-            self.direct_diagnostic_source_expression(idx)
-                .or_else(|| self.assignment_source_expression(idx))
-                .and_then(|expr_idx| {
-                    self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
-                })
-                .map(|display| {
-                    source_str = display;
-                })
-                .is_some()
-        } else {
-            false
-        };
+        let source_from_annotation = declared_numeric_literal_union_source_display
+            .as_ref()
+            .map(|display| {
+                source_str = display.clone();
+            })
+            .is_some();
         if !source_from_annotation {
             source_str = self
                 .canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
