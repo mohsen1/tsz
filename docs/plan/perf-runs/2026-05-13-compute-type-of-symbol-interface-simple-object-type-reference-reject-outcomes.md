@@ -1,4 +1,9 @@
-# 2026-05-13 — `compute_type_of_symbol` Simple-Object `type_reference` Reject Outcomes (monorepo-006)
+# 2026-05-13 — `compute_type_of_symbol` Simple-Object `type_reference` Reject Outcomes (deferred)
+
+Status: deferred. The JSON schema field remains, but runtime recording for this
+second-level split is disabled in the guarded PR because resolving symbols at
+the simple-object reject site perturbed TS2339 receiver display on current
+main. Do not use the raw counts below as merge evidence.
 
 Follow-up to:
 
@@ -6,7 +11,8 @@ Follow-up to:
 - `2026-05-13-compute-type-of-symbol-interface-simple-object-outcomes.md`
 
 Goal: split `interface_simple_object_non_primitive_annotation_kinds.type_reference`
-into actionable reject outcomes without changing shortcut behavior.
+into actionable reject outcomes without changing shortcut behavior. The first
+implementation did not satisfy that requirement, so this is now follow-up work.
 
 ## Change
 
@@ -25,9 +31,10 @@ Buckets include:
 - `other_type_name_syntax`
 - `malformed_type_reference`
 
-Recording point: the existing `RejectNonPrimitiveAnnotation` site in the
-simple-object shortcut, only when the annotation-kind classifier reports
-`TypeReference`.
+Intended recording point: the existing `RejectNonPrimitiveAnnotation` site in
+the simple-object shortcut, only when the annotation-kind classifier reports
+`TypeReference`. The guarded PR leaves this second-level recording disabled
+until the classifier is side-effect-free.
 
 ## Reproducer
 
@@ -39,7 +46,7 @@ simple-object shortcut, only when the annotation-kind classifier reports
 | Counter mode | `TSZ_PERF_COUNTERS=1` |
 | Command | `/Users/mohsen/.cache/tsz-target/release/tsz --noEmit -p <fixture>/tsconfig.json --extendedDiagnostics --pretty false` |
 
-## Result
+## Superseded Result
 
 From the run:
 
@@ -49,15 +56,14 @@ From the run:
 - `compute_type_of_symbol_interface_simple_object_outcomes.reject_non_primitive_annotation = 24,760`
 - `interface_simple_object_non_primitive_annotation_kinds.type_reference = 24,760`
 
-New `type_reference` reject split:
+The attempted `type_reference` reject split reported:
 
 - `identifier_not_found_symbol = 24,760`
 - all other reject-outcome buckets: `0`
 
 ## Decision
 
-1. Do not relax `type_reference` guards blindly: current residues are not-found
-   identifiers in this shortcut context.
-2. Any future shortcut expansion here needs a conformance-proven symbol
-   resolution strategy first.
+1. Do not relax `type_reference` guards blindly.
+2. Any future shortcut expansion here needs a conformance-proven,
+   side-effect-free attribution strategy first.
 3. If that strategy is not viable, simplify/remove dead shortcut branches.

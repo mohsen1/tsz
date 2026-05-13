@@ -61,7 +61,6 @@ The guarded branch reports:
 - `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits = 0`
 - `reject_non_primitive_annotation = 24,760`
 - `interface_simple_object_non_primitive_annotation_kinds.type_reference = 24,760`
-- `interface_simple_object_type_reference_reject_outcomes.identifier_not_found_symbol = 24,760`
 
 So the broad-run `99.85%` success ratio here is historical context only, not
 the current guarded baseline.

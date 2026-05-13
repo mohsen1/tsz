@@ -1,10 +1,8 @@
 use crate::state::CheckerState;
-use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::SymbolId;
 use tsz_common::perf_counters::{
     ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind as AnnotationKind,
     ComputeTypeOfSymbolInterfaceSimpleObjectOutcome as Outcome,
-    ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome as TypeReferenceOutcome,
 };
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -119,18 +117,13 @@ impl<'a> CheckerState<'a> {
                     tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                         Outcome::RejectNonPrimitiveAnnotation,
                     );
-                    let annotation_kind = self
-                        .classify_simple_local_interface_non_primitive_annotation_kind(
-                            sig.type_annotation,
-                        );
-                    tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind(
-                        annotation_kind,
-                    );
-                    if annotation_kind == AnnotationKind::TypeReference {
-                        tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome(
-                            self.classify_simple_local_interface_type_reference_reject_outcome(
+                    if tsz_common::perf_counters::enabled_fast() {
+                        let annotation_kind = self
+                            .classify_simple_local_interface_non_primitive_annotation_kind(
                                 sig.type_annotation,
-                            ),
+                            );
+                        tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind(
+                            annotation_kind,
                         );
                     }
                     return None;
@@ -234,53 +227,5 @@ impl<'a> CheckerState<'a> {
             }
             _ => AnnotationKind::Other,
         }
-    }
-
-    fn classify_simple_local_interface_type_reference_reject_outcome(
-        &self,
-        type_idx: NodeIndex,
-    ) -> TypeReferenceOutcome {
-        let Some(type_node) = self.ctx.arena.get(type_idx) else {
-            return TypeReferenceOutcome::MalformedTypeReference;
-        };
-        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
-            return TypeReferenceOutcome::MalformedTypeReference;
-        };
-
-        let type_name_idx = type_ref.type_name;
-        let Some(type_name_node) = self.ctx.arena.get(type_name_idx) else {
-            return TypeReferenceOutcome::OtherTypeNameSyntax;
-        };
-
-        if type_name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            return match self.resolve_qualified_symbol_in_type_position(type_name_idx) {
-                TypeSymbolResolution::Type(_) => {
-                    TypeReferenceOutcome::QualifiedNameResolvableSymbol
-                }
-                TypeSymbolResolution::ValueOnly(_) => {
-                    TypeReferenceOutcome::QualifiedNameValueOnlySymbol
-                }
-                TypeSymbolResolution::NotFound => TypeReferenceOutcome::QualifiedNameNotFoundSymbol,
-            };
-        }
-
-        if type_name_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.ctx.arena.get_identifier(type_name_node)
-                && crate::query_boundaries::common::is_compiler_managed_type(
-                    ident.escaped_text.as_str(),
-                )
-            {
-                return TypeReferenceOutcome::IdentifierCompilerManagedType;
-            }
-            return match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
-                TypeSymbolResolution::Type(_) => TypeReferenceOutcome::IdentifierResolvableSymbol,
-                TypeSymbolResolution::ValueOnly(_) => {
-                    TypeReferenceOutcome::IdentifierValueOnlySymbol
-                }
-                TypeSymbolResolution::NotFound => TypeReferenceOutcome::IdentifierNotFoundSymbol,
-            };
-        }
-
-        TypeReferenceOutcome::OtherTypeNameSyntax
     }
 }
