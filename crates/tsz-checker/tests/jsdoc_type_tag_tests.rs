@@ -14,6 +14,22 @@ struct Diag {
     message_text: String,
 }
 
+trait HasDiagnosticCode {
+    fn diagnostic_code(&self) -> u32;
+}
+
+impl HasDiagnosticCode for Diag {
+    fn diagnostic_code(&self) -> u32 {
+        self.code
+    }
+}
+
+impl HasDiagnosticCode for Diagnostic {
+    fn diagnostic_code(&self) -> u32 {
+        self.code
+    }
+}
+
 fn check_js_internal(source: &str, with_libs: bool) -> Vec<Diag> {
     let options = CheckerOptions {
         allow_js: true,
@@ -41,6 +57,10 @@ fn check_js(source: &str) -> Vec<Diag> {
 
 fn check_js_with_libs(source: &str) -> Vec<Diag> {
     check_js_internal(source, true)
+}
+
+fn diagnostic_codes<T: HasDiagnosticCode>(diagnostics: &[T]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.diagnostic_code()).collect()
 }
 
 #[test]
@@ -97,7 +117,7 @@ class A {
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for number assigned to boolean @type field, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -137,7 +157,7 @@ class A {
         ts2322,
         0,
         "Expected no TS2322 for string assigned to string @type field, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -155,7 +175,7 @@ var f = function(value) {
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for number assigned to string parameter from @type function, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -172,7 +192,7 @@ x(1);
     assert!(
         ts7006 >= 1,
         "Expected TS7006 for broad @type {{Function}} on function expression, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -187,7 +207,7 @@ fn test_jsdoc_typedef_before_paren_does_not_suppress_implicit_any() {
     assert!(
         ts7006 >= 1,
         "Expected TS7006 for @typedef before parenthesized expression, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -205,7 +225,7 @@ f(1);
     assert!(
         ts7006 >= 1,
         "Expected TS7006 for parameter with inline @typedef, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -225,7 +245,7 @@ tagCounts["x"] = 1;
         ts2315,
         0,
         "Object<K, V> must not emit TS2315 in JS, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -267,7 +287,7 @@ const table = {
 };
 "#;
     let diagnostics = check_js(source);
-    let codes = diagnostics.iter().map(|d| d.code).collect::<Vec<_>>();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&2322),
         "Expected TS2322 for nested Object value type, got: {codes:?}"
@@ -287,7 +307,7 @@ y(1);
     assert!(
         ts7006 >= 1,
         "Expected TS7006 for broad @type {{function}} on function expression, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -305,7 +325,7 @@ function g(s) {
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for number assigned to string parameter from @type on function decl, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -329,7 +349,7 @@ obj.foo = 'hello';
         ts2322,
         0,
         "Expected no TS2322 when assigning string to @type {{string|undefined}} property, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -347,7 +367,7 @@ var obj = {
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for number initializer on @type {{string|undefined}} property, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -368,7 +388,7 @@ const obj = {
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for string assigned to number parameter under @type {{function(number): number}}, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -387,7 +407,7 @@ var obj = {
         ts2322,
         0,
         "Expected no TS2322 for literal \"a\" assigned to @type {{\"a\"}} property, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -407,7 +427,7 @@ var x = 42;
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for number assigned to braceless @type string, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -424,7 +444,7 @@ var x = 42;
         ts2322,
         0,
         "Expected no TS2322 for number assigned to braceless @type number, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -440,7 +460,7 @@ const obj = { type: "other", prop: 10 };
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for incompatible discriminant under braceless JSDoc intersection, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -495,12 +515,12 @@ var props = {};
     assert!(
         ts7006 >= 2,
         "Expected two TS7006 diagnostics in the mixed JSDoc file, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
     assert!(
         ts2403 >= 1,
         "Expected TS2403 for @type {{object}} vs @type {{Object}} redeclaration, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -519,7 +539,7 @@ var props = {};
     assert!(
         ts2403 >= 1,
         "Expected TS2403 for @type {{object}} vs @type {{Object}} redeclaration, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -536,7 +556,7 @@ if (/** @type {value is string} */ (value === undefined)) {
     assert!(
         diagnostics.iter().any(|d| d.code == 1228),
         "Expected TS1228 for a type predicate in a JSDoc @type cast, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -552,7 +572,7 @@ var s = "" + /** @type {*} */ (4);
     assert!(
         !diagnostics.iter().any(|d| d.code == 2403),
         "Did not expect TS2403 when string concatenation with a JSDoc-any cast redeclares a string var, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -589,7 +609,7 @@ someBase = someFakeClass;
         .unwrap_or_else(|| {
             panic!(
                 "Expected TS2322 for assigning a checked-JS constructor instance to SomeBase, got: {:?}",
-                diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+                diagnostic_codes(&diagnostics)
             )
         });
     assert!(
@@ -625,7 +645,7 @@ inJs(1);
         ts2345,
         0,
         "Expected no TS2345 for call on generic JSDoc @type function declaration, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -650,7 +670,7 @@ inJsArrow(2);
         ts2345,
         0,
         "Expected no TS2345 for call on generic JSDoc @type arrow, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -671,7 +691,7 @@ echo(123);
         .unwrap_or_else(|| {
             panic!(
                 "Expected TS2345 for number argument against tab-whitespace JSDoc generic constraint, got: {:?}",
-                diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+                diagnostic_codes(&diagnostics)
             )
         });
     assert!(
@@ -701,7 +721,7 @@ typed("x");
         ts2345,
         0,
         "Expected no TS2345 for call on inline generic JSDoc @type function, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -732,7 +752,7 @@ const a = { value: undefined };
         1,
         "Expected TS2375 for `value: undefined` under exactOptionalPropertyTypes \
          when @property uses `[value]` optional syntax, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -770,7 +790,7 @@ const a = { value: undefined };
         ts2375.len(),
         1,
         "Expected exactly one TS2375 for the typedef-aliased target, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
     let msg = &ts2375[0].message_text;
     assert!(
@@ -810,7 +830,7 @@ const b = { flag: undefined };
         ts2375.len(),
         1,
         "Expected exactly one TS2375 for the inline-typedef alias target, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
     let msg = &ts2375[0].message_text;
     assert!(
@@ -842,13 +862,13 @@ const a = { value: undefined };
         ts2375,
         0,
         "TS2375 must not fire without exactOptionalPropertyTypes, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
     assert_eq!(
         ts2322,
         0,
         "TS2322 must not fire when classic optional semantics widen to `T | undefined`, \
          got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
