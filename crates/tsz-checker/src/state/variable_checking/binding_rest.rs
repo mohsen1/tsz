@@ -4,6 +4,7 @@
 //! computing the rest type by omitting named sibling properties.
 
 use crate::query_boundaries::state::checking as query;
+use crate::query_boundaries::type_checking_utilities;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -52,7 +53,12 @@ impl<'a> CheckerState<'a> {
                         computed_string_keys.push(s);
                     }
                 }
-            } else {
+            } else if type_checking_utilities::get_invalid_index_type_member_strict(
+                self.ctx.types,
+                key_type,
+            )
+            .is_none()
+            {
                 computed_key_type_ids.push(key_type);
             }
         }
@@ -70,15 +76,15 @@ impl<'a> CheckerState<'a> {
                     string_keys.push(name.clone());
                 }
             }
+            let unspreadable = self.collect_unspreadable_prototype_names_from(parent_type);
+            for name in unspreadable {
+                if !string_keys.iter().any(|k| k == &name) {
+                    string_keys.push(name);
+                }
+            }
             if (!string_keys.is_empty() || !computed_key_type_ids.is_empty())
                 && let Some(omit_type) = self.resolve_lib_type_by_name("Omit")
             {
-                let unspreadable = self.collect_unspreadable_prototype_names_from(parent_type);
-                for name in unspreadable {
-                    if !string_keys.iter().any(|k| k == &name) {
-                        string_keys.push(name);
-                    }
-                }
                 let factory = self.ctx.types.factory();
                 let mut key_args: Vec<TypeId> = string_keys
                     .iter()
