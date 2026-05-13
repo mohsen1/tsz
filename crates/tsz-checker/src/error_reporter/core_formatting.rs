@@ -205,6 +205,13 @@ impl<'a> CheckerState<'a> {
                     // Match tsc: optional parameters display as `(a?: T)`.
                     .with_preserve_optional_parameter_surface_syntax(true)
                     .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks)
+                    .with_builtin_iterator_return_type(
+                        if state.ctx.compiler_options.strict_builtin_iterator_return {
+                            TypeId::UNDEFINED
+                        } else {
+                            TypeId::ANY
+                        },
+                    )
                     .with_exact_optional_property_types(
                         state.ctx.compiler_options.exact_optional_property_types,
                     );
