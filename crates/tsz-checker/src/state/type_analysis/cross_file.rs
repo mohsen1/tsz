@@ -12,52 +12,10 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
+
 thread_local! {
     static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// Typed identifier for the cross-file query bucket a cache lookup or write
-/// targets. Replaces the four `u8` constants that used to live here, matching
-/// the API shape proposed in `docs/plan/PERFORMANCE_PLAN.md` §7 ("Typed
-/// Cross-File Queries"):
-///
-/// > pub enum CrossFileQueryKind {
-/// >     SymbolType,
-/// >     ClassInstanceType,
-/// >     InterfaceType,
-/// >     InterfaceMemberSimpleType,
-/// > }
-///
-/// The discriminant values are the historical `u8` numbers already stored in
-/// `DefinitionStore` cache keys, so the enum remains `#[repr(u8)]`-compatible
-/// with the cache key layout via `as u8`.
-///
-/// Adding a new bucket: add the variant, give it a fresh `u8` discriminant,
-/// and ensure it doesn't collide with existing ones (the storage layer keys
-/// caches by `(u8, file_idx, primary, secondary, args_hash)` so
-/// re-purposing a discriminant would silently corrupt unrelated cache
-/// entries).
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(u8)]
-// Variant names mirror PERFORMANCE_PLAN.md §7 verbatim; the shared "Type"
-// suffix is part of the plan's API contract and must stay.
-#[allow(clippy::enum_variant_names)]
-pub(crate) enum CrossFileQueryKind {
-    InterfaceType = 1,
-    ClassInstanceType = 2,
-    InterfaceMemberSimpleType = 3,
-    SymbolType = 4,
-}
-
-impl CrossFileQueryKind {
-    /// Discriminant value used as the first component of
-    /// `DefinitionStore::resolved_cross_file_queries` cache keys. Stable —
-    /// changing this for an existing variant would invalidate every cached
-    /// entry under that discriminant.
-    #[inline]
-    pub(crate) const fn as_storage_kind(self) -> u8 {
-        self as u8
-    }
 }
 
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
