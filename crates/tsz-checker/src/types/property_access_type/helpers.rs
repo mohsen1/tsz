@@ -887,24 +887,20 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Carry flow narrowing's nullish refinement back into the chosen
-    /// write-base type. `write_receiver_type_for_property_access` may pick the
-    /// un-narrowed declared type for property shape (so member lookup keeps
-    /// the full declared signature), but the nullish absence proven by flow
-    /// analysis (e.g. after `obj.p ??= rhs`) is a flow fact about `obj`
-    /// itself. Without this step the TS18048/TS2532 check on the write-base
-    /// would fire on the un-narrowed declared receiver even though flow
-    /// already proved it is non-nullish.
+    /// Carry the flow-narrowed nullish absence onto the chosen write-base
+    /// type. The caller may pick the un-narrowed declared type for property
+    /// shape; the nullish verdict is a flow fact about the receiver itself
+    /// and must follow, or the write-base TS18048/TS2532 check fires on a
+    /// receiver flow analysis already proved non-nullish.
     fn carry_flow_nullish_refinement(&mut self, narrowed: TypeId, declared: TypeId) -> TypeId {
-        if narrowed == declared {
+        use crate::query_boundaries::common::{is_nullish_type, remove_nullish};
+        if narrowed == declared || !is_nullish_type(self.ctx.types, declared) {
             return declared;
         }
-        let (_, narrowed_nullish) =
-            crate::query_boundaries::common::split_nullish_type(self.ctx.types, narrowed);
-        if narrowed_nullish.is_some() {
+        if is_nullish_type(self.ctx.types, narrowed) {
             return declared;
         }
-        crate::query_boundaries::common::remove_nullish(self.ctx.types, declared)
+        remove_nullish(self.ctx.types, declared)
     }
 
     fn write_receiver_can_flow_narrow(

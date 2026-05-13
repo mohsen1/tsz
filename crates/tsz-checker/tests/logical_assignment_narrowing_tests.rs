@@ -221,11 +221,7 @@ function configure(config: Config) {
 
 #[test]
 fn test_logical_and_assignment_does_not_widen_property_access_target() {
-    // &&= only assigns when the LHS is truthy, so it must NOT erase a possibly
-    // undefined union member. After `obj.a &&= obj.a`, `obj.a` remains
-    // `{ b: number } | undefined`. The follow-up read should still flag
-    // TS18048. This is the structural counterpart of
-    // `test_logical_and_assignment_does_not_narrow_away_undefined` above.
+    // `&&=` assigns only when the LHS is truthy, so `undefined` must remain.
     let source = r#"
 interface Obj { a?: { b: number } }
 function foo(obj: Obj) {

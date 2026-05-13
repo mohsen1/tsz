@@ -236,13 +236,11 @@ impl<'a> FlowAnalyzer<'a> {
                 if bin.operator_token != SyntaxKind::EqualsToken as u16
                     && is_compound_assignment_operator(bin.operator_token)
                 {
-                    // Member-like writes through `+=`/`-=`/`&=`/... must keep
-                    // the receiver's declared read surface, because the value
-                    // assigned through a setter need not equal the getter's
-                    // declared type. Logical compound writes (`??=`/`||=`/
-                    // `&&=`) join the short-circuit and assignment branches
-                    // through the binary-op evaluator, and are sound to
-                    // narrow on any reference kind.
+                    // Logical compound writes (`??=`/`||=`/`&&=`) join the
+                    // short-circuit and assignment branches structurally, so
+                    // they narrow any reference kind. Other compound writes
+                    // (`+=`, `-=`, `&=`, ...) on member-like targets must
+                    // preserve the getter's declared read surface.
                     if !is_logical_compound_assignment_operator(bin.operator_token)
                         && self.is_access_reference(target)
                     {
