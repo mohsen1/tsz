@@ -111,6 +111,7 @@ const value: string = x.value
         "imported companion const should preserve the Readonly alias annotation when eager alias evaluation cannot reduce it, got: {diagnostics:?}"
     );
 }
+
 #[test]
 fn imported_companion_const_keeps_private_readonly_alias_annotation() {
     let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
