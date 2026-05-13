@@ -5547,6 +5547,11 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                 }
             } else if func.body.is_some()
+                && !self.source_function_body_contains_direct_call_to_name(
+                    source_arena,
+                    func,
+                    &symbol.escaped_name,
+                )
                 && let Some(type_text) = {
                     let mut scratch = if std::ptr::eq(source_arena, self.arena)
                         && let (Some(type_cache), Some(type_interner), Some(binder)) =

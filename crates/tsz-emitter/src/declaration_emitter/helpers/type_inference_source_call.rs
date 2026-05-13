@@ -6,6 +6,43 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn source_function_body_contains_direct_call_to_name(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        name: &str,
+    ) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let Some(source_file) = self.arena_source_file(source_arena) else {
+            return false;
+        };
+        let Some(body_node) = source_arena.get(func.body) else {
+            return false;
+        };
+        let Ok(start) = usize::try_from(body_node.pos) else {
+            return false;
+        };
+        let Ok(end) = usize::try_from(body_node.end) else {
+            return false;
+        };
+        let Some(body_text) = source_file.text.get(start..end) else {
+            return false;
+        };
+
+        let mut search = body_text;
+        while let Some(offset) = search.find(name) {
+            let after_name = &search[offset + name.len()..];
+            let after_ws = after_name.trim_start();
+            if after_ws.starts_with('(') || after_ws.starts_with('<') {
+                return true;
+            }
+            search = after_name;
+        }
+        false
+    }
+
     pub(in crate::declaration_emitter) fn function_body_returned_parameter_call_return_type_text(
         &self,
         source_arena: &NodeArena,
