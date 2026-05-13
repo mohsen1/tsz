@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `fix-super-getter-ts2340-6481`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #6482
+- **Status**: ready
 - **Workstream**: conformance/checker false positives
 
 ## Intent
@@ -15,8 +15,12 @@ private access.
 
 ## Files Touched
 
+- `crates/tsz-checker/src/checkers/property_checker/super_accessor.rs`
+- `crates/tsz-checker/tests/ts2340_super_accessor_tests.rs`
 - `docs/plan/claims/fix-super-getter-ts2340-6481.md`
 
 ## Verification
 
-- Pending.
+- `cargo test -p tsz-checker --test ts2340_super_accessor_tests -- --nocapture` (5 passed)
+- `cargo fmt --all --check`
+- `git diff --check`

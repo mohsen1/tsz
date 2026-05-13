@@ -1,17 +1,7 @@
-//! Tests for TS2340 on `super.<accessor>` reads.
+//! Tests for `super.<accessor>` reads.
 //!
-//! Closes #5995. The structural rule:
-//!
-//! > `super.X` is only legal when X is a method on the base class. When
-//! > X is a `get` accessor (or `set` accessor read as a value), tsc
-//! > emits TS2340: "Only public and protected methods of the base
-//! > class are accessible via the 'super' keyword."
-//!
-//! The fix lives in `check_property_accessibility_super_method`-style
-//! logic in `checkers/property_checker.rs`. It adds a dedicated
-//! `class_chain_member_is_accessor` lookup (in `classes/class_summary.rs`)
-//! because the existing `class_chain_member_kind_name_only` folds
-//! accessors and methods together as `MethodLike`.
+//! Regression coverage for #6481: public and protected accessors are valid
+//! `super` property targets and must not be rejected with TS2340.
 
 fn diags(source: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_source_code_messages(source)
@@ -24,8 +14,8 @@ fn has_ts2340(diags: &[(u32, String)]) -> bool {
 }
 
 #[test]
-fn super_get_accessor_read_emits_ts2340() {
-    // Direct repro from #5995.
+fn super_public_get_accessor_read_no_ts2340() {
+    // Direct repro from #6481.
     let source = r#"
 class Base {
   get value(): number {
@@ -41,13 +31,13 @@ class Derived extends Base {
 "#;
     let d = diags(source);
     assert!(
-        has_ts2340(&d),
-        "expected TS2340 for super.<getter>, got: {d:?}",
+        !has_ts2340(&d),
+        "public super.<getter> must not emit TS2340, got: {d:?}",
     );
 }
 
 #[test]
-fn super_get_accessor_read_different_name_emits_ts2340() {
+fn super_public_get_accessor_read_different_name_no_ts2340() {
     // Anti-hardcoding: the property name varies. Same rule applies.
     let source = r#"
 class A {
@@ -64,8 +54,30 @@ class B extends A {
 "#;
     let d = diags(source);
     assert!(
-        has_ts2340(&d),
-        "expected TS2340 for super.<getter> (name 'size'), got: {d:?}",
+        !has_ts2340(&d),
+        "public super.<getter> (name 'size') must not emit TS2340, got: {d:?}",
+    );
+}
+
+#[test]
+fn super_protected_get_accessor_read_no_ts2340() {
+    let source = r#"
+class Base {
+  protected get value(): number {
+    return 0;
+  }
+}
+
+class Derived extends Base {
+  protected override get value(): number {
+    return super.value + 1;
+  }
+}
+"#;
+    let d = diags(source);
+    assert!(
+        !has_ts2340(&d),
+        "protected super.<getter> must not emit TS2340, got: {d:?}",
     );
 }
 
