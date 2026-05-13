@@ -14,11 +14,12 @@ This slice is deliberately limited to:
 - `symbol_arenas` delegations,
 - target arenas that are bundled lib declaration files, and
 - symbols proven to come from actual/cloned standard libs,
-- interface symbols whose declarations are all in builtin lib arenas.
+- allowlisted option/registry interface symbols whose declarations are all in
+  builtin lib arenas.
 
-Type aliases and symbols with non-builtin declarations are intentionally
-excluded because the broader prototype changed observable diagnostics for lib
-utility aliases and merged external symbols.
+Type aliases, core lib identity interfaces, and symbols with non-builtin
+declarations are intentionally excluded because broader prototypes changed
+observable diagnostics or conformance behavior.
 
 ## Evidence
 
@@ -26,12 +27,12 @@ Attribution mode on `monorepo-006`:
 
 | Counter | Before (#6243) | After | Delta |
 | --- | ---: | ---: | ---: |
-| `checker.with_parent_cache_constructed` | 56 | 37 | -19 |
-| `with_parent_cache_by_reason.DelegateCrossArenaSymbol` | 41 | 28 | -13 |
-| `delegate.misses` | 55 | 36 | -19 |
-| `delegate_miss_classification.target_declaration_files` | 41 | 28 | -13 |
+| `checker.with_parent_cache_constructed` | 56 | 55 | -1 |
+| `with_parent_cache_by_reason.DelegateCrossArenaSymbol` | 41 | 40 | -1 |
+| `delegate.misses` | 55 | 54 | -1 |
+| `delegate_miss_classification.target_declaration_files` | 41 | 40 | -1 |
 | `delegate_miss_classification.by_kind.type_alias` | 16 | 16 | 0 |
-| `delegate_miss_classification.by_kind.interface` | 25 | 12 | -13 |
+| `delegate_miss_classification.by_kind.interface` | 25 | 24 | -1 |
 
 Diagnostics count remains unchanged at `10198`.
 
@@ -42,6 +43,6 @@ Raw artifacts:
 
 ## Residue
 
-The remaining 28 declaration-file misses include the rejected type-alias slice
-and interface residue that needs namespace-qualified or merged-lib proof rather
-than broadening this global-lib resolver path.
+The remaining 40 declaration-file misses include the rejected type-alias slice
+and interface residue that needs namespace-qualified, merged-lib, or
+conformance-backed proof rather than broadening this global-lib resolver path.
