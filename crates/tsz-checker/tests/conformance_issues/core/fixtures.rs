@@ -1,6 +1,108 @@
 use super::*;
 
 #[test]
+fn test_cross_file_imported_interface_promise_return_keeps_lib_symbol() {
+    let diagnostics = compile_named_files_get_diagnostics_with_compiled_libs_and_options(
+        &[
+            (
+                "a.ts",
+                r#"
+export interface I {
+  getSchemas(): Promise<SchemaMetadata[]>;
+}
+export interface SchemaMetadata {
+  readonly name: string;
+}
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import type { I, SchemaMetadata } from "./a.js";
+
+export class C implements I {
+  async getSchemas(): Promise<SchemaMetadata[]> {
+    return [];
+  }
+}
+"#,
+            ),
+        ],
+        "b.ts",
+        &[
+            "lib.es5.d.ts",
+            "lib.es2015.d.ts",
+            "lib.es2015.promise.d.ts",
+            "lib.es2015.iterable.d.ts",
+            "lib.es2022.d.ts",
+            "lib.dom.d.ts",
+        ],
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2017,
+            module: ModuleKind::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2416),
+        "Imported interface return type `Promise<T>` must not resolve through a foreign arena \
+         collision such as `CSSLayerBlockRule<T>`. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_cross_file_class_method_promise_return_uses_lib_generic_base() {
+    let diagnostics = compile_named_files_get_diagnostics_with_compiled_libs_and_options(
+        &[
+            (
+                "base.ts",
+                r#"
+export class Base {
+  m(x: unknown): Promise<void> {
+    return null as any;
+  }
+}
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import { Base } from "./base.js";
+
+declare const base: Base;
+const f: (x: unknown) => Promise<void> = base.m;
+"#,
+            ),
+        ],
+        "b.ts",
+        &[
+            "lib.es5.d.ts",
+            "lib.es2015.promise.d.ts",
+            "lib.es2015.iterable.d.ts",
+            "lib.es2022.d.ts",
+            "lib.dom.d.ts",
+        ],
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2017,
+            module: ModuleKind::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322)
+            && diagnostics
+                .iter()
+                .all(|(_, message)| !message.contains("object<void>")),
+        "Cross-file class method return `Promise<void>` must not become `object<void>`. \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_const_alias_expando_element_reads_do_not_emit_ts7053_in_declaration_mode() {
     let source = r#"
 function foo() {}

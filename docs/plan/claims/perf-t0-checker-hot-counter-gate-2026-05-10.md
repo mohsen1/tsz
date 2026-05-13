@@ -4,8 +4,8 @@
 
 ## Scope
 
-Five inline `inc(&counters().X)` increments in checker code that pay an
-unconditional `OnceLock<PerfCounters>::get()` per invocation. All five
+Seven inline `inc(&counters().X)` increments in checker code that pay an
+unconditional `OnceLock<PerfCounters>::get_or_init(...)` path per invocation. All seven
 are on multi-million-call hot paths (one per symbol-type lookup or
 cross-file type-params query), where the gate-once pattern saves a real
 amount of disabled-mode overhead.

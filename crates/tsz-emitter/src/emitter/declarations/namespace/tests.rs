@@ -31,6 +31,26 @@ fn namespace_recovers_malformed_export_function_arrow_body() {
     );
 }
 
+#[test]
+fn namespace_recovers_malformed_export_function_arrow_object_literal_body() {
+    let source = "namespace M {\n    export namespace N {\n        export function f()=>({ a: 1 });\n    }\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("({ a: 1 });"),
+        "Recovered object-literal arrow body must stay parenthesized in statement position.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n        { a: 1 };"),
+        "Recovered object-literal arrow body must not emit as a bare block statement.\nOutput:\n{output}"
+    );
+}
+
 /// Regression test: type-only import-equals inside a namespace must not
 /// leave a phantom blank line. The import `import T = M1.I;` produces no
 /// JS output (type-only alias), but `emit_namespace_body_statements` used

@@ -1,13 +1,9 @@
 //! Tests for TS2320: Interface inherits conflicting declarations from base types.
 
-use crate::test_utils::{check_source_code_messages, check_source_codes};
+use crate::test_utils::{check_source_code_messages as get_diagnostics, check_source_codes};
 
 fn has_error(source: &str, code: u32) -> bool {
     check_source_codes(source).contains(&code)
-}
-
-fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source_code_messages(source)
 }
 
 #[test]

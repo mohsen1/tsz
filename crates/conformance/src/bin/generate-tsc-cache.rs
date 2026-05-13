@@ -250,7 +250,7 @@ fn main() -> Result<()> {
 }
 
 fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Vec<PathBuf>> {
-    use tsz_conformance::test_filter::matches_path_filter;
+    use tsz_conformance::test_filter::{is_conformance_source_file, matches_path_filter};
     let mut files = Vec::new();
 
     for entry in WalkDir::new(test_dir)
@@ -264,25 +264,15 @@ fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Ve
             continue;
         }
 
-        let path_str = path.to_string_lossy();
-
-        if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
+        if !is_conformance_source_file(path) {
             continue;
         }
 
-        if path_str.ends_with(".d.ts") {
+        if !matches_path_filter(path, filter) {
             continue;
         }
 
-        if path
-            .extension()
-            .is_some_and(|ext| ext == "ts" || ext == "tsx" || ext == "js" || ext == "jsx")
-        {
-            if !matches_path_filter(path, filter) {
-                continue;
-            }
-            files.push(path.to_path_buf());
-        }
+        files.push(path.to_path_buf());
     }
 
     files.sort();

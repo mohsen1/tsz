@@ -13,6 +13,28 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
+    fn array_element_is_const_assertion(&self, elem_idx: NodeIndex) -> bool {
+        let mut current = elem_idx;
+        while let Some(node) = self.ctx.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                current = paren.expression;
+                continue;
+            }
+
+            if (node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::TYPE_ASSERTION)
+                && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
+            {
+                return self.is_const_assertion_type_node(assertion.type_node);
+            }
+
+            return false;
+        }
+        false
+    }
+
     fn mutable_spread_declared_type_in_const_assertion(
         &mut self,
         expression: NodeIndex,
@@ -655,6 +677,8 @@ impl<'a> CheckerState<'a> {
         let mut element_nodes = Vec::new();
         let mut tuple_elements = Vec::new();
         let mut preserve_tuple_spread_literals = false;
+        let mut saw_array_element_for_bct = false;
+        let mut all_array_elements_const_asserted = true;
         // Total element count for tuple contextual typing. Elided slots count toward
         // the position of subsequent elements (e.g. `[42,,true]` has length 3 with
         // an undefined slot at index 1), matching tsc's `elementCount = elements.length`.
@@ -700,6 +724,8 @@ impl<'a> CheckerState<'a> {
                         rest: false,
                     });
                 } else {
+                    saw_array_element_for_bct = true;
+                    all_array_elements_const_asserted = false;
                     element_types.push(hole_type);
                     // Note: we don't add to element_nodes since there is no node
                     // for an elision. Excess property checks are skipped for the slot.
@@ -825,6 +851,8 @@ impl<'a> CheckerState<'a> {
                     } else {
                         // For array context, add element types
                         preserve_tuple_spread_literals = true;
+                        saw_array_element_for_bct = true;
+                        all_array_elements_const_asserted = false;
                         for elem in &elems {
                             if elem.rest
                                 && let Some(rest_elem) =
@@ -864,12 +892,15 @@ impl<'a> CheckerState<'a> {
                         rest: true, // Mark as spread for non-tuple spreads in tuple context
                     });
                 } else {
+                    saw_array_element_for_bct = true;
+                    all_array_elements_const_asserted = false;
                     element_types.push(elem_type);
                 }
                 continue;
             }
 
             // Regular (non-spread) element
+            let elem_is_const_assertion = self.array_element_is_const_assertion(elem_idx);
             let mut elem_type = if self.ctx.in_destructuring_target {
                 self.destructuring_target_type_from_initializer(elem_idx)
             } else {
@@ -913,6 +944,8 @@ impl<'a> CheckerState<'a> {
                     rest: false,
                 });
             } else {
+                saw_array_element_for_bct = true;
+                all_array_elements_const_asserted &= elem_is_const_assertion;
                 element_types.push(elem_type);
                 element_nodes.push(elem_idx);
             }
@@ -1091,7 +1124,12 @@ impl<'a> CheckerState<'a> {
         // skip BCT's literal widening by computing the union directly. This preserves
         // literal types like "foo" | "bar" instead of widening to string, enabling
         // correct type parameter inference (e.g., K inferred as "foo" | "bar" not string).
-        let element_type = if self.ctx.preserve_literal_types || preserve_tuple_spread_literals {
+        let preserve_const_asserted_element_literals =
+            saw_array_element_for_bct && all_array_elements_const_asserted;
+        let element_type = if self.ctx.preserve_literal_types
+            || preserve_tuple_spread_literals
+            || preserve_const_asserted_element_literals
+        {
             self.ctx.types.union(element_types.clone())
         } else {
             expr_ops::compute_best_common_type_cached(

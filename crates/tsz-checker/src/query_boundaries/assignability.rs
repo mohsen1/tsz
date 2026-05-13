@@ -300,6 +300,10 @@ pub(crate) fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -
     tsz_solver::type_queries::get_return_type(db, type_id)
 }
 
+pub(crate) fn strip_function_type_predicate(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::strip_function_type_predicate(db, type_id)
+}
+
 pub(crate) fn rewrite_function_error_slots_to_any(
     db: &dyn TypeDatabase,
     type_id: TypeId,

@@ -933,7 +933,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if !self.is_assignable_to(predicate_type, param_type)
+        if !self.type_predicate_type_assignable_to_parameter(predicate_type, param_type)
             && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
         {
             self.ctx.error(
