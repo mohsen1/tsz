@@ -134,19 +134,8 @@ impl<'a> CheckerState<'a> {
         } else {
             return_type
         };
-        // Eagerly evaluate monomorphic TypeApplication return types to prevent
-        // deeply nested application chains from accumulating. Without this,
-        // sequential calls like `merge(merge(merge(...)))` build a chain of
-        // unevaluated TypeApplications where each level references the previous
-        // one. Later evaluation of the outermost type re-evaluates the entire
-        // chain from scratch, leading to exponential blowup.
-        //
-        // Skip eager evaluation for Promise-like applications (Promise<T>,
-        // PromiseLike<T>). The await expression handler relies on the
-        // Application wrapper to extract T via promise_like_return_type_argument.
-        // Evaluating Promise<T> into its structural Object form destroys the
-        // Application wrapper and causes `await fn()` to produce the structural
-        // Promise object instead of the unwrapped T.
+        // Eagerly evaluate monomorphic TypeApplications to avoid nested return
+        // chains, but keep Promise-like applications wrapped for await handling.
         let return_type = if common::is_generic_application(self.ctx.types, return_type)
             && !self.contains_type_parameters_cached(return_type)
             && !self.is_promise_type(return_type)
@@ -167,24 +156,23 @@ impl<'a> CheckerState<'a> {
 
     fn apply_direct_callable_this_substitution(
         &mut self,
-        return_type: TypeId,
-        callee_expr: NodeIndex,
-        callee_type: TypeId,
+        ty: TypeId,
+        expr: NodeIndex,
+        callee: TypeId,
     ) -> TypeId {
-        if return_type.is_intrinsic()
-            || matches!(callee_type, TypeId::ERROR | TypeId::ANY)
-            || !common::contains_this_type(self.ctx.types, return_type)
+        if ty.is_intrinsic()
+            || matches!(callee, TypeId::ERROR | TypeId::ANY)
+            || !common::contains_this_type(self.ctx.types, ty)
+            || self
+                .ctx
+                .arena
+                .get(expr)
+                .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
         {
-            return return_type;
+            ty
+        } else {
+            common::substitute_this_type_at_return_position(self.ctx.types, ty, callee)
         }
-        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
-            return return_type;
-        };
-        if callee_node.kind != SyntaxKind::Identifier as u16 {
-            return return_type;
-        }
-
-        common::substitute_this_type_at_return_position(self.ctx.types, return_type, callee_type)
     }
 
     fn polymorphic_this_indexed_conditional_target(
