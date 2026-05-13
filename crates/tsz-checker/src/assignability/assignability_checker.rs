@@ -21,10 +21,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
 
-// =============================================================================
-// Assignability Checking Methods
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
         if let Some(shape) =
@@ -2179,10 +2175,12 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         self.ensure_relation_inputs_ready(&[source, target]);
-        let source = self.substitute_this_type_if_needed(source);
-        let target = self.substitute_this_type_if_needed(target);
+        let mut source = self.substitute_this_type_if_needed(source);
+        let mut target = self.substitute_this_type_if_needed(target);
         let raw_source = source;
         let raw_target = target;
+        source = self.normalize_awaited_application_args_for_variance(source);
+        target = self.normalize_awaited_application_args_for_variance(target);
 
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
@@ -2349,6 +2347,9 @@ impl<'a> CheckerState<'a> {
         if let Some(concrete_target) = self.concrete_remapped_mapped_assignability_target(target) {
             return self.is_assignable_to(source, concrete_target);
         }
+
+        source = self.normalize_index_access_for_assignability(source, 0);
+        target = self.normalize_index_access_for_assignability(target, 0);
 
         let source_eval = self.evaluate_type_for_assignability(source);
         let target_eval = self.evaluate_type_for_assignability(target);
