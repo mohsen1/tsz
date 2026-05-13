@@ -9,6 +9,7 @@
 //! Source: `conformance/pedantic/noUncheckedIndexedAccess.ts`
 //! ("Writes don't allow 'undefined'; all should be errors").
 
+use crate::test_utils::diagnostic_codes;
 use tsz_common::options::checker::CheckerOptions;
 
 fn diags_for_strict_nuia(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
@@ -31,7 +32,7 @@ declare const strMap: { [s: string]: boolean };
 const x: boolean = strMap["k"];
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "NUIA read must emit TS2322 for boolean|undefined → boolean. Got: {codes:?}",
@@ -48,7 +49,7 @@ declare const lookupTable: { [k: string]: number };
 const v: number = lookupTable.foo;
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "Renamed: NUIA read must emit TS2322 for number|undefined → number. Got: {codes:?}",
@@ -64,7 +65,7 @@ declare const strMap: { [s: string]: boolean };
 const x: boolean | undefined = strMap["k"];
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         !codes.contains(&2322),
         "boolean|undefined slot must accept NUIA-widened read. Got: {codes:?}",

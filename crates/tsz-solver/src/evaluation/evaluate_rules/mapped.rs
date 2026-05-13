@@ -20,6 +20,10 @@ pub(crate) struct MappedKeys {
     pub string_literals: Vec<Atom>,
     pub has_string: bool,
     pub has_number: bool,
+    /// Template literal types used as mapped-type key constraints (e.g. `` `on${string}` ``).
+    /// When non-empty and `has_string` is false, the object gets a template-literal index
+    /// signature instead of a plain string index signature.
+    pub template_literals: Vec<TypeId>,
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
@@ -512,36 +516,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             properties.sort_by_key(|p| order_map.get(&p.name).copied().unwrap_or(usize::MAX));
         }
 
+        let empty_atom = self.interner().intern_string("");
+
         let string_index = if key_set.has_string {
             match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
                 Ok(Some(remapped)) => {
                     if remapped != TypeId::STRING {
                         return self.interner().mapped(*mapped);
                     }
-                    let key_type = TypeId::STRING;
-                    subst.clear();
-                    subst.insert(mapped.type_param.name, key_type);
-                    let instantiated_template =
-                        instantiate_type(self.interner(), mapped.template, &subst);
-                    let mut value_type = self.evaluate(instantiated_template);
-
-                    // Get modifiers for string index
-                    let empty_atom = self.interner().intern_string("");
-                    let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
-                        mapped,
+                    Some(self.build_index_signature_for_mapped(
+                        *mapped,
+                        TypeId::STRING,
                         is_homomorphic,
                         source_object,
                         empty_atom,
-                    );
-                    if idx_optional {
-                        value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
-                    }
-                    Some(IndexSignature {
-                        key_type,
-                        value_type,
-                        readonly: idx_readonly,
-                        param_name: None,
-                    })
+                    ))
                 }
                 Ok(None) => None,
                 Err(()) => return self.interner().mapped(*mapped),
@@ -556,35 +545,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if remapped != TypeId::NUMBER {
                         return self.interner().mapped(*mapped);
                     }
-                    let key_type = TypeId::NUMBER;
-                    subst.clear();
-                    subst.insert(mapped.type_param.name, key_type);
-                    let mut value_type =
-                        self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
-
-                    // Get modifiers for number index
-                    let empty_atom = self.interner().intern_string("");
-                    let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
-                        mapped,
+                    Some(self.build_index_signature_for_mapped(
+                        *mapped,
+                        TypeId::NUMBER,
                         is_homomorphic,
                         source_object,
                         empty_atom,
-                    );
-                    if idx_optional {
-                        value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
-                    }
-                    Some(IndexSignature {
-                        key_type,
-                        value_type,
-                        readonly: idx_readonly,
-                        param_name: None,
-                    })
+                    ))
                 }
                 Ok(None) => None,
                 Err(()) => return self.interner().mapped(*mapped),
             }
         } else {
             None
+        };
+
+        let string_index = if string_index.is_none() && !key_set.template_literals.is_empty() {
+            let key_type =
+                crate::utils::union_or_single(self.interner(), key_set.template_literals);
+            Some(self.build_index_signature_for_mapped(
+                *mapped,
+                key_type,
+                is_homomorphic,
+                source_object,
+                empty_atom,
+            ))
+        } else {
+            string_index
         };
 
         if string_index.is_some() || number_index.is_some() {
@@ -597,6 +584,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             })
         } else {
             self.interner().object(properties)
+        }
+    }
+
+    fn build_index_signature_for_mapped(
+        &mut self,
+        mapped: MappedType,
+        key_type: TypeId,
+        is_homomorphic: bool,
+        source_object: Option<TypeId>,
+        empty_atom: Atom,
+    ) -> IndexSignature {
+        let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
+        let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+        let mut value_type = self.evaluate(instantiated);
+        let (idx_optional, idx_readonly) =
+            self.get_mapped_modifiers(&mapped, is_homomorphic, source_object, empty_atom);
+        if idx_optional {
+            value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
+        }
+        IndexSignature {
+            key_type,
+            value_type,
+            readonly: idx_readonly,
+            param_name: None,
         }
     }
 
@@ -956,6 +967,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             string_literals: Vec::new(),
             has_string: false,
             has_number: false,
+            template_literals: Vec::new(),
         };
 
         match key {
@@ -1047,7 +1059,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if evaluated != type_id {
                     return self.extract_mapped_keys(evaluated);
                 }
-                None
+                // Infinite set — can't expand to concrete keys; emit as index signature.
+                keys.template_literals.push(type_id);
+                Some(keys)
             }
             // Numeric literals become string property names (e.g., enum value 0 → "0").
             // This handles the case where a single-member enum is used as a mapped type
@@ -1154,9 +1168,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         keys.string_literals.extend(inner_keys.string_literals);
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
+                        keys.template_literals.extend(inner_keys.template_literals);
                     }
                 }
-                if !keys.has_string && !keys.has_number && keys.string_literals.is_empty() {
+                if !keys.has_string
+                    && !keys.has_number
+                    && keys.string_literals.is_empty()
+                    && keys.template_literals.is_empty()
+                {
                     // Only symbol keys (or nothing) - defer until we support symbol indices.
                     return None;
                 }
@@ -1226,8 +1245,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             other.string_literals.iter().copied().collect();
                         result.string_literals.retain(|lit| other_set.contains(lit));
                     }
+                    // Template literals: union (not intersection) — keep all constraints.
+                    for tl in &other.template_literals {
+                        if !result.template_literals.contains(tl) {
+                            result.template_literals.push(*tl);
+                        }
+                    }
                 }
-                if !result.has_string && !result.has_number && result.string_literals.is_empty() {
+                if !result.has_string
+                    && !result.has_number
+                    && result.string_literals.is_empty()
+                    && result.template_literals.is_empty()
+                {
                     // Intersection is empty — produces empty object.
                     // Still return Some so we generate an empty object type rather than deferring.
                 }

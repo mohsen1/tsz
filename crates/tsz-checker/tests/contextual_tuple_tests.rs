@@ -97,3 +97,19 @@ eacher((a, b) => {
         "Expected assignability error for narrower literal type, got {ts2322:?}"
     );
 }
+
+#[test]
+fn distributive_conditional_tuple_union_preserves_literal_assignment() {
+    let source = r#"
+type Pair<T> = T extends any ? [T, T] : never;
+type P = Pair<"a" | "b">;
+const p: P = ["a", "a"];
+p;
+"#;
+
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.is_empty(),
+        "expected tuple literal to assign to distributive conditional union, got: {diagnostics:#?}"
+    );
+}

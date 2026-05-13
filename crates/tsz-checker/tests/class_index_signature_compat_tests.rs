@@ -75,3 +75,37 @@ class Derived extends Base {
         "Expected TS2415 with string index signature incompatibility, got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn class_implements_matching_index_signature_does_not_emit_duplicate_ts2420() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Dictionary {
+  [key: string]: string;
+}
+
+class StringDict implements Dictionary {
+  [key: string]: string;
+
+  get(key: string): string {
+    return this[key] ?? "";
+  }
+}
+"#,
+    );
+
+    let ts2411_count = diagnostics.iter().filter(|(code, _)| *code == 2411).count();
+    let ts2420: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2420)
+        .collect();
+
+    assert_eq!(
+        ts2411_count, 1,
+        "Expected the method-vs-string-index TS2411 diagnostic to remain, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2420.is_empty(),
+        "Matching class index signature should not also emit TS2420. Diagnostics: {diagnostics:#?}"
+    );
+}

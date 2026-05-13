@@ -3,7 +3,22 @@
 //! These tests verify that the call expression module (`call.rs`) correctly uses
 //! solver query APIs instead of direct TypeData/lookup inspection.
 
-use crate::test_utils::{check_source, check_source_diagnostics};
+use crate::diagnostics::Diagnostic;
+use crate::test_utils::{check_source, check_source_diagnostics, diagnostic_codes};
+
+fn diagnostics_with_code(diagnostics: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == code)
+        .collect()
+}
+
+fn diagnostic_messages<'a>(diagnostics: &[&'a Diagnostic]) -> Vec<&'a str> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message_text.as_str())
+        .collect()
+}
 
 /// Verify `ThisType` extraction through type alias applications works correctly
 /// via `get_this_type_from_marker_expanding` (previously used raw TypeData
@@ -32,12 +47,12 @@ createComponent({
 "#,
     );
 
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for ThisType through alias application, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -93,7 +108,7 @@ const b: string = foo("hello");
         errors.len(),
         0,
         "Expected no type errors for basic overload resolution, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -119,7 +134,7 @@ const result: string = obj.method(42);
         errors.len(),
         0,
         "Expected no type errors for property call method invocation, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -137,12 +152,12 @@ const result = apply((x: number) => x.toString(), nums);
     );
 
     // Should produce no type errors for valid generic spread call.
-    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         ts2345.len(),
         0,
         "Expected no TS2345 for generic call with spread args, got: {:?}",
-        ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2345)
     );
 }
 
@@ -160,7 +175,7 @@ const r: string = convert(true);
     );
 
     // Should emit TS2769 (no overload matches) for `true` argument.
-    let ts2769: Vec<_> = diags.iter().filter(|d| d.code == 2769).collect();
+    let ts2769 = diagnostics_with_code(&diags, 2769);
     assert!(
         !ts2769.is_empty(),
         "Expected TS2769 for overload mismatch with boolean arg"
@@ -179,7 +194,7 @@ pair(1, 2, 3);
 "#,
     );
 
-    let ts2554: Vec<_> = diags.iter().filter(|d| d.code == 2554).collect();
+    let ts2554 = diagnostics_with_code(&diags, 2554);
     assert!(
         !ts2554.is_empty(),
         "Expected TS2554 for too many arguments in overloaded call"
@@ -210,7 +225,7 @@ const b: object = parser.parse("{}", (k, v) => v);
         errors.len(),
         0,
         "Expected no type errors for overloaded property call, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -237,7 +252,7 @@ const result: string = transform("hello");
         errors.len(),
         0,
         "Expected no type errors for callable interface invocation, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -251,7 +266,7 @@ x();
 "#,
     );
 
-    let ts2349: Vec<_> = diags.iter().filter(|d| d.code == 2349).collect();
+    let ts2349 = diagnostics_with_code(&diags, 2349);
     assert!(
         !ts2349.is_empty(),
         "Expected TS2349 for calling a non-callable type"
@@ -279,7 +294,7 @@ const strs: string[] = map(nums, n => n.toFixed(2));
         errors.len(),
         0,
         "Expected no errors for generic call with contextual callback, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -313,12 +328,12 @@ const test1 = authorPromise.then(mapper);
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let errors = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         errors.len(),
         0,
         "Expected generic mapper identifier to match Promise.then callback without TS2345, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -340,12 +355,12 @@ foo(null, ctor, "");
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let errors = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         errors.len(),
         0,
         "Expected generic construct signature argument not to infer U from T, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -363,12 +378,12 @@ function g<T>(queue: Enqueue<T>, value: T) {
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let errors = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         errors.len(),
         0,
         "Expected generic inference to preserve outer type parameter evidence for contravariant object members, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -465,12 +480,12 @@ const result: string | undefined = fn1?.(42);
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let errors = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         errors.len(),
         0,
         "Expected no TS2322 for optional chain call with nullish callee, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -490,12 +505,12 @@ const result: "a" = pick("a");
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let errors = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         errors.len(),
         0,
         "Expected no TS2322 for literal type preserved in generic constraint, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -524,7 +539,7 @@ const boxed = wrap(42);
         panics.len(),
         0,
         "Expected no call resolution errors for generic application return, got: {:?}",
-        panics.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&panics)
     );
 }
 
@@ -564,7 +579,7 @@ const result: number = sum(...args);
         errors.len(),
         0,
         "Expected no errors for spread call with tuple rest, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -587,7 +602,7 @@ const result: number = apply(x => x + 1, 42);
         errors.len(),
         0,
         "Expected no errors for callable param type normalization, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -608,12 +623,12 @@ const instance: MyClass = new Ctor(42);
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let errors = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         errors.len(),
         0,
         "Expected no TS2322 for new property constructor lookup, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -629,12 +644,12 @@ const result: string = describe(Color.Red);
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let errors = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         errors.len(),
         0,
         "Expected no TS2322 for generic call with enum argument, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -665,7 +680,7 @@ const b: object | null = parse("{}", true);
         errors.len(),
         0,
         "Expected no type errors for overload return type selection, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -690,7 +705,7 @@ const b: string = concat("a", "b", "c", "d");
         errors.len(),
         0,
         "Expected no type errors for overload with rest params, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -719,7 +734,7 @@ config.db.connect("postgres://localhost");
         errors.len(),
         0,
         "Expected no errors for nested property call, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -745,7 +760,7 @@ logger?.log("hello");
         errors.len(),
         0,
         "Expected no errors for optional chain method call, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -763,12 +778,12 @@ value.foo(42);
 "#,
     );
 
-    let ts2554: Vec<_> = diags.iter().filter(|d| d.code == 2554).collect();
+    let ts2554 = diagnostics_with_code(&diags, 2554);
     assert_eq!(
         ts2554.len(),
         0,
         "Expected no TS2554 for non-generic method with this param, got: {:?}",
-        ts2554.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2554)
     );
 
     // Generic case: `this: T` should not be counted
@@ -784,15 +799,12 @@ value.foo("a");
 "#,
     );
 
-    let ts2554_generic: Vec<_> = diags2.iter().filter(|d| d.code == 2554).collect();
+    let ts2554_generic = diagnostics_with_code(&diags2, 2554);
     assert_eq!(
         ts2554_generic.len(),
         0,
         "Expected no TS2554 for generic method with this param, got: {:?}",
-        ts2554_generic
-            .iter()
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        diagnostic_messages(&ts2554_generic)
     );
 }
 
@@ -806,12 +818,12 @@ const result: string | undefined = fn1?.(42);
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let errors = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         errors.len(),
         0,
         "Expected no TS2322 for optional chain on non-nullish callee, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -825,11 +837,11 @@ x();
 "#,
     );
 
-    let ts18046: Vec<_> = diags.iter().filter(|d| d.code == 18046).collect();
+    let ts18046 = diagnostics_with_code(&diags, 18046);
     assert!(
         !ts18046.is_empty(),
         "Expected TS18046 for calling unknown type, got codes: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -843,7 +855,7 @@ const result: never = f();
 "#,
     );
 
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     // f() should return never, so assigning to never is valid.
     // TS2349 is expected since never has no call signatures.
     let _ = ts2322;
@@ -870,7 +882,7 @@ const b = create<string>("hello", "greeting");
         errors.len(),
         0,
         "Expected no errors for generic overloaded call with explicit type args, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -892,7 +904,7 @@ f(1, 2, 3);
     assert!(
         has_arity_error,
         "Expected arity/overload error for union callee with too many args, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -915,7 +927,7 @@ both([1, 2], n => { void n; }, n => n.toFixed(2));
         errors.len(),
         0,
         "Expected no TS7006/TS2339 for generic call with multiple callbacks, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -935,12 +947,12 @@ const result = nums.map(n => n.toFixed(2));
 "#,
     );
 
-    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    let ts7006 = diagnostics_with_code(&diags, 7006);
     assert_eq!(
         ts7006.len(),
         0,
         "Expected no TS7006 for generic method property call, got: {:?}",
-        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts7006)
     );
 }
 
@@ -960,7 +972,7 @@ add(...args);
     assert!(
         has_error,
         "Expected TS2556/TS2554 for spread call with insufficient tuple args, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -985,7 +997,7 @@ const lvl: number = logger.level;
         errors.len(),
         0,
         "Expected no errors for callable intersection invocation, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -999,11 +1011,11 @@ identity<number, string>(42);
 "#,
     );
 
-    let ts2558: Vec<_> = diags.iter().filter(|d| d.code == 2558).collect();
+    let ts2558 = diagnostics_with_code(&diags, 2558);
     assert!(
         !ts2558.is_empty(),
         "Expected TS2558 for type argument count mismatch, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -1017,11 +1029,11 @@ f<number>(42);
 "#,
     );
 
-    let ts2347: Vec<_> = diags.iter().filter(|d| d.code == 2347).collect();
+    let ts2347 = diagnostics_with_code(&diags, 2347);
     assert!(
         !ts2347.is_empty(),
         "Expected TS2347 for untyped function call with type args, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -1034,12 +1046,12 @@ const result: number = ((x: number) => x + 1)(42);
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let errors = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         errors.len(),
         0,
         "Expected no TS2322 for IIFE with contextual typing, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1067,7 +1079,7 @@ class Derived extends Base {
         errors.len(),
         0,
         "Expected no errors for super call with construct signature, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1095,7 +1107,7 @@ const b: number = choose(1, 2);
         errors.len(),
         0,
         "Expected no errors for mixed generic/non-generic overloads, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1120,7 +1132,7 @@ const b: string = fmt(3, 2);
         errors.len(),
         0,
         "Expected no errors for overload with optional parameter arity, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1146,7 +1158,7 @@ on("hover", x => { const s: string = x; });
         errors.len(),
         0,
         "Expected no errors for overload callback contextual typing, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1172,7 +1184,7 @@ const result: number = sum(...arr);
         errors.len(),
         0,
         "Expected no errors for spread array into rest param, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1195,7 +1207,7 @@ const result: [string, number] = pair(...args);
         errors.len(),
         0,
         "Expected no errors for spread tuple into fixed params, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1218,7 +1230,7 @@ const result: string = combine("total", ...nums);
         errors.len(),
         0,
         "Expected no errors for mixed spread and non-spread args, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1240,7 +1252,7 @@ nums(...strs);
     assert!(
         !ts2345.is_empty(),
         "Expected TS2345/TS2556 for spread with type mismatch, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -1262,12 +1274,12 @@ function f1() {
 "#,
     );
 
-    let ts2556: Vec<_> = diags.iter().filter(|d| d.code == 2556).collect();
+    let ts2556 = diagnostics_with_code(&diags, 2556);
     assert!(
         ts2556.is_empty(),
         "Expected no TS2556 for array literal spread (length is statically \
          known and elements are checked individually), got: {:?}",
-        ts2556.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2556)
     );
 }
 
@@ -1287,12 +1299,12 @@ function f1() {
 "#,
     );
 
-    let ts2556: Vec<_> = diags.iter().filter(|d| d.code == 2556).collect();
+    let ts2556 = diagnostics_with_code(&diags, 2556);
     assert!(
         !ts2556.is_empty(),
         "Expected TS2556 for opaque (non-literal) array spread into a \
          signature with no rest parameter, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -1325,7 +1337,7 @@ const val: number = c.increment(5);
         errors.len(),
         0,
         "Expected no errors for class method property call, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1351,7 +1363,7 @@ const result: string = obj["method"](42);
         errors.len(),
         0,
         "Expected no errors for element access call, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1377,7 +1389,7 @@ const result: string = api!.fetch("/data");
         errors.len(),
         0,
         "Expected no errors for non-null assertion method call, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1407,7 +1419,7 @@ const result: string = toStr(42);
         errors.len(),
         0,
         "Expected no errors for generic interface application callee, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1427,14 +1439,14 @@ const result: string = concat(...strArgs);
 
     // Spread call on overloaded function should resolve correctly.
     // The important invariant: no panic, and the right overload is picked.
-    let ts2769: Vec<_> = diags.iter().filter(|d| d.code == 2769).collect();
-    let ts2349: Vec<_> = diags.iter().filter(|d| d.code == 2349).collect();
+    let ts2769 = diagnostics_with_code(&diags, 2769);
+    let ts2349 = diagnostics_with_code(&diags, 2349);
     // These should not appear for a valid spread call.
     assert_eq!(
         ts2349.len(),
         0,
         "Expected no TS2349 for overloaded spread call, got: {:?}",
-        ts2349.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2349)
     );
     let _ = ts2769; // May or may not fire depending on spread resolution details
 }
@@ -1466,7 +1478,7 @@ const age: number = person.getAge();
         errors.len(),
         0,
         "Expected no errors for property call through intersection, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1511,7 +1523,7 @@ const output: string[] = transform(input, n => String(n));
         errors.len(),
         0,
         "Expected no errors for progressive generic inference, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1537,7 +1549,7 @@ const n: 42 = create<42>(42);
         errors.len(),
         0,
         "Expected no errors for generic overloaded call with type args, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1564,7 +1576,7 @@ const result: string | undefined = svc?.fetch(1);
         errors.len(),
         0,
         "Expected no errors for optional chain generic property call, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1597,7 +1609,7 @@ const b: string = overloaded("a", "b");
         errors.len(),
         0,
         "Expected no type errors for mixed generic/non-generic overloads, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1628,7 +1640,7 @@ const s: string = obj.format(42);
         errors.len(),
         0,
         "Expected no errors for intersection property calls, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1654,7 +1666,7 @@ const r: boolean = choose(true);
         errors.len(),
         0,
         "Expected no errors when later overload signature matches, got: {:?}",
-        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&errors)
     );
 }
 
@@ -1677,12 +1689,12 @@ withBase<Base>((item) => {
 "#,
     );
 
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for callback with intersection type param, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -1707,12 +1719,12 @@ const v: number = c.value;
 "#,
     );
 
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for property access on generic application return, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -1735,12 +1747,12 @@ if (g.check(val)) {
 "#,
     );
 
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         0,
         "Expected no TS2322 for overloaded method type predicate, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -1753,8 +1765,8 @@ f((x) => { return x.toFixed(); });
 "#,
     );
 
-    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2345.len(),
         1,
@@ -1776,8 +1788,8 @@ f((x) => x.toFixed());
 "#,
     );
 
-    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2345.len(),
         0,
@@ -1810,7 +1822,7 @@ _.map(c2, rf1);
 "#,
     );
 
-    let ts2769: Vec<_> = diags.iter().filter(|d| d.code == 2769).collect();
+    let ts2769 = diagnostics_with_code(&diags, 2769);
     assert_eq!(
         ts2769.len(),
         0,
@@ -1847,14 +1859,11 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
 "#,
     );
 
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert!(
         !ts2322.is_empty(),
         "Expected TS2322 for indexed access on intersection with unconstrained type param, got: {:?}",
-        diags
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -1919,12 +1928,12 @@ test({
 "#,
     );
 
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for Vue-like ThisType inference, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -1966,16 +1975,16 @@ class A {
 
     // tsc emits only TS2552 for each `typeof a` in the type parameter constraint.
     // No TS2339 should be emitted for `a.b` in the body.
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for property access on type param with error constraint, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 
     // TS2552 should be emitted for each `typeof a` in the constraints.
-    let ts2552: Vec<_> = diags.iter().filter(|d| d.code == 2552).collect();
+    let ts2552 = diagnostics_with_code(&diags, 2552);
     assert!(
         ts2552.len() >= 6,
         "Expected at least 6 TS2552 for unresolved typeof in constraints, got {}",

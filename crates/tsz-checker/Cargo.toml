@@ -1030,6 +1030,10 @@ name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 
 [[test]]
+name = "class_implements_index_signature_tests"
+path = "tests/class_implements_index_signature_tests.rs"
+
+[[test]]
 name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 
@@ -1048,6 +1052,14 @@ path = "tests/source_file_index_signatures_rewrite_tests.rs"
 [[test]]
 name = "recursive_type_references_tests"
 path = "tests/recursive_type_references_tests.rs"
+
+[[test]]
+name = "template_literal_record_key_tests"
+path = "tests/template_literal_record_key_tests.rs"
+
+[[test]]
+name = "tuple_union_contextual_typing_tests"
+path = "tests/tuple_union_contextual_typing_tests.rs"
 
 [lints]
 workspace = true
