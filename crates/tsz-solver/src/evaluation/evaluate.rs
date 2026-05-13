@@ -1224,18 +1224,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if app.args.is_empty() {
             return;
         }
-        let app_def_kind = match self.interner.lookup(app.base) {
-            Some(TypeData::Lazy(def_id)) => self.resolver.get_def_kind(def_id),
-            Some(TypeData::TypeQuery(sym_ref)) => self
+        let app_def = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => self
                 .resolver
-                .symbol_to_def_id(sym_ref)
-                .and_then(|def_id| self.resolver.get_def_kind(def_id)),
+                .get_def_kind(def_id)
+                .map(|kind| (def_id, kind)),
+            Some(TypeData::TypeQuery(sym_ref)) => {
+                self.resolver.symbol_to_def_id(sym_ref).and_then(|def_id| {
+                    self.resolver
+                        .get_def_kind(def_id)
+                        .map(|kind| (def_id, kind))
+                })
+            }
             _ => None,
         };
         // This back-reference is for nominal parametric shapes. Type-alias
         // applications still need their evaluated structural form for displays
         // such as TS2339 on conditional helper aliases.
-        if matches!(app_def_kind, Some(crate::def::DefKind::TypeAlias)) {
+        let is_type_alias = matches!(app_def, Some((_, crate::def::DefKind::TypeAlias)));
+        if is_type_alias {
             return;
         }
         // Fast path: all-intrinsic args trivially have no free type

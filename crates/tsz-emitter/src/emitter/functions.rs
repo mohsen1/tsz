@@ -84,7 +84,9 @@ impl<'a> Printer<'a> {
     fn emit_arrow_function_native(&mut self, func: &tsz_parser::parser::node::FunctionData) {
         // For ES2015/ES2016, lower async arrows: () => __awaiter(this, void 0, void 0, function* () { ... })
         if func.is_async && self.ctx.needs_async_lowering {
+            self.push_temp_scope();
             self.emit_arrow_function_async_lowered(func);
+            self.pop_temp_scope();
             return;
         }
 
@@ -748,8 +750,14 @@ impl<'a> Printer<'a> {
         // However, if we're already inside a generator body that has captured arguments
         // (rewrite_arguments_to_arguments_1 is true), don't create another capture -
         // the references are already being rewritten to `arguments_1`.
-        let captures_arguments = !self.ctx.rewrite_arguments_to_arguments_1
+        let body_uses_arguments = !self.ctx.rewrite_arguments_to_arguments_1
             && contains_arguments_reference(self.arena, func.body);
+        let enclosing_arguments_capture_name = if body_uses_arguments {
+            self.ctx.arguments_capture_name.clone()
+        } else {
+            None
+        };
+        let captures_arguments = body_uses_arguments && enclosing_arguments_capture_name.is_none();
 
         let body_node = self.arena.get(func.body);
         let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
@@ -810,7 +818,13 @@ impl<'a> Printer<'a> {
             self.write(") {");
 
             let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+            let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
+            if let Some(capture_name) = enclosing_arguments_capture_name.clone() {
+                self.ctx.rewrite_arguments_to_arguments_1 = true;
+                self.ctx.arguments_capture_name = Some(capture_name);
+            }
             if is_block {
                 if body_is_single_line && !has_forwarded_object_rest_param_prologue {
                     if let Some(body_node) = self.arena.get(func.body)
@@ -843,6 +857,8 @@ impl<'a> Printer<'a> {
                 self.write(";");
             }
             self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+            self.ctx.arguments_capture_name = saved_arguments_capture_name;
             self.write(" })");
             return;
         }
@@ -940,7 +956,13 @@ impl<'a> Printer<'a> {
             self.write(", void 0, void 0, function* () {");
 
             let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+            let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
+            if let Some(capture_name) = enclosing_arguments_capture_name.clone() {
+                self.ctx.rewrite_arguments_to_arguments_1 = true;
+                self.ctx.arguments_capture_name = Some(capture_name);
+            }
             if let Some(body_node) = self.arena.get(func.body)
                 && let Some(block) = self.arena.get_block(body_node)
             {
@@ -950,6 +972,8 @@ impl<'a> Printer<'a> {
                 }
             }
             self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+            self.ctx.arguments_capture_name = saved_arguments_capture_name;
             self.write(" })");
             return;
         }
@@ -963,7 +987,13 @@ impl<'a> Printer<'a> {
             self.write(this_arg);
             self.write(", void 0, void 0, function* () {");
             let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+            let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
+            if let Some(capture_name) = enclosing_arguments_capture_name.clone() {
+                self.ctx.rewrite_arguments_to_arguments_1 = true;
+                self.ctx.arguments_capture_name = Some(capture_name);
+            }
             if has_object_rest_param_prologue {
                 self.write_line();
                 self.increase_indent();
@@ -979,6 +1009,8 @@ impl<'a> Printer<'a> {
                 self.write(";");
             }
             self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+            self.ctx.arguments_capture_name = saved_arguments_capture_name;
             self.write(" })");
             return;
         }
@@ -993,7 +1025,13 @@ impl<'a> Printer<'a> {
 
         // Emit body with await→yield substitution
         let saved_yield = self.ctx.emit_await_as_yield;
+        let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+        let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
         self.ctx.emit_await_as_yield = true;
+        if let Some(capture_name) = enclosing_arguments_capture_name {
+            self.ctx.rewrite_arguments_to_arguments_1 = true;
+            self.ctx.arguments_capture_name = Some(capture_name);
+        }
         self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
 
         // Block body: emit statements directly
@@ -1007,6 +1045,8 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.emit_await_as_yield = saved_yield;
+        self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+        self.ctx.arguments_capture_name = saved_arguments_capture_name;
 
         self.decrease_indent();
         self.write("})");
@@ -1036,15 +1076,83 @@ impl<'a> Printer<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         this_arg: &str,
     ) {
+        let first_default_param_idx = func
+            .parameters
+            .nodes
+            .iter()
+            .position(|&param_idx| {
+                self.arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .is_some_and(|param| param.initializer.is_some())
+            })
+            .unwrap_or(0);
+        let leading_names = self.async_arrow_forwarded_parameter_names(
+            &func.parameters.nodes[..first_default_param_idx],
+        );
         let args_name = self.make_unique_name_from_base("args");
+        let captures_arguments = !self.ctx.rewrite_arguments_to_arguments_1
+            && contains_arguments_reference(self.arena, func.body);
+        let existing_arguments_capture_name = self.ctx.arguments_capture_name.clone();
+        let mut emits_arguments_capture = false;
+        let arguments_capture_name = if captures_arguments {
+            if existing_arguments_capture_name.is_some() {
+                existing_arguments_capture_name
+            } else {
+                emits_arguments_capture = true;
+                Some(loop {
+                    self.ctx.arguments_capture_counter += 1;
+                    let candidate = format!("arguments_{}", self.ctx.arguments_capture_counter);
+                    if !self.file_identifiers.contains(&candidate) {
+                        break candidate;
+                    }
+                })
+            }
+        } else {
+            None
+        };
 
-        self.write("(...");
+        if emits_arguments_capture && let Some(capture_name) = arguments_capture_name.clone() {
+            self.ctx.arguments_capture_name = Some(capture_name);
+        }
+
+        self.write("(");
+        for (idx, name) in leading_names.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write(name);
+        }
+        if !leading_names.is_empty() {
+            self.write(", ");
+        }
+        self.write("...");
         self.write(&args_name);
         self.write(") => ");
+        if emits_arguments_capture && let Some(capture_name) = arguments_capture_name.as_deref() {
+            self.write("{");
+            self.write_line();
+            self.increase_indent();
+            self.write("var ");
+            self.write(capture_name);
+            self.write(" = arguments;");
+            self.write_line();
+            self.write("return ");
+        }
         self.write_helper("__awaiter");
         self.write("(");
         self.write(this_arg);
-        self.write(", [...");
+        self.write(", [");
+        for (idx, name) in leading_names.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write(name);
+        }
+        if !leading_names.is_empty() {
+            self.write(", ");
+        }
+        self.write("...");
         self.write(&args_name);
         self.write("], void 0, function* (");
         self.emit_function_parameters_js(&func.parameters.nodes);
@@ -1060,7 +1168,13 @@ impl<'a> Printer<'a> {
                 .unwrap_or(false);
 
         let saved_yield = self.ctx.emit_await_as_yield;
+        let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+        let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
         self.ctx.emit_await_as_yield = true;
+        if let Some(capture_name) = arguments_capture_name.clone() {
+            self.ctx.rewrite_arguments_to_arguments_1 = true;
+            self.ctx.arguments_capture_name = Some(capture_name);
+        }
         if is_block {
             if body_is_single_line {
                 if let Some(body_node) = self.arena.get(func.body)
@@ -1090,7 +1204,19 @@ impl<'a> Printer<'a> {
             self.write(";");
         }
         self.ctx.emit_await_as_yield = saved_yield;
+        self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+        if emits_arguments_capture {
+            self.ctx.arguments_capture_name = arguments_capture_name.clone();
+        } else {
+            self.ctx.arguments_capture_name = saved_arguments_capture_name;
+        }
         self.write(" })");
+        if emits_arguments_capture {
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+        }
     }
 
     fn emit_async_arrow_await_param_recovery(
@@ -1374,6 +1500,7 @@ impl<'a> Printer<'a> {
         // Regular functions have their own `arguments`, so turn off the rewrite flag
         let prev_rewrite_args = self.ctx.rewrite_arguments_to_arguments_1;
         self.ctx.rewrite_arguments_to_arguments_1 = false;
+        let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
@@ -1388,6 +1515,7 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.ctx.rewrite_arguments_to_arguments_1 = prev_rewrite_args;
+        self.ctx.arguments_capture_name = prev_arguments_capture_name;
         self.ctx.flags.in_generator = prev_in_generator;
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
@@ -2457,6 +2585,57 @@ mod tests {
         assert!(
             result.code.contains("var foo = (...args_1) => __awaiter(void 0, [...args_1], void 0, function* (a = yield ) {"),
             "Async arrow await-default recovery should forward args in ES2015 emit.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn async_arrow_default_param_preserves_leading_args_and_reuses_arguments_capture() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "function f() { const a1 = async (x, y = z) => {}; const a2 = async (x = z) => { return async () => arguments; }; const a3 = async () => { return async (x = z) => arguments; }; }";
+        let (parser, root) = parse_test_source(source);
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains(
+                "const a1 = (x_1, ...args_1) => __awaiter(this, [x_1, ...args_1], void 0, function* (x, y = z) { });"
+            ),
+            "Leading parameters before the first default should stay explicit and the default tail should be forwarded.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("var arguments_1 = arguments;"),
+            "The first async arrow that needs lexical arguments should create a function-scoped capture.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            result.code.contains(
+                "const a3 = () => __awaiter(this, void 0, void 0, function* () { return (...args_1) => __awaiter(this, [...args_1], void 0, function* (x = z) { return arguments_1; }); });"
+            ),
+            "Sibling async arrows should reuse the existing function-scoped arguments capture.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("var arguments_2 = arguments;"),
+            "Sibling async arrows should not create redundant lexical arguments captures.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn async_function_es2015_single_line_moved_params_stays_inline() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "async function f(x = z) { return async () => arguments; }";
+        let (parser, root) = parse_test_source(source);
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains(
+                "return __awaiter(this, arguments, void 0, function* (x = z) { return () => __awaiter(this, void 0, void 0, function* () { return arguments_1; }); });"
+            ),
+            "Single-line async function bodies with moved parameters should stay inline in the generator wrapper.\nOutput:\n{}",
             result.code
         );
     }
