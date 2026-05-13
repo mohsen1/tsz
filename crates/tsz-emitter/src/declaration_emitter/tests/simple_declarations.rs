@@ -2004,6 +2004,28 @@ export = X;
 }
 
 #[test]
+fn test_private_namespace_exports_do_not_retain_private_top_level_interfaces() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+namespace Query {
+    export function fromDoWhile<T>(test: (value: Iterator<T>) => boolean): Iterator<T> {
+        return null as any;
+    }
+    function fromOrderBy() {
+        return fromDoWhile(test => true);
+    }
+}
+"#,
+    );
+
+    assert_eq!("export declare var x: number;", output.trim());
+}
+
+#[test]
 fn test_namespace_shadowed_default_export_uses_self_import_type_names() {
     let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
