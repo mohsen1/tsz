@@ -3,7 +3,7 @@
 - **Date**: 2026-05-13
 - **Branch**: `fix/dynamic-names-class-implements-ts2720-20260513`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: conformance
 
 ## Intent
@@ -17,4 +17,7 @@ Fix the remaining `dynamicNames` conformance regression where a class with publi
 
 ## Verification
 
-- Pending.
+- `scripts/conformance/conformance.sh run --filter dynamicNames --workers 1` (3/3 passed)
+- `cargo fmt --all -- --check` (passed)
+- `cargo test -p tsz-checker --test class_implements_predicate_inference_tests implements_public_computed_name_class_shape_does_not_emit_ts2720 -- --nocapture` (1 passed)
+- `git diff --check` (passed)
