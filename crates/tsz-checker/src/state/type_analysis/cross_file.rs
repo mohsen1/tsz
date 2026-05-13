@@ -817,6 +817,27 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, direct_params));
             }
 
+            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
+                && let Some(direct_type) = self.direct_source_file_variable_annotation_type(
+                    sym_id,
+                    delegate_binder,
+                    symbol_arena,
+                    symbol_type_cache_from_symbol_arena,
+                )
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.ctx.cache_stable_source_file_symbol_arena_type(
+                        sym_id,
+                        file_idx as u32,
+                        source_cache_scope,
+                        direct_type,
+                        Vec::new(),
+                    );
+                }
+                return Some((direct_type, Vec::new()));
+            }
+
             // Both caches and the alias shortcut missed → about to do real work
             // (boxed child checker construction + recursion).
             if let Some(p) = perf {
