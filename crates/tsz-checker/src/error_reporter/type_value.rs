@@ -363,44 +363,48 @@ impl<'a> CheckerState<'a> {
     /// alias being used as a computed property key, which should get TS2690
     /// (with mapped type suggestion) instead of TS2693.
     fn is_computed_property_in_type_member(&self, idx: NodeIndex) -> bool {
-        // Walk up: Identifier -> ComputedPropertyName -> TypeMember -> TypeLiteral/Interface
+        // Walk up: Identifier -> ComputedPropertyName -> TypeMember -> TypeLiteral/Interface.
+        // Parser recovery can also place an invalid key like `[number]: C1`
+        // directly under IndexSignature, so accept that shape as the type member.
         let Some(ext) = self.ctx.arena.get_extended(idx) else {
             return false;
         };
         let Some(parent) = self.ctx.arena.get(ext.parent) else {
             return false;
         };
-        if parent.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return false;
-        }
-
-        let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) else {
-            return false;
-        };
-        let Some(grandparent) = self.ctx.arena.get(parent_ext.parent) else {
+        let type_member_idx = if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) else {
+                return false;
+            };
+            parent_ext.parent
+        } else if parent.kind == syntax_kind_ext::INDEX_SIGNATURE {
+            ext.parent
+        } else {
             return false;
         };
 
         // The computed property name must be inside a type member
-        let is_type_member = matches!(
-            grandparent.kind,
+        let Some(type_member) = self.ctx.arena.get(type_member_idx) else {
+            return false;
+        };
+        if !matches!(
+            type_member.kind,
             syntax_kind_ext::PROPERTY_SIGNATURE
                 | syntax_kind_ext::METHOD_SIGNATURE
                 | syntax_kind_ext::INDEX_SIGNATURE
-        );
-        if !is_type_member {
+        ) {
             return false;
         }
 
         // The type member must be inside a type literal or interface
-        let Some(grandparent_ext) = self.ctx.arena.get_extended(parent_ext.parent) else {
+        let Some(type_member_ext) = self.ctx.arena.get_extended(type_member_idx) else {
             return false;
         };
-        let Some(great_grandparent) = self.ctx.arena.get(grandparent_ext.parent) else {
+        let Some(container) = self.ctx.arena.get(type_member_ext.parent) else {
             return false;
         };
         if !matches!(
-            great_grandparent.kind,
+            container.kind,
             syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
         ) {
             return false;
@@ -410,7 +414,7 @@ impl<'a> CheckerState<'a> {
         // sole member of the type literal. When there are multiple members,
         // it can't simply be converted to a mapped type, so TS2693 is emitted.
         use tsz_parser::parser::node::NodeAccess;
-        let children = self.ctx.arena.get_children(grandparent_ext.parent);
+        let children = self.ctx.arena.get_children(type_member_ext.parent);
         let member_count = children
             .iter()
             .filter(|&&child| {

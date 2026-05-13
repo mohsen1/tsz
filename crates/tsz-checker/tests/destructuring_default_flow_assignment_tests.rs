@@ -28,26 +28,26 @@ let d: string | number = "before";
 
 if (typeof a === "string") {
   [a = 1] = [];
-  a.toFixed();
   a.toUpperCase();
+  a.toFixed();
 }
 
 if (typeof b === "string") {
   [b = 1] = [undefined];
-  b.toFixed();
   b.toUpperCase();
+  b.toFixed();
 }
 
 if (typeof c === "string") {
   [c = 1] = tupleSource;
-  c.toFixed();
   c.toUpperCase();
+  c.toFixed();
 }
 
 if (typeof d === "string") {
   ({ y: d = 1 } = objectSource);
-  d.toFixed();
   d.toUpperCase();
+  d.toFixed();
 }
 "#,
     );

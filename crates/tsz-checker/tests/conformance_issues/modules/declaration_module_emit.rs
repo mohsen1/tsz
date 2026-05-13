@@ -2106,6 +2106,88 @@ declare class MyArray<T> implements Array<T> {
 }
 
 #[test]
+fn test_class_implements_public_dynamic_name_class_shape_no_ts2720() {
+    let source = r#"
+const c0 = "a";
+const c1 = 1;
+const s0 = Symbol();
+
+declare class T1 {
+    [c0]: number;
+    [c1]: string;
+    [s0]: boolean;
+}
+declare class T2 extends T1 {
+}
+
+const c4 = "a";
+const c5 = 1;
+const s2: typeof s0 = s0;
+
+declare class T13 implements T2 {
+    a: number;
+    1: string;
+    [s2]: boolean;
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2720 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2720)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2720.is_empty(),
+        "Expected no TS2720 for public dynamic-name class shape. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_implements_interface_member_mismatch_prefers_ts2416() {
+    let source = r#"
+interface FileSystem {
+  read: number;
+}
+
+class WorkerFS implements FileSystem {
+  read: string;
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2416 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2416)
+        .collect::<Vec<_>>();
+    let ts2420 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2420)
+        .collect::<Vec<_>>();
+    assert!(
+        !ts2416.is_empty(),
+        "Expected TS2416 for implemented member type mismatch. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2420.is_empty(),
+        "Expected member-level TS2416 to suppress broad TS2420. Actual TS2420 diagnostics: {ts2420:#?}"
+    );
+}
+
+#[test]
 fn test_generic_array_extension_global_array_display_uses_shorthand() {
     let source = r#"
 export declare class ObservableArray<T> implements Array<T> {
