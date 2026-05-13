@@ -2476,27 +2476,26 @@ pub fn substitute_this_type_at_return_position(
 /// We intentionally do NOT match a top-level Application (e.g. `Selector<S, T[K]>`)
 /// because the evaluator correctly passes those through as-is.  Only unions/
 /// intersections are at risk of member loss.
-/// Check whether `type_id` is or contains an `Application` whose base is a `Lazy` reference.
-///
-/// The instantiator's `NoopResolver` cannot expand `Lazy` type aliases, so any
-/// `Application(Lazy(DefId), args)` cannot be evaluated until the outer evaluator
-/// (which has a real `TypeResolver`) runs. This predicate detects such types so
-/// the caller can defer rather than silently collapse unresolvable Applications.
-fn type_contains_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+fn type_is_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
-    crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
-        if let TypeData::Application(app_id) = key {
-            let app = interner.type_application(*app_id);
-            !app.base.is_intrinsic()
-                && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
-        } else {
-            false
-        }
-    })
+
+    let Some(TypeData::Application(app_id)) = interner.lookup(type_id) else {
+        return false;
+    };
+    let app = interner.type_application(app_id);
+    !app.base.is_intrinsic() && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
 }
 
+/// Check whether `type_id` is a lazy application, or a union/intersection whose
+/// immediate members contain one.
+///
+/// This intentionally does not recursively inspect arbitrary nested types.
+/// Eager evaluation only loses members for the immediate mapped-template shape;
+/// recursive matching also catches unrelated implementation details and can
+/// change assignability/display behavior for conditionals that should still be
+/// evaluated in place.
 fn template_has_lazy_application_in_composite(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
@@ -2510,33 +2509,11 @@ fn template_has_lazy_application_in_composite(
     match data {
         TypeData::Union(members) | TypeData::Intersection(members) => {
             let list = interner.type_list(members);
-            list.iter().any(|&m| {
-                if m.is_intrinsic() {
-                    return false;
-                }
-                if let Some(TypeData::Application(app_id)) = interner.lookup(m) {
-                    let app = interner.type_application(app_id);
-                    !app.base.is_intrinsic()
-                        && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
-                } else {
-                    false
-                }
-            })
+            list.iter().any(|&m| type_is_lazy_application(interner, m))
         }
         TypeData::Conditional(cond_id) => {
             let cond = interner.get_conditional(cond_id);
-            // The check_type and extends_type participate in the `extends` test.
-            // If either is or contains an Application whose base is Lazy, the
-            // NoopResolver cannot expand it, making the conditional unevaluable.
-            // Defer so the outer evaluator—which has a real TypeResolver—can
-            // expand the Application and evaluate the conditional correctly.
-            //
-            // Example: `App(IsStr, [T[K]]) extends true ? K : never` — the
-            // check_type `App(IsStr, [T[K]])` cannot be resolved without a real
-            // resolver; deferring lets the outer evaluator handle it.
-            type_contains_lazy_application(interner, cond.check_type)
-                || type_contains_lazy_application(interner, cond.extends_type)
-                || template_has_lazy_application_in_composite(interner, cond.true_type)
+            template_has_lazy_application_in_composite(interner, cond.true_type)
                 || template_has_lazy_application_in_composite(interner, cond.false_type)
         }
         _ => false,
