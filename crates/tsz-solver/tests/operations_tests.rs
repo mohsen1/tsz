@@ -3334,7 +3334,7 @@ fn test_generic_call_resets_fixed_union_member_cache() {
 }
 
 #[test]
-fn test_infer_generic_function_identity_widens_non_const_literal() {
+fn test_infer_generic_function_identity_preserves_non_const_literal() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -3363,7 +3363,7 @@ fn test_infer_generic_function_identity_widens_non_const_literal() {
 
     let hello = interner.literal_string("hello");
     let result = infer_generic_function(&interner, &mut subtype, &func, &[hello]);
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, hello);
 }
 
 #[test]
@@ -11918,10 +11918,10 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
     }
 }
 
-/// Tests that without a contextual type, the identity fast path widens literals.
-/// `identity('ELSE')` without context should infer T = string (normal widening).
+/// Tests that without a contextual type, the identity fast path preserves direct
+/// literal arguments. `identity('ELSE')` should infer T = "ELSE".
 #[test]
-fn test_trivial_identity_widens_literal_without_contextual_type() {
+fn test_trivial_identity_preserves_literal_without_contextual_type() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
     let mut evaluator = CallEvaluator::new(&interner, &mut checker);
@@ -11955,11 +11955,9 @@ fn test_trivial_identity_widens_literal_without_contextual_type() {
 
     match result {
         CallResult::Success(ret) => {
-            // Without contextual type, the literal should be widened to string
             assert_eq!(
-                ret,
-                TypeId::STRING,
-                "identity('ELSE') without context should widen to string"
+                ret, lit_else,
+                "identity('ELSE') without context should preserve the literal"
             );
         }
         other => panic!("Expected success for identity call without context, got {other:?}"),

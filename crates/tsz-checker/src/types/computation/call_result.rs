@@ -694,13 +694,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut candidates = Vec::new();
+        let mut seen = FxHashSet::default();
         for candidate in arg_types.iter().copied().chain(
             args.iter()
                 .filter_map(|&arg_idx| self.literal_type_from_initializer(arg_idx)),
         ) {
             if common::literal_value(self.ctx.types, candidate).is_some()
                 && common::widen_literal_type(self.ctx.types, candidate) == expected_arg_base
-                && !candidates.contains(&candidate)
+                && seen.insert(candidate)
             {
                 candidates.push(candidate);
             }
