@@ -1,6 +1,6 @@
 # Claim: reuse override intersection diagnostic helper
 
-Status: WIP
+Status: ready for review
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6216
 Branch: `codex/cleanup-override-intersection-helper-20260513`
@@ -15,6 +15,11 @@ Branch: `codex/cleanup-override-intersection-helper-20260513`
   cleanup.
 
 ## Verification Plan
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(override_intersection_display_tests::)' --no-fail-fast`
+
+## Verification
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(override_intersection_display_tests::)' --no-fail-fast`
