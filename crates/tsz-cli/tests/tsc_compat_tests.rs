@@ -1204,6 +1204,39 @@ fn array_values_iterator_helpers_do_not_report_missing_members() {
 }
 
 #[test]
+fn readonly_property_remains_readonly_after_in_narrowing() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("readonly_in_narrowing").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"
+type ReadonlyA = { readonly a: string };
+type ReadonlyB = { readonly b: number };
+type Union = ReadonlyA | ReadonlyB;
+
+declare const x: Union;
+
+if ("a" in x) {
+  x.a = "modified";
+}
+"#,
+    );
+
+    let output = assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+        "readonly property after in narrowing",
+    );
+    assert!(
+        output.contains("TS2540"),
+        "expected readonly assignment diagnostic, got:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics() {
     let Some(_) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");

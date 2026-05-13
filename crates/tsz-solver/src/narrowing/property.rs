@@ -253,7 +253,7 @@ impl<'a> NarrowingContext<'a> {
                     type_id: prop_type.unwrap_or(TypeId::UNKNOWN),
                     write_type: prop_type.unwrap_or(TypeId::UNKNOWN),
                     optional: false,
-                    readonly: false,
+                    readonly: prop_info.as_ref().is_some_and(|prop| prop.readonly),
                     is_method: false,
                     is_class_prototype: false,
                     visibility: Visibility::Public,
