@@ -3,14 +3,22 @@
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
-    CrossArenaSymbolMissSource, DirectCrossFileInterfaceLoweringOutcome,
+    CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
+    DirectCrossFileInterfaceLoweringOutcome, record_direct_actual_lib_alias_body_outcome,
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
-use tsz_solver::def::DefKind;
+use tsz_solver::def::{DefId, DefKind};
+use tsz_solver::{TypeId, TypeParamInfo};
+
+struct DirectActualLibAliasBodyProof {
+    body: TypeId,
+    type_params: Vec<TypeParamInfo>,
+    def_id: DefId,
+    outcome: DirectActualLibAliasBodyOutcome,
+}
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
     let basename = std::path::Path::new(file_name)
@@ -214,33 +222,83 @@ impl<'a> CheckerState<'a> {
         symbol: &tsz_binder::Symbol,
         name: &str,
         delegate_arena: &NodeArena,
-    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        if !matches!(name, "DecoratorMetadata" | "DecoratorMetadataObject")
-            || !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-            || symbol.has_any_flags(symbol_flags::VALUE)
-            || !self.symbol_type_alias_declarations_are_proven_actual_lib_only(
-                sym_id,
-                symbol,
-                name,
-                delegate_arena,
-            )
-        {
+    ) -> Option<DirectActualLibAliasBodyProof> {
+        if !matches!(name, "DecoratorMetadata" | "DecoratorMetadataObject") {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::NameNotAdmitted,
+            );
+            return None;
+        }
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::NotTypeAlias,
+            );
+            return None;
+        }
+        if symbol.has_any_flags(symbol_flags::VALUE) {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::ValueMerge,
+            );
+            return None;
+        }
+        if !self.symbol_type_alias_declarations_are_proven_actual_lib_only(
+            sym_id,
+            symbol,
+            name,
+            delegate_arena,
+        ) {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::UnprovenActualLibDeclarations,
+            );
             return None;
         }
 
-        let alias_type = self.resolve_lib_type_by_name(name)?;
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)?;
-        let def_info = self.ctx.definition_store.get(def_id)?;
+        let Some(alias_type) = self.resolve_lib_type_by_name(name) else {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::MissingResolverType,
+            );
+            return None;
+        };
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
+        else {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::ResolverNotLazyDef,
+            );
+            return None;
+        };
+        let Some(def_info) = self.ctx.definition_store.get(def_id) else {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::MissingDefinition,
+            );
+            return None;
+        };
         if !matches!(def_info.kind, DefKind::TypeAlias) {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::NonTypeAliasDefinition,
+            );
             return None;
         }
-        let body = self.ctx.definition_store.get_body(def_id)?;
+        let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::MissingBody,
+            );
+            return None;
+        };
 
         let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
         if !params.is_empty() {
+            record_direct_actual_lib_alias_body_outcome(
+                DirectActualLibAliasBodyOutcome::GenericAlias,
+            );
             return None;
         }
-        Some((body, params))
+        record_direct_actual_lib_alias_body_outcome(DirectActualLibAliasBodyOutcome::Success);
+        Some(DirectActualLibAliasBodyProof {
+            body,
+            type_params: params,
+            def_id,
+            outcome: DirectActualLibAliasBodyOutcome::Success,
+        })
     }
 
     pub(super) fn direct_actual_lib_symbol_type(
@@ -249,7 +307,7 @@ impl<'a> CheckerState<'a> {
         delegate_arena_source: CrossArenaSymbolMissSource,
         delegate_arena: Option<&NodeArena>,
         needs_cross_file_delegation: bool,
-    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
         if needs_cross_file_delegation
             || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
             || !delegate_arena.is_some_and(is_direct_actual_lib_declaration_arena)
@@ -269,8 +327,12 @@ impl<'a> CheckerState<'a> {
         // Generic lib utility aliases stay on fallback so application/indexed-access
         // behavior sees the declared alias shape with type parameters in scope.
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
-            let (alias_type, params) =
-                self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
+            let DirectActualLibAliasBodyProof {
+                body: alias_type,
+                type_params: params,
+                def_id: _def_id,
+                outcome: _outcome,
+            } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
             self.ctx.symbol_types.insert(sym_id, alias_type);
             self.ctx
                 .lib_delegation_cache
