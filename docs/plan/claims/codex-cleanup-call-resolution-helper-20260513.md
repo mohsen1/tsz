@@ -19,3 +19,9 @@ Branch: `codex/cleanup-call-resolution-helper-20260513`
 - `cargo fmt --all -- --check`
 - `git diff --check`
 - `cargo nextest run -p tsz-checker --test call_resolution_regression_tests --no-fail-fast`
+
+## Verification
+
+- `cargo fmt --all -- --check`
+- `git diff --check`
+- `cargo nextest run -p tsz-checker --test call_resolution_regression_tests --no-fail-fast` (150 passed)
