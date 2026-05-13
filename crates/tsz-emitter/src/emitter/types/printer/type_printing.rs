@@ -1556,6 +1556,12 @@ impl<'a> TypePrinter<'a> {
                 nested.current_depth += 1;
                 return nested.print_type(symbol_type);
             }
+            if !needs_typeof
+                && self.type_param_scope_contains_name(&symbol.escaped_name)
+                && self.global_class_symbol_can_use_global_this(sym_id)
+            {
+                return format!("globalThis.{}", symbol.escaped_name);
+            }
             if let Some(name) = self.print_named_symbol_reference(sym_id, needs_typeof) {
                 return name;
             }
