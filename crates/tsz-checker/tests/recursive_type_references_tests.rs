@@ -247,6 +247,70 @@ flat2([1, ['a']]);
 }
 
 #[test]
+fn recursive_array_rewrite_noops_without_required_flat_markers() {
+    let source = r#"
+interface Box<T> {
+    a: T;
+    b: [T] extends [Box<T>] ? { inner: T } : { outer: T };
+}
+type Box2 = Box<Box2 | number>;
+const b20: Box2 = 42;
+
+type RecArray<T> = Array<T | RecArray<T>>;
+let s: string = 1;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let number_to_string: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.message_text == "Type 'number' is not assignable to type 'string'."
+        })
+        .collect();
+    assert_eq!(
+        number_to_string.len(),
+        1,
+        "Expected standard TS2322 to remain when recursive rewrite markers are missing: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn recursive_array_rewrite_preserves_unrelated_same_message_diagnostics() {
+    let source = r#"
+interface Box<T> {
+    a: T;
+    b: [T] extends [Box<T>] ? { inner: T } : { outer: T };
+}
+type Box2 = Box<Box2 | number>;
+const b20: Box2 = 42;
+
+type RecArray<T> = Array<T | RecArray<T>>;
+declare function flat(xs: RecArray<string>): string;
+declare function flat1(xs: string[]): string;
+declare function flat2(xs: string | (string | string[])[]): string;
+
+flat([1, ['a']]);
+flat1([1, ['a']]);
+flat2([1, ['a']]);
+
+let s: string = 1;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let number_to_string: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.message_text == "Type 'number' is not assignable to type 'string'."
+        })
+        .collect();
+    assert_eq!(
+        number_to_string.len(),
+        1,
+        "Expected unrelated TS2322 messages to survive recursive rewrite filtering: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn value_or_array_recursive_alias_accepts_nested_array_assignment() {
     let source = r#"
 type ValueOrArray<T> = T | Array<ValueOrArray<T>>;

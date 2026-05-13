@@ -1024,9 +1024,6 @@ pub struct CheckerContext<'a> {
     /// speculative request-local results across editor operations.
     pub share_owner_symbol_type_results: bool,
 
-    /// Identity scope for source-file symbol-arena shared cache keys.
-    pub source_file_symbol_type_cache_scope: u64,
-
     /// Mapping from Binder `SymbolId` to Solver `DefId`.
     /// Used during migration to avoid creating duplicate `DefIds` for the same symbol.
     /// Wrapped in `RefCell` to allow mutation through shared references (for use in Fn closures).
@@ -1401,7 +1398,6 @@ pub struct ProgramContext {
     pub all_arenas: Arc<Vec<Arc<NodeArena>>>,
     /// All binders for cross-file resolution (indexed by `file_idx`).
     pub all_binders: Arc<Vec<Arc<BinderState>>>,
-    /// Unique cache scope for source-file symbol-arena symbol-type entries.
     pub source_file_symbol_type_cache_scope: u64,
     /// Pre-computed declared modules from skeleton index.
     pub skeleton_declared_modules: Option<Arc<GlobalDeclaredModules>>,
@@ -1655,7 +1651,8 @@ impl ProgramContext {
             ctx.definition_store = Arc::clone(store);
             ctx.share_owner_symbol_type_results = true;
         }
-        ctx.source_file_symbol_type_cache_scope = self.source_file_symbol_type_cache_scope;
+        ctx.definition_store
+            .set_source_file_symbol_type_cache_scope(self.source_file_symbol_type_cache_scope);
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // When the shared DefinitionStore was fully populated (via from_semantic_defs
         // during project setup), skip the expensive per-binder iteration. Instead,
