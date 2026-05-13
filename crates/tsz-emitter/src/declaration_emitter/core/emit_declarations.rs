@@ -1,8 +1,8 @@
 use rustc_hash::FxHashSet;
 use tracing::debug;
 use tsz_common::comments::is_jsdoc_comment;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
@@ -461,6 +461,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        self.emit_deferred_js_export_equals_dependency_classes(source_file);
         self.emit_pending_top_level_jsdoc_type_aliases(source_file);
         self.emit_pending_jsdoc_callback_type_aliases(source_file);
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
@@ -562,6 +563,70 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         found_in_ambient_module
+    }
+
+    fn emit_deferred_js_export_equals_dependency_classes(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if !self.source_is_js_file || self.js_export_equals_names.is_empty() {
+            return;
+        }
+
+        let deferred = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    return false;
+                }
+                let Some(class) = self.arena.get_class(stmt_node) else {
+                    return false;
+                };
+                self.should_defer_js_export_equals_dependency_class(class.name, &class.modifiers)
+            })
+            .collect::<Vec<_>>();
+        if deferred.is_empty() {
+            return;
+        }
+
+        let export_equals_names = std::mem::take(&mut self.js_export_equals_names);
+        for class_idx in deferred {
+            self.emit_class_declaration(class_idx);
+        }
+        self.js_export_equals_names = export_equals_names;
+    }
+
+    fn should_defer_js_export_equals_dependency_class(
+        &self,
+        name_idx: NodeIndex,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        self.source_is_js_file
+            && !self.js_export_equals_names.is_empty()
+            && !self
+                .arena
+                .has_modifier(modifiers, SyntaxKind::ExportKeyword)
+            && !self.is_js_named_exported_name(name_idx)
+            && !self.is_js_export_equals_name(name_idx)
+            && self.is_js_export_equals_namespace_alias_local(name_idx)
+    }
+
+    fn is_js_export_equals_namespace_alias_local(&self, name_idx: NodeIndex) -> bool {
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+
+        self.js_export_equals_names.iter().any(|root_name| {
+            self.js_namespace_export_aliases
+                .get(root_name)
+                .is_some_and(|aliases| aliases.iter().any(|alias| alias.local_name == name))
+        })
     }
 
     fn prune_unused_named_import_specifiers_from_output(output: &str) -> String {
@@ -1494,6 +1559,9 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
             || self.is_js_named_exported_name(class.name);
+        if self.should_defer_js_export_equals_dependency_class(class.name, &class.modifiers) {
+            return;
+        }
         if !is_exported
             && !self.should_emit_public_api_member(&class.modifiers)
             && !self.is_js_export_equals_name(class.name)

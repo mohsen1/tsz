@@ -2007,6 +2007,41 @@ module.exports = a;
 }
 
 #[test]
+fn test_js_module_exports_defers_dependency_class_until_after_root_namespace() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Base {}
+
+/** @returns {Base} */
+function BaseFactory() {
+    return new Base();
+}
+
+BaseFactory.Base = Base;
+module.exports = BaseFactory;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = BaseFactory;")
+        .expect("Expected CommonJS export assignment");
+    let function_pos = output
+        .find("declare function BaseFactory(): Base;")
+        .expect("Expected exported function declaration");
+    let namespace_pos = output
+        .find("declare namespace BaseFactory")
+        .expect("Expected namespace for static Base member");
+    let class_pos = output
+        .find("declare class Base")
+        .expect("Expected dependency class declaration");
+
+    assert!(
+        export_pos < function_pos && function_pos < namespace_pos && namespace_pos < class_pos,
+        "Expected dependency class to follow the export root namespace: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"
@@ -4071,6 +4106,19 @@ module.exports.Another = Q;
     assert!(
         output.contains("declare class Q_1 {"),
         "Expected the shadowed local class declaration to be emitted under a stable unique alias: {output}"
+    );
+    let namespace_pos = output
+        .find("declare namespace Q")
+        .expect("Expected namespace for export-equals root");
+    let class_a_pos = output
+        .find("declare class A")
+        .expect("Expected local dependency class A");
+    let class_q_alias_pos = output
+        .find("declare class Q_1")
+        .expect("Expected shadowed local class alias");
+    assert!(
+        namespace_pos < class_a_pos && class_a_pos < class_q_alias_pos,
+        "Expected local dependency class A to stay before the deferred shadowed alias: {output}"
     );
     assert!(
         !output.contains("export = exports;"),
