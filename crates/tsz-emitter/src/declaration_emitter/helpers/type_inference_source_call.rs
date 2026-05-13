@@ -123,6 +123,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut type_param_names = Vec::new();
         let mut type_param_constraints = Vec::new();
+        let mut type_param_defaults = Vec::new();
         for &param_idx in &type_params.nodes {
             let Some(param_node) = source_arena.get(param_idx) else {
                 continue;
@@ -140,11 +141,18 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 type_param_constraints.push((name_text.clone(), constraint));
             }
+            if param.default.is_some()
+                && let Some(default_text) = self
+                    .emit_type_node_text_from_arena(source_arena, param.default)
+                    .or_else(|| self.source_slice_from_arena(source_arena, param.default))
+            {
+                type_param_defaults.push((name_text.clone(), default_text));
+            }
             type_param_names.push(name_text);
         }
 
         let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
-        let substitutions = if explicit_type_args.is_empty() {
+        let mut substitutions = if explicit_type_args.is_empty() {
             self.infer_call_type_param_substitutions_from_arguments(
                 source_arena,
                 &func.parameters,
@@ -159,6 +167,17 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(|(name_text, arg_text)| (name_text.clone(), arg_text.clone()))
                 .collect()
         };
+        for (name_text, default_text) in type_param_defaults {
+            if substitutions
+                .iter()
+                .any(|(substituted, _)| substituted == &name_text)
+                || !Self::contains_whole_word_in_text(&type_text, &name_text)
+            {
+                continue;
+            }
+            let default_text = Self::replace_whole_words_in_text(&default_text, &substitutions);
+            substitutions.push((name_text, default_text));
+        }
         if substitutions.is_empty()
             && type_param_names
                 .iter()
@@ -167,6 +186,8 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         type_text = Self::replace_whole_words_in_text(&type_text, &substitutions);
+        type_text = Self::simplify_string_literal_template_type_text(&type_text);
+        type_text = Self::expand_literal_key_mapped_type_text(&type_text).unwrap_or(type_text);
         if type_param_names
             .iter()
             .any(|name| Self::contains_whole_word_in_text(&type_text, name))
@@ -177,6 +198,97 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(type_text)
+    }
+
+    fn expand_literal_key_mapped_type_text(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
+        let mapped = inner.strip_prefix('[')?;
+        let in_pos = mapped.find(" in ")?;
+        let after_in = mapped.get(in_pos + " in ".len()..)?;
+        let end_bracket = after_in.find(']')?;
+        let keys_text = after_in.get(..end_bracket)?.trim();
+        let after_bracket = after_in.get(end_bracket + 1..)?.trim();
+        let value_text = after_bracket
+            .strip_prefix(':')?
+            .trim()
+            .trim_end_matches(';')
+            .trim();
+        if value_text.is_empty() {
+            return None;
+        }
+        let mut lines = Vec::new();
+        for key in Self::split_top_level_union_type_parts(keys_text) {
+            let key = key.trim();
+            let key = Self::unquoted_string_literal_text(key)?;
+            if !Self::is_simple_identifier_text(&key) {
+                return None;
+            }
+            lines.push(format!("    {key}: {value_text};"));
+        }
+        (!lines.is_empty()).then(|| format!("{{\n{}\n}}", lines.join("\n")))
+    }
+
+    fn simplify_string_literal_template_type_text(type_text: &str) -> String {
+        let mut output = String::with_capacity(type_text.len());
+        let bytes = type_text.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i] != b'`' {
+                output.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+            if let Some((replacement, next)) = Self::try_simplify_template_literal_at(type_text, i)
+            {
+                output.push_str(&replacement);
+                i = next;
+            } else if let Some(end) = type_text.get(i + 1..).and_then(|text| text.find('`')) {
+                let end = i + 1 + end + 1;
+                output.push_str(type_text.get(i..end).unwrap_or("`"));
+                i = end;
+            } else {
+                output.push('`');
+                i += 1;
+            }
+        }
+        output
+    }
+
+    fn try_simplify_template_literal_at(type_text: &str, start: usize) -> Option<(String, usize)> {
+        let bytes = type_text.as_bytes();
+        let mut i = start + 1;
+        let mut value = String::new();
+        while i < bytes.len() {
+            match bytes[i] {
+                b'`' => return Some((format!("{value:?}"), i + 1)),
+                b'$' if bytes.get(i + 1) == Some(&b'{') => {
+                    let expr_start = i + 2;
+                    let expr_end = type_text.get(expr_start..)?.find('}')? + expr_start;
+                    let literal = type_text.get(expr_start..expr_end)?.trim();
+                    let literal = Self::unquoted_string_literal_text(literal)?;
+                    value.push_str(&literal);
+                    i = expr_end + 1;
+                }
+                b'\\' => return None,
+                byte => {
+                    value.push(byte as char);
+                    i += 1;
+                }
+            }
+        }
+        None
+    }
+
+    fn unquoted_string_literal_text(literal: &str) -> Option<String> {
+        let quote = literal.as_bytes().first().copied()?;
+        if quote != b'"' && quote != b'\'' {
+            return None;
+        }
+        if literal.as_bytes().last().copied() != Some(quote) {
+            return None;
+        }
+        Some(literal.get(1..literal.len() - 1)?.to_string())
     }
 
     pub(in crate::declaration_emitter) fn substitute_call_result_parameter_type_queries(

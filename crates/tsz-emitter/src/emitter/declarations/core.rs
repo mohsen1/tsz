@@ -3,7 +3,7 @@ use super::namespace::rewrite_enum_iife_for_namespace_export;
 use crate::transforms::enum_es5::EnumES5Transformer;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{Node, VariableDeclarationData};
+use tsz_parser::parser::node::{FunctionData, Node, VariableDeclarationData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -31,6 +31,15 @@ impl<'a> Printer<'a> {
             func.body.is_none() && self.has_recovered_anonymous_function_arrow(node, func.name);
         if func.body.is_none() && !has_recovered_trailing_comma && !has_recovered_anonymous_arrow {
             self.skip_comments_for_erased_node(node);
+            return;
+        }
+        let has_recovered_errant_arrow_body =
+            self.has_recovered_errant_function_arrow_body(node, func);
+        if has_recovered_errant_arrow_body
+            && self.recovered_errant_function_arrow_skips_declaration(func)
+        {
+            self.emit_expression_in_statement_position(func.body);
+            self.write_semicolon();
             return;
         }
 
@@ -143,6 +152,20 @@ impl<'a> Printer<'a> {
             }
             return;
         }
+        if has_recovered_errant_arrow_body {
+            self.write(" { }");
+            self.function_scope_depth -= 1;
+            if func.name.is_some() {
+                let func_name = self.get_identifier_text_idx(func.name);
+                if !func_name.is_empty() {
+                    self.declared_namespace_names.insert(func_name);
+                }
+            }
+            self.write_line();
+            self.emit_expression_in_statement_position(func.body);
+            self.write_semicolon();
+            return;
+        }
 
         // No return type for JavaScript — skip comments inside erased return type
         if !self.ctx.flags.in_declaration_emit
@@ -220,7 +243,34 @@ impl<'a> Printer<'a> {
         let Some(prefix) = text.get(start..end) else {
             return false;
         };
-        prefix.contains('¬')
+        prefix
+            .rfind(')')
+            .is_some_and(|close_paren| prefix[close_paren + 1..].contains('¬'))
+    }
+
+    fn has_recovered_errant_function_arrow_body(&self, node: &Node, func: &FunctionData) -> bool {
+        let Some(body_node) = self.arena.get(func.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (body_node.pos as usize).min(text.len());
+        text.get(start..end)
+            .is_some_and(|header| header.contains("=>"))
+    }
+
+    fn recovered_errant_function_arrow_skips_declaration(&self, func: &FunctionData) -> bool {
+        func.type_annotation.is_some()
+            || func.parameters.nodes.iter().copied().any(|param_idx| {
+                self.arena
+                    .get_parameter_at(param_idx)
+                    .is_some_and(|param| param.type_annotation.is_some())
+            })
     }
 
     pub(in crate::emitter) fn emit_variable_declaration_list(&mut self, node: &Node) {

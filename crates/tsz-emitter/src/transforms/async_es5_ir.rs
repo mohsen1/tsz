@@ -75,7 +75,7 @@ pub struct AsyncTransformState {
 
 enum SuspendedAssignmentTarget {
     Property(String),
-    Element(IRNode),
+    Element(Box<IRNode>),
 }
 
 impl AsyncTransformState {
@@ -1530,7 +1530,7 @@ impl<'a> AsyncES5Transformer<'a> {
             SuspendedAssignmentTarget::Property(property) => {
                 IRNode::prop(IRNode::id(temp), property)
             }
-            SuspendedAssignmentTarget::Element(index) => IRNode::elem(IRNode::id(temp), index),
+            SuspendedAssignmentTarget::Element(index) => IRNode::elem(IRNode::id(temp), *index),
         };
         current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
             lowered_target,
@@ -1557,7 +1557,7 @@ impl<'a> AsyncES5Transformer<'a> {
             let access = self.arena.get_access_expr(left_node)?;
             let object = self.expression_to_ir(access.expression);
             let index = self.expression_to_ir(access.name_or_argument);
-            return Some((SuspendedAssignmentTarget::Element(index), object));
+            return Some((SuspendedAssignmentTarget::Element(Box::new(index)), object));
         }
 
         None
@@ -1782,6 +1782,8 @@ impl<'a> AsyncES5Transformer<'a> {
             body,
             super_param,
             weakmap_decls,
+            computed_prop_temp_decls: _,
+            computed_prop_temp_inits: _,
             weakmap_inits,
             deferred_static_blocks,
             ..
