@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `fix-jsx-same-name-component-stack-6262`
-- **PR**: TBD
+- **PR**: #6268
 - **Status**: claim
 - **Workstream**: checker crash / urgent public issue #6262
 
