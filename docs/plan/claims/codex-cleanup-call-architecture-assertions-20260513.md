@@ -2,7 +2,7 @@
 
 Issue: https://github.com/mohsen1/tsz/issues/6361
 Branch: `codex/cleanup-next-focused-20260513`
-Status: WIP
+Status: Ready for review
 
 ## Scope
 
@@ -15,9 +15,8 @@ compiler behavior, or implementation direction.
 
 ## Verification
 
-Planned:
-
 - `cargo fmt --check`
-- focused `cargo nextest` for the affected checker library test module
+- `cargo nextest run -p tsz-checker --lib -E 'test(call_architecture_tests::)' --no-fail-fast` (73 passed)
 - `cargo clippy --profile ci-lint -p tsz-checker --all-targets -- -D warnings`
+- `cargo nextest run --workspace --no-fail-fast` (27,101 passed, 35 unrelated failures outside the edited test module)
 - Full PR CI after marking ready.
