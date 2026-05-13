@@ -197,6 +197,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let call = self.arena.get_call_expr(expr_node)?;
+        if call.type_arguments.is_some() {
+            return None;
+        }
         let callee_idx = self.skip_parenthesized_expression(call.expression)?;
         let callee_node = self.arena.get(callee_idx)?;
         if callee_node.kind != SyntaxKind::Identifier as u16 {
@@ -242,6 +245,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let call = self.arena.get_call_expr(expr_node)?;
+        if call.type_arguments.is_some() {
+            return None;
+        }
         let arguments = call.arguments.as_ref()?;
         let binder = self.binder?;
         let sym_id = self.value_reference_symbol(call.expression).or_else(|| {

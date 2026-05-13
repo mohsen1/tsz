@@ -1652,6 +1652,33 @@ hResult = h("bar");
 }
 
 #[test]
+fn fix_generic_call_identity_callback_skips_explicit_recursive_type_arguments() {
+    let output = emit_dts(
+        r#"
+export type Key<U> = keyof U;
+export type Value<K extends Key<U>, U> = U[K];
+export const updateIfChanged = <T>(t: T) => {
+    const reduce = <U>(u: U, update: (u: U) => T) => {
+        const set = (newU: U) => Object.is(u, newU) ? t : update(newU);
+        return Object.assign(
+            <K extends Key<U>>(key: K) =>
+                reduce<Value<K, U>>(u[key as keyof U] as Value<K, U>, (v: Value<K, U>) => {
+                    return update(Object.assign(Array.isArray(u) ? [] : {}, u, { [key]: v }));
+                }),
+            { map: (updater: (u: U) => U) => set(updater(u)), set });
+    };
+    return reduce<T>(t, (t: T) => t);
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const updateIfChanged"),
+        "recursive explicit generic calls should not crash declaration emit: {output}"
+    );
+}
+
+#[test]
 fn fix_local_overloaded_call_uses_matching_literal_signature_return() {
     let output = emit_dts_with_usage_analysis(
         r#"
