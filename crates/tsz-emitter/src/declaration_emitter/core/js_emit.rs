@@ -1429,7 +1429,7 @@ impl<'a> DeclarationEmitter<'a> {
         // collector) and would be emitted a second time when the statement
         // visitor reaches it. Remove those stmt indices from the deferred
         // maps before emitting here, so the statement visitor skips them.
-        for (stmt_idx, _) in
+        for (stmt_idx, _, _) in
             self.js_module_exports_secondary_member_stmt_assignments(root_initializer)
         {
             self.js_deferred_value_export_statements.remove(&stmt_idx);
@@ -1486,7 +1486,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn js_module_exports_secondary_member_stmt_assignments(
         &self,
         root_initializer: NodeIndex,
-    ) -> Vec<(NodeIndex, NodeIndex)> {
+    ) -> Vec<(NodeIndex, NodeIndex, NodeIndex)> {
         let Some(source_file_idx) = self.current_source_file_idx else {
             return Vec::new();
         };
@@ -1533,9 +1533,9 @@ impl<'a> DeclarationEmitter<'a> {
                 if !self.is_module_exports_reference(receiver) {
                     return None;
                 }
-                let (name_idx, _) =
+                let (name_idx, initializer) =
                     self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)?;
-                Some((stmt_idx, name_idx))
+                Some((stmt_idx, name_idx, initializer))
             })
             .collect()
     }
@@ -1600,14 +1600,22 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         root_initializer: NodeIndex,
     ) {
-        let secondary_classes: Vec<_> = self
-            .js_module_exports_secondary_member_assignments(root_initializer)
+        let secondary_class_stmts: Vec<_> = self
+            .js_module_exports_secondary_member_stmt_assignments(root_initializer)
             .into_iter()
-            .filter(|(_, initializer)| {
+            .filter(|(_, _, initializer)| {
                 self.arena
                     .get(*initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_EXPRESSION)
             })
+            .collect();
+        for (stmt_idx, _, _) in &secondary_class_stmts {
+            self.js_deferred_value_export_statements.remove(stmt_idx);
+            self.js_deferred_function_export_statements.remove(stmt_idx);
+        }
+        let secondary_classes: Vec<_> = secondary_class_stmts
+            .into_iter()
+            .map(|(_, name_idx, initializer)| (name_idx, initializer))
             .collect();
         if secondary_classes.is_empty() {
             return;
@@ -3072,6 +3080,62 @@ impl<'a> DeclarationEmitter<'a> {
         bindings
     }
 
+    fn collect_flattened_binding_type_texts_from_annotation(
+        &mut self,
+        pattern_idx: NodeIndex,
+        type_annotation: NodeIndex,
+    ) -> Vec<(NodeIndex, String)> {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return Vec::new();
+        };
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return Vec::new();
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return Vec::new();
+        };
+        let pattern_elements = pattern.elements.nodes.clone();
+
+        let Some(type_node) = self.arena.get(type_annotation) else {
+            return Vec::new();
+        };
+        let Some(tuple) = self.arena.get_tuple_type(type_node) else {
+            return Vec::new();
+        };
+        let tuple_elements = tuple.elements.nodes.clone();
+
+        let mut type_texts = Vec::new();
+        let mut tuple_index = 0usize;
+        for element_idx in pattern_elements {
+            let Some(element_node) = self.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                tuple_index += 1;
+                continue;
+            }
+            if element_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                continue;
+            }
+            let Some(element) = self.arena.get_binding_element(element_node) else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(element.name) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::Identifier as u16
+                && let Some(&tuple_element_idx) = tuple_elements.get(tuple_index)
+                && let Some(type_text) = self.type_node_text(tuple_element_idx)
+            {
+                type_texts.push((element.name, type_text));
+            }
+            if !element.dot_dot_dot_token {
+                tuple_index += 1;
+            }
+        }
+        type_texts
+    }
+
     pub(in crate::declaration_emitter) fn emit_flattened_binding_type_annotation(
         &mut self,
         ident_idx: NodeIndex,
@@ -3115,6 +3179,8 @@ impl<'a> DeclarationEmitter<'a> {
                 &[decl_idx, decl.name, decl.initializer],
             ),
         );
+        let annotation_type_texts = self
+            .collect_flattened_binding_type_texts_from_annotation(decl.name, decl.type_annotation);
         if bindings.is_empty() {
             return;
         }
@@ -3143,7 +3209,15 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_leading_jsdoc_comments(node.pos);
             }
             self.emit_node(ident_idx);
-            self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+            if let Some(type_text) = annotation_type_texts
+                .iter()
+                .find_map(|(idx, text)| (*idx == ident_idx).then(|| text.clone()))
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else {
+                self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+            }
         }
         self.write(";");
         self.write_line();

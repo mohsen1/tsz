@@ -31,6 +31,46 @@ fn extra_this_parameter_is_compatible_method_shape(actual: &str, expected: &str)
 }
 
 impl<'a> CheckerState<'a> {
+    fn class_index_signatures_satisfy_interface(
+        &mut self,
+        class_instance_type: TypeId,
+        interface_type: TypeId,
+    ) -> bool {
+        let Some(class_shape) = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            class_instance_type,
+        ) else {
+            return false;
+        };
+        let Some(interface_shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
+        else {
+            return false;
+        };
+
+        let mut checked_index = false;
+        if let Some(target_index) = interface_shape.string_index.as_ref() {
+            checked_index = true;
+            let Some(source_index) = class_shape.string_index.as_ref() else {
+                return false;
+            };
+            if !self.is_assignable_to(source_index.value_type, target_index.value_type) {
+                return false;
+            }
+        }
+        if let Some(target_index) = interface_shape.number_index.as_ref() {
+            checked_index = true;
+            let Some(source_index) = class_shape.number_index.as_ref() else {
+                return false;
+            };
+            if !self.is_assignable_to(source_index.value_type, target_index.value_type) {
+                return false;
+            }
+        }
+
+        checked_index
+    }
+
     fn class_member_name_is_computed(&self, member_idx: NodeIndex) -> bool {
         let Some(member_node) = self.ctx.arena.get(member_idx) else {
             return false;
@@ -1516,6 +1556,22 @@ impl<'a> CheckerState<'a> {
                         if !self.is_assignable_to(class_instance_type, target_type) {
                             let analysis = self
                                 .analyze_assignability_failure(class_instance_type, target_type);
+                            let suppress_index_member_duplicate = !is_class
+                                && interface_has_index_signature
+                                && self.class_index_signatures_satisfy_interface(
+                                    class_instance_type,
+                                    target_type,
+                                )
+                                && matches!(
+                                    analysis.failure_reason,
+                                    Some(
+                                        tsz_solver::SubtypeFailureReason::IndexSignatureMismatch {
+                                            ..
+                                        } | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+                                            ..
+                                        }
+                                    )
+                                );
                             if !is_class
                                 && let Some(
                                     tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
@@ -1540,6 +1596,12 @@ impl<'a> CheckerState<'a> {
                                     expected_str,
                                     actual_str,
                                 ));
+                            } else if suppress_index_member_duplicate {
+                                // Class member compatibility with its own declared index
+                                // signature is reported separately as TS2411. If the class
+                                // index signature itself satisfies the implemented interface,
+                                // do not add a duplicate class-level TS2420 just because a
+                                // named method/property is incompatible with that index value.
                             } else {
                                 let suppress_computed_name_class_diagnostic = is_class
                                     && !extends_same_base

@@ -3518,6 +3518,37 @@ module.exports = class {
 }
 
 #[test]
+fn test_js_module_exports_anonymous_class_secondary_class_emits_once() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+module.exports = class {
+    constructor(p) {
+        this.t = 12 + p;
+    }
+};
+module.exports.Sub = class {
+    constructor() {
+        this.instance = new module.exports(10);
+    }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace exports {\n    export { Sub };\n}"),
+        "Expected secondary anonymous class exports to be aliased through the export= namespace: {output}"
+    );
+    assert!(
+        output.contains("declare class Sub {"),
+        "Expected secondary anonymous class exports to emit a local class declaration: {output}"
+    );
+    assert!(
+        !output.contains("export class Sub"),
+        "Did not expect the secondary class assignment to also emit as a named export: {output}"
+    );
+}
+
+#[test]
 fn test_js_array_subclass_emits_array_any_and_constructors() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -3782,7 +3813,7 @@ Object.defineProperty(E.prototype, "x", { set: setter });
 
 #[test]
 fn test_js_named_export_equals_class_expression_shadowing_preserves_root_name() {
-    let output = emit_js_dts(
+    let output = emit_js_dts_with_usage_analysis(
         r#"
 class A {
     member = new Q();
@@ -3806,6 +3837,10 @@ module.exports.Another = Q;
     assert!(
         output.contains("declare namespace Q {"),
         "Expected named CommonJS class export-equals roots to own their namespace aliases: {output}"
+    );
+    assert!(
+        output.contains("declare class A {\n    member: Q;\n}"),
+        "Expected local classes referenced by the exported class expression surface to be retained: {output}"
     );
     assert!(
         output.contains("export { Q_1 as Another };"),

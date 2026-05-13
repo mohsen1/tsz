@@ -120,30 +120,22 @@ impl<'a> CheckerState<'a> {
     fn finalize_call_return_like_success(
         &mut self,
         callee_expr: NodeIndex,
+        callee_type: TypeId,
         arg_types: &[TypeId],
         return_type: TypeId,
         is_optional_chain: bool,
     ) -> TypeId {
         let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
+        let return_type =
+            self.apply_direct_callable_this_substitution(return_type, callee_expr, callee_type);
         let return_type = self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
         let return_type = if !self.ctx.compiler_options.sound_mode {
             common::widen_freshness(self.ctx.types, return_type)
         } else {
             return_type
         };
-        // Eagerly evaluate monomorphic TypeApplication return types to prevent
-        // deeply nested application chains from accumulating. Without this,
-        // sequential calls like `merge(merge(merge(...)))` build a chain of
-        // unevaluated TypeApplications where each level references the previous
-        // one. Later evaluation of the outermost type re-evaluates the entire
-        // chain from scratch, leading to exponential blowup.
-        //
-        // Skip eager evaluation for Promise-like applications (Promise<T>,
-        // PromiseLike<T>). The await expression handler relies on the
-        // Application wrapper to extract T via promise_like_return_type_argument.
-        // Evaluating Promise<T> into its structural Object form destroys the
-        // Application wrapper and causes `await fn()` to produce the structural
-        // Promise object instead of the unwrapped T.
+        // Eagerly evaluate monomorphic TypeApplications to avoid nested return
+        // chains, but keep Promise-like applications wrapped for await handling.
         let return_type = if common::is_generic_application(self.ctx.types, return_type)
             && !self.contains_type_parameters_cached(return_type)
             && !self.is_promise_type(return_type)
@@ -159,6 +151,27 @@ impl<'a> CheckerState<'a> {
                 .union2(return_type, TypeId::UNDEFINED)
         } else {
             return_type
+        }
+    }
+
+    fn apply_direct_callable_this_substitution(
+        &mut self,
+        ty: TypeId,
+        expr: NodeIndex,
+        callee: TypeId,
+    ) -> TypeId {
+        if ty.is_intrinsic()
+            || matches!(callee, TypeId::ERROR | TypeId::ANY)
+            || !common::contains_this_type(self.ctx.types, ty)
+            || self
+                .ctx
+                .arena
+                .get(expr)
+                .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+        {
+            ty
+        } else {
+            common::substitute_this_type_at_return_position(self.ctx.types, ty, callee)
         }
     }
 
@@ -835,6 +848,7 @@ impl<'a> CheckerState<'a> {
 
                 self.finalize_call_return_like_success(
                     callee_expr,
+                    callee_type,
                     arg_types,
                     return_type,
                     is_optional_chain,
@@ -976,6 +990,7 @@ impl<'a> CheckerState<'a> {
                 {
                     self.finalize_call_return_like_success(
                         callee_expr,
+                        callee_type,
                         arg_types,
                         return_type,
                         is_optional_chain,
