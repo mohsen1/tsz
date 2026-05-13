@@ -254,6 +254,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.js_deferred_function_export_statements.remove(stmt_idx);
             self.js_deferred_value_export_statements.remove(stmt_idx);
         }
+        let js_commonjs_closure_export = self.js_commonjs_export_assignment_closure(source_file);
 
         debug!(
             "[DEBUG] source_file has {} comments",
@@ -297,6 +298,9 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.emit_js_anonymous_export_equals_value_declaration(initializer);
             }
+        }
+        if let Some((_, root_initializer, ref secondary_members)) = js_commonjs_closure_export {
+            self.emit_js_commonjs_closure_export_assignment(root_initializer, secondary_members);
         }
 
         // For JS source files, hoist `export default <Identifier>` statements that
@@ -375,6 +379,15 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if skipped_nested_module_export_namespace_stmts.contains(&stmt_idx) {
+                continue;
+            }
+            if js_commonjs_closure_export
+                .as_ref()
+                .is_some_and(|(closure_stmt_idx, _, _)| *closure_stmt_idx == stmt_idx)
+            {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
                 continue;
             }
             if deferred_js_namespace_objects.contains(&stmt_idx)
