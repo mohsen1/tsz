@@ -86,6 +86,14 @@ pub(crate) fn type_application(
     tsz_solver::type_queries::get_type_application(db, type_id)
 }
 
+pub(crate) fn application_base_has_conditional_alias_body(
+    db: &dyn tsz_solver::TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::application_base_has_conditional_alias_body(db, def_store, type_id)
+}
+
 pub(crate) fn preserves_named_application_base(
     db: &dyn tsz_solver::TypeDatabase,
     type_id: TypeId,
