@@ -296,36 +296,12 @@ impl<'a> CheckerState<'a> {
     ) -> (FxHashMap<String, TypeId>, FxHashMap<String, TypeId>) {
         use tsz_solver::CallableShape;
 
-        // Common case fast path: scan member names once with a small seen set
-        // and only build the heavier per-name grouping once a second method
-        // declaration with the same `(name, is_static)` key is observed. Most
-        // classes have no overloaded methods, so we return empty maps without
-        // allocating a `Vec` per group.
-        let mut seen: FxHashSet<(String, bool)> = FxHashSet::default();
-        let mut has_overload = false;
-        for &member_idx in &class.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
-                continue;
-            }
-            let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                continue;
-            };
-            let Some(name) = self.get_property_name(method.name) else {
-                continue;
-            };
-            let is_static = self.has_static_modifier(&method.modifiers);
-            if !seen.insert((name, is_static)) {
-                has_overload = true;
-                break;
-            }
-        }
-        if !has_overload {
-            return (FxHashMap::default(), FxHashMap::default());
-        }
-
+        // Single-pass groupby: walk members once and route each declaration
+        // into `singletons` (only one observed) or `groups` (two or more
+        // observed). Non-overloaded classes pay only N hashmap inserts and
+        // never allocate a `Vec` per method name. Each name is interned via
+        // `get_property_name` once.
+        let mut singletons: FxHashMap<(String, bool), (NodeIndex, bool)> = FxHashMap::default();
         let mut groups: FxHashMap<(String, bool), Vec<(NodeIndex, bool)>> = FxHashMap::default();
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -342,19 +318,24 @@ impl<'a> CheckerState<'a> {
             };
             let is_static = self.has_static_modifier(&method.modifiers);
             let has_body = method.body.is_some();
-            groups
-                .entry((name, is_static))
-                .or_default()
-                .push((member_idx, has_body));
+            let key = (name, is_static);
+            if let Some(group) = groups.get_mut(&key) {
+                group.push((member_idx, has_body));
+            } else if let Some(first) = singletons.remove(&key) {
+                groups.insert(key, vec![first, (member_idx, has_body)]);
+            } else {
+                singletons.insert(key, (member_idx, has_body));
+            }
+        }
+
+        if groups.is_empty() {
+            return (FxHashMap::default(), FxHashMap::default());
         }
 
         let mut instance_overloads: FxHashMap<String, TypeId> = FxHashMap::default();
         let mut static_overloads: FxHashMap<String, TypeId> = FxHashMap::default();
 
         for ((name, is_static), decls) in groups {
-            if decls.len() <= 1 {
-                continue;
-            }
             let has_any_bodyless = decls.iter().any(|&(_, has_body)| !has_body);
 
             let mut sigs: Vec<tsz_solver::CallSignature> = Vec::new();

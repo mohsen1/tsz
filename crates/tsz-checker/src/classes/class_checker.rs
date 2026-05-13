@@ -2093,61 +2093,30 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Overloaded-method compat: when this method has multiple
-            // declarations in derived (overload sigs + impl, or multiple
-            // overload sigs in an abstract class) or the base side has
-            // multiple declarations, the externally-visible API is the
-            // overload set, not the per-AST-node signature. Compare the
-            // combined `CallableShape` instead of the impl/overload-sig
-            // node's individual function type. This single pass covers
-            // every declaration of the same name, so emit at most once.
-            if is_method {
-                let derived_overload_type = if is_static {
-                    derived_static_method_overloads.get(&member_name).copied()
-                } else {
-                    derived_instance_method_overloads.get(&member_name).copied()
-                };
-                let base_overload_type =
-                    base_chain_summary.method_overload_type(&member_name, is_static);
-                if derived_overload_type.is_some() || base_overload_type.is_some() {
-                    if overload_compat_checked.insert((member_name.clone(), is_static)) {
-                        let derived_combined = derived_overload_type.unwrap_or(member_type);
-                        let base_combined = base_overload_type.unwrap_or(base_info.type_id);
-                        let base_combined =
-                            instantiate_type(self.ctx.types, base_combined, &substitution);
-                        let resolved_member_type = self.resolve_type_query_type(derived_combined);
-                        let resolved_base_type = self.resolve_type_query_type(base_combined);
-                        if resolved_member_type != TypeId::ANY
-                            && resolved_base_type != TypeId::ANY
-                            && should_report_member_type_mismatch_bivariant(
-                                self,
-                                resolved_member_type,
-                                resolved_base_type,
-                                member_name_idx,
-                            )
-                        {
-                            let member_type_str = self.format_type(resolved_member_type);
-                            let base_type_str = self.format_type(resolved_base_type);
-                            let display_name = format_property_name_for_diagnostic(&member_name);
-                            let base_class_display_name =
-                                base_class_name_for_diagnostic(&base_class_name);
-                            self.error_at_node(
-                                member_name_idx,
-                                &format!(
-                                    "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_display_name}'."
-                                ),
-                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                            );
-                            self.report_type_not_assignable_detail(
-                                member_name_idx,
-                                &member_type_str,
-                                &base_type_str,
-                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                            );
-                        }
-                    }
-                    continue;
-                }
+            // Overloaded-method compat: when either side has multiple
+            // declarations of this name, swap the impl/overload-sig node's
+            // type for the externally-visible `CallableShape` and run the
+            // compat check once per name.
+            if is_method
+                && self.check_overloaded_method_compat(
+                    &member_name,
+                    member_type,
+                    member_name_idx,
+                    is_static,
+                    &derived_class_name,
+                    &base_class_name,
+                    &base_info,
+                    &base_chain_summary,
+                    if is_static {
+                        &derived_static_method_overloads
+                    } else {
+                        &derived_instance_method_overloads
+                    },
+                    &substitution,
+                    &mut overload_compat_checked,
+                )
+            {
+                continue;
             }
 
             // Skip type compatibility for overload signatures. tsc checks
@@ -2308,6 +2277,77 @@ impl<'a> CheckerState<'a> {
         }
 
         self.pop_type_parameters(derived_type_param_updates);
+    }
+
+    /// TS2416 type compat for overloaded methods: when this method has
+    /// multiple declarations on either the derived or base side, swap the
+    /// per-AST-node signature for the externally-visible `CallableShape`
+    /// (the overload sigs, or — when no bodyless overload sigs exist — the
+    /// single implementation signature). Returns `true` if the method was
+    /// recognized as overloaded and handled here, so the per-node compat
+    /// check should be skipped for every declaration of this name in the
+    /// derived class.
+    #[allow(clippy::too_many_arguments)]
+    fn check_overloaded_method_compat(
+        &mut self,
+        member_name: &str,
+        member_type: TypeId,
+        member_name_idx: NodeIndex,
+        is_static: bool,
+        derived_class_name: &str,
+        base_class_name: &str,
+        base_info: &ClassMemberInfo,
+        base_chain_summary: &ClassChainSummary,
+        derived_overloads: &rustc_hash::FxHashMap<String, TypeId>,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+        overload_compat_checked: &mut rustc_hash::FxHashSet<(String, bool)>,
+    ) -> bool {
+        use crate::query_boundaries::common::instantiate_type;
+
+        let derived_overload_type = derived_overloads.get(member_name).copied();
+        let base_overload_type = base_chain_summary.method_overload_type(member_name, is_static);
+        if derived_overload_type.is_none() && base_overload_type.is_none() {
+            return false;
+        }
+        if !overload_compat_checked.insert((member_name.to_string(), is_static)) {
+            return true;
+        }
+
+        let derived_combined = derived_overload_type.unwrap_or(member_type);
+        let base_combined = base_overload_type.unwrap_or(base_info.type_id);
+        let base_combined = instantiate_type(self.ctx.types, base_combined, substitution);
+        let resolved_member_type = self.resolve_type_query_type(derived_combined);
+        let resolved_base_type = self.resolve_type_query_type(base_combined);
+        if resolved_member_type == TypeId::ANY
+            || resolved_base_type == TypeId::ANY
+            || !should_report_member_type_mismatch_bivariant(
+                self,
+                resolved_member_type,
+                resolved_base_type,
+                member_name_idx,
+            )
+        {
+            return true;
+        }
+
+        let member_type_str = self.format_type(resolved_member_type);
+        let base_type_str = self.format_type(resolved_base_type);
+        let display_name = format_property_name_for_diagnostic(member_name);
+        let base_class_display_name = base_class_name_for_diagnostic(base_class_name);
+        self.error_at_node(
+            member_name_idx,
+            &format!(
+                "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_display_name}'."
+            ),
+            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+        );
+        self.report_type_not_assignable_detail(
+            member_name_idx,
+            &member_type_str,
+            &base_type_str,
+            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+        );
+        true
     }
 
     /// Check constructor parameter properties against base class members for
