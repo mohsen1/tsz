@@ -2404,6 +2404,20 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    pub(crate) fn type_predicate_type_assignable_to_parameter(
+        &mut self,
+        predicate_type: TypeId,
+        param_type: TypeId,
+    ) -> bool {
+        let types = self.ctx.types;
+        crate::query_boundaries::type_predicates::type_predicate_type_assignable_to_parameter_with(
+            types,
+            predicate_type,
+            param_type,
+            |source, target| self.is_assignable_to(source, target),
+        )
+    }
+
     fn is_assignable_with_target_this_bound_to_source(
         &mut self,
         source: TypeId,

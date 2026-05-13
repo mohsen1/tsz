@@ -663,6 +663,51 @@ fn mixin_expression_accessor_over_property_reports_ts2611_without_never_base() {
 }
 
 #[test]
+fn mixin_extends_parameter_shadowing_abstract_class_no_ts2653() {
+    let source = r#"
+        abstract class Base {
+            abstract method(): void;
+        }
+
+        type GConstructor<T = {}> = new (...args: any[]) => T;
+
+        function Timestamped<TBase extends GConstructor>(Base: TBase) {
+            return class extends Base {
+                timestamp = 1;
+            };
+        }
+
+        class User {
+            name = "";
+        }
+
+        const TimestampedUser = Timestamped(User);
+    "#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Shadowing mixin parameter should hide outer abstract class in extends, got: {diags:?}",
+    );
+}
+
+#[test]
+fn class_expression_extending_abstract_class_still_emits_ts2653() {
+    let source = r#"
+        abstract class Base {
+            abstract method(): void;
+        }
+
+        const Derived = class extends Base {};
+    "#;
+    let diags = check_strict(source);
+    assert!(
+        count_code(&diags, 2653) == 1,
+        "Class expression extending abstract class without implementation should emit exactly one TS2653, got: {:?}",
+        codes(&diags),
+    );
+}
+
+#[test]
 fn mixin_expression_auto_accessor_over_auto_accessor_has_no_ts2611() {
     let source = r#"
         function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {

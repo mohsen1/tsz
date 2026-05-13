@@ -759,6 +759,45 @@ fn test_substitution_from_args_with_concrete_defaults() {
     assert_eq!(subst.get(u_name), Some(TypeId::STRING));
 }
 
+#[test]
+fn test_substitution_from_args_circular_defaults_resolve_to_any() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let t_type = interner.type_param(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let u_type = interner.type_param(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let type_params = vec![
+        TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: Some(u_type),
+            is_const: false,
+        },
+        TypeParamInfo {
+            name: u_name,
+            constraint: None,
+            default: Some(t_type),
+            is_const: false,
+        },
+    ];
+
+    let subst = TypeSubstitution::from_args(&interner, &type_params, &[]);
+
+    assert_eq!(subst.get(t_name), Some(TypeId::ANY));
+    assert_eq!(subst.get(u_name), Some(TypeId::ANY));
+}
+
 // ============================================
 // Template Literal Instantiation Tests
 // ============================================
