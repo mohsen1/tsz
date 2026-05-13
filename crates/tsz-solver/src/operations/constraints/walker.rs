@@ -2175,9 +2175,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let Some(t_last) = target_params.last() else {
             return;
         };
-        if !t_last.rest || !var_map.contains_key(&t_last.type_id) {
+        if !t_last.rest {
             return;
         }
+        let Some(&var) = var_map.get(&t_last.type_id) else {
+            return;
+        };
         let target_fixed_count = target_params.len().saturating_sub(1);
         if source_params.len() <= target_fixed_count {
             return;
@@ -2196,13 +2199,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             })
             .collect();
         let source_tuple = self.interner.tuple(tuple_elements);
-        if let Some(&var) = var_map.get(&t_last.type_id) {
-            ctx.add_candidate(
-                var,
-                source_tuple,
-                crate::types::InferencePriority::NakedTypeVariable,
-            );
-        }
+        // Function parameters are contravariant, so the rest-tuple candidate
+        // must always go to contra-candidates regardless of in_contra_mode.
+        ctx.add_contra_candidate(
+            var,
+            source_tuple,
+            crate::types::InferencePriority::NakedTypeVariable,
+        );
     }
 
     /// For each source property, instantiate the mapped type's template by
