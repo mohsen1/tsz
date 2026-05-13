@@ -46,6 +46,12 @@ impl<'a> TypePrinter<'a> {
             return false;
         };
 
+        if symbol.value_declaration.is_some()
+            && !self.declaration_is_nameable(symbol.value_declaration)
+        {
+            return false;
+        }
+
         if symbol.declarations.is_empty() {
             return !symbol.parent.is_some();
         }
@@ -112,6 +118,7 @@ impl<'a> TypePrinter<'a> {
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => return false,
                 k if k == syntax_kind_ext::FUNCTION_EXPRESSION => return false,
                 k if k == syntax_kind_ext::ARROW_FUNCTION => return false,
+                k if k == syntax_kind_ext::CLASS_EXPRESSION => return false,
                 k if k == syntax_kind_ext::METHOD_DECLARATION => return false,
                 k if k == syntax_kind_ext::GET_ACCESSOR => return false,
                 k if k == syntax_kind_ext::SET_ACCESSOR => return false,
