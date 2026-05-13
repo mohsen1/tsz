@@ -123,6 +123,7 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
         name,
         "ArrayIterator"
             | "DateTimeFormatOptions"
+            | "Iterator"
             | "IteratorObject"
             | "Locale"
             | "NumberFormatOptions"
@@ -161,6 +162,31 @@ impl<'a> CheckerState<'a> {
                             })
                     })
             })
+    }
+
+    fn symbol_mapped_declarations_are_builtin_lib_only(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        name: &str,
+    ) -> bool {
+        let mut saw_mapped = false;
+        for &decl_idx in &symbol.declarations {
+            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                continue;
+            };
+            if arenas.is_empty() {
+                return false;
+            }
+            saw_mapped = true;
+            if !arenas.iter().all(|arena| {
+                is_builtin_lib_declaration_arena(arena.as_ref())
+                    && Self::lib_declaration_name_matches(arena.as_ref(), decl_idx, name)
+            }) {
+                return false;
+            }
+        }
+        saw_mapped
     }
 
     fn lib_declaration_name_matches(arena: &NodeArena, decl_idx: NodeIndex, name: &str) -> bool {
@@ -214,7 +240,22 @@ impl<'a> CheckerState<'a> {
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return None;
         }
-        if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name) {
+        let declarations_are_direct =
+            self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name);
+        let declarations_iterator_mapped_builtin = name == "Iterator"
+            && self.symbol_mapped_declarations_are_builtin_lib_only(sym_id, symbol, &name);
+        let declarations_iterator_has_unmapped = name == "Iterator"
+            && symbol.declarations.iter().any(|&decl_idx| {
+                !self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .contains_key(&(sym_id, decl_idx))
+            });
+        if !declarations_are_direct
+            && !declarations_iterator_mapped_builtin
+            && !declarations_iterator_has_unmapped
+        {
             return None;
         }
 
@@ -747,7 +788,10 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
+    use super::{
+        is_builtin_lib_file_name, is_direct_actual_lib_declaration_arena,
+        is_external_package_declaration_file_name,
+    };
     use crate::context::{CheckerContext, CheckerOptions, LibContext};
     use crate::state::CheckerState;
     use crate::test_utils::load_lib_files;
@@ -1117,6 +1161,78 @@ mod tests {
             .get(&(sym_id, decl_idx))
             .and_then(|arenas| arenas.first())
             .expect("declaration arena should exist")
+            .as_ref();
+
+        let (ty, _) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(delegate_arena),
+                false,
+            )
+            .expect("direct actual-lib lowering should succeed");
+
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_builtin_iterator_symbol() {
+        let lib_files = load_lib_files(&[
+            "es5.d.ts",
+            "es2015.iterable.d.ts",
+            "esnext.iterator.d.ts",
+            "dom.d.ts",
+            "dom.iterable.d.ts",
+        ]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .resolve_lib_symbol_by_name("Iterator")
+            .expect("Iterator should resolve");
+        let symbol = state
+            .get_cross_file_symbol(sym_id)
+            .expect("symbol should resolve");
+        let delegate_arena = symbol
+            .declarations
+            .iter()
+            .copied()
+            .find_map(|decl_idx| {
+                state
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .and_then(|arenas| {
+                        arenas
+                            .iter()
+                            .find(|arena| is_direct_actual_lib_declaration_arena(arena.as_ref()))
+                    })
+            })
+            .expect("direct actual-lib declaration arena should exist")
             .as_ref();
 
         let (ty, _) = state
