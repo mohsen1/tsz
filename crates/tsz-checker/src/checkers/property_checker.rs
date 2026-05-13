@@ -194,11 +194,28 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2340 fires when `super.<accessor>` reads a `get` accessor on a
+        // base class. tsc's rule: only methods are accessible via `super`;
+        // accessors are not. `class_chain_member_kind_name_only` folds
+        // accessors into `MethodLike` so we need a dedicated lookup.
+        let in_static_context = self.is_in_static_class_member_context(error_node);
+        if self.is_super_expression(object_expr)
+            && !in_static_context
+            && self.class_chain_member_is_accessor(class_idx, property_name, is_static)
+            && !self.is_property_access_write_context(error_node)
+        {
+            self.error_at_node(
+                error_node,
+                diagnostic_messages::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
+                diagnostic_codes::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
+            );
+            return false;
+        }
+
         // TS2855 fires when `super.<field>` accesses a parent class **instance**
         // field. From within a static member/initializer, `super` is the parent
         // class object itself (not its prototype), so `super.x` resolves to the
         // parent's *static* member — TS2855 must not fire there.
-        let in_static_context = self.is_in_static_class_member_context(error_node);
         if self.is_super_expression(object_expr)
             && !is_static
             && !in_static_context
