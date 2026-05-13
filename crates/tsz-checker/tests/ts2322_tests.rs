@@ -5032,6 +5032,38 @@ const x: number = undefined as R;
     );
 }
 
+#[test]
+fn test_strict_builtin_iterator_return_in_lib_heritage_displays_undefined() {
+    let source = r#"
+declare const map: Map<string, number>;
+const r1: number = map.values().next().value;
+"#;
+    let options = CheckerOptions {
+        strict_builtin_iterator_return: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", options);
+
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("number | undefined")),
+        "Expected IteratorObject heritage argument BuiltinIteratorReturn to resolve to undefined, got: {messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("BuiltinIteratorReturn")),
+        "BuiltinIteratorReturn should not leak into strict diagnostics, got: {messages:?}"
+    );
+}
+
 /// When `strictBuiltinIteratorReturn` is false, `BuiltinIteratorReturn` resolves to `any`.
 /// Assigning `any` to `number` is always allowed, so no error.
 #[test]

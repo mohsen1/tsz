@@ -2895,8 +2895,21 @@ impl<'a> CheckerState<'a> {
             let stored_predicate =
                 call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
                     .filter(|sig| {
+                        // Only defer to `resolve_generic_predicate` when the type parameter
+                        // actually appears in a parameter type; otherwise use the instantiated
+                        // predicate directly (T appears only in the predicate, not in params).
                         sig.predicate.type_id.is_some_and(|pred_ty| {
-                            common::type_param_info(self.ctx.types, pred_ty).is_some()
+                            common::type_param_info(self.ctx.types, pred_ty).is_some_and(
+                                |tp_info| {
+                                    sig.params.iter().any(|p| {
+                                        common::contains_type_parameter_named(
+                                            self.ctx.types,
+                                            p.type_id,
+                                            tp_info.name,
+                                        )
+                                    })
+                                },
+                            )
                         })
                     })
                     .map(|sig| (sig.predicate, sig.params))
