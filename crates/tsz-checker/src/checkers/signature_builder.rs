@@ -648,6 +648,20 @@ impl<'a> CheckerState<'a> {
                 );
                 return (return_type, None);
             }
+            if let Some(index) = parameter_index
+                && params.get(index).is_some_and(|param| param.rest)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                let error_node = self.ctx.arena.get(data.parameter_name).unwrap_or(node);
+                self.ctx.error(
+                    error_node.pos,
+                    error_node.end.saturating_sub(error_node.pos),
+                    diagnostic_messages::A_TYPE_PREDICATE_CANNOT_REFERENCE_A_REST_PARAMETER
+                        .to_string(),
+                    diagnostic_codes::A_TYPE_PREDICATE_CANNOT_REFERENCE_A_REST_PARAMETER,
+                );
+                return (return_type, None);
+            }
         }
 
         let predicate = TypePredicate {
