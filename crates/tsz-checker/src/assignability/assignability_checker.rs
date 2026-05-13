@@ -2181,8 +2181,6 @@ impl<'a> CheckerState<'a> {
         let raw_target = target;
         source = self.normalize_awaited_application_args_for_variance(source);
         target = self.normalize_awaited_application_args_for_variance(target);
-        source = self.normalize_index_access_for_assignability(source, 0);
-        target = self.normalize_index_access_for_assignability(target, 0);
 
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
@@ -2349,6 +2347,9 @@ impl<'a> CheckerState<'a> {
         if let Some(concrete_target) = self.concrete_remapped_mapped_assignability_target(target) {
             return self.is_assignable_to(source, concrete_target);
         }
+
+        source = self.normalize_index_access_for_assignability(source, 0);
+        target = self.normalize_index_access_for_assignability(target, 0);
 
         let source_eval = self.evaluate_type_for_assignability(source);
         let target_eval = self.evaluate_type_for_assignability(target);
