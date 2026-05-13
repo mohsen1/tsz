@@ -1,31 +1,34 @@
-//! Tests for TS2340 on `super.<accessor>` reads.
+//! Regression coverage for `super.<accessor>` reads and writes.
 //!
-//! Closes #5995. The structural rule:
+//! Structural rule (matches `tsc`):
 //!
-//! > `super.X` is only legal when X is a method on the base class. When
-//! > X is a `get` accessor (or `set` accessor read as a value), tsc
-//! > emits TS2340: "Only public and protected methods of the base
-//! > class are accessible via the 'super' keyword."
+//! > When the receiver of a property access is the `super` keyword and the
+//! > resolved base-class member is a `get` / `set` accessor, the access is
+//! > valid. TypeScript never emits TS2340 in that shape — TS2340 is for
+//! > unrelated invalid `super` access shapes that no longer apply to
+//! > accessors.
 //!
-//! The fix lives in `check_property_accessibility_super_method`-style
-//! logic in `checkers/property_checker.rs`. It adds a dedicated
-//! `class_chain_member_is_accessor` lookup (in `classes/class_summary.rs`)
-//! because the existing `class_chain_member_kind_name_only` folds
-//! accessors and methods together as `MethodLike`.
+//! tsz previously emitted TS2340 for `super.<getter>` reads inside an
+//! overriding accessor (introduced by #6170 to "close" #5995, which
+//! misreported tsc's behavior). That false positive is reported by #6481
+//! and #6665 and is removed by deleting the accessor-only TS2340 gate.
+//!
+//! TS2855 ("Class field … is not accessible … via super") and TS2540
+//! ("Cannot assign to … because it is a read-only property") still cover
+//! the `super.<field>` and `super.<readonly-accessor> = …` shapes via the
+//! existing property-checker paths and are exercised below to prove this
+//! change does not unmask either of them incorrectly.
 
 fn diags(source: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_source_code_messages(source)
 }
 
-fn has_ts2340(diags: &[(u32, String)]) -> bool {
-    diags
-        .iter()
-        .any(|(c, m)| *c == 2340 && m.contains("methods") && m.contains("'super'"))
+fn has_code(diags: &[(u32, String)], code: u32) -> bool {
+    diags.iter().any(|(c, _)| *c == code)
 }
 
 #[test]
-fn super_get_accessor_read_emits_ts2340() {
-    // Direct repro from #5995.
+fn super_public_get_accessor_read_no_ts2340() {
     let source = r#"
 class Base {
   get value(): number {
@@ -41,14 +44,14 @@ class Derived extends Base {
 "#;
     let d = diags(source);
     assert!(
-        has_ts2340(&d),
-        "expected TS2340 for super.<getter>, got: {d:?}",
+        !has_code(&d, 2340),
+        "public super.<getter> must not emit TS2340, got: {d:?}",
     );
 }
 
 #[test]
-fn super_get_accessor_read_different_name_emits_ts2340() {
-    // Anti-hardcoding: the property name varies. Same rule applies.
+fn super_public_get_accessor_read_renamed_no_ts2340() {
+    // Anti-hardcoding: same rule under a different property name.
     let source = r#"
 class A {
   get size(): number {
@@ -64,14 +67,155 @@ class B extends A {
 "#;
     let d = diags(source);
     assert!(
-        has_ts2340(&d),
-        "expected TS2340 for super.<getter> (name 'size'), got: {d:?}",
+        !has_code(&d, 2340),
+        "public super.<getter> (name 'size') must not emit TS2340, got: {d:?}",
+    );
+}
+
+#[test]
+fn super_protected_get_accessor_read_no_ts2340() {
+    let source = r#"
+class Base {
+  protected get value(): number {
+    return 0;
+  }
+}
+
+class Derived extends Base {
+  protected override get value(): number {
+    return super.value + 1;
+  }
+}
+"#;
+    let d = diags(source);
+    assert!(
+        !has_code(&d, 2340),
+        "protected super.<getter> must not emit TS2340, got: {d:?}",
+    );
+}
+
+#[test]
+fn super_set_accessor_write_no_ts2340() {
+    // super.<setter> = x via an overriding setter — tsc accepts this.
+    let source = r#"
+class Base {
+  set value(_v: number) {}
+}
+
+class Derived extends Base {
+  override set value(v: number) {
+    super.value = v / 2;
+  }
+}
+"#;
+    let d = diags(source);
+    assert!(
+        !has_code(&d, 2340),
+        "super.<setter> write must not emit TS2340, got: {d:?}",
+    );
+}
+
+#[test]
+fn super_get_accessor_read_inside_method_no_ts2340() {
+    // The receiver context is a regular method (not an accessor body) —
+    // tsc still allows the access. The previous gate required the access
+    // to live inside an accessor body, so this also guards against the
+    // gate accidentally returning.
+    let source = r#"
+class Base {
+  get x(): number {
+    return 1;
+  }
+}
+
+class Derived extends Base {
+  read(): number {
+    return super.x + 1;
+  }
+}
+"#;
+    let d = diags(source);
+    assert!(
+        !has_code(&d, 2340),
+        "super.<getter> inside a method must not emit TS2340, got: {d:?}",
+    );
+}
+
+#[test]
+fn super_get_accessor_inherited_from_grandparent_no_ts2340() {
+    // The accessor is on a transitively-inherited class. The chain walk
+    // must still treat it as a valid super target.
+    let source = r#"
+class Grand {
+  get gp(): number {
+    return 1;
+  }
+}
+class Mid extends Grand {}
+class Leaf extends Mid {
+  override get gp(): number {
+    return super.gp + 1;
+  }
+}
+"#;
+    let d = diags(source);
+    assert!(
+        !has_code(&d, 2340),
+        "inherited super.<getter> must not emit TS2340, got: {d:?}",
+    );
+}
+
+#[test]
+fn super_get_accessor_in_arrow_inside_accessor_no_ts2340() {
+    // Lexical `super` inside an arrow body still binds to the enclosing
+    // accessor's home object. tsc accepts this, and so must we.
+    let source = r#"
+class Base {
+  get x(): number {
+    return 1;
+  }
+}
+
+class Derived extends Base {
+  override get x(): number {
+    const f = (): number => super.x + 1;
+    return f();
+  }
+}
+"#;
+    let d = diags(source);
+    assert!(
+        !has_code(&d, 2340),
+        "super.<getter> in arrow inside accessor must not emit TS2340, got: {d:?}",
+    );
+}
+
+#[test]
+fn super_static_get_accessor_read_no_ts2340() {
+    // Static super accessor — also accepted by tsc.
+    let source = r#"
+class Base {
+  static get s(): number {
+    return 1;
+  }
+}
+
+class Derived extends Base {
+  static override get s(): number {
+    return super.s + 1;
+  }
+}
+"#;
+    let d = diags(source);
+    assert!(
+        !has_code(&d, 2340),
+        "static super.<getter> must not emit TS2340, got: {d:?}",
     );
 }
 
 #[test]
 fn super_method_call_no_ts2340() {
-    // Regression guard: regular method access via super must remain OK.
+    // Regression guard: regular method access via super remains OK.
     let source = r#"
 class Base {
   greet(): string {
@@ -80,42 +224,39 @@ class Base {
 }
 
 class Derived extends Base {
-  greet(): string {
+  override greet(): string {
     return super.greet() + " world";
   }
 }
 "#;
     let d = diags(source);
     assert!(
-        !d.iter().any(|(c, _)| *c == 2340),
+        !has_code(&d, 2340),
         "super.method() must not emit TS2340, got: {d:?}",
     );
 }
 
 #[test]
-fn super_get_accessor_write_no_ts2340_on_read_path() {
-    // Regression guard: assignment via super (write context) should not
-    // emit the read-context TS2340. Other diagnostics may still fire
-    // depending on whether the base has a setter, but not TS2340 for
-    // the read path.
+fn super_field_read_still_emits_ts2855_when_es2022() {
+    // The TS2855 path lives in `checkers/property_checker.rs` and is
+    // unaffected by removing the accessor gate. Keep it covered.
     let source = r#"
 class Base {
-  set value(v: number) {}
+  field: number = 0;
 }
-
 class Derived extends Base {
-  override set value(v: number) {
-    super.value = v;
+  read(): number {
+    return super.field;
   }
 }
 "#;
     let d = diags(source);
-    // The write context bypasses the new read-only check we added.
-    // (tsc actually still emits TS2340 here in some cases; we keep the
-    //  conservative read-only gate for this slice. If tsc parity needs
-    //  the write case too, a follow-up can widen the gate.)
     assert!(
-        !has_ts2340(&d),
-        "write-context super accessor should not hit the read-only TS2340 path, got: {d:?}",
+        !has_code(&d, 2340),
+        "super.<field> must not emit TS2340 (TS2855 is its diagnostic), got: {d:?}",
+    );
+    assert!(
+        has_code(&d, 2855),
+        "super.<field> read should emit TS2855 in default ES2022 mode, got: {d:?}",
     );
 }
