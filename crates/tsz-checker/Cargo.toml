@@ -106,6 +106,10 @@ name = "ts2449_parameter_decorator_no_tdz_tests"
 path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
 
 [[test]]
+name = "parameter_initializer_identifier_context_tests"
+path = "tests/parameter_initializer_identifier_context_tests.rs"
+
+[[test]]
 name = "decorator_method_tdz_tests"
 path = "tests/decorator_method_tdz_tests.rs"
 

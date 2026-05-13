@@ -944,8 +944,15 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
+            let initializer_is_identifier = self
+                .ctx
+                .arena
+                .get(param.initializer)
+                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::Identifier as u16);
             let request = match declared_type {
-                Some(dt) if dt != TypeId::ANY => TypingRequest::with_contextual_type(dt),
+                Some(dt) if dt != TypeId::ANY && !initializer_is_identifier => {
+                    TypingRequest::with_contextual_type(dt)
+                }
                 _ => TypingRequest::NONE,
             };
 
