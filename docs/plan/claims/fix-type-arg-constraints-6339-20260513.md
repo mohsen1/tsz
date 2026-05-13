@@ -21,5 +21,5 @@ Investigate and fix missing TS2344 diagnostics when explicit type arguments viol
 ## Verification
 
 - `cargo run -p tsz-cli --bin tsz -- --noEmit --strict --pretty false /tmp/issue6339.ts` now reports TS2344 for explicit `unknown`, `string`, and object type arguments.
-- `cargo test -p tsz-cli --test tsc_compat_tests explicit_unknown_type_argument_violates_function_constraint -- --nocapture` passed.
+- `cargo test -p tsz-cli --test tsc_compat_tests explicit_type_arguments_violate_function_constraint -- --nocapture` passed.
 - `cargo fmt --all -- --check` passed.
