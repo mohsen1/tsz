@@ -336,6 +336,50 @@ impl DirectCrossFileInterfaceLoweringOutcome {
     }
 }
 
+/// Outcome of the actual-lib alias-body helper inside the direct
+/// `DelegateCrossArenaSymbol` path. This is intentionally separate from the
+/// older source-file alias shortcut counters: it classifies bundled-lib aliases
+/// by why the typed alias-body proof did or did not admit them.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum DirectActualLibAliasBodyOutcome {
+    Success = 0,
+    NameNotAdmitted = 1,
+    NotTypeAlias = 2,
+    ValueMerge = 3,
+    UnprovenActualLibDeclarations = 4,
+    MissingResolverType = 5,
+    ResolverNotLazyDef = 6,
+    MissingDefinition = 7,
+    NonTypeAliasDefinition = 8,
+    MissingBody = 9,
+    GenericAlias = 10,
+}
+
+pub const DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT: usize = 11;
+
+pub const DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES: [&str;
+    DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT] = [
+    "success",
+    "name_not_admitted",
+    "not_type_alias",
+    "value_merge",
+    "unproven_actual_lib_declarations",
+    "missing_resolver_type",
+    "resolver_not_lazy_def",
+    "missing_definition",
+    "non_type_alias_definition",
+    "missing_body",
+    "generic_alias",
+];
+
+impl DirectActualLibAliasBodyOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Why a cross-file cache reader (`cached_cross_file_*` in
 /// `tsz-checker/src/context/cross_file_query.rs`) returned `None`.
 ///
@@ -497,6 +541,9 @@ pub struct PerfCounters {
     /// Outcome buckets for direct cross-file interface lowering attempts.
     pub direct_cross_file_interface_lowering_outcome:
         [AtomicU64; DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
+    /// Outcome buckets for direct actual-lib alias-body attempts.
+    pub direct_actual_lib_alias_body_outcome:
+        [AtomicU64; DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
     /// Why each `cached_cross_file_*` reader returned `None`. See
     /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
     /// all buckets equals the flat miss count for the four reader
@@ -608,6 +655,8 @@ impl PerfCounters {
                 CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
             direct_cross_file_interface_lowering_outcome: [const { AtomicU64::new(0) };
                 DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
+            direct_actual_lib_alias_body_outcome: [const { AtomicU64::new(0) };
+                DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };
@@ -1353,6 +1402,15 @@ pub fn record_direct_cross_file_interface_lowering_outcome(
         .fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
+pub fn record_direct_actual_lib_alias_body_outcome(outcome: DirectActualLibAliasBodyOutcome) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.direct_actual_lib_alias_body_outcome[outcome.as_index()].fetch_add(1, Ordering::Relaxed);
+}
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -1455,6 +1513,7 @@ impl PerfCounters {
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
+            + &Self::dump_direct_actual_lib_alias_body_outcomes()
             + &Self::dump_delegate_declaration_file_miss_residues(
                 &snap.delegate_declaration_file_miss_residues,
             )
@@ -1562,6 +1621,31 @@ impl PerfCounters {
             let count = load(&c.direct_cross_file_interface_lowering_outcome[idx]);
             if count > 0 {
                 out.push_str(&format!("  {name:<28} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
+    fn dump_direct_actual_lib_alias_body_outcomes() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .direct_actual_lib_alias_body_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDirect actual-lib alias body outcomes:\n");
+        for (idx, name) in DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count = load(&c.direct_actual_lib_alias_body_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<36} {count:>12}\n"));
             }
         }
         out
@@ -1711,6 +1795,14 @@ pub struct PerfCounterSnapshot {
     /// path from firing — the target list for "widen the direct
     /// lowering" follow-ups.
     pub direct_interface_lowering_outcomes: Vec<NamedCount>,
+    /// Outcome buckets for direct actual-lib alias-body attempts.
+    ///
+    /// Always `DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT` long, in
+    /// `DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES` order. These buckets say
+    /// whether an actual bundled-lib alias was admitted by the typed body
+    /// helper, rejected by the current conservative name gate, or rejected
+    /// because the resolver/definition-store proof was incomplete.
+    pub direct_actual_lib_alias_body_outcomes: Vec<NamedCount>,
     /// Why each `cached_cross_file_*` reader returned `None`.
     ///
     /// Always `CROSS_FILE_CACHE_MISS_CAUSE_COUNT` long, in
@@ -2018,6 +2110,12 @@ impl PerfCounters {
                     count: load(&c.direct_cross_file_interface_lowering_outcome[i]),
                 })
                 .collect(),
+            direct_actual_lib_alias_body_outcomes: (0..DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES[i],
+                    count: load(&c.direct_actual_lib_alias_body_outcome[i]),
+                })
+                .collect(),
             cross_file_cache_miss_causes: (0..CROSS_FILE_CACHE_MISS_CAUSE_COUNT)
                 .map(|i| NamedCount {
                     name: CROSS_FILE_CACHE_MISS_CAUSE_NAMES[i],
@@ -2096,6 +2194,7 @@ mod json_tests {
             "delegate_declaration_file_miss_residues",
             "alias_shortcut_outcomes",
             "direct_interface_lowering_outcomes",
+            "direct_actual_lib_alias_body_outcomes",
             "cross_file_cache_miss_causes",
             "source_file_symbol_arena_cache_eligibility_outcomes",
         ] {
@@ -2520,6 +2619,31 @@ mod json_tests {
     }
 
     #[test]
+    fn direct_actual_lib_alias_body_outcomes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["direct_actual_lib_alias_body_outcomes"]
+            .as_array()
+            .expect("direct_actual_lib_alias_body_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT,
+            "direct_actual_lib_alias_body_outcomes length must match \
+             DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES[i],
+                "direct_actual_lib_alias_body_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "direct_actual_lib_alias_body_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
     fn cross_file_cache_miss_causes_locks_to_names_array() {
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -2721,6 +2845,7 @@ mod json_tests {
         let aso_idx = CrossArenaAliasShortcutOutcome::Success.as_index();
         let sfsa_idx = SourceFileSymbolArenaCacheEligibilityOutcome::Cacheable.as_index();
         let dilo_idx = DirectCrossFileInterfaceLoweringOutcome::Success.as_index();
+        let dalabo_idx = DirectActualLibAliasBodyOutcome::Success.as_index();
 
         let before_source =
             c.delegate_cross_arena_symbol_miss_by_source[source_idx].load(Ordering::Relaxed);
@@ -2735,6 +2860,8 @@ mod json_tests {
             c.source_file_symbol_arena_cache_eligibility_outcome[sfsa_idx].load(Ordering::Relaxed);
         let before_dilo =
             c.direct_cross_file_interface_lowering_outcome[dilo_idx].load(Ordering::Relaxed);
+        let before_dalabo =
+            c.direct_actual_lib_alias_body_outcome[dalabo_idx].load(Ordering::Relaxed);
 
         c.delegate_cross_arena_symbol_miss_by_source[source_idx].fetch_add(1, Ordering::Relaxed);
         c.delegate_cross_arena_symbol_miss_by_kind[kind_idx].fetch_add(1, Ordering::Relaxed);
@@ -2744,6 +2871,7 @@ mod json_tests {
         c.source_file_symbol_arena_cache_eligibility_outcome[sfsa_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.direct_cross_file_interface_lowering_outcome[dilo_idx].fetch_add(1, Ordering::Relaxed);
+        c.direct_actual_lib_alias_body_outcome[dalabo_idx].fetch_add(1, Ordering::Relaxed);
 
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -2804,6 +2932,16 @@ mod json_tests {
         assert!(
             dilo_row["count"].as_u64().unwrap_or(0) > before_dilo,
             "direct_interface_lowering_outcomes[success] did not reflect the bump",
+        );
+
+        let dalabo = json["direct_actual_lib_alias_body_outcomes"]
+            .as_array()
+            .expect("direct_actual_lib_alias_body_outcomes is array");
+        let dalabo_row = &dalabo[dalabo_idx];
+        assert_eq!(dalabo_row["name"], "success");
+        assert!(
+            dalabo_row["count"].as_u64().unwrap_or(0) > before_dalabo,
+            "direct_actual_lib_alias_body_outcomes[success] did not reflect the bump",
         );
     }
 
