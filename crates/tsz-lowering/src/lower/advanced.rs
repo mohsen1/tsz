@@ -652,6 +652,12 @@ impl<'a> TypeLowering<'a> {
                 return type_param;
             }
 
+            if name == "BuiltinIteratorReturn"
+                && let Some(ty) = self.builtin_iterator_return_type
+            {
+                return ty;
+            }
+
             // Check for built-in type names FIRST before attempting symbol resolution.
             // This ensures that primitive type keywords like "symbol", "string", "number"
             // always resolve to their primitive types (TypeId::SYMBOL, TypeId::STRING, etc.)
