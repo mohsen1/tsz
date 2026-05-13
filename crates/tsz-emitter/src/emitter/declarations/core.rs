@@ -243,7 +243,9 @@ impl<'a> Printer<'a> {
         let Some(prefix) = text.get(start..end) else {
             return false;
         };
-        prefix.contains('¬')
+        prefix
+            .rfind(')')
+            .is_some_and(|close_paren| prefix[close_paren + 1..].contains('¬'))
     }
 
     fn has_recovered_errant_function_arrow_body(&self, node: &Node, func: &FunctionData) -> bool {
