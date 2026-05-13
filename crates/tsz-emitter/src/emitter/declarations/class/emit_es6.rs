@@ -279,6 +279,43 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+
+        let default_export_set_function_name_temp = if self.ctx.options.legacy_decorators
+            && class.name.is_none()
+            && assignment_prefix.as_ref().is_some_and(|(_, binding_name)| {
+                self.anonymous_default_export_name
+                    .as_deref()
+                    .is_some_and(|default_name| default_name == binding_name)
+            })
+            && !self.collect_class_decorators(&class.modifiers).is_empty()
+            && target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member_node| {
+                    member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self
+                            .arena
+                            .get_property_decl(member_node)
+                            .is_some_and(|prop| {
+                                self.arena.is_static(&prop.modifiers)
+                                    && !self
+                                        .arena
+                                        .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                                    && !self
+                                        .arena
+                                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                                    && !prop.initializer.is_none()
+                                    && self.class_property_initializer_has_equals(member_node, prop)
+                            })
+                })
+            }) {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+
         if let Some((keyword, binding_name)) = assignment_prefix.as_ref() {
             if !keyword.is_empty() {
                 self.write(keyword);
@@ -286,15 +323,16 @@ impl<'a> Printer<'a> {
             }
             self.write(binding_name);
             self.write(" = ");
+            if let Some(temp) = default_export_set_function_name_temp.as_ref() {
+                self.write(temp);
+                self.write(" = ");
+            }
         }
 
         // Collect `accessor` fields to lower using one of two strategies:
         // - ES2022+ (except ESNext): emit native private storage + getter/setter.
         // - < ES2022: emit WeakMap-backed getter/setter pairs.
         let auto_accessor_target = self.ctx.options.target;
-        let target_needs_field_lowering = (self.ctx.options.target as u32)
-            < (tsz_common::ScriptTarget::ES2022 as u32)
-            || !self.ctx.options.use_define_for_class_fields;
         let has_order_sensitive_instance_field_initializer = target_needs_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
                 let Some(member_node) = self.arena.get(member_idx) else {
@@ -2916,6 +2954,13 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
         } else if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
+            if let Some(temp) = default_export_set_function_name_temp.as_ref() {
+                self.write_helper("__setFunctionName");
+                self.write("(");
+                self.write(temp);
+                self.write(", \"default\");");
+                self.write_line();
+            }
             // If lowered static elements need a stable class value, emit
             // `_a = ClassName;` so `this` and class-name references can use it.
             if !emit_private_inits_before_static_elements
