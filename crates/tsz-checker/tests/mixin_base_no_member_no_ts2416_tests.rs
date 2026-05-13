@@ -122,3 +122,34 @@ Enhanced.create();
 "#,
     );
 }
+
+#[test]
+fn mixin_call_heritage_reports_static_return_and_property_diagnostics() {
+    let source = r#"
+type Constructor<T = {}> = new (...args: unknown[]) => T;
+
+function Timestamped<TBase extends Constructor>(Base: TBase) {
+  return class extends Base {
+    timestamp = 0;
+  };
+}
+
+class User {
+  name = "test";
+}
+
+class TimestampedUser extends Timestamped(User) {}
+
+const tu = new TimestampedUser();
+const _un: string = tu.name;
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+
+    for expected in [2545, 2417, 2510, 2339] {
+        assert!(
+            codes.contains(&expected),
+            "Expected TS{expected} for mixin call heritage, got codes {codes:?} and diagnostics {diags:#?}"
+        );
+    }
+}
