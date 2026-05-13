@@ -838,6 +838,10 @@ name = "destructuring_rest_omit_unspreadable_tests"
 path = "tests/destructuring_rest_omit_unspreadable_tests.rs"
 
 [[test]]
+name = "destructuring_rest_computed_key_omit_tests"
+path = "tests/destructuring_rest_computed_key_omit_tests.rs"
+
+[[test]]
 name = "super_keyword_speculation_survival_tests"
 path = "tests/super_keyword_speculation_survival_tests.rs"
 
