@@ -232,3 +232,42 @@ class Derived extends Mid {
         "Expected no TS2416 for grandparent abstract overload, got: {diags:#?}"
     );
 }
+
+/// Override semantics across the chain: when a mid-tier class declares
+/// its own overload set, the derived class's combined-type compat check
+/// must compare against the MID-tier set, not the grandparent's.
+/// `Mid` overrides `GrandBase`'s overloads with a different shape; the
+/// derived must satisfy Mid's overloads only.
+#[test]
+fn mid_chain_overrides_grandparent_overloads_uses_mid_set_for_ts2416() {
+    let source = r#"
+abstract class GrandBase {
+  abstract op(x: boolean): boolean;
+  abstract op(x: object): object;
+}
+class Mid extends GrandBase {
+  op(x: string): string;
+  op(x: number): number;
+  op(x: boolean): boolean;
+  op(x: object): object;
+  op(x: any): any { return x; }
+}
+class Derived extends Mid {
+  op(x: string): string;
+  op(x: number): number;
+  op(x: boolean): boolean;
+  op(x: object): object;
+  op(x: any): any { return x; }
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    let ts2416_on_derived: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2416)
+        .filter(|d| d.message_text.contains("'Derived'") || d.message_text.contains("'Mid'"))
+        .collect();
+    assert!(
+        ts2416_on_derived.is_empty(),
+        "Expected no TS2416 — Derived covers all of Mid's overloads, got: {diags:#?}"
+    );
+}
