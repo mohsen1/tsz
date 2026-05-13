@@ -798,6 +798,14 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let jsdoc = self.function_like_jsdoc_for_node(initializer);
+        if is_exported
+            && jsdoc
+                .as_deref()
+                .is_some_and(|jsdoc| jsdoc.contains("@constructor"))
+            && self.emit_js_commonjs_constructor_prototype_class(name_idx)
+        {
+            return;
+        }
         let reserved_export_alias = if is_exported {
             self.js_reserved_export_local_name(name_idx)
         } else {
@@ -3604,6 +3612,70 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
+    fn emit_js_commonjs_constructor_prototype_class(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(export_name) = self.js_commonjs_export_name_text(name_idx) else {
+            return false;
+        };
+        let prototype_members = self.js_prototype_object_members_for_export_name(&export_name);
+        if prototype_members.is_empty() {
+            return false;
+        }
+
+        self.write_indent();
+        self.write("export class ");
+        self.write(&export_name);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        for member_idx in prototype_members {
+            self.emit_js_commonjs_constructor_prototype_member(member_idx);
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+        self.emitted_module_indicator = true;
+        true
+    }
+
+    fn emit_js_commonjs_constructor_prototype_member(&mut self, member_idx: NodeIndex) {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return;
+        };
+        let before_jsdoc_len = self.writer.len();
+        let saved_comment_idx = self.comment_emit_idx;
+        self.emit_leading_jsdoc_comments(member_node.pos);
+        let before_member_len = self.writer.len();
+
+        if let Some(prop) = self.arena.get_property_assignment(member_node) {
+            if let Some(type_text) = self
+                .function_expression_type_text_from_ast(prop.initializer)
+                .or_else(|| {
+                    self.resolve_declaration_type_text(&[prop.initializer], Some(prop.initializer))
+                        .map(|resolved| resolved.emitted_type_text)
+                })
+                .or_else(|| self.allowlisted_initializer_type_text(prop.initializer))
+            {
+                self.write_indent();
+                self.emit_node(prop.name);
+                self.write(": ");
+                self.write(&type_text);
+                self.write(";");
+                self.write_line();
+            }
+        } else {
+            self.emit_class_member(member_idx);
+        }
+
+        if self.writer.len() == before_member_len {
+            self.writer.truncate(before_jsdoc_len);
+            self.comment_emit_idx = saved_comment_idx;
+            self.skip_comments_in_node(member_node.pos, member_node.end);
+        }
+    }
+
     fn js_proto_property_assignment_type_text(&self, member_idx: NodeIndex) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
         let prop = self.arena.get_property_assignment(member_node)?;
@@ -3684,6 +3756,10 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(name) = self.get_identifier_text(name_idx) else {
             return Vec::new();
         };
+        self.js_prototype_object_members_for_export_name(&name)
+    }
+
+    fn js_prototype_object_members_for_export_name(&self, name: &str) -> Vec<NodeIndex> {
         let Some(source_file_idx) = self.current_source_file_idx else {
             return Vec::new();
         };
@@ -3734,8 +3810,13 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_identifier_text(lhs_access.name_or_argument)
                 .as_deref()
                 != Some("prototype")
-                || self.get_identifier_text(lhs_access.expression).as_deref() != Some(&name)
             {
+                continue;
+            }
+            let receiver_name = self
+                .get_identifier_text(lhs_access.expression)
+                .or_else(|| self.module_exports_property_reference_name(lhs_access.expression));
+            if receiver_name.as_deref() != Some(name) {
                 continue;
             }
             let rhs = self

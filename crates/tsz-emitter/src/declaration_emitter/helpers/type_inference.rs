@@ -7612,7 +7612,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn function_expression_type_text_from_ast(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn function_expression_type_text_from_ast(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION
             && expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
