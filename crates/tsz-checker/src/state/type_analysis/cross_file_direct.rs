@@ -116,8 +116,37 @@ fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
     matches!(name, "CollatorOptions")
 }
 
-fn is_direct_actual_lib_utility_alias_name(name: &str) -> bool {
-    matches!(name, "FlatArray")
+fn is_direct_actual_lib_utility_alias_body(arena: &NodeArena, decl_idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(decl_idx) else {
+        return false;
+    };
+    let Some(alias) = arena.get_type_alias(node) else {
+        return false;
+    };
+    if alias
+        .type_parameters
+        .as_ref()
+        .is_none_or(|params| params.nodes.is_empty())
+    {
+        return false;
+    }
+    let Some(body) = arena.get(alias.type_node) else {
+        return false;
+    };
+    if body.kind != syntax_kind_ext::INDEXED_ACCESS_TYPE {
+        return false;
+    }
+    let Some(indexed) = arena.get_indexed_access_type(body) else {
+        return false;
+    };
+    let object_is_type_literal = arena
+        .get(indexed.object_type)
+        .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_LITERAL);
+    let index_is_conditional = arena
+        .get(indexed.index_type)
+        .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_TYPE);
+
+    object_is_type_literal && index_is_conditional
 }
 
 impl<'a> CheckerState<'a> {
@@ -141,6 +170,36 @@ impl<'a> CheckerState<'a> {
                                         arena.as_ref(),
                                         decl_idx,
                                         name,
+                                    )
+                            })
+                    })
+            })
+    }
+
+    fn symbol_declarations_are_direct_actual_lib_utility_alias_only(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        name: &str,
+    ) -> bool {
+        !symbol.declarations.is_empty()
+            && symbol.declarations.iter().all(|&decl_idx| {
+                self.ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .is_some_and(|arenas| {
+                        !arenas.is_empty()
+                            && arenas.iter().all(|arena| {
+                                is_direct_actual_lib_declaration_arena(arena.as_ref())
+                                    && Self::lib_declaration_name_matches(
+                                        arena.as_ref(),
+                                        decl_idx,
+                                        name,
+                                    )
+                                    && is_direct_actual_lib_utility_alias_body(
+                                        arena.as_ref(),
+                                        decl_idx,
                                     )
                             })
                     })
@@ -192,8 +251,8 @@ impl<'a> CheckerState<'a> {
         }
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             let name = symbol.escaped_name.clone();
-            if !is_direct_actual_lib_utility_alias_name(&name)
-                || !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name)
+            if !self
+                .symbol_declarations_are_direct_actual_lib_utility_alias_only(sym_id, symbol, &name)
             {
                 return None;
             }
@@ -1096,6 +1155,12 @@ mod tests {
         assert_ne!(ty, TypeId::UNKNOWN, "FlatArray should not lower to UNKNOWN");
         assert_ne!(ty, TypeId::ERROR, "FlatArray should not lower to ERROR");
         assert_eq!(params.len(), 2, "FlatArray type params");
+
+        let (hit_ty, hit_params) = state
+            .delegate_cross_arena_symbol_resolution(flat_array_sym_id)
+            .expect("cached FlatArray delegation should resolve");
+        assert_eq!(hit_ty, ty);
+        assert_eq!(hit_params.len(), 2, "FlatArray cache-hit type params");
 
         for name in ["IteratorResult", "Record", "Partial"] {
             let sym_id = resolve_name_to_lib_symbol(
