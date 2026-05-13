@@ -73,14 +73,26 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
 fn is_direct_actual_lib_interface_name(name: &str) -> bool {
     matches!(
         name,
-        "BigIntToLocaleStringOptions"
+        "ArrayIterator"
+            | "BigIntToLocaleStringOptions"
             | "CollatorOptions"
+            | "ConcatArray"
             | "DateTimeFormatOptions"
+            | "Disposable"
+            | "Iterable"
+            | "IteratorObject"
+            | "IteratorReturnResult"
+            | "IteratorYieldResult"
             | "Locale"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
+            | "RegExpExecArray"
+            | "RegExpIndicesArray"
+            | "RegExpMatchArray"
+            | "RegExpStringIterator"
+            | "StringIterator"
     )
 }
 
@@ -140,8 +152,7 @@ impl<'a> CheckerState<'a> {
         if !is_direct_actual_lib_interface_name(&name) {
             return None;
         }
-        let direct_type = self.resolve_lib_type_by_name(&name);
-        let params = Vec::new();
+        let (direct_type, params) = self.resolve_lib_type_with_params(&name);
         let direct_type = direct_type?;
         if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
             return None;
