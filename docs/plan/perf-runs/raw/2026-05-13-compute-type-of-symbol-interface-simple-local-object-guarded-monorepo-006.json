@@ -2,10 +2,10 @@
   "fixture": "monorepo-006",
   "mode": "attribution",
   "timings": {
-    "total_s": 78.41,
-    "check_s": 76.69,
-    "parse_bind_s": 1.21,
-    "io_read_s": 0.32
+    "total_s": 92.19,
+    "check_s": 90.43,
+    "parse_bind_s": 1.23,
+    "io_read_s": 0.36
   },
   "diagnostics": 10198,
   "compute_type_of_symbol": {
@@ -79,6 +79,15 @@
       "operator_or_parenthesized": 0,
       "optional_rest_or_this": 0,
       "other": 0
+    },
+    "interface_simple_object_type_reference_reject_outcomes": {
+      "identifier_resolvable_symbol": 0,
+      "identifier_unresolved_symbol": 24760,
+      "identifier_compiler_managed_type": 0,
+      "qualified_name_resolvable_symbol": 0,
+      "qualified_name_unresolved_symbol": 0,
+      "other_type_name_syntax": 0,
+      "malformed_type_reference": 0
     }
   }
 }

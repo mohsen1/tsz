@@ -1910,14 +1910,25 @@ impl<'a> CheckerState<'a> {
             };
             let type_id = if sig.type_annotation.is_some() {
                 if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
+                    use tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind as AnnotationKind;
+
                     tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                         Outcome::RejectNonPrimitiveAnnotation,
                     );
-                    tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind(
-                        self.classify_simple_local_interface_non_primitive_annotation_kind(
+                    let annotation_kind = self
+                        .classify_simple_local_interface_non_primitive_annotation_kind(
                             sig.type_annotation,
-                        ),
+                        );
+                    tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind(
+                        annotation_kind,
                     );
+                    if annotation_kind == AnnotationKind::TypeReference {
+                        tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome(
+                            self.classify_simple_local_interface_type_reference_reject_outcome(
+                                sig.type_annotation,
+                            ),
+                        );
+                    }
                     return None;
                 }
                 self.get_type_from_type_node_in_type_literal(sig.type_annotation)
@@ -2025,6 +2036,55 @@ impl<'a> CheckerState<'a> {
             }
             _ => Kind::Other,
         }
+    }
+
+    fn classify_simple_local_interface_type_reference_reject_outcome(
+        &self,
+        type_idx: NodeIndex,
+    ) -> tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome
+    {
+        use tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome as Outcome;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(type_node) = self.ctx.arena.get(type_idx) else {
+            return Outcome::MalformedTypeReference;
+        };
+        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
+            return Outcome::MalformedTypeReference;
+        };
+
+        let type_name_idx = type_ref.type_name;
+        let Some(type_name_node) = self.ctx.arena.get(type_name_idx) else {
+            return Outcome::OtherTypeNameSyntax;
+        };
+
+        if type_name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            if self
+                .resolve_type_symbol_for_lowering(type_name_idx)
+                .is_some()
+            {
+                return Outcome::QualifiedNameResolvableSymbol;
+            }
+            return Outcome::QualifiedNameUnresolvedSymbol;
+        }
+
+        if type_name_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.ctx.arena.get_identifier(type_name_node)
+                && tsz_solver::is_compiler_managed_type(ident.escaped_text.as_str())
+            {
+                return Outcome::IdentifierCompilerManagedType;
+            }
+            if self
+                .resolve_type_symbol_for_lowering(type_name_idx)
+                .is_some()
+            {
+                return Outcome::IdentifierResolvableSymbol;
+            }
+            return Outcome::IdentifierUnresolvedSymbol;
+        }
+
+        Outcome::OtherTypeNameSyntax
     }
 }
 

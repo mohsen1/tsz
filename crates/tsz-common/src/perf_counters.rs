@@ -643,6 +643,46 @@ impl ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind {
     }
 }
 
+/// Attribution split for `type_reference` rows inside
+/// `RejectNonPrimitiveAnnotation` of the simple local-interface object
+/// shortcut.
+///
+/// This keeps runtime behavior unchanged (the shortcut still rejects all
+/// non-primitive annotations) while exposing why `type_reference` rows are
+/// rejected.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
+    IdentifierResolvableSymbol = 0,
+    IdentifierUnresolvedSymbol = 1,
+    IdentifierCompilerManagedType = 2,
+    QualifiedNameResolvableSymbol = 3,
+    QualifiedNameUnresolvedSymbol = 4,
+    OtherTypeNameSyntax = 5,
+    MalformedTypeReference = 6,
+}
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT:
+    usize = 7;
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES:
+    [&str; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT] = [
+    "identifier_resolvable_symbol",
+    "identifier_unresolved_symbol",
+    "identifier_compiler_managed_type",
+    "qualified_name_resolvable_symbol",
+    "qualified_name_unresolved_symbol",
+    "other_type_name_syntax",
+    "malformed_type_reference",
+];
+
+impl ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Why a cross-file cache reader (`cached_cross_file_*` in
 /// `tsz-checker/src/context/cross_file_query.rs`) returned `None`.
 ///
@@ -897,6 +937,8 @@ pub struct PerfCounters {
         [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT],
     pub compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind: [AtomicU64;
         COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_COUNT],
+    pub compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome: [AtomicU64;
+        COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT],
 
     // ─── resolver / VFS ──────────────────────────────────────────────────
     pub resolver_lookup_calls: AtomicU64,
@@ -983,6 +1025,10 @@ impl PerfCounters {
                 AtomicU64::new(0)
             };
                 COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_COUNT],
+            compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome: [const {
+                AtomicU64::new(0)
+            };
+                COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT],
             resolver_lookup_calls: AtomicU64::new(0),
             resolver_is_file_calls: AtomicU64::new(0),
             resolver_is_dir_calls: AtomicU64::new(0),
@@ -1552,6 +1598,20 @@ pub fn record_compute_type_of_symbol_interface_simple_object_non_primitive_annot
     .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record attribution for why a `type_reference` annotation was still rejected
+/// by the simple local-interface object shortcut.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome(
+    outcome: ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
+        [outcome.as_index()]
+    .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record a `TypeInterner::intern_string` call. Mirrors the existing
 /// `record_compute_type_of_symbol_*` shape: gate once, one `counters()`
 /// lookup, increment exactly the named field.
@@ -1930,12 +1990,18 @@ impl PerfCounters {
             .iter()
             .map(load)
             .sum();
+        let interface_simple_object_type_reference_reject_outcome_total: u64 = c
+            .compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
+            .iter()
+            .map(load)
+            .sum();
         if source_total == 0
             && kind_total == 0
             && interface_fastpath_total == 0
             && interface_callsite_total == 0
             && interface_simple_object_total == 0
             && interface_simple_object_non_primitive_annotation_kind_total == 0
+            && interface_simple_object_type_reference_reject_outcome_total == 0
         {
             return String::new();
         }
@@ -2009,6 +2075,24 @@ impl PerfCounters {
             {
                 let count = load(
                     &c.compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind
+                        [idx],
+                );
+                if count > 0 {
+                    out.push_str(&format!("  {name:<28} {count:>12}\n"));
+                }
+            }
+        }
+        if interface_simple_object_type_reference_reject_outcome_total > 0 {
+            out.push_str(
+                "\ncompute_type_of_symbol interface simple-object type-reference reject outcomes:\n",
+            );
+            for (idx, name) in
+                COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES
+                    .iter()
+                    .enumerate()
+            {
+                let count = load(
+                    &c.compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
                         [idx],
                 );
                 if count > 0 {
@@ -2323,6 +2407,16 @@ pub struct PerfCounterSnapshot {
     /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_NAMES`
     /// order.
     pub compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kinds:
+        Vec<NamedCount>,
+    /// Attribution split for `type_reference` rows within
+    /// `compute_type_of_symbol_interface_simple_object_outcomes.reject_non_primitive_annotation`.
+    ///
+    /// Always
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT`
+    /// long, in
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES`
+    /// order.
+    pub compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes:
         Vec<NamedCount>,
     /// Outcome buckets for direct cross-file interface lowering attempts.
     ///
@@ -2690,6 +2784,16 @@ impl PerfCounters {
                     name: COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_NAMES[i],
                     count: load(
                         &c.compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind
+                            [i],
+                    ),
+                })
+                .collect(),
+            compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes: (0
+                ..COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES[i],
+                    count: load(
+                        &c.compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
                             [i],
                     ),
                 })
@@ -3344,6 +3448,36 @@ mod json_tests {
     }
 
     #[test]
+    fn compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes_locks_to_names_array()
+     {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes"]
+            .as_array()
+            .expect(
+                "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes is array",
+            );
+        assert_eq!(
+            rows.len(),
+            COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT,
+            "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes length must match \
+             COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"],
+                COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES
+                    [i],
+                "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
     fn direct_interface_lowering_outcomes_locks_to_names_array() {
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -3606,6 +3740,9 @@ mod json_tests {
         let ctos_simple_object_non_primitive_annotation_kind_idx =
             ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind::TypeReference
                 .as_index();
+        let ctos_simple_object_type_reference_reject_outcome_idx =
+            ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome::IdentifierUnresolvedSymbol
+                .as_index();
 
         let before_source =
             c.delegate_cross_arena_symbol_miss_by_source[source_idx].load(Ordering::Relaxed);
@@ -3642,6 +3779,10 @@ mod json_tests {
             .compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind
             [ctos_simple_object_non_primitive_annotation_kind_idx]
             .load(Ordering::Relaxed);
+        let before_ctos_simple_object_type_reference_reject_outcome = c
+            .compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
+            [ctos_simple_object_type_reference_reject_outcome_idx]
+            .load(Ordering::Relaxed);
 
         c.delegate_cross_arena_symbol_miss_by_source[source_idx].fetch_add(1, Ordering::Relaxed);
         c.delegate_cross_arena_symbol_miss_by_kind[kind_idx].fetch_add(1, Ordering::Relaxed);
@@ -3662,6 +3803,9 @@ mod json_tests {
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind
             [ctos_simple_object_non_primitive_annotation_kind_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        c.compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome
+            [ctos_simple_object_type_reference_reject_outcome_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_simple_object_fastpath_hits
             .fetch_add(1, Ordering::Relaxed);
@@ -3807,6 +3951,27 @@ mod json_tests {
                 .unwrap_or(0)
                 > before_ctos_simple_object_non_primitive_annotation_kind,
             "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kinds[type_reference] did not reflect the bump",
+        );
+
+        let ctos_simple_object_type_reference_reject_outcomes = json
+            ["compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes"]
+            .as_array()
+            .expect(
+                "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes is array",
+            );
+        let ctos_simple_object_type_reference_reject_outcome_row =
+            &ctos_simple_object_type_reference_reject_outcomes
+                [ctos_simple_object_type_reference_reject_outcome_idx];
+        assert_eq!(
+            ctos_simple_object_type_reference_reject_outcome_row["name"],
+            "identifier_unresolved_symbol"
+        );
+        assert!(
+            ctos_simple_object_type_reference_reject_outcome_row["count"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_ctos_simple_object_type_reference_reject_outcome,
+            "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes[identifier_unresolved_symbol] did not reflect the bump",
         );
 
         assert!(
