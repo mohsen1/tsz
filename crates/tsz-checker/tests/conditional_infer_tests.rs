@@ -1746,3 +1746,97 @@ const bad: F0 = "nope";
             .collect::<Vec<_>>()
     );
 }
+
+// ── Tuple rest/last infer spread flattening (issue #6671) ──────────────────
+
+/// `[...infer R, infer L]` captures R as a tuple. The true branch `[L, ...R]`
+/// must spread R's elements into the result, not wrap them in a nested tuple.
+#[test]
+fn test_rotate_right_tuple_infer_rest_last_spreads_correctly() {
+    let source = r#"
+type RotateRight<T extends unknown[]> =
+  T extends [...infer R, infer L] ? [L, ...R] : T;
+
+type RR1 = RotateRight<[1, 2, 3]>;
+type RR2 = RotateRight<[string, number]>;
+
+const ok1: RR1 = [3, 1, 2];
+const ok2: RR2 = [42, "hello"];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert!(
+        diags.is_empty(),
+        "RotateRight should produce no errors. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `RotateRight` should reject assignments that don't match the rotated type.
+#[test]
+fn test_rotate_right_rejects_wrong_assignment() {
+    let source = r#"
+type RotateRight<T extends unknown[]> =
+  T extends [...infer R, infer L] ? [L, ...R] : T;
+
+type RR1 = RotateRight<[1, 2, 3]>;
+const bad: RR1 = [1, 2, 3];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Assigning [1,2,3] to RotateRight<[1,2,3]>=[3,1,2] should error."
+    );
+}
+
+/// `RotateLeft` `[infer F, ...infer R]` followed by `[...R, F]` must also spread R.
+#[test]
+fn test_rotate_left_tuple_infer_first_rest_spreads_correctly() {
+    let source = r#"
+type RotateLeft<T extends unknown[]> =
+  T extends [infer F, ...infer R] ? [...R, F] : T;
+
+type RL1 = RotateLeft<[1, 2, 3]>;
+type RL2 = RotateLeft<[string, number, boolean]>;
+
+const ok1: RL1 = [2, 3, 1];
+const ok2: RL2 = [42, true, "hello"];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert!(
+        diags.is_empty(),
+        "RotateLeft should produce no errors. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `Reverse<T>` uses `[...infer Init, infer Last]` recursively; every recursive
+/// step must spread the init portion correctly.
+#[test]
+fn test_recursive_reverse_tuple_spreads_correctly() {
+    let source = r#"
+type Reverse<T extends unknown[]> =
+  T extends [...infer Init, infer Last] ? [Last, ...Reverse<Init>] : T;
+
+type Rev1 = Reverse<[1, 2, 3]>;
+type Rev2 = Reverse<[string, number]>;
+
+const ok1: Rev1 = [3, 2, 1];
+const ok2: Rev2 = [42, "hello"];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert!(
+        diags.is_empty(),
+        "Reverse should produce no errors. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}

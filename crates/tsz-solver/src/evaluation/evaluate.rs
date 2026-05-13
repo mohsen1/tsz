@@ -2376,10 +2376,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let elements = self.interner.tuple_list(tuple_list_id);
 
-        // Quick check: does any element need evaluation?
-        let needs_eval = elements
-            .iter()
-            .any(|elem| Self::is_evaluable_meta_type(self.interner, elem.type_id));
+        // Quick check: does any element need evaluation or structural normalization?
+        // Also triggers when a rest element holds a concrete Tuple that must be
+        // flattened — e.g. `[L, ...R]` after infer-binding R to `[1, 2]`.
+        // ReadonlyType(Tuple) rest elements are already caught by is_evaluable_meta_type.
+        let needs_eval = elements.iter().any(|elem| {
+            Self::is_evaluable_meta_type(self.interner, elem.type_id)
+                || (elem.rest
+                    && matches!(self.interner.lookup(elem.type_id), Some(TypeData::Tuple(_))))
+        });
         if !needs_eval {
             return original_type_id;
         }
@@ -2412,7 +2417,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
 
-                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
+                let evaluated_inner =
+                    crate::type_queries::data::unwrap_readonly(self.interner, evaluated);
+                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated_inner)
+                {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
                     for alternative in &mut alternatives {
                         alternative.extend(inner_elements.iter().copied());
