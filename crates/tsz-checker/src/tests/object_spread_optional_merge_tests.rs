@@ -59,6 +59,21 @@ let result: { value: number | string } = { ...definite, ...maybeText };
     );
 }
 
+#[test]
+fn spread_optional_later_explicit_undefined_uses_missing_semantics_without_exact_optional() {
+    let codes = diag_codes(
+        r#"
+declare const definite: { value: number };
+declare const maybeText: { value?: string | undefined };
+let result: { value: number | string } = { ...definite, ...maybeText };
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Non-exact optional later spread should not preserve undefined in the merged read type; got codes: {codes:?}"
+    );
+}
+
 /// Required-later spread should fully override — TS2322 still expected
 /// when the override doesn't satisfy the target.
 #[test]

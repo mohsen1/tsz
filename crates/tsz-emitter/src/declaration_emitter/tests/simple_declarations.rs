@@ -1631,6 +1631,40 @@ export function f2(a, b) {}
 }
 
 #[test]
+fn test_guarded_generic_return_preserves_nullish_intersection() {
+    let output = emit_dts_with_binding(
+        r#"
+function ensureNotNull<T>(x: T) {
+    if (x === null) throw Error();
+    return x;
+}
+
+function ensureNotUndefined<T>(x: T) {
+    if (x === undefined) throw Error();
+    return x;
+}
+
+function ensureNotNullOrUndefined<T>(x: T) {
+    return ensureNotUndefined(ensureNotNull(x));
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function ensureNotNull<T>(x: T): T & ({} | undefined);"),
+        "Expected null guard to preserve undefined branch: {output}"
+    );
+    assert!(
+        output.contains("declare function ensureNotUndefined<T>(x: T): T & ({} | null);"),
+        "Expected undefined guard to preserve null branch: {output}"
+    );
+    assert!(
+        output.contains("declare function ensureNotNullOrUndefined<T>(x: T): T & {};"),
+        "Expected composed nullish guards to remove both nullish branches: {output}"
+    );
+}
+
+#[test]
 fn test_js_typedef_emits_jsdoc_template_default() {
     let output = emit_js_dts(
         r#"
