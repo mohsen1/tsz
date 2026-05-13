@@ -2295,7 +2295,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return original_type_id;
         }
 
-        let mut result: Vec<TupleElement> = Vec::with_capacity(elements.len());
+        let mut alternatives: Vec<Vec<TupleElement>> = vec![Vec::with_capacity(elements.len())];
         let mut changed = false;
         let mut spread_product = 1usize;
 
@@ -2325,40 +2325,102 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
-                    for inner_elem in inner_elements.iter() {
-                        result.push(*inner_elem);
+                    for alternative in &mut alternatives {
+                        alternative.extend(inner_elements.iter().copied());
                     }
                     changed = true;
                     continue;
                 } else if let Some(TypeData::Array(element_type)) = self.interner.lookup(evaluated)
                 {
                     // Rest element evaluating to an array stays as rest
-                    result.push(TupleElement {
+                    let rest_element = TupleElement {
                         type_id: element_type,
                         name: elem.name,
                         optional: elem.optional,
                         rest: true,
-                    });
+                    };
+                    for alternative in &mut alternatives {
+                        alternative.push(rest_element);
+                    }
                     if element_type != elem.type_id {
                         changed = true;
                     }
                     continue;
+                } else if let Some(TypeData::Union(list_id)) = self.interner.lookup(evaluated) {
+                    let members = self.interner.type_list(list_id);
+                    let mut spread_alternatives: Vec<Vec<TupleElement>> =
+                        Vec::with_capacity(members.len());
+                    for &member in members.iter() {
+                        match self.interner.lookup(member) {
+                            Some(TypeData::Tuple(inner_list_id)) => {
+                                spread_alternatives
+                                    .push(self.interner.tuple_list(inner_list_id).to_vec());
+                            }
+                            Some(TypeData::Array(element_type)) => {
+                                spread_alternatives.push(vec![TupleElement {
+                                    type_id: element_type,
+                                    name: elem.name,
+                                    optional: elem.optional,
+                                    rest: true,
+                                }]);
+                            }
+                            _ => {
+                                spread_alternatives.push(vec![TupleElement {
+                                    type_id: member,
+                                    name: elem.name,
+                                    optional: elem.optional,
+                                    rest: true,
+                                }]);
+                            }
+                        }
+                    }
+
+                    let alternative_count =
+                        alternatives.len().saturating_mul(spread_alternatives.len());
+                    if alternative_count >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                        self.interner.mark_union_too_complex();
+                        return TypeId::ERROR;
+                    }
+
+                    let mut distributed = Vec::with_capacity(alternative_count);
+                    for prefix in alternatives {
+                        for spread in &spread_alternatives {
+                            let mut next = prefix.clone();
+                            next.extend(spread.iter().copied());
+                            distributed.push(next);
+                        }
+                    }
+                    alternatives = distributed;
+                    changed = true;
+                    continue;
                 }
             }
 
-            result.push(TupleElement {
+            let next_element = TupleElement {
                 type_id: evaluated,
                 name: elem.name,
                 optional: elem.optional,
                 rest: elem.rest,
-            });
+            };
+            for alternative in &mut alternatives {
+                alternative.push(next_element);
+            }
         }
 
         if !changed {
             return original_type_id;
         }
 
-        self.interner.tuple(result)
+        if alternatives.len() == 1 {
+            self.interner.tuple(alternatives.pop().unwrap_or_default())
+        } else {
+            self.interner.union(
+                alternatives
+                    .into_iter()
+                    .map(|elems| self.interner.tuple(elems))
+                    .collect(),
+            )
+        }
     }
 
     fn tuple_spread_alternative_count(&self, type_id: TypeId) -> Option<usize> {
