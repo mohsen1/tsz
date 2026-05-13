@@ -1052,6 +1052,54 @@ fn array_values_iterator_helpers_do_not_report_missing_members() {
 }
 
 #[test]
+fn esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("esnext_disposable_symbols").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"class Resource {
+  constructor(public name: string) {}
+  [Symbol.dispose](): void {}
+}
+
+function useResource() {
+  using resource = new Resource("test");
+  const _name: string = resource.name;
+}
+
+class AsyncResource {
+  constructor(public name: string) {}
+  async [Symbol.asyncDispose](): Promise<void> {
+    await Promise.resolve();
+  }
+}
+
+async function useAsyncResource() {
+  await using resource = new AsyncResource("async-test");
+  const _name: string = resource.name;
+}
+
+export {};
+"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit", "--strict", "--lib", "esnext", "--pretty", "false", "test.ts",
+        ],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "--lib esnext should load disposable symbols and avoid unrelated builtin lib diagnostics:\n{output}"
+    );
+}
+
+#[test]
 fn batch_mode_uses_project_cwd_for_jsdoc_required_constructor_types() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");

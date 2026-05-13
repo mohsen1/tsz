@@ -1114,6 +1114,62 @@ fn compile_source_reference_lib_known_name_does_not_report_ts2726() {
 }
 
 #[test]
+fn compile_lib_esnext_loads_disposable_symbols() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("resource.ts"),
+        r#"
+class Resource {
+  constructor(public name: string) {}
+  [Symbol.dispose](): void {}
+}
+
+function useResource() {
+  using resource = new Resource("test");
+  const _name: string = resource.name;
+}
+
+class AsyncResource {
+  constructor(public name: string) {}
+  async [Symbol.asyncDispose](): Promise<void> {
+    await Promise.resolve();
+  }
+}
+
+async function useAsyncResource() {
+  await using resource = new AsyncResource("async-test");
+  const _name: string = resource.name;
+}
+
+export {};
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "strict": true,
+            "lib": ["esnext"]
+          },
+          "files": ["resource.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "--lib esnext should load Symbol.dispose and Symbol.asyncDispose without diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_triple_slash_reference_attribute_must_match_exactly() {
     // Regression for #3375: triple-slash reference attributes must be matched
     // as exact attribute names. `notpath="..."` must NOT be treated as
