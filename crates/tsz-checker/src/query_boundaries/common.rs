@@ -92,6 +92,10 @@ pub(crate) fn is_unresolved_for_display(db: &dyn TypeDatabase, ty: TypeId) -> bo
     tsz_solver::type_queries::is_deferred_lazy_or_indexed_access(db, ty)
 }
 
+pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
+    tsz_solver::is_compiler_managed_type(name)
+}
+
 /// Thin wrapper around `tsz_solver::deep_reduce_for_display`.
 ///
 /// Deeply reduce meta-type applications (e.g. `InstanceType<typeof Foo>`)
