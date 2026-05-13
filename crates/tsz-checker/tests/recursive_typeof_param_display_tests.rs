@@ -127,3 +127,27 @@ expected = 3;
         "non-recursive nested typeof in function return must not be over-elided, got: {diag:?}"
     );
 }
+
+#[test]
+fn non_recursive_callable_return_with_typeof_overload_does_not_elide() {
+    let diagnostics = diagnostics_for(
+        r#"
+declare const refFn: (v: number) => number;
+type Over = {
+    (): typeof refFn;
+    (x: number): string;
+};
+declare let expected: () => Over;
+expected = 3;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for assigning number to callable-return type");
+    assert!(
+        !diag.message_text.contains("() => ..."),
+        "non-recursive callable return containing typeof should not elide entire return surface, got: {diag:?}"
+    );
+}

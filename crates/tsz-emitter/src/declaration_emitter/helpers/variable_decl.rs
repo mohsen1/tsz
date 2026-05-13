@@ -437,9 +437,15 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
                     .unwrap_or(type_text);
                 let type_text = Self::normalize_inferred_array_any_text(&type_text);
-                let type_text = self
+                let mut type_text = self
                     .expand_rest_tuple_parameters_in_function_type_text(initializer, &type_text)
                     .unwrap_or(type_text);
+                if keyword != "const"
+                    && let Some(widened_type_text) =
+                        self.widen_mutable_call_initializer_literal_type_text(initializer)
+                {
+                    type_text = widened_type_text;
+                }
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
@@ -833,6 +839,29 @@ impl<'a> DeclarationEmitter<'a> {
                 .map_or(init_node.end, |node| node.end);
             self.skip_comments_before_raw(skip_end);
         }
+    }
+
+    fn widen_mutable_call_initializer_literal_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let call = self
+            .arena
+            .get(initializer)
+            .and_then(|node| self.arena.get_call_expr(node))?;
+        if call.type_arguments.is_some()
+            || self
+                .arena
+                .get(call.expression)
+                .and_then(|node| self.arena.get_expr_type_args(node))
+                .is_some_and(|expr| expr.type_arguments.is_some())
+        {
+            return None;
+        }
+        let interner = self.type_interner?;
+        let type_id = self.get_node_type_or_names(&[initializer])?;
+        let widened = tsz_solver::operations::widening::widen_literal_type(interner, type_id);
+        (widened != type_id).then(|| self.print_type_id_for_inferred_declaration(widened))
     }
 
     fn insert_import_for_reused_static_call_type(

@@ -2200,7 +2200,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         // parameter does NOT have a primitive literal-preserving constraint.
                         // tsc preserves literal types when the constraint is a primitive:
                         //   <T extends string>(a: T) => T  -- T="z" preserved
-                        //   <T>(a: T) => T                  -- T="z" widened to string
+                        //   <T>(a: T) => T                  -- handled by the trivial fast path
                         if infer_ctx.all_candidates_are_fresh_literals(var) {
                             if noinfer_param_vars.contains(&var) {
                                 let mut literal_bounds = lower_bounds

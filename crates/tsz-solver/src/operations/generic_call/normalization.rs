@@ -133,6 +133,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // behavior where contextual return types inform inference and
                     // prevent unnecessary widening of literals.
                     arg_ty
+                } else if constraint.is_none() {
+                    arg_ty
                 } else {
                     widened
                 }
