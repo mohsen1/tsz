@@ -102,6 +102,35 @@ pub(super) fn indexed_access_object_alias_application_exceeds_depth(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn index_constraint_keyof_matches_mapped_constraint(
+        &mut self,
+        index_constraint: Option<TypeId>,
+        mapped_constraint: TypeId,
+        keyof: TypeId,
+    ) -> bool {
+        let Some(index_constraint) = index_constraint else {
+            return false;
+        };
+        let index_constraint_eval = self.evaluate_type_with_env(index_constraint);
+        [index_constraint, index_constraint_eval]
+            .into_iter()
+            .filter_map(|candidate| {
+                crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+            })
+            .any(|index_operand| {
+                crate::query_boundaries::state::checking::keyof_target(
+                    self.ctx.types,
+                    mapped_constraint,
+                )
+                .is_some_and(|constraint_operand| {
+                    same_object_key_space(self.ctx.types, index_operand, constraint_operand)
+                }) || crate::query_boundaries::state::checking::keyof_target(self.ctx.types, keyof)
+                    .is_some_and(|keyof_operand| {
+                        same_object_key_space(self.ctx.types, index_operand, keyof_operand)
+                    })
+            })
+    }
+
     pub(super) fn type_literal_keyof_from_node(
         &mut self,
         type_node_idx: NodeIndex,

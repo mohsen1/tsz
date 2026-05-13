@@ -930,39 +930,12 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
             }
-            if let Some(index_constraint) = index_constraint {
-                let index_constraint_eval = self.evaluate_type_with_env(index_constraint);
-                for candidate in [index_constraint, index_constraint_eval] {
-                    if let Some(index_operand) =
-                        crate::query_boundaries::state::checking::keyof_target(
-                            self.ctx.types,
-                            candidate,
-                        )
-                    {
-                        if let Some(constraint_operand) =
-                            crate::query_boundaries::state::checking::keyof_target(
-                                self.ctx.types,
-                                mapped_constraint,
-                            )
-                            && same_object_key_space(
-                                self.ctx.types,
-                                index_operand,
-                                constraint_operand,
-                            )
-                        {
-                            return;
-                        }
-                        if let Some(keyof_operand) =
-                            crate::query_boundaries::state::checking::keyof_target(
-                                self.ctx.types,
-                                keyof,
-                            )
-                            && same_object_key_space(self.ctx.types, index_operand, keyof_operand)
-                        {
-                            return;
-                        }
-                    }
-                }
+            if self.index_constraint_keyof_matches_mapped_constraint(
+                index_constraint,
+                mapped_constraint,
+                keyof,
+            ) {
+                return;
             }
 
             keyof
