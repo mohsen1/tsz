@@ -463,6 +463,9 @@ mod generic_tests;
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
 #[cfg(test)]
+#[path = "../tests/interface_extends_array_json_tests.rs"]
+mod interface_extends_array_json_tests;
+#[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
 #[cfg(test)]
