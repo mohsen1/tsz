@@ -12,12 +12,11 @@ on:
     - cron: '0 15 * * *'
   workflow_dispatch:
 
-# Keep one benchmark active and one freshest pending benchmark. A new trigger
-# replaces any older pending run, but does not cancel the long-running benchmark
-# that is already producing useful data for tsz.dev.
+# Only one benchmark runs at a time. New runs cancel in-progress ones to ensure
+# fresh data on the website without wasting CI minutes on stale commits.
 concurrency:
   group: bench
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -56,8 +55,7 @@ jobs:
             fi
           fi
 
-          # Concurrency handles coalescing: the active run finishes, and only
-          # the freshest pending run remains queued.
+          # Concurrency group handles all coalescing - no debounce or explicit run checks needed
 
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
 
@@ -79,7 +77,7 @@ jobs:
         name: Confirm benchmark should proceed
         shell: bash
         run: |
-          # Concurrency handles supersession before this job starts.
+          # Concurrency group handles supersession - just proceed
           echo "should_run=true" >> "$GITHUB_OUTPUT"
 
       - name: Restore GCS caches
