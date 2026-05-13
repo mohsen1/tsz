@@ -43023,7 +43023,7 @@ fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
 /// Tests for distributive conditional instantiation over union type parameters.
 ///
 /// Structural rule: when a distributive conditional `K extends K ? K : never`
-/// is instantiated with K=1|2, the TypeInstantiator distributes K over the
+/// is instantiated with K=1|2, the `TypeInstantiator` distributes K over the
 /// union members, producing a union of evaluated conditionals.
 #[test]
 fn test_distributive_conditional_over_union_evaluates_correctly() {
