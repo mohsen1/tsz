@@ -1101,6 +1101,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return ann_type;
                     }
                 }
+
+                if let Some(val_type) = self.compute_safe_merged_value_type_for_type_query(sym_id) {
+                    self.ctx.merged_value_types.insert(sym_id, val_type);
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            val_type,
+                            type_arguments,
+                        );
+                    }
+                    return val_type;
+                }
             }
 
             let mut declared_type: Option<TypeId> =
@@ -1716,54 +1727,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         arena
             .get_identifier_at(mapped.type_node)
             .is_some_and(|name| name.escaped_text == param_name.escaped_text)
-    }
-
-    pub(crate) fn property_name_text(&self, name: NodeIndex) -> Option<String> {
-        let name = self.ctx.arena.skip_parenthesized_and_assertions(name);
-        let node = self.ctx.arena.get(name)?;
-        if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
-        }
-        if node.kind == SyntaxKind::StringLiteral as u16
-            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-            || node.kind == SyntaxKind::NumericLiteral as u16
-        {
-            return self.ctx.arena.get_literal(node).map(|lit| lit.text.clone());
-        }
-        None
-    }
-
-    fn literal_type_from_const_member_initializer(&self, initializer: NodeIndex) -> Option<TypeId> {
-        let initializer = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(initializer);
-        let node = self.ctx.arena.get(initializer)?;
-        let factory = self.ctx.types.factory();
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                self.ctx
-                    .arena
-                    .get_literal(node)
-                    .map(|lit| factory.literal_string(&lit.text))
-            }
-            k if k == SyntaxKind::NumericLiteral as u16 => self
-                .ctx
-                .arena
-                .get_literal(node)
-                .and_then(|lit| {
-                    lit.value
-                        .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
-                })
-                .map(|value| factory.literal_number(value)),
-            k if k == SyntaxKind::TrueKeyword as u16 => Some(factory.literal_boolean(true)),
-            k if k == SyntaxKind::FalseKeyword as u16 => Some(factory.literal_boolean(false)),
-            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
-            k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
-            _ => None,
-        }
     }
 
     fn declared_type_for_type_query_symbol(
