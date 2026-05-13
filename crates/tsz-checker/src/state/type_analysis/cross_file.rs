@@ -787,6 +787,7 @@ impl<'a> CheckerState<'a> {
                         delegate_binder,
                         symbol_arena,
                         false,
+                        symbol_type_cache_from_symbol_arena,
                     )
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
@@ -1329,9 +1330,13 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(self.ctx.binder)
         };
 
-        if let Some((direct_type, direct_params)) =
-            self.direct_cross_file_interface_lowering(sym_id, delegate_binder, symbol_arena, false)
-        {
+        if let Some((direct_type, direct_params)) = self.direct_cross_file_interface_lowering(
+            sym_id,
+            delegate_binder,
+            symbol_arena,
+            false,
+            false,
+        ) {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
             if !direct_params.is_empty() {
                 self.ctx.insert_def_type_params(def_id, direct_params);
