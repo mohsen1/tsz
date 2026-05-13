@@ -2197,11 +2197,11 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
-                if let Some(decl) =
-                    Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &alias_name)
-                {
-                    self.emit_rendered_jsdoc_type_alias(decl, exported);
-                }
+                self.emit_jsdoc_default_typedef_alias_decl_for_comment(
+                    &jsdoc,
+                    &alias_name,
+                    exported,
+                );
             }
         }
 
@@ -2209,9 +2209,29 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            if let Some(decl) = Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &alias_name) {
-                self.emit_rendered_jsdoc_type_alias(decl, exported);
-            }
+            self.emit_jsdoc_default_typedef_alias_decl_for_comment(&jsdoc, &alias_name, exported);
         }
+    }
+
+    fn emit_jsdoc_default_typedef_alias_decl_for_comment(
+        &mut self,
+        jsdoc: &str,
+        alias_name: &str,
+        exported: bool,
+    ) {
+        let Some(mut decl) = Self::parse_jsdoc_default_typedef_alias_decl(jsdoc, alias_name) else {
+            return;
+        };
+
+        // A `@typedef {…} default` can map to an existing default-export local
+        // name (e.g. `class Cls; export default Cls;`). Emitting `export type Cls`
+        // would collide with that declaration in `.d.ts`, so synthesize a unique
+        // alias and reserve it for subsequent import/export name generation.
+        if self.reserved_names.contains(&decl.name) {
+            decl.name = self.generate_unique_name(&decl.name);
+        }
+        self.reserved_names.insert(decl.name.clone());
+
+        self.emit_rendered_jsdoc_type_alias(decl, exported);
     }
 }

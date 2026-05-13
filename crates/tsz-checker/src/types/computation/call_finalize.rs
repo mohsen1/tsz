@@ -543,26 +543,36 @@ impl<'a> CheckerState<'a> {
     }
 
     fn construct_signature_flags(&mut self, type_id: TypeId) -> (bool, bool) {
-        let signatures = common::construct_signatures_for_type(self.ctx.types, type_id)
-            .filter(|signatures| !signatures.is_empty())
+        self.construct_signature_flags_for_type(type_id)
             .or_else(|| {
                 let evaluated = self.evaluate_type_with_env(type_id);
                 (evaluated != type_id)
-                    .then(|| common::construct_signatures_for_type(self.ctx.types, evaluated))
+                    .then(|| self.construct_signature_flags_for_type(evaluated))
                     .flatten()
-                    .filter(|signatures| !signatures.is_empty())
-            });
-
-        signatures
-            .map(|signatures| {
-                (
-                    true,
-                    signatures
-                        .iter()
-                        .any(|signature| !signature.type_params.is_empty()),
-                )
             })
             .unwrap_or((false, false))
+    }
+
+    fn construct_signature_flags_for_type(&self, type_id: TypeId) -> Option<(bool, bool)> {
+        if let Some(shape) = common::callable_shape_for_type_extended(self.ctx.types, type_id)
+            && !shape.construct_signatures.is_empty()
+        {
+            return Some((
+                true,
+                shape
+                    .construct_signatures
+                    .iter()
+                    .any(|signature| !signature.type_params.is_empty()),
+            ));
+        }
+
+        if let Some(shape) = common::function_shape_for_type(self.ctx.types, type_id)
+            && shape.is_constructor
+        {
+            return Some((true, !shape.type_params.is_empty()));
+        }
+
+        None
     }
 
     fn check_generic_rest_object_literal_values_against_sibling_annotation(

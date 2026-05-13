@@ -76,6 +76,26 @@ const table: { [k: symbol]: string } = {
 }
 
 #[test]
+fn keyof_well_known_symbol_property_preserves_symbol_key_type() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Symbol: { readonly iterator: unique symbol };
+
+type Keys = keyof { [Symbol.iterator]: number };
+declare let key: Keys;
+
+const iter: typeof Symbol.iterator = key;
+const key2: Keys = Symbol.iterator;
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "keyof {{[Symbol.iterator]: ...}} should preserve symbol key identity and avoid TS2322, got {codes:?}",
+    );
+}
+
+#[test]
 fn jsdoc_symbol_index_signature_reports_computed_property_value_mismatch() {
     let codes = diagnostic_codes_for_js(
         r#"

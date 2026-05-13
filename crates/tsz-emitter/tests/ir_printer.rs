@@ -73,6 +73,17 @@ fn test_emit_var_decl() {
 }
 
 #[test]
+fn test_emit_expression_statement_wraps_object_literal() {
+    let stmt = IRNode::expr_stmt(IRNode::object(vec![IRProperty {
+        key: IRPropertyKey::Identifier("a".into()),
+        value: IRNode::number("1"),
+        kind: IRPropertyKind::Init,
+    }]));
+    let output = IRPrinter::emit_to_string(&stmt);
+    assert_eq!(output, "({ a: 1 });");
+}
+
+#[test]
 fn test_emit_return_statement() {
     let ret = IRNode::ret(None);
     assert_eq!(IRPrinter::emit_to_string(&ret), "return;");
