@@ -1591,6 +1591,7 @@ impl<'a> CheckerState<'a> {
                 has_local_interface_heritage_extends,
                 has_local_computed_property_name,
             ) {
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_fastpath_hit();
                 if let Some(shape) = type_environment::object_shape(self.ctx.types, interface_type)
                 {
                     self.ctx

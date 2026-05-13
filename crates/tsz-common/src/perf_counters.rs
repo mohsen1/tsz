@@ -747,6 +747,7 @@ pub struct PerfCounters {
     // ─── compute_type_of_symbol ──────────────────────────────────────────
     pub compute_type_of_symbol_calls: AtomicU64,
     pub compute_type_of_symbol_cache_hits: AtomicU64,
+    pub compute_type_of_symbol_interface_simple_object_fastpath_hits: AtomicU64,
     pub compute_type_of_symbol_source_outcome:
         [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_COUNT],
     pub compute_type_of_symbol_kind_outcome: [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT],
@@ -823,6 +824,7 @@ impl PerfCounters {
             interner_lock_wait_histogram_ns: [const { AtomicU64::new(0) }; LOCK_WAIT_BUCKET_COUNT],
             compute_type_of_symbol_calls: AtomicU64::new(0),
             compute_type_of_symbol_cache_hits: AtomicU64::new(0),
+            compute_type_of_symbol_interface_simple_object_fastpath_hits: AtomicU64::new(0),
             compute_type_of_symbol_source_outcome: [const { AtomicU64::new(0) };
                 COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_COUNT],
             compute_type_of_symbol_kind_outcome: [const { AtomicU64::new(0) };
@@ -1314,6 +1316,18 @@ pub fn record_compute_type_of_symbol_cache_hit() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record use of the simple local-interface object shortcut inside
+/// `compute_type_of_symbol`.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_simple_object_fastpath_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .compute_type_of_symbol_interface_simple_object_fastpath_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record how `compute_type_of_symbol` sourced the symbol payload.
 #[inline]
 pub fn record_compute_type_of_symbol_source_outcome(outcome: ComputeTypeOfSymbolSourceOutcome) {
@@ -1631,7 +1645,8 @@ impl PerfCounters {
              overlay len ≥ 1M           {:>12}\n\
              compute_type_of_symbol:\n  \
              total calls                {:>12}\n  \
-             cache hits                 {:>12}\n\
+             cache hits                 {:>12}\n  \
+             simple-object hits         {:>12}\n\
              TypeInterner:\n  \
              intern calls (total)       {:>12}\n  \
              intern hits                {:>12}\n  \
@@ -1668,6 +1683,8 @@ impl PerfCounters {
             snap.overlay.len_ge_1m,
             snap.checker.compute_type_of_symbol_calls,
             snap.checker.compute_type_of_symbol_cache_hits,
+            snap.checker
+                .compute_type_of_symbol_interface_simple_object_fastpath_hits,
             snap.interner.intern_calls.unwrap_or(0),
             snap.interner.intern_hits.unwrap_or(0),
             snap.interner.intern_misses.unwrap_or(0),
@@ -2107,6 +2124,7 @@ pub struct CheckerCounters {
     pub file_session_resets: u64,
     pub compute_type_of_symbol_calls: u64,
     pub compute_type_of_symbol_cache_hits: u64,
+    pub compute_type_of_symbol_interface_simple_object_fastpath_hits: u64,
 }
 
 /// One `(name, count)` row in a named-counter JSON array.
@@ -2272,6 +2290,9 @@ impl PerfCounters {
                 file_session_resets: load(&c.file_session_resets),
                 compute_type_of_symbol_calls: load(&c.compute_type_of_symbol_calls),
                 compute_type_of_symbol_cache_hits: load(&c.compute_type_of_symbol_cache_hits),
+                compute_type_of_symbol_interface_simple_object_fastpath_hits: load(
+                    &c.compute_type_of_symbol_interface_simple_object_fastpath_hits,
+                ),
             },
             overlay: OverlayCounters {
                 copy_calls: load(&c.copy_symbol_file_targets_calls),
@@ -2673,6 +2694,7 @@ mod json_tests {
                 "file_session_resets",
                 "compute_type_of_symbol_calls",
                 "compute_type_of_symbol_cache_hits",
+                "compute_type_of_symbol_interface_simple_object_fastpath_hits",
             ],
         );
     }
@@ -3218,6 +3240,9 @@ mod json_tests {
         let before_ctos_callsite = c.compute_type_of_symbol_interface_callsite_outcome
             [ctos_callsite_idx]
             .load(Ordering::Relaxed);
+        let before_ctos_simple_object_hits = c
+            .compute_type_of_symbol_interface_simple_object_fastpath_hits
+            .load(Ordering::Relaxed);
 
         c.delegate_cross_arena_symbol_miss_by_source[source_idx].fetch_add(1, Ordering::Relaxed);
         c.delegate_cross_arena_symbol_miss_by_kind[kind_idx].fetch_add(1, Ordering::Relaxed);
@@ -3232,6 +3257,8 @@ mod json_tests {
         c.compute_type_of_symbol_interface_fastpath_outcome[ctos_fastpath_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_callsite_outcome[ctos_callsite_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        c.compute_type_of_symbol_interface_simple_object_fastpath_hits
             .fetch_add(1, Ordering::Relaxed);
 
         let snap = PerfCounters::snapshot();
@@ -3333,6 +3360,14 @@ mod json_tests {
         assert!(
             ctos_callsite_row["count"].as_u64().unwrap_or(0) > before_ctos_callsite,
             "compute_type_of_symbol_interface_callsite_outcomes[root] did not reflect the bump",
+        );
+
+        assert!(
+            json["checker"]["compute_type_of_symbol_interface_simple_object_fastpath_hits"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_ctos_simple_object_hits,
+            "checker.compute_type_of_symbol_interface_simple_object_fastpath_hits did not reflect the bump",
         );
     }
 
