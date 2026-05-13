@@ -46,7 +46,8 @@ impl<'a> TypePrinter<'a> {
             return false;
         };
 
-        if symbol.value_declaration.is_some()
+        if self.node_arena.is_some()
+            && symbol.value_declaration.is_some()
             && !self.declaration_is_nameable(symbol.value_declaration)
         {
             return false;
