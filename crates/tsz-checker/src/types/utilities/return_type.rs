@@ -367,7 +367,9 @@ impl<'a> CheckerState<'a> {
     ///   (`return x as const` or `return <const>x`), preserve the asserted
     ///   literal type even without a contextual return type. tsc keeps the
     ///   const-asserted literal as the inferred return type.
-    /// - Otherwise widen literal types (`return "a"` → return type `string`).
+    /// - Otherwise widen literal types only when the return expression is fresh
+    ///   (`return "a"` → return type `string`). Non-fresh references such as
+    ///   parameters or annotated locals keep their declared literal-union type.
     fn maybe_widen_return_contribution(
         &self,
         expr_idx: NodeIndex,
@@ -383,7 +385,10 @@ impl<'a> CheckerState<'a> {
         if self.return_expression_is_const_assertion(expr_idx) {
             return type_id;
         }
-        self.widen_literal_type(type_id)
+        if self.is_fresh_literal_expression(expr_idx) {
+            return self.widen_literal_type(type_id);
+        }
+        type_id
     }
 
     /// Structurally detect whether a return expression is a const assertion

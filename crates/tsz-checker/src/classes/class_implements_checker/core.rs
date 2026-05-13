@@ -158,14 +158,16 @@ impl<'a> CheckerState<'a> {
             interface_name.to_string()
         };
 
-        let mut properties = Vec::new();
-        let mut has_index_signature = false;
-        if let Some(shape) =
+        let (mut properties, mut has_index_signature) = if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
         {
-            has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
-            properties.extend(shape.properties.iter().cloned());
-        }
+            (
+                shape.properties.to_vec(),
+                shape.string_index.is_some() || shape.number_index.is_some(),
+            )
+        } else {
+            (Vec::new(), false)
+        };
 
         for &decl_idx in interface_declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
@@ -227,13 +229,9 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
-                let name_atom = self.ctx.types.intern_string(&name);
-                if properties.iter().any(|prop| prop.name == name_atom) {
-                    continue;
-                }
-
-                properties.push(PropertyInfo {
-                    name: name_atom,
+                let member_atom = self.ctx.types.intern_string(&name);
+                let property_info = PropertyInfo {
+                    name: member_atom,
                     type_id: member_type,
                     write_type: member_type,
                     optional: sig.question_token,
@@ -246,7 +244,12 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
-                });
+                };
+                if let Some(existing) = properties.iter_mut().find(|p| p.name == member_atom) {
+                    *existing = property_info;
+                } else {
+                    properties.push(property_info);
+                }
             }
         }
 
