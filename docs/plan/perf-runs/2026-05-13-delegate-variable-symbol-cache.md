@@ -1,6 +1,6 @@
 # 2026-05-13 - DelegateCrossArenaSymbol Variable Symbol Cache
 
-Attribution-mode follow-up for #6203. This run validates the first
+Attribution-mode follow-up for #6208. This run validates the first
 requester-independent variable-symbol slice for the stable source-file
 symbol-arena cache key.
 
@@ -9,7 +9,7 @@ symbol-arena cache key.
 | Item | Value |
 | --- | --- |
 | `tsz` code commit | `2792c8607a` before docs-only updates |
-| `origin/main` base | `c4f68c6c90` |
+| `origin/main` base | `c4f68c6c90` (#6208) |
 | `tsz` build | `CARGO_TARGET_DIR=.target cargo build -p tsz-cli --bin tsz --features perf-tools --release` |
 | Fixture path | `scripts/bench/scale-cliff/fixtures/monorepo-006` |
 | Counter mode | `TSZ_PERF_COUNTERS=1` |
@@ -38,18 +38,11 @@ variable-symbol subset:
 
 Inferred variables remain outside this proof.
 
-This branch rebased over #6208, which renamed the coarse
-`source_file_symbol_arena_cache_eligibility` array to the detailed
-`source_file_symbol_arena_cache_eligibility_outcomes` array. The old
-`eligible` bucket is now `cacheable`, `declaration_file` is now
-`target_declaration_file`, and the old `unstable_symbol` residue appears as
-the more specific rejection outcome that blocked cacheability.
-
 ## Headline Counters
 
 | Fixture | with_parent_cache | `DelegateCrossArenaSymbol` | delegate calls | lib hits | cross-file hits | misses |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| monorepo-006 before (#6203) | 843 | 828 | 941 | 3 | 96 | 842 |
+| monorepo-006 before (#6208 input) | 843 | 828 | 941 | 3 | 96 | 842 |
 | monorepo-006 after | 554 | 539 | 941 | 3 | 385 | 553 |
 | delta | -289 | -289 | 0 | 0 | +289 | -289 |
 
@@ -58,18 +51,17 @@ source-file symbol-arena cache hits on this fixture.
 
 ## Eligibility
 
-| Bucket | Before (#6203) | After | Interpretation |
+| Bucket | Before (#6208 input) | After | Interpretation |
 | --- | ---: | ---: | --- |
-| `cacheable` / old `eligible` | 343 | 883 | Classes/interfaces plus annotated variables can now form a stable key. |
-| old `unstable_symbol` | 540 | 0 | The measured variable residue no longer fails the stability gate. In #6208 terms, `not_class_or_interface = 0` after this PR. |
-| `target_declaration_file` / old `declaration_file` | 44 | 44 | Declaration-file targets are unchanged. |
+| `cacheable` | 343 | 883 | Classes/interfaces plus annotated variables can now form a stable key. |
+| `not_class_or_interface` | 540 | 0 | The measured variable residue no longer fails the stability gate. |
+| `target_declaration_file` | 44 | 44 | Declaration-file targets are unchanged. |
 
 All other eligibility buckets stay zero on this run.
 
-The `eligible` count includes both cache hits and cold first reads. After this
+The `cacheable` count includes both cache hits and cold first reads. After this
 PR, `cross_file_cache_miss_causes.bucket_empty = 498`, matching the remaining
-source-file child-checker misses. All other detailed eligibility outcomes are
-zero after the change.
+source-file child-checker misses.
 
 ## Remaining Residue
 
@@ -79,7 +71,7 @@ as:
 | Slice | Count | Source |
 | --- | ---: | --- |
 | Stable source-file key, cold cache | 498 | `cross_file_cache_miss_causes.bucket_empty`; also `target_source_files = 498`. |
-| Declaration-file targets | 41 | `delegate_miss_classification.target_declaration_files`; `declaration_file = 44` still includes 3 lib cache hits. |
+| Declaration-file targets | 41 | `delegate_miss_classification.target_declaration_files`; `target_declaration_file = 44` still includes 3 lib cache hits. |
 
 The remaining source-file misses are first-requester cold reads, not stability
 rejections. The next `DelegateCrossArenaSymbol` lever needs either a direct
@@ -98,8 +90,8 @@ Use these numbers only for phase dominance.
 ## Decision
 
 1. Keep the annotated-variable proof. It removes the whole measured
-   `unstable_symbol` bucket on monorepo-006 while preserving the stable
-   source-file program-scope key.
+   variable-driven `not_class_or_interface` outcome on monorepo-006 while
+   preserving the stable source-file program-scope key.
 2. Do not broaden the variable slice in the next PR; there is no remaining
    variable stability residue on this fixture.
 3. Target the 498 stable source-file cold reads next, or the 41 declaration-file

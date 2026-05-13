@@ -3,14 +3,15 @@
 **Owner:** Codex session
 **Branch:** `codex/perf-delegate-variable-symbol-cache-20260513`
 **Draft PR:** #6212
-**Sequences after:** #6203 (DelegateCrossArenaSymbol residue classification)
+**Sequences after:** #6208 (DelegateCrossArenaSymbol residue classification schema)
 **Input decision record:** [`perf-runs/2026-05-13-delegate-residue-classification.md`](../perf-runs/2026-05-13-delegate-residue-classification.md)
 
 ## Goal
 
-Reduce the largest measured `DelegateCrossArenaSymbol` residue after #6203:
-the 540 source-file variable-symbol child-checker constructions reported as
-`source_file_symbol_arena_cache_eligibility.unstable_symbol` on `monorepo-006`.
+Reduce the largest measured `DelegateCrossArenaSymbol` residue after #6208:
+the 540 source-file variable-symbol child-checker constructions reported in
+`source_file_symbol_arena_cache_eligibility_outcomes.not_class_or_interface` on
+`monorepo-006`.
 
 ## Initial scope
 
@@ -35,16 +36,16 @@ the 540 source-file variable-symbol child-checker constructions reported as
 
 1. A focused test covers the safe variable-symbol subset or documents why no
    safe subset was found.
-2. If implemented, `source_file_symbol_arena_cache_eligibility.unstable_symbol`
+2. If implemented,
+   `source_file_symbol_arena_cache_eligibility_outcomes.not_class_or_interface`
    and `DelegateCrossArenaSymbol` drop on `monorepo-006`.
 3. A follow-up decision record under `docs/plan/perf-runs/` captures the result
    and next target.
 
 ## Result
 
-Implemented the conservative single-declaration annotated-variable subset in
-`2792c8607a`. On `monorepo-006`, the old `unstable_symbol` residue drops from
-540 to 0 (`not_class_or_interface = 0` in the post-#6208 detailed outcome
-schema), `delegate.cache_hits_cross_file` rises from 96 to 385, and
+Implemented the conservative single-declaration annotated-variable subset. On
+`monorepo-006`, the variable-driven `not_class_or_interface` outcome drops from
+540 to 0, `delegate.cache_hits_cross_file` rises from 96 to 385, and
 `DelegateCrossArenaSymbol` drops from 828 to 539. Decision record:
 [`perf-runs/2026-05-13-delegate-variable-symbol-cache.md`](../perf-runs/2026-05-13-delegate-variable-symbol-cache.md).
