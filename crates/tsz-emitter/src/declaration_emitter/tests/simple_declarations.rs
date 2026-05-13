@@ -1473,6 +1473,36 @@ function p() { return Promise.resolve(); }
 }
 
 #[test]
+fn test_jsdoc_nested_object_binding_params_and_promise_star() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Y {
+    /**
+     * @param {Object} error
+     * @param {string?} error.reason
+     * @param {Object} error.suberr
+     * @param {string?} error.suberr.reason
+     * @param {string?} error.suberr.code
+     * @returns {Promise.<*>}
+     */
+    async cancel({reason, suberr}) {}
+}
+"#,
+    );
+
+    for expected in [
+        "reason: string | null;",
+        "suberr: {\n            reason: string | null;\n            code: string | null;\n        };",
+        "): Promise<any>;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected nested JSDoc parameter output `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};

@@ -1093,7 +1093,38 @@ impl<'a> DeclarationEmitter<'a> {
                     .join(" | ");
             }
         }
+        if let Some(generic) = Self::normalize_jsdoc_generic_type_reference(trimmed) {
+            return generic;
+        }
         Self::normalize_jsdoc_type_atom(trimmed)
+    }
+
+    fn normalize_jsdoc_generic_type_reference(type_expr: &str) -> Option<String> {
+        let open = type_expr.find('<')?;
+        if !type_expr.ends_with('>') {
+            return None;
+        }
+
+        let base = type_expr[..open].trim();
+        if base.is_empty()
+            || !base
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+
+        let args = type_expr[open + 1..type_expr.len() - 1].trim();
+        if args.is_empty() {
+            return None;
+        }
+
+        let normalized_args = Self::split_jsdoc_params(args)
+            .into_iter()
+            .map(Self::normalize_jsdoc_type_expr)
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("{base}<{normalized_args}>"))
     }
 
     fn normalize_jsdoc_object_index_type(type_expr: &str) -> Option<String> {
