@@ -3058,7 +3058,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 continue;
             }
-            if !self.checker.is_assignable_to(arg_type, constraint)
+            if !self.arg_satisfies_type_parameter_constraint(arg_type, constraint)
                 && !self.is_function_union_compat(arg_type, constraint)
                 && !self.callable_satisfies_top_rest_any_constraint(arg_type, constraint)
             {
