@@ -1,4 +1,5 @@
-//! AST-level index signature parameter type validity checks.
+//! AST-level index signature parameter type validity checks, plus a small
+//! TypeId-level structural query used by the readonly-write classifier.
 //!
 //! Mirrors tsc's `isValidIndexKeyType` for the AST surface. Used at TS1268
 //! emission sites as a fallback when the resolved key `TypeId` is a composite
@@ -8,6 +9,7 @@
 
 use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::{TypeDatabase, types::TypeId};
 
 /// Structural AST check for index-signature parameter type validity.
 ///
@@ -142,4 +144,23 @@ pub(crate) fn contains_type_param_or_literal_ast(
     }
 
     false
+}
+
+/// Returns true when `type_id` embeds a `keyof X` whose inner contains a free
+/// type parameter — the structural signal that the type's effective key space
+/// is generic (e.g. `Record<keyof Shape | "k", V>` where `Shape` is free).
+///
+/// Walking the unevaluated type tree preserves the generic `keyof T` form,
+/// which environment-bound evaluation would otherwise collapse to T's
+/// constraint and erase. Used to distinguish a deferred mapped key space from
+/// a concrete declared index signature for the TS2862 readonly-write check.
+pub(crate) fn type_uses_keyof_of_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    use tsz_solver::types::TypeData;
+    tsz_solver::query::contains_type_matching(db, type_id, |td| {
+        matches!(
+            td,
+            TypeData::KeyOf(inner)
+                if tsz_solver::type_queries::contains_type_parameters_db(db, *inner)
+        )
+    })
 }

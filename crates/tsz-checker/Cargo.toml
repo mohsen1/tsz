@@ -122,6 +122,10 @@ name = "ts2862_keyof_tparam_tests"
 path = "tests/ts2862_keyof_tparam_tests.rs"
 
 [[test]]
+name = "ts2862_concrete_index_signature_tests"
+path = "tests/ts2862_concrete_index_signature_tests.rs"
+
+[[test]]
 name = "ts1210_arguments_param_in_class_tests"
 path = "tests/ts1210_arguments_param_in_class_tests.rs"
 

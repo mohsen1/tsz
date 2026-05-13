@@ -579,11 +579,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if an element access on a generic type parameter would be an unsafe write.
+    /// Check if an element access on a generic type would be an unsafe write.
     ///
     /// Returns `true` when the object type is generic and the index type is a broad
     /// primitive key space (`string`, `number`, `symbol`, or a union of them), and
-    /// the write would flow through an index-signature-like path. In this case,
+    /// the write would flow through a *deferred* index-signature path. In this case,
     /// TS2862 should be emitted.
     ///
     /// Does NOT fire when:
@@ -591,13 +591,15 @@ impl<'a> CheckerState<'a> {
     /// - The index is `keyof T` — constrains to the receiver's own key space
     /// - The index is `K extends keyof T` — a type parameter constrained to keyof
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
+    /// - The object has an explicit, concrete index signature (declared on a class
+    ///   or interface, or via `Record<concreteKey, V>`) — writes through the
+    ///   declared signature use ordinary assignability.
     pub(crate) fn is_generic_indexed_write(
         &mut self,
         object_type: TypeId,
         index_type: TypeId,
     ) -> bool {
         use crate::query_boundaries::common as common_query;
-        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
         // Broad primitive keys definitely go through an index-signature-like path.
         if !self.is_broad_index_type(index_type) {
@@ -621,23 +623,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Object must be a type parameter (e.g., T in `function f<T extends ...>(target: T)`)
         if !object_is_type_parameter {
-            let evaluated_object = self.evaluate_type_with_env(object_type);
-            let resolver = IndexSignatureResolver::new(self.ctx.types);
-
-            if common_query::is_generic_mapped_type(self.ctx.types, evaluated_object)
-                || common_query::is_mapped_type(self.ctx.types, evaluated_object)
-            {
-                return true;
-            }
-
-            return if index_type == TypeId::STRING {
-                resolver.has_index_signature(evaluated_object, IndexKind::String)
-            } else {
-                resolver.has_index_signature(evaluated_object, IndexKind::String)
-                    || resolver.has_index_signature(evaluated_object, IndexKind::Number)
-            };
+            // Walk the unevaluated type tree: `evaluate_type_with_env` would
+            // collapse `keyof T` to T's constraint, erasing the distinction
+            // between a deferred generic key space and a concrete declared
+            // index signature.
+            return crate::query_boundaries::index_signature::type_uses_keyof_of_type_parameter(
+                self.ctx.types,
+                object_type,
+            );
         }
 
         // When the object IS a type parameter T, the index must reference a foreign
