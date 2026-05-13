@@ -2450,6 +2450,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if crate::query_boundaries::common::type_application(self.ctx.types, ty).is_some() {
+            let evaluated = self.evaluate_type_for_assignability(ty);
+            if evaluated != ty && !matches!(evaluated, TypeId::ERROR | TypeId::UNKNOWN) {
+                return self.normalize_index_access_for_assignability(evaluated, depth + 1);
+            }
+        }
+
         if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
             let mut changed = false;
             let normalized_members: Vec<_> = members
@@ -2463,6 +2470,56 @@ impl<'a> CheckerState<'a> {
                 .collect();
             if changed {
                 return self.ctx.types.factory().union(normalized_members);
+            }
+        }
+
+        if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(self.ctx.types, ty)
+        {
+            let is_object_with_index =
+                crate::query_boundaries::common::object_with_index_shape_id(self.ctx.types, ty)
+                    .is_some();
+            let mut shape = (*self.ctx.types.object_shape(shape_id)).clone();
+            let mut changed = false;
+            for property in &mut shape.properties {
+                let normalized =
+                    self.normalize_index_access_for_assignability(property.type_id, depth + 1);
+                if normalized != property.type_id {
+                    changed = true;
+                    property.type_id = normalized;
+                }
+                let normalized_write =
+                    self.normalize_index_access_for_assignability(property.write_type, depth + 1);
+                if normalized_write != property.write_type {
+                    changed = true;
+                    property.write_type = normalized_write;
+                }
+            }
+            if let Some(index) = &mut shape.string_index {
+                let normalized =
+                    self.normalize_index_access_for_assignability(index.value_type, depth + 1);
+                if normalized != index.value_type {
+                    changed = true;
+                    index.value_type = normalized;
+                }
+            }
+            if let Some(index) = &mut shape.number_index {
+                let normalized =
+                    self.normalize_index_access_for_assignability(index.value_type, depth + 1);
+                if normalized != index.value_type {
+                    changed = true;
+                    index.value_type = normalized;
+                }
+            }
+            if changed {
+                return if is_object_with_index {
+                    self.ctx.types.factory().object_with_index(shape)
+                } else {
+                    self.ctx.types.factory().object_with_flags_and_symbol(
+                        shape.properties,
+                        shape.flags,
+                        shape.symbol,
+                    )
+                };
             }
         }
 

@@ -1,6 +1,7 @@
 use crate::context::CheckerOptions;
 use crate::test_utils::{
-    check_multi_file, check_source_diagnostics, check_source_with_libs, load_default_lib_files,
+    check_multi_file, check_multi_file_with_libs, check_source_diagnostics, check_source_with_libs,
+    load_default_lib_files,
 };
 use tsz_common::common::ModuleKind;
 
@@ -586,6 +587,59 @@ createRootContext({ async: false });
     assert!(
         diags.is_empty(),
         "Expected boolean to be assignable to optional Omit<...>[\"async\"] property, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn zod_cross_file_spread_context_accepts_partial_omit_properties() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "expected default libs to load");
+
+    let diags = check_multi_file_with_libs(
+        &[
+            (
+                "zod-parse-util-min.ts",
+                r#"
+export type ParseParams = {
+    path: (string | number)[];
+    data: unknown;
+    errorMap: unknown;
+    async: boolean;
+};
+
+export type ParseParamsNoData = Omit<ParseParams, "data">;
+"#,
+            ),
+            (
+                "zod-types-min.ts",
+                r#"
+import { ParseParamsNoData } from "./zod-parse-util-min";
+
+declare function createRootContext(params: Partial<ParseParamsNoData>): void;
+
+function safeParse(params?: Partial<ParseParamsNoData>) {
+    createRootContext({ ...params, async: false });
+}
+"#,
+            ),
+        ],
+        "zod-types-min.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        diags.is_empty(),
+        "Expected cross-file spread object to remain assignable to Partial<Omit<...>>, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message_text))
