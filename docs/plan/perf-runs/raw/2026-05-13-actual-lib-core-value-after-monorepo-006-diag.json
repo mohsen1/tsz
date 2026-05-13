@@ -15,27 +15,27 @@
     "local_override": false
   },
   "command_line": [
-    "/tmp/tsz-target-corevalue-after/release/tsz",
+    "/tmp/tsz-target-corevalue-rebase-after/release/tsz",
     "--project",
     "scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json",
     "--pretty",
     "false",
     "--noEmit",
     "--diagnostics-json",
-    "/tmp/core-value-after-fresh-monorepo-006-diag.json",
+    "/tmp/core-value-rebase-after-monorepo-006-diag.json",
     "--perf-counters-json",
-    "/tmp/core-value-after-fresh-monorepo-006-pc.json"
+    "/tmp/core-value-rebase-after-monorepo-006-pc.json"
   ],
   "phases_ms": {
     "config_discovery": 0.0,
     "source_discovery": 0.0,
     "module_resolution": 0.0,
-    "io_read": 362.228416,
-    "load_libs": 3.530333,
-    "parse_bind": 1545.704125,
-    "check": 85129.662084,
-    "emit": 0.000167,
-    "total": 87082.78445800001
+    "io_read": 332.539875,
+    "load_libs": 2.969584,
+    "parse_bind": 1116.251625,
+    "check": 71662.469,
+    "emit": 0.00020800000000000001,
+    "total": 73147.09670800001
   },
   "counts": {
     "files": 5332,
@@ -44,5 +44,5 @@
     "source_bytes": 0,
     "diagnostics": 10198
   },
-  "rss_peak_bytes": 3027288064
+  "rss_peak_bytes": 3028926464
 }
