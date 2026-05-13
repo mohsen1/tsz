@@ -539,3 +539,72 @@ type T = readonly Array<string>;
         "Should emit TS1354 for 'readonly Array<string>'"
     );
 }
+
+// =========================================================================
+// DeepReadonly with Function branch – nested property TS2540 (issue #6591)
+// =========================================================================
+
+const DEEP_READONLY_PREAMBLE: &str = r"
+type DeepReadonly<T> = T extends Function
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+
+interface Nested {
+  a: {
+    b: {
+      c: number;
+    };
+  };
+  fn: () => void;
+}
+
+type DRN = DeepReadonly<Nested>;
+declare const drn: DRN;
+";
+
+#[test]
+fn test_deep_readonly_function_branch_all_levels_error() {
+    for (expr, label) in [
+        ("drn.a = { b: { c: 1 } };", "level 1 (drn.a)"),
+        ("drn.a.b = { c: 1 };", "level 2 (drn.a.b)"),
+        ("drn.a.b.c = 5;", "level 3 (drn.a.b.c)"),
+    ] {
+        let source = format!("{DEEP_READONLY_PREAMBLE}\n{expr}");
+        assert!(
+            has_error_with_code(&source, 2540),
+            "Should emit TS2540 at {label}"
+        );
+    }
+}
+
+#[test]
+fn test_deep_readonly_without_function_branch_nested_errors() {
+    let source = r"
+type DR<T> = { readonly [K in keyof T]: DR<T[K]> };
+declare const drn: DR<{ a: { b: { c: number } } }>;
+drn.a.b = { c: 1 };
+drn.a.b.c = 5;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Without Function branch: should still emit TS2540 for nested properties"
+    );
+}
+
+#[test]
+fn test_deep_readonly_function_branch_no_false_positive_on_mutable() {
+    let source = r"
+interface Nested {
+  a: { b: { c: number } };
+}
+declare const obj: Nested;
+obj.a.b = { c: 1 };
+obj.a.b.c = 5;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for mutable nested properties"
+    );
+}
