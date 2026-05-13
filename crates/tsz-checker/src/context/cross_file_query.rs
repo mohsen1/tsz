@@ -19,7 +19,7 @@
 //! resolved" (`None`), while these helpers collapse `UNKNOWN` to `None` for
 //! the (more common) "treat as cache miss" semantics.
 
-use tsz_binder::SymbolId;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::perf_counters::{CrossFileCacheMissCause, record_cross_file_cache_miss_cause};
 
 use crate::query_boundaries::common::type_id_is_known_to_db;
@@ -28,18 +28,96 @@ use crate::state_type_analysis::cross_file::CrossFileQueryKind;
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
-    /// Look up a cached cross-file symbol-type via the canonical
-    /// `CrossFileQueryKind::SymbolType` bucket.
-    ///
-    /// Returns `None` when:
-    /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
-    /// - the bucket has no entry for `(sym_id, file_idx)`, or
-    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`,
-    /// - the cached non-intrinsic `TypeId` is not interned in this checker.
-    pub fn cached_cross_file_symbol_type(
+    pub fn program_has_module_augmentations(&self) -> bool {
+        if self
+            .global_module_augmentations_index
+            .as_ref()
+            .is_some_and(|index| !index.is_empty())
+            || self
+                .global_augmentation_targets_index
+                .as_ref()
+                .is_some_and(|index| !index.is_empty())
+        {
+            return true;
+        }
+
+        self.all_binders.as_ref().is_some_and(|binders| {
+            binders.iter().any(|binder| {
+                !binder.module_augmentations.is_empty()
+                    || !binder.augmentation_target_modules.is_empty()
+            })
+        }) || !self.binder.module_augmentations.is_empty()
+            || !self.binder.augmentation_target_modules.is_empty()
+    }
+
+    pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
+        self.definition_store.source_file_symbol_type_cache_scope()
+    }
+
+    pub fn symbol_arena_symbol_type_cache_is_stable(
+        &self,
+        sym_id: SymbolId,
+        delegate_arena: &tsz_parser::NodeArena,
+    ) -> bool {
+        let Some(symbol) = self.cross_file_cache_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
+            || symbol.declarations.len() != 1
+        {
+            return false;
+        }
+
+        // The `symbol_arenas` map stores one arena for the symbol, but merged
+        // or augmented symbols can also have declarations in other arenas. A
+        // cached symbol type is reusable only for the small stable slice where
+        // the single class/interface declaration is proven to belong solely to
+        // the delegated source-file arena.
+        symbol.declarations.iter().all(|&decl_idx| {
+            self.binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .is_some_and(|arenas| {
+                    arenas.len() == 1 && std::ptr::eq(arenas[0].as_ref(), delegate_arena)
+                })
+        })
+    }
+
+    fn cross_file_cache_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
+        if let Some(file_idx) = self.resolve_symbol_file_index(sym_id)
+            && let Some(binder) = self.get_binder_for_file(file_idx)
+            && let Some(sym) = binder.get_symbol(sym_id)
+        {
+            return Some(sym);
+        }
+        if let Some(sym) = self.binder.get_symbol(sym_id) {
+            return Some(sym);
+        }
+        for lib in self.lib_contexts.iter() {
+            if let Some(sym) = lib.binder.get_symbol(sym_id) {
+                return Some(sym);
+            }
+        }
+        if let Some(binders) = &self.all_binders {
+            for binder in binders.iter() {
+                if let Some(sym) = binder.get_symbol(sym_id) {
+                    return Some(sym);
+                }
+            }
+        }
+        None
+    }
+
+    const fn source_file_symbol_type_requester_key(requester_file_idx: u32) -> u32 {
+        requester_file_idx.saturating_add(1)
+    }
+
+    fn cached_symbol_type_entry(
         &self,
         sym_id: SymbolId,
         file_idx: u32,
+        secondary: u32,
+        args_hash: u64,
     ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         if !self.share_owner_symbol_type_results {
             record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
@@ -49,8 +127,8 @@ impl<'a> CheckerContext<'a> {
             CrossFileQueryKind::SymbolType.as_storage_kind(),
             file_idx,
             sym_id.0,
-            0,
-            0,
+            secondary,
+            args_hash,
         ) else {
             record_cross_file_cache_miss_cause(CrossFileCacheMissCause::BucketEmpty);
             return None;
@@ -69,19 +147,49 @@ impl<'a> CheckerContext<'a> {
         Some((cached_type, params))
     }
 
-    /// Cache a cross-file symbol-type result in the canonical
+    /// Look up a cached cross-file symbol-type via the canonical
     /// `CrossFileQueryKind::SymbolType` bucket.
     ///
-    /// No-op when:
-    /// - the share-owner gate is off, or
-    /// - `type_id` is `TypeId::ERROR` / `TypeId::UNKNOWN` (sentinel values
-    ///   would poison the cache for repeat lookups).
-    ///
-    /// First-writer-wins via `DashMap::entry().or_insert_with(...)`.
-    pub fn cache_cross_file_symbol_type(
+    /// Returns `None` when:
+    /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
+    /// - the bucket has no entry for `(sym_id, file_idx)`, or
+    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`,
+    /// - the cached non-intrinsic `TypeId` is not interned in this checker.
+    pub fn cached_cross_file_symbol_type(
         &self,
         sym_id: SymbolId,
         file_idx: u32,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        self.cached_symbol_type_entry(sym_id, file_idx, 0, 0)
+    }
+
+    /// Look up a cached source-file symbol-arena delegation result.
+    ///
+    /// Unlike genuine cross-file symbol targets, source-file symbol-arena
+    /// answers can depend on the requesting file's import/diagnostic context
+    /// and the virtual program that produced small file/symbol ids. Those
+    /// entries therefore use requester and program scope key slots.
+    pub fn cached_source_file_symbol_arena_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        scope: u64,
+        requester_file_idx: u32,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        self.cached_symbol_type_entry(
+            sym_id,
+            file_idx,
+            Self::source_file_symbol_type_requester_key(requester_file_idx),
+            scope,
+        )
+    }
+
+    fn cache_symbol_type_entry(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        secondary: u32,
+        args_hash: u64,
         type_id: tsz_solver::TypeId,
         type_params: Vec<tsz_solver::TypeParamInfo>,
     ) {
@@ -98,8 +206,48 @@ impl<'a> CheckerContext<'a> {
             CrossFileQueryKind::SymbolType.as_storage_kind(),
             file_idx,
             sym_id.0,
-            0,
-            0,
+            secondary,
+            args_hash,
+            type_id,
+            type_params,
+        );
+    }
+
+    /// Cache a cross-file symbol-type result in the canonical
+    /// `CrossFileQueryKind::SymbolType` bucket.
+    ///
+    /// No-op when:
+    /// - the share-owner gate is off, or
+    /// - `type_id` is `TypeId::ERROR` / `TypeId::UNKNOWN` (sentinel values
+    ///   would poison the cache for repeat lookups).
+    ///
+    /// First-writer-wins via `DashMap::entry().or_insert_with(...)`.
+    pub fn cache_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        type_id: tsz_solver::TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        self.cache_symbol_type_entry(sym_id, file_idx, 0, 0, type_id, type_params);
+    }
+
+    /// Cache a source-file symbol-arena delegation result under requester and
+    /// program scoped key slots. See [`cached_source_file_symbol_arena_type`].
+    pub fn cache_source_file_symbol_arena_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        scope: u64,
+        requester_file_idx: u32,
+        type_id: tsz_solver::TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        self.cache_symbol_type_entry(
+            sym_id,
+            file_idx,
+            Self::source_file_symbol_type_requester_key(requester_file_idx),
+            scope,
             type_id,
             type_params,
         );
@@ -409,6 +557,58 @@ mod tests {
         );
         assert_eq!(
             ctx.cached_cross_file_class_instance_type(SymbolId(13), 7),
+            None
+        );
+    }
+
+    #[test]
+    fn source_file_symbol_type_cache_keys_scope_and_requester() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+        let ctx = shared_context(&arena, &binder, &types, store);
+        let sym_id = SymbolId(11);
+        let file_idx = 7;
+        let scope = 0xCAFE_BABE_DEAD_BEEF;
+        let requester_file_idx = 3;
+
+        ctx.cache_cross_file_symbol_type(sym_id, file_idx, TypeId::NUMBER, Vec::new());
+        ctx.cache_source_file_symbol_arena_type(
+            sym_id,
+            file_idx,
+            scope,
+            requester_file_idx,
+            TypeId::STRING,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            ctx.cached_cross_file_symbol_type(sym_id, file_idx)
+                .map(|(type_id, _)| type_id),
+            Some(TypeId::NUMBER)
+        );
+        assert_eq!(
+            ctx.cached_source_file_symbol_arena_type(sym_id, file_idx, scope, requester_file_idx)
+                .map(|(type_id, _)| type_id),
+            Some(TypeId::STRING)
+        );
+        assert_eq!(
+            ctx.cached_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                scope,
+                requester_file_idx + 1
+            ),
+            None
+        );
+        assert_eq!(
+            ctx.cached_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                scope + 1,
+                requester_file_idx
+            ),
             None
         );
     }

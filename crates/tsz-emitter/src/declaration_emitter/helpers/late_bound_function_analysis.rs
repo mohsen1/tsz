@@ -113,6 +113,43 @@ impl<'a> DeclarationEmitter<'a> {
             && Self::is_late_bound_reserved_binding_name(property_name_text)
     }
 
+    fn is_late_bound_contextual_keyword_property_name(text: &str) -> bool {
+        matches!(
+            text,
+            "abstract"
+                | "as"
+                | "asserts"
+                | "any"
+                | "async"
+                | "await"
+                | "boolean"
+                | "constructor"
+                | "declare"
+                | "get"
+                | "infer"
+                | "is"
+                | "keyof"
+                | "module"
+                | "namespace"
+                | "never"
+                | "readonly"
+                | "require"
+                | "number"
+                | "object"
+                | "set"
+                | "string"
+                | "symbol"
+                | "type"
+                | "undefined"
+                | "unique"
+                | "unknown"
+                | "from"
+                | "global"
+                | "bigint"
+                | "of"
+        )
+    }
+
     fn late_bound_synthetic_member_name(index: usize) -> String {
         let mut counter = index;
         if counter >= 8 {
@@ -808,6 +845,23 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn generate_unique_namespace_member_name(
+        &self,
+        base: &str,
+        reserved_member_names: &FxHashSet<String>,
+    ) -> String {
+        let mut i = 1usize;
+        loop {
+            let candidate = format!("{base}_{i}");
+            if !self.reserved_names.contains(&candidate)
+                && !reserved_member_names.contains(&candidate)
+            {
+                return candidate;
+            }
+            i += 1;
+        }
+    }
+
     pub(in crate::declaration_emitter) fn emit_ts_late_bound_function_namespace_from_members(
         &mut self,
         name_idx: NodeIndex,
@@ -856,22 +910,28 @@ impl<'a> DeclarationEmitter<'a> {
             .filter_map(|member| member.namespace_member_name.clone())
             .collect();
         let mut synthetic_member_count = 0usize;
+        let mut emitted_keyword_export_alias = false;
         for member in namespace_members {
             let mut export_alias = None;
             let namespace_member_name = if let Some(namespace_member_name) =
                 member.namespace_member_name.as_deref()
             {
-                if self.source_is_js_file && self.reserved_names.contains(namespace_member_name) {
-                    let synthetic_name = self.generate_unique_name(namespace_member_name);
-                    self.reserved_names.insert(synthetic_name.clone());
+                if self.source_is_js_file
+                    && (self.reserved_names.contains(namespace_member_name)
+                        || emitted_keyword_export_alias
+                            && !Self::is_late_bound_contextual_keyword_property_name(
+                                namespace_member_name,
+                            ))
+                {
+                    let synthetic_name = self.generate_unique_namespace_member_name(
+                        namespace_member_name,
+                        &reserved_member_names,
+                    );
+                    reserved_member_names.insert(synthetic_name.clone());
                     export_alias =
                         Some((synthetic_name.clone(), namespace_member_name.to_string()));
                     synthetic_name
                 } else {
-                    if self.source_is_js_file {
-                        self.reserved_names
-                            .insert(namespace_member_name.to_string());
-                    }
                     namespace_member_name.to_string()
                 }
             } else {
@@ -890,9 +950,6 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
                 };
-                if self.source_is_js_file {
-                    self.reserved_names.insert(synthetic_name.clone());
-                }
                 export_alias = Some((synthetic_name.clone(), member.property_name_text.clone()));
                 synthetic_name
             };
@@ -925,6 +982,8 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     export_aliases.push((local_name, exported_name));
                 }
+                emitted_keyword_export_alias |=
+                    Self::is_late_bound_reserved_binding_name(&member.property_name_text);
             }
         }
         if !export_aliases.is_empty() {
