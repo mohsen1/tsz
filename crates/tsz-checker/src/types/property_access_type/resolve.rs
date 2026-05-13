@@ -489,6 +489,11 @@ impl<'a> CheckerState<'a> {
             && !self.is_super_expression(access.expression)
         {
             let property_name = &ident.escaped_text;
+            let prop_atom = if ident.atom != tsz_common::interner::Atom::none() {
+                ident.atom
+            } else {
+                self.ctx.types.intern_string(property_name)
+            };
 
             // TOP-LEVEL CACHE: check the dedicated optional_chain_cache first.
             // This is keyed by (object_type_with_nullish, prop_atom) and stores
@@ -498,17 +503,12 @@ impl<'a> CheckerState<'a> {
             // Only used when flow narrowing is skipped (skip_result_flow_for_result),
             // which guarantees the result is context-independent.
             if skip_result_flow_for_result {
-                let oc_atom = if ident.atom != tsz_common::interner::Atom::none() {
-                    ident.atom
-                } else {
-                    self.ctx.types.intern_string(property_name)
-                };
                 if let Some(&cached) = self
                     .ctx
                     .narrowing_cache
                     .optional_chain_cache
                     .borrow()
-                    .get(&(object_type, oc_atom))
+                    .get(&(object_type, prop_atom))
                 {
                     return cached;
                 }
@@ -516,6 +516,11 @@ impl<'a> CheckerState<'a> {
 
             let (non_nullish_base, base_nullish) = self.split_nullish_type(object_type);
             let Some(non_nullish_base) = non_nullish_base else {
+                self.error_property_not_exist_at(
+                    property_name,
+                    TypeId::NEVER,
+                    access.name_or_argument,
+                );
                 return TypeId::UNDEFINED;
             };
 
@@ -525,13 +530,6 @@ impl<'a> CheckerState<'a> {
                 .is_none()
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
-                // PERF: Reuse the pre-interned atom from the identifier when available,
-                // avoiding a DashMap lookup in intern_string on every property access.
-                let prop_atom = if ident.atom != tsz_common::interner::Atom::none() {
-                    ident.atom
-                } else {
-                    self.ctx.types.intern_string(property_name)
-                };
 
                 // property_cache stores Option<TypeId>: Some(id) = resolved type,
                 // None = property not found (fall through for TS2339 diagnostics).

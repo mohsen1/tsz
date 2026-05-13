@@ -30,11 +30,9 @@ fn diags_strict(source: &str) -> Vec<(u32, String)> {
 }
 
 fn has_ts2339_never(diags: &[(u32, String)], prop: &str) -> bool {
-    diags.iter().any(|(c, m)| {
-        *c == 2339
-            && m.contains(&format!("'{prop}'"))
-            && m.contains("'never'")
-    })
+    diags
+        .iter()
+        .any(|(c, m)| *c == 2339 && m.contains(&format!("'{prop}'")) && m.contains("'never'"))
 }
 
 #[test]
@@ -88,7 +86,9 @@ fn element_access_on_literal_null() {
     let source = "const z = null?.[\"valueOf\"];\n";
     let diags = diags_strict(source);
     assert!(
-        diags.iter().any(|(c, m)| *c == 2339 && m.contains("'never'")),
+        diags
+            .iter()
+            .any(|(c, m)| *c == 2339 && m.contains("'never'")),
         "expected TS2339 / 'never' for `null?.[...]`, got: {diags:?}",
     );
 }
