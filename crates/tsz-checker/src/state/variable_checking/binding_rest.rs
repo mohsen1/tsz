@@ -4,6 +4,7 @@
 //! computing the rest type by omitting named sibling properties.
 
 use crate::query_boundaries::state::checking as query;
+use crate::query_boundaries::type_checking_utilities;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -16,68 +17,101 @@ impl<'a> CheckerState<'a> {
     /// Given `{ a, b, ...rest } = expr`, computes the type of `rest` by removing
     /// the properties named `a` and `b` from the source type.
     ///
+    /// Computed property keys (e.g. `{ [key]: _ }`) whose expressions do not
+    /// resolve to a static string literal are handled separately: for generic
+    /// sources the expression's TypeId is used directly as the second argument
+    /// to `Omit<T, K>`; for concrete sources the expression's type is evaluated
+    /// and, if it resolves to string literals, those names are added to the
+    /// static exclusion set.
+    ///
     /// For union types, the rest type is computed independently for each member
     /// and the results are unioned.
     ///
-    /// For type parameters, the rest type is the type parameter itself. We cannot
-    /// express `Omit<T, K>` directly, so we preserve the type parameter's identity.
-    /// This ensures that when a generic function returns `{ ...rest, b: a }`, the
-    /// return type contains `T` and is properly instantiated at call sites.
+    /// For type parameters, `Omit<T, K>` is constructed when the lib alias is
+    /// available and there is at least one key to omit. Otherwise `T` is
+    /// returned unchanged so the function's inferred return type preserves `T`'s
+    /// identity.
     pub(crate) fn compute_object_rest_type(
         &mut self,
         pattern_idx: NodeIndex,
         parent_type: TypeId,
     ) -> TypeId {
-        // Collect the names of all non-rest sibling properties in this binding pattern.
-        let excluded = self.collect_non_rest_property_names(pattern_idx);
+        let (excluded, computed_key_exprs) = self.collect_non_rest_key_info(pattern_idx);
 
-        // For type parameters, preserve the generic identity. `rest` of
-        // `T extends { a, b }` with `a` excluded is `Omit<T, "a">`. When the
-        // `Omit` lib alias is available and at least one sibling is excluded,
-        // construct `Omit<T, K>` so downstream spread analysis (e.g. TS2783
-        // overwrite detection) sees the correct set of known properties.
-        //
-        // K also includes the constraint's non-spreadable prototype members
-        // (public methods, getters, setters), matching tsc's
-        // `getSpreadType` / `isSpreadablePropertyOfClass` behavior. For
-        // `<T extends A>` with `A` containing public methods, `const { ...r }`
-        // produces `Omit<T, "method" | "getter" | "setter">` even when no
-        // sibling is explicitly destructured.
-        //
-        // When the lib alias isn't available (tests with no `lib.es5`) or
-        // there are no keys to omit, fall back to returning T unchanged so
-        // that the function's inferred return type still preserves T's
-        // identity.
-        let is_type_param = query::type_parameter_constraint(self.ctx.types, parent_type).is_some();
+        let mut computed_string_keys: Vec<String> = Vec::new();
+        let mut computed_key_type_ids: Vec<TypeId> = Vec::new();
+        for &expr_idx in &computed_key_exprs {
+            let key_type = self.get_type_of_node(expr_idx);
+            if matches!(key_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+                continue;
+            }
+            let string_atoms = query::extract_string_literal_keys(self.ctx.types, key_type);
+            if !string_atoms.is_empty() {
+                for atom in string_atoms {
+                    let s = self.ctx.types.resolve_atom(atom).to_string();
+                    if !computed_string_keys.contains(&s) {
+                        computed_string_keys.push(s);
+                    }
+                }
+            } else if type_checking_utilities::get_invalid_index_type_member_strict(
+                self.ctx.types,
+                key_type,
+            )
+            .is_none()
+            {
+                computed_key_type_ids.push(key_type);
+            }
+        }
+
+        // For type parameters, build `Omit<T, K>`. K is the union of static string-literal
+        // types from explicit and computed siblings, non-literal TypeIds from computed key
+        // expressions (e.g. `K` itself), and non-spreadable prototype member names from the
+        // constraint. Fall back to returning `T` unchanged when the lib alias is unavailable
+        // or there are no keys to omit.
+        let is_type_param = query::is_type_parameter(self.ctx.types, parent_type);
         if is_type_param {
-            let unspreadable = self.collect_unspreadable_prototype_names_from(parent_type);
-            let mut keys: Vec<String> = excluded.clone();
-            for name in unspreadable {
-                if !keys.iter().any(|k| k == &name) {
-                    keys.push(name);
+            let mut string_keys: Vec<String> = excluded;
+            for name in &computed_string_keys {
+                if !string_keys.iter().any(|k| k == name) {
+                    string_keys.push(name.clone());
                 }
             }
-            if !keys.is_empty()
+            let unspreadable = self.collect_unspreadable_prototype_names_from(parent_type);
+            for name in unspreadable {
+                if !string_keys.iter().any(|k| k == &name) {
+                    string_keys.push(name);
+                }
+            }
+            if (!string_keys.is_empty() || !computed_key_type_ids.is_empty())
                 && let Some(omit_type) = self.resolve_lib_type_by_name("Omit")
             {
                 let factory = self.ctx.types.factory();
-                let literal_ids: Vec<TypeId> =
-                    keys.iter().map(|n| factory.literal_string(n)).collect();
-                let key_arg = if literal_ids.len() == 1 {
-                    literal_ids[0]
+                let mut key_args: Vec<TypeId> = string_keys
+                    .iter()
+                    .map(|n| factory.literal_string(n))
+                    .collect();
+                key_args.extend_from_slice(&computed_key_type_ids);
+                let key_arg = if key_args.len() == 1 {
+                    key_args[0]
                 } else {
-                    factory.union(literal_ids)
+                    factory.union(key_args)
                 };
                 return factory.application(omit_type, vec![parent_type, key_arg]);
             }
             return parent_type;
         }
 
-        // For union types, compute rest type for each member and union them.
+        let mut all_excluded = excluded;
+        for s in computed_string_keys {
+            if !all_excluded.contains(&s) {
+                all_excluded.push(s);
+            }
+        }
+
         if let Some(members) = query::union_members(self.ctx.types, parent_type) {
             let rest_types: Vec<TypeId> = members
                 .iter()
-                .map(|&m| self.omit_properties_from_type(m, &excluded))
+                .map(|&m| self.omit_properties_from_type(m, &all_excluded))
                 .collect();
             return if rest_types.len() == 1 {
                 rest_types[0]
@@ -86,20 +120,34 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        self.omit_properties_from_type(parent_type, &excluded)
+        self.omit_properties_from_type(parent_type, &all_excluded)
     }
 
     /// Collect static property names from all non-rest sibling elements in
     /// an object binding pattern.
     pub(crate) fn collect_non_rest_property_names(&self, pattern_idx: NodeIndex) -> Vec<String> {
+        self.collect_non_rest_key_info(pattern_idx).0
+    }
+
+    /// Single-pass traversal of an object binding pattern's non-rest sibling elements.
+    ///
+    /// Returns `(static_names, dynamic_computed_expr_indices)` where:
+    /// - `static_names`: keys that resolve to a string at parse time (shorthand,
+    ///   identifier, string literal, or computed string-literal).
+    /// - `dynamic_computed_expr_indices`: expression `NodeIndex`es for computed keys
+    ///   that could not be resolved to a static string — the caller must look up their
+    ///   types to handle them.
+    fn collect_non_rest_key_info(&self, pattern_idx: NodeIndex) -> (Vec<String>, Vec<NodeIndex>) {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
 
         let mut names = Vec::new();
+        let mut dynamic_exprs = Vec::new();
+
         for &element_idx in pattern_data.elements.nodes.iter() {
             if element_idx.is_none() {
                 continue;
@@ -113,48 +161,47 @@ impl<'a> CheckerState<'a> {
             let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
                 continue;
             };
-            // Skip rest elements — they are the target, not excluded.
             if element_data.dot_dot_dot_token {
                 continue;
             }
-            // Extract the property name (same logic as the main property_name extraction).
-            let prop_name = if element_data.property_name.is_some() {
-                if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                    if let Some(keyword) =
-                        SyntaxKind::try_from_u16(prop_node.kind).and_then(keyword_to_text_static)
+
+            if element_data.property_name.is_some() {
+                let Some(prop_node) = self.ctx.arena.get(element_data.property_name) else {
+                    continue;
+                };
+                if let Some(keyword) =
+                    SyntaxKind::try_from_u16(prop_node.kind).and_then(keyword_to_text_static)
+                {
+                    names.push(keyword.to_string());
+                } else if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
+                    names.push(ident.escaped_text.clone());
+                } else if let Some(lit) = self.ctx.arena.get_literal(prop_node) {
+                    names.push(lit.text.clone());
+                } else if let Some(computed) = self.ctx.arena.get_computed_property(prop_node) {
+                    if let Some(lit) = self
+                        .ctx
+                        .arena
+                        .get(computed.expression)
+                        .and_then(|expr| self.ctx.arena.get_literal(expr))
                     {
-                        Some(keyword.to_string())
-                    } else if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
-                        Some(ident.escaped_text.clone())
-                    } else if let Some(lit) = self.ctx.arena.get_literal(prop_node) {
-                        // String literal property name: { 'b': renamed }
-                        Some(lit.text.clone())
-                    } else if let Some(computed) = self.ctx.arena.get_computed_property(prop_node) {
-                        // Computed property with string literal: { ['b']: renamed }
-                        self.ctx
-                            .arena
-                            .get(computed.expression)
-                            .and_then(|expr| self.ctx.arena.get_literal(expr))
-                            .map(|lit| lit.text.clone())
+                        // Computed key with string literal: `{ ['b']: v }`.
+                        names.push(lit.text.clone());
                     } else {
-                        None
+                        // Dynamic computed key: `{ [key]: v }` — caller resolves the type.
+                        dynamic_exprs.push(computed.expression);
                     }
-                } else {
-                    None
                 }
-            } else {
-                // Shorthand: { x } — the name itself is the property name.
-                self.ctx
-                    .arena
-                    .get(element_data.name)
-                    .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone())
-            };
-            if let Some(name) = prop_name {
-                names.push(name);
+            } else if let Some(ident) = self
+                .ctx
+                .arena
+                .get(element_data.name)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+            {
+                names.push(ident.escaped_text.clone());
             }
         }
-        names
+
+        (names, dynamic_exprs)
     }
 
     /// Collect the names of public prototype members (methods, getters,

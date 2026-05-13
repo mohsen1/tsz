@@ -370,6 +370,10 @@ name = "ts2353_mapped_template_literal_key_tests"
 path = "tests/ts2353_mapped_template_literal_key_tests.rs"
 
 [[test]]
+name = "ts2353_generic_constraint_excess_property_tests"
+path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
+
+[[test]]
 name = "ts2677_intersection_predicate_tests"
 path = "tests/ts2677_intersection_predicate_tests.rs"
 
@@ -836,6 +840,10 @@ path = "tests/jsdoc_param_return_ts2314_tests.rs"
 [[test]]
 name = "destructuring_rest_omit_unspreadable_tests"
 path = "tests/destructuring_rest_omit_unspreadable_tests.rs"
+
+[[test]]
+name = "destructuring_rest_computed_key_omit_tests"
+path = "tests/destructuring_rest_computed_key_omit_tests.rs"
 
 [[test]]
 name = "super_keyword_speculation_survival_tests"

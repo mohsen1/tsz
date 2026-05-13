@@ -1673,11 +1673,17 @@ impl<'a> TypeInstantiator<'a> {
                 // (which has a proper TypeResolver) handle the full expansion.
                 let has_lazy_application =
                     template_has_lazy_application_in_composite(self.interner, new_template);
+                // Same hazard for the `as` clause: a Lazy alias application in
+                // `name_type` collapses to `never` under NoopResolver eager
+                // evaluation, filtering out every key.
+                let name_type_has_lazy_application = new_name_type
+                    .is_some_and(|nt| type_contains_lazy_application(self.interner, nt));
                 let resolver_dependent_constraint =
                     mapped_constraint_needs_resolver(self.interner, new_constraint);
                 if self.preserve_meta_types
                     || has_lazy_extends
                     || has_lazy_application
+                    || name_type_has_lazy_application
                     || resolver_dependent_constraint
                 {
                     mapped_type
@@ -2476,6 +2482,26 @@ pub fn substitute_this_type_at_return_position(
 /// We intentionally do NOT match a top-level Application (e.g. `Selector<S, T[K]>`)
 /// because the evaluator correctly passes those through as-is.  Only unions/
 /// intersections are at risk of member loss.
+fn type_is_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+
+    let Some(TypeData::Application(app_id)) = interner.lookup(type_id) else {
+        return false;
+    };
+    let app = interner.type_application(app_id);
+    !app.base.is_intrinsic() && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
+}
+
+/// Check whether `type_id` is a lazy application, or a union/intersection whose
+/// immediate members contain one.
+///
+/// This intentionally does not recursively inspect arbitrary nested types.
+/// Eager evaluation only loses members for the immediate mapped-template shape;
+/// recursive matching also catches unrelated implementation details and can
+/// change assignability/display behavior for conditionals that should still be
+/// evaluated in place.
 fn template_has_lazy_application_in_composite(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
@@ -2489,18 +2515,7 @@ fn template_has_lazy_application_in_composite(
     match data {
         TypeData::Union(members) | TypeData::Intersection(members) => {
             let list = interner.type_list(members);
-            list.iter().any(|&m| {
-                if m.is_intrinsic() {
-                    return false;
-                }
-                if let Some(TypeData::Application(app_id)) = interner.lookup(m) {
-                    let app = interner.type_application(app_id);
-                    !app.base.is_intrinsic()
-                        && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
-                } else {
-                    false
-                }
-            })
+            list.iter().any(|&m| type_is_lazy_application(interner, m))
         }
         TypeData::Conditional(cond_id) => {
             let cond = interner.get_conditional(cond_id);
@@ -2509,6 +2524,22 @@ fn template_has_lazy_application_in_composite(
         }
         _ => false,
     }
+}
+
+/// Check whether `type_id` reaches an `Application(Lazy(_), _)` anywhere in
+/// its structure.
+///
+/// `NoopResolver` cannot expand `Lazy` alias bodies, so eagerly evaluating
+/// a type that contains such an application silently folds it into `never`.
+/// Callers defer evaluation to an outer evaluator with a real resolver.
+fn type_contains_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
+        let TypeData::Application(app_id) = key else {
+            return false;
+        };
+        let app = interner.type_application(*app_id);
+        matches!(interner.lookup(app.base), Some(TypeData::Lazy(_)))
+    })
 }
 
 /// Check whether a mapped constraint needs a real resolver before it can be
