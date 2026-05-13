@@ -910,7 +910,7 @@ impl<'a> DeclarationEmitter<'a> {
             .filter_map(|member| member.namespace_member_name.clone())
             .collect();
         let mut synthetic_member_count = 0usize;
-        let mut emitted_export_alias = false;
+        let mut emitted_keyword_export_alias = false;
         for member in namespace_members {
             let mut export_alias = None;
             let namespace_member_name = if let Some(namespace_member_name) =
@@ -918,7 +918,7 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 if self.source_is_js_file
                     && (self.reserved_names.contains(namespace_member_name)
-                        || emitted_export_alias
+                        || emitted_keyword_export_alias
                             && !Self::is_late_bound_contextual_keyword_property_name(
                                 namespace_member_name,
                             ))
@@ -982,7 +982,8 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     export_aliases.push((local_name, exported_name));
                 }
-                emitted_export_alias = true;
+                emitted_keyword_export_alias |=
+                    Self::is_late_bound_reserved_binding_name(&member.property_name_text);
             }
         }
         if !export_aliases.is_empty() {

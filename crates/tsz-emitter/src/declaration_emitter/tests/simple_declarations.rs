@@ -2810,6 +2810,7 @@ function foo() {}
 foo.null = true;
 
 function bar() {}
+bar.async = true;
 bar.normal = false;
 
 function baz() {}
@@ -2825,13 +2826,15 @@ declare namespace foo {
 }
 declare function bar(): void;
 declare namespace bar {
+    let async: boolean;
     let normal: boolean;
 }
 declare function baz(): void;
 declare namespace baz {
     let _class: boolean;
     export { _class as class };
-    export let normal: boolean;
+    let normal_1: boolean;
+    export { normal_1 as normal };
 }"#;
     assert!(
         output.contains(expected),
