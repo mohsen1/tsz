@@ -849,6 +849,14 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text = if has_initializer {
+                    self.add_initializer_object_member_comments_to_type_text(
+                        initializer,
+                        &selected_type_text,
+                    )
+                } else {
+                    selected_type_text
+                };
                 let selected_type_text =
                     Self::normalize_inferred_array_any_text(&selected_type_text);
                 let selected_type_text = if has_initializer {
@@ -918,6 +926,14 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(decl_idx)
                 .map_or(init_node.end, |node| node.end);
             self.skip_comments_before_raw(skip_end);
+        }
+        if has_initializer
+            && let Some(init_node) = self.arena.get(initializer)
+            && (init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || init_node.kind == syntax_kind_ext::AS_EXPRESSION
+                || init_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+        {
+            self.skip_comments_in_node(init_node.pos, init_node.end);
         }
     }
 
