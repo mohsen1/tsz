@@ -148,6 +148,42 @@ export {};
 }
 
 #[test]
+fn accessor_modifier_below_es2015_reports_ts18045() {
+    let temp = TempDir::new("accessor_modifier_below_es2015").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"class Counter {
+    accessor count = 0;
+}
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es5",
+            "--ignoreDeprecations",
+            "6.0",
+            "--pretty",
+            "false",
+            "test.ts",
+        ],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(code, 0, "ES5 accessor property should fail");
+    assert!(
+        output.contains("error TS18045: Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher."),
+        "expected TS18045 for ES5 accessor property, got:\n{output}"
+    );
+}
+
+#[test]
 fn tsconfig_output_only_flags_accept_jsonc_trailing_commas() {
     let temp = TempDir::new("output_only_flags_jsonc").expect("temp dir");
     write_file(
@@ -1078,6 +1114,54 @@ fn array_values_iterator_helpers_do_not_report_missing_members() {
     assert_eq!(
         code, 0,
         "array iterator helpers should type-check without false diagnostics:\n{output}"
+    );
+}
+
+#[test]
+fn esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("esnext_disposable_symbols").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"class Resource {
+  constructor(public name: string) {}
+  [Symbol.dispose](): void {}
+}
+
+function useResource() {
+  using resource = new Resource("test");
+  const _name: string = resource.name;
+}
+
+class AsyncResource {
+  constructor(public name: string) {}
+  async [Symbol.asyncDispose](): Promise<void> {
+    await Promise.resolve();
+  }
+}
+
+async function useAsyncResource() {
+  await using resource = new AsyncResource("async-test");
+  const _name: string = resource.name;
+}
+
+export {};
+"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit", "--strict", "--lib", "esnext", "--pretty", "false", "test.ts",
+        ],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "--lib esnext should load disposable symbols and avoid unrelated builtin lib diagnostics:\n{output}"
     );
 }
 
