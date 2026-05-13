@@ -11,7 +11,7 @@
 
 use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -132,6 +132,41 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing interface data - propagate error
         };
         let interface_symbol = self.ctx.binder.get_node_symbol(idx);
+
+        let own_type_param_names: FxHashSet<String> = interface
+            .type_parameters
+            .as_ref()
+            .map(|params| {
+                params
+                    .nodes
+                    .iter()
+                    .filter_map(|&param_idx| {
+                        self.ctx
+                            .arena
+                            .get(param_idx)
+                            .and_then(|param_node| self.ctx.arena.get_type_parameter(param_node))
+                            .and_then(|param| {
+                                self.ctx
+                                    .arena
+                                    .get(param.name)
+                                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                                    .map(|ident| ident.escaped_text.clone())
+                            })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut hidden_merged_type_params = Vec::new();
+        if let Some(sym_id) = interface_symbol {
+            for param in self.get_type_params_for_symbol(sym_id) {
+                let name = self.ctx.types.resolve_atom_ref(param.name).to_string();
+                if !own_type_param_names.contains(&name)
+                    && let Some(previous) = self.ctx.type_parameter_scope.remove(&name)
+                {
+                    hidden_merged_type_params.push((name, previous));
+                }
+            }
+        }
 
         let (_interface_type_params, interface_type_param_updates) =
             self.push_type_parameters(&interface.type_parameters);
@@ -606,6 +641,9 @@ impl<'a> CheckerState<'a> {
         };
 
         self.pop_type_parameters(interface_type_param_updates);
+        for (name, type_id) in hidden_merged_type_params {
+            self.ctx.type_parameter_scope.insert(name, type_id);
+        }
         self.merge_interface_heritage_types(std::slice::from_ref(&idx), result)
     }
 
