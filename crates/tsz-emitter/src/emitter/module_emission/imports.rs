@@ -1194,6 +1194,8 @@ impl<'a> Printer<'a> {
         };
         let is_external = module_node.is_string_literal()
             || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
+        let is_node_esm_external =
+            is_external && self.ctx.options.resolved_node_module_to_esm && !self.in_namespace_iife;
 
         if self.recovered_module_syntax_block_depth > 0 && is_external && !is_exported_var {
             self.write("import ");
@@ -1310,6 +1312,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if is_node_esm_external && is_exported_var {
+            self.write_var_or_const();
+            self.emit_decl_name(import.import_clause);
+            self.write(" = ");
+            self.emit_node_esm_import_equals_require(module_node);
+            self.write_semicolon();
+            self.write_line();
+            self.write("export { ");
+            self.emit_decl_name(import.import_clause);
+            self.write(" }");
+            return;
+        }
+
         if is_exported_var {
             // Emit directly as `exports.b = ...;` — the identifier substitution
             // in emit() will produce `exports.b`.
@@ -1328,16 +1343,111 @@ impl<'a> Printer<'a> {
         }
 
         if module_node.is_string_literal() {
-            if let Some(lit) = self.arena.get_literal(module_node) {
-                let spec = self.rewrite_module_spec(&lit.text);
-                self.write("require(\"");
-                self.write(&spec);
-                self.write("\")");
-            }
+            self.emit_import_equals_require_call(module_node, is_node_esm_external);
             return;
         }
 
         self.emit_entity_name(import.module_specifier);
+    }
+
+    fn emit_node_esm_import_equals_require(&mut self, module_node: &Node) {
+        self.emit_import_equals_require_call(module_node, true);
+    }
+
+    fn emit_import_equals_require_call(&mut self, module_node: &Node, use_node_esm_require: bool) {
+        if let Some(lit) = self.arena.get_literal(module_node) {
+            let spec = self.rewrite_module_spec(&lit.text);
+            let require_name = if use_node_esm_require {
+                self.node_esm_require_name()
+            } else {
+                "require".to_string()
+            };
+            self.write(&require_name);
+            self.write("(\"");
+            self.write(&spec);
+            self.write("\")");
+        }
+    }
+
+    pub(in crate::emitter) fn source_needs_node_esm_create_require(
+        &self,
+        statements: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        self.ctx.options.resolved_node_module_to_esm
+            && statements.nodes.iter().any(|&stmt_idx| {
+                self.arena.get(stmt_idx).is_some_and(|stmt| {
+                    if stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                        return self.import_equals_declaration_is_external(stmt);
+                    }
+                    if let Some(export) = self.arena.get_export_decl(stmt)
+                        && let Some(clause_node) = self.arena.get(export.export_clause)
+                        && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    {
+                        return self.import_equals_declaration_is_external(clause_node);
+                    }
+                    false
+                })
+            })
+    }
+
+    pub(in crate::emitter) fn import_equals_declaration_is_external(&self, node: &Node) -> bool {
+        self.arena.get_import_decl(node).is_some_and(|import| {
+            !import.is_type_only
+                && self
+                    .arena
+                    .get(import.module_specifier)
+                    .is_some_and(|module_node| {
+                        module_node.is_string_literal()
+                            || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                    })
+        })
+    }
+
+    pub(in crate::emitter) fn emit_node_esm_create_require_preamble(&mut self) {
+        let (create_require_name, require_name) = self.node_esm_create_require_names();
+        self.write("import { createRequire as ");
+        self.write(&create_require_name);
+        self.write(" } from \"module\";");
+        self.write_line();
+        self.write_var_or_const();
+        self.write(&require_name);
+        self.write(" = ");
+        self.write(&create_require_name);
+        self.write("(import.meta.url);");
+        self.write_line();
+    }
+
+    fn node_esm_require_name(&mut self) -> String {
+        self.node_esm_create_require_names().1
+    }
+
+    fn node_esm_create_require_names(&mut self) -> (String, String) {
+        if let Some(names) = &self.node_esm_create_require_names {
+            return names.clone();
+        }
+        let create_require_name = self.make_unique_exact_or_numbered_name("_createRequire");
+        let require_name = self.make_unique_exact_or_numbered_name("__require");
+        let names = (create_require_name, require_name);
+        self.node_esm_create_require_names = Some(names.clone());
+        names
+    }
+
+    fn make_unique_exact_or_numbered_name(&mut self, base: &str) -> String {
+        if !self.file_identifiers.contains(base) && !self.generated_temp_names.contains(base) {
+            let name = base.to_string();
+            self.generated_temp_names.insert(name.clone());
+            return name;
+        }
+        for suffix in 1..=1000 {
+            let candidate = format!("{base}_{suffix}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+        self.make_unique_name_fresh()
     }
 
     fn namespace_has_prior_import_equals_alias(&self, node: &Node, alias_name: &str) -> bool {

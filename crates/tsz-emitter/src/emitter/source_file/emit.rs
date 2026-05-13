@@ -82,6 +82,7 @@ impl<'a> Printer<'a> {
             self.wrapped_export_module_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.node_esm_create_require_names = None;
         self.commonjs_tslib_import_binding = "tslib_1".to_string();
         self.ctx.arguments_capture_counter = 0;
         self.first_for_of_emitted = false;
@@ -601,6 +602,8 @@ impl<'a> Printer<'a> {
         let will_emit_helpers = !self.ctx.options.no_emit_helpers
             && self.transforms.helpers_populated()
             && self.transforms.helpers().any_needed();
+        let needs_node_esm_create_require_preamble =
+            self.source_needs_node_esm_create_require(&source.statements);
 
         // Pre-compute the detached comment boundary for erased first statements.
         // tsc's algorithm: scan header comment ranges, find the FIRST blank-line
@@ -796,7 +799,9 @@ impl<'a> Printer<'a> {
                     //    the first real statement.
                     let should_defer = (is_commonjs
                         && (is_triple_slash_no_space || (!is_detached && !is_amd_dependency)))
-                        || (will_emit_helpers && !is_detached && !is_amd_dependency);
+                        || ((will_emit_helpers || needs_node_esm_create_require_preamble)
+                            && !is_detached
+                            && !is_amd_dependency);
                     // When JSX auto-import will generate ESM imports, defer
                     // /// <reference> directives so they appear AFTER the import,
                     // matching tsc's ordering.
@@ -853,6 +858,9 @@ impl<'a> Printer<'a> {
             self.jsx_auto_import_text()
         };
         let mut emitted_jsx_esm_import = false;
+        if needs_node_esm_create_require_preamble {
+            self.emit_node_esm_create_require_preamble();
+        }
         if !self.ctx.is_commonjs()
             && let Some(ref jsx_import) = jsx_import_text
         {
