@@ -1713,7 +1713,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             );
         }
 
-        Some(instantiated)
+        // Evaluate the instantiated body before returning. When the distributive
+        // conditional path in TypeInstantiator distributes a union-typed parameter
+        // over conditional branches, it produces a union of unevaluated Conditional
+        // nodes. Those Conditionals must be evaluated here so the SubtypeChecker
+        // sees concrete types (tuples, objects, etc.) rather than structural
+        // Conditional nodes that it cannot directly compare to source types.
+        let evaluated = self.evaluate_type(instantiated);
+        Some(if evaluated != instantiated {
+            evaluated
+        } else {
+            instantiated
+        })
     }
 
     /// Try to expand a Mapped type to its structural form.

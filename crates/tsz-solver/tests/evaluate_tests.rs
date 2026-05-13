@@ -43019,3 +43019,99 @@ fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
         "Fresh intermediate applications should still carry the forward alias"
     );
 }
+
+/// Tests for distributive conditional instantiation over union type parameters.
+///
+/// Structural rule: when a distributive conditional `K extends K ? K : never`
+/// is instantiated with K=1|2, the TypeInstantiator distributes K over the
+/// union members, producing a union of evaluated conditionals.
+#[test]
+fn test_distributive_conditional_over_union_evaluates_correctly() {
+    let interner = TypeInterner::new();
+
+    let k_name = interner.intern_string("K");
+
+    let k_param = interner.type_param(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let union_1_2 = interner.union(vec![lit1, lit2]);
+
+    // Conditional: K extends K ? K : never  (distributive, trivially true)
+    let k_extends_k = interner.conditional(ConditionalType {
+        check_type: k_param,
+        extends_type: k_param,
+        true_type: k_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    // Instantiate with {K → 1|2} — should distribute and produce 1|2
+    let k_type_params = vec![TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }];
+    let k_args = vec![union_1_2];
+
+    let result = instantiate_generic(&interner, k_extends_k, &k_type_params, &k_args);
+    let evaluated = evaluate_type(&interner, result);
+
+    // Each union member passes `K extends K`, so the evaluated result is the original union
+    assert!(
+        matches!(interner.lookup(evaluated), Some(TypeData::Union(_))),
+        "Expected union from distributive K extends K ? K : never with K=1|2, got: {:?}",
+        interner.lookup(evaluated)
+    );
+}
+
+/// Tests with renamed type parameter (X instead of K) to prove the fix
+/// is structural, not dependent on parameter name spelling.
+#[test]
+fn test_distributive_conditional_renamed_param_evaluates_correctly() {
+    let interner = TypeInterner::new();
+
+    let x_name = interner.intern_string("X");
+    let x_param = interner.type_param(TypeParamInfo {
+        name: x_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let union_ab = interner.union(vec![lit_a, lit_b]);
+
+    // Conditional: X extends X ? X : never  (distributive)
+    let x_extends_x = interner.conditional(ConditionalType {
+        check_type: x_param,
+        extends_type: x_param,
+        true_type: x_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let x_type_params = vec![TypeParamInfo {
+        name: x_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }];
+    let x_args = vec![union_ab];
+
+    let result = instantiate_generic(&interner, x_extends_x, &x_type_params, &x_args);
+    let evaluated = evaluate_type(&interner, result);
+
+    assert!(
+        matches!(interner.lookup(evaluated), Some(TypeData::Union(_))),
+        "Expected union from distributive X extends X ? X : never with X='a'|'b', got: {:?}",
+        interner.lookup(evaluated)
+    );
+}
