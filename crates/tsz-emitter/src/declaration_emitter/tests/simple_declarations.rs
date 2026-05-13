@@ -2078,6 +2078,59 @@ export function convert(value) {
 }
 
 #[test]
+fn test_jsdoc_overload_function_declaration_hoists_before_variables() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @template T
+ * @param {T} x
+ * @returns {T}
+ */
+const identity = x => x;
+
+/**
+ * @template T
+ * @template U
+ * @overload
+ * @param {T[]} array
+ * @param {(x: T) => U[]} iterable
+ * @returns {U[]}
+ */
+/**
+ * @template T
+ * @overload
+ * @param {T[][]} array
+ * @returns {T[]}
+ */
+/**
+ * @param {unknown[]} array
+ * @param {(x: unknown) => unknown} iterable
+ * @returns {unknown[]}
+ */
+function flatMap(array, iterable = identity) {
+    return array;
+}
+"#,
+    );
+
+    let flat_map_pos = output
+        .find("declare function flatMap<T, U>(array: T[], iterable: (x: T) => U[]): U[];")
+        .expect("expected first flatMap overload");
+    let identity_pos = output
+        .find("declare function identity<T>(x: T): T;")
+        .expect("expected identity helper declaration");
+
+    assert!(
+        flat_map_pos < identity_pos,
+        "Expected JSDoc overload function declarations before variables: {output}"
+    );
+    assert!(
+        output.contains("declare function flatMap<T>(array: T[][]): T[];"),
+        "Expected second flatMap overload: {output}"
+    );
+}
+
+#[test]
 fn test_jsdoc_constructor_overload_tags_emit_constructor_signatures() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
