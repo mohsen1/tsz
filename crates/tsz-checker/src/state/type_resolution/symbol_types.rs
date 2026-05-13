@@ -68,7 +68,9 @@ impl<'a> CheckerState<'a> {
                     // the class name (e.g., "A") even when the type was resolved via
                     // cross-file delegation and produced a different TypeId than the
                     // original get_class_instance_type_inner call.
-                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    let def_id = self
+                        .ctx
+                        .get_or_create_def_id_for_symbol_name(sym_id, escaped_name);
                     if !params.is_empty() && self.ctx.get_def_type_params(def_id).is_none() {
                         self.ctx.insert_def_type_params(def_id, params);
                     }
@@ -296,12 +298,12 @@ impl<'a> CheckerState<'a> {
                             .iter()
                             .map(|p| p.default.unwrap_or(TypeId::ERROR))
                             .collect();
-                        let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+                        let lazy_type = self.ctx.types.lazy(def_id);
                         let app_type = self.ctx.types.application(lazy_type, default_args);
                         self.ctx.leave_recursion();
                         return app_type;
                     }
-                    let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+                    let lazy_type = self.ctx.types.lazy(def_id);
                     self.ctx.leave_recursion();
                     return lazy_type;
                 }
@@ -891,6 +893,17 @@ impl<'a> CheckerState<'a> {
 
         if declarations.is_empty() {
             return TypeId::ERROR;
+        }
+
+        if self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .is_some_and(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena))
+            && let Some(delegated) = self.delegate_cross_arena_interface_type(sym_id)
+        {
+            return delegated;
         }
 
         let local_interface_decls: Vec<_> = declarations

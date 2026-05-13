@@ -147,7 +147,10 @@ impl<'a> CheckerState<'a> {
         } else {
             tsz_solver::ObjectFlags::empty()
         };
-        if self.enum_kind(sym_id) == Some(EnumKind::Numeric) {
+        if matches!(
+            self.enum_kind(sym_id),
+            Some(EnumKind::Numeric) | Some(EnumKind::Mixed)
+        ) {
             let number_index = Some(IndexSignature {
                 key_type: TypeId::NUMBER,
                 value_type: TypeId::STRING,

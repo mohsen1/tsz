@@ -132,22 +132,20 @@ impl TypeSubstitution {
             }
         }
 
-        // Phase 2: Pre-fill unsupplied type parameters with `error` so that
-        // forward references in defaults resolve to error (silencing downstream
-        // assignability checks). This matches tsc's `fillMissingTypeArguments`
-        // which initializes unsupplied slots to `errorType` before processing
-        // defaults.
+        // Phase 2: Pre-fill unsupplied type parameters with `any` so that
+        // circular and forward references in defaults become any-like instead
+        // of leaking unresolved placeholders into the instantiated type.
         for (i, param) in type_params.iter().enumerate() {
             if i >= type_args.len() {
-                map.insert(param.name, TypeId::ERROR);
+                map.insert(param.name, TypeId::ANY);
             }
         }
 
         // Phase 3: Process defaults in declaration order. Each default is
         // instantiated with the substitution built so far (which includes
-        // explicitly provided args, already-resolved defaults, and `error` for
+        // explicitly provided args, already-resolved defaults, and `any` for
         // not-yet-resolved params). This means a forward reference like `U = V`
-        // where V hasn't been processed yet resolves to `error`, matching tsc.
+        // where V hasn't been processed yet resolves to an any-like type.
         for (i, param) in type_params.iter().enumerate() {
             if i < type_args.len() {
                 continue; // already provided explicitly

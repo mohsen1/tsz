@@ -782,13 +782,15 @@ for line in baseline.read_text(encoding="utf-8", errors="replace").splitlines():
 
 test_dir = Path("TypeScript/tests/cases")
 files = []
+source_suffixes = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
+declaration_suffixes = (".d.ts", ".d.mts", ".d.cts")
 for path in test_dir.rglob("*"):
     if not path.is_file():
         continue
     path_str = path.as_posix()
-    if path.suffix not in {".ts", ".tsx", ".js", ".jsx"}:
+    if path.suffix not in source_suffixes:
         continue
-    if path_str.endswith(".d.ts") or path_str.endswith(".d.mts"):
+    if path_str.endswith(declaration_suffixes):
         continue
     if "/fourslash/" in path_str:
         continue
