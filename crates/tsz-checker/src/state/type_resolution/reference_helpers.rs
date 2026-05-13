@@ -1082,8 +1082,10 @@ impl<'a> CheckerState<'a> {
         self.body_contains_self_referencing_mapped(type_alias.type_node, &sym_name, &param_names)
     }
 
-    /// Recursively check if a type node contains a mapped type that references
-    /// the alias with the same type arguments.
+    /// Returns `true` only when the body contains the pattern `{ [P in K]: Alias<K> }[K]`:
+    /// a mapped type whose template is an identity self-reference, immediately indexed to
+    /// extract a property.  That shape collapses the alias back to itself (infinite instantiation).
+    /// A mapped type appearing directly in the body or as a union member is coinductively valid.
     fn body_contains_self_referencing_mapped(
         &self,
         node_idx: NodeIndex,
@@ -1094,28 +1096,20 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Check if this node is a mapped type with self-reference in template
-        if node.kind == syntax_kind_ext::MAPPED_TYPE
-            && let Some(mapped) = self.ctx.arena.get_mapped_type(node)
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+            && let Some(indexed) = self.ctx.arena.get_indexed_access_type(node)
+            && let Some(obj_node) = self.ctx.arena.get(indexed.object_type)
+            && obj_node.kind == syntax_kind_ext::MAPPED_TYPE
+            && let Some(mapped) = self.ctx.arena.get_mapped_type(obj_node)
             && self.template_has_identity_self_ref(mapped.type_node, name, param_names)
         {
             return true;
         }
 
-        // Special case: index access type like `{ [P in K]: N<T, K> }[K]`
-        // The object type is a mapped type, check if it self-references
-        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
-            && let Some(indexed) = self.ctx.arena.get_indexed_access_type(node)
+        // Skip MAPPED_TYPE (coinductively valid) and CONDITIONAL_TYPE (bounded recursion).
+        if node.kind != syntax_kind_ext::CONDITIONAL_TYPE
+            && node.kind != syntax_kind_ext::MAPPED_TYPE
         {
-            // Check the object type (which may be a mapped type)
-            if self.body_contains_self_referencing_mapped(indexed.object_type, name, param_names) {
-                return true;
-            }
-        }
-
-        // Recurse into children for union types, intersection types, etc.
-        // Skip conditional types as they represent bounded recursion
-        if node.kind != syntax_kind_ext::CONDITIONAL_TYPE {
             for child_idx in self.ctx.arena.get_children(node_idx) {
                 if self.body_contains_self_referencing_mapped(child_idx, name, param_names) {
                     return true;
