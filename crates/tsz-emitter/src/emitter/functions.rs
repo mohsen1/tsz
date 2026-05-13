@@ -2081,9 +2081,7 @@ impl<'a> Printer<'a> {
         param_idx: NodeIndex,
         param: &tsz_parser::parser::node::ParameterData,
     ) -> Option<String> {
-        let Some(source) = self.source_text else {
-            return None;
-        };
+        let source = self.source_text?;
 
         let raw = self
             .arena
