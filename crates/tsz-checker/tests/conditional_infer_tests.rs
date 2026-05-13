@@ -1297,3 +1297,129 @@ type Test = AssertedType<(target: any) => asserts target is number>;
             .collect::<Vec<_>>()
     );
 }
+
+// Tests for fix: try_expand_application must evaluate its instantiated result
+// so that distributive conditionals (K extends K ? [K, ...] : never) are resolved
+// to concrete union-of-tuples before the structural subtype check proceeds.
+//
+// Structural rule: "When an Application type's expanded body contains conditional
+// types from distributive instantiation over a union type parameter, the expanded
+// result must be fully evaluated before subtype comparison."
+
+#[test]
+fn test_permutation_type_with_default_param_and_distribution() {
+    // Case 1 (reported repro): T/K naming, numeric literals
+    let source = r#"
+type MyExclude<T, U> = T extends U ? never : T;
+
+type Permutation<T, K = T> =
+  [T] extends [never]
+    ? []
+    : K extends K
+      ? [K, ...Permutation<MyExclude<T, K>>]
+      : never;
+
+type P = Permutation<1 | 2>;
+
+const p1: P = [1, 2];
+const p2: P = [2, 1];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for Permutation<1|2> assignments, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_permutation_type_renamed_params() {
+    // Case 2: same rule, different type parameter names (A/B instead of T/K)
+    // proves the fix is structural, not dependent on parameter name spelling
+    let source = r#"
+type Rem<A, B> = A extends B ? never : A;
+
+type Perm<A, B = A> =
+  [A] extends [never]
+    ? []
+    : B extends B
+      ? [B, ...Perm<Rem<A, B>>]
+      : never;
+
+type Q = Perm<"x" | "y">;
+
+const q1: Q = ["x", "y"];
+const q2: Q = ["y", "x"];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for Perm<'x'|'y'> with renamed params, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_permutation_type_three_element_union() {
+    // Case 3: larger union (3 members) — ensures distribution over >2 members works
+    let source = r#"
+type MyExclude<T, U> = T extends U ? never : T;
+
+type Permutation<T, K = T> =
+  [T] extends [never]
+    ? []
+    : K extends K
+      ? [K, ...Permutation<MyExclude<T, K>>]
+      : never;
+
+type P3 = Permutation<1 | 2 | 3>;
+
+const pa: P3 = [1, 2, 3];
+const pb: P3 = [2, 1, 3];
+const pc: P3 = [3, 1, 2];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for Permutation<1|2|3> assignments, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_permutation_type_invalid_assignment_still_rejected() {
+    // Case 4 (negative): invalid value must still be rejected — the fix must not
+    // loosen type safety for non-permutation tuples
+    let source = r#"
+type MyExclude<T, U> = T extends U ? never : T;
+
+type Permutation<T, K = T> =
+  [T] extends [never]
+    ? []
+    : K extends K
+      ? [K, ...Permutation<MyExclude<T, K>>]
+      : never;
+
+type P = Permutation<1 | 2>;
+
+const bad: P = [3, 1];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for invalid permutation [3, 1]: P, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}

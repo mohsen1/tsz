@@ -791,7 +791,11 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
-    fn has_class_member_modifier(&self, modifiers: &Option<NodeList>, modifier: u16) -> bool {
+    pub(super) fn has_class_member_modifier(
+        &self,
+        modifiers: &Option<NodeList>,
+        modifier: u16,
+    ) -> bool {
         let Some(mods) = modifiers else {
             return false;
         };
