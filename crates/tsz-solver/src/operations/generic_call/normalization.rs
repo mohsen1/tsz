@@ -100,43 +100,48 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             });
             if constraint_is_primitive {
                 arg_ty
-            } else {
-                let widened = crate::operations::widening::widen_type(
+            } else if let Some(constraint) = constraint {
+                // Widen to check if widening would violate the constraint.
+                // Fresh objects use widen_type (not widen_type_for_inference) to preserve
+                // FRESH_LITERAL, which is required for excess-property checking against the constraint.
+                let widened_for_check = crate::operations::widening::widen_type(
                     self.interner.as_type_database(),
                     arg_ty,
                 );
-                // When a constraint exists and the widened type violates it, fall back
-                // to the unwidened (literal) type. This matches tsc's behavior: for
-                // `<T extends 'a' | 'b'>(x: T)` called with `'a'`, T infers as `"a"`
-                // (not `string`), because widening to `string` would violate the
-                // constraint. Similarly for tuple constraints like
-                // `<T extends [string, string, 'a' | 'b']>(x: T)`.
-                if let Some(constraint) = constraint {
-                    if !self.checker.is_assignable_to(widened, constraint)
-                        && self.checker.is_assignable_to(arg_ty, constraint)
-                    {
-                        arg_ty
-                    } else {
-                        widened
-                    }
-                } else if let Some(ctx_type) = self.contextual_type
-                    && ctx_type != TypeId::ANY
-                    && ctx_type != TypeId::UNKNOWN
-                    && widened != arg_ty
-                    && !self.checker.is_assignable_to(widened, ctx_type)
-                    && self.checker.is_assignable_to(arg_ty, ctx_type)
+                if !self.checker.is_assignable_to(widened_for_check, constraint)
+                    && self.checker.is_assignable_to(arg_ty, constraint)
                 {
-                    // When a contextual return type exists (e.g., from a variable
-                    // declaration like `let v: DooDad = identity('ELSE')`), and
-                    // widening the argument type breaks assignability to the
-                    // contextual type, preserve the literal. This matches tsc's
-                    // behavior where contextual return types inform inference and
-                    // prevent unnecessary widening of literals.
-                    arg_ty
-                } else if constraint.is_none() {
                     arg_ty
                 } else {
-                    widened
+                    widened_for_check
+                }
+            } else if self.is_first_arg_type_annotated() {
+                // Type assertions (e.g. `identity(1 as 1)`) produce non-fresh literals;
+                // preserve them, matching the normal inference path's
+                // `has_type_annotation_candidate` gate.
+                arg_ty
+            } else {
+                // Only compute widen_type when a contextual return type exists — widening may
+                // break assignability to it (e.g. `let v: DooDad = identity('ELSE')`).
+                let should_preserve_literal = self.contextual_type.is_some_and(|ctx_type| {
+                    if ctx_type == TypeId::ANY || ctx_type == TypeId::UNKNOWN {
+                        return false;
+                    }
+                    let widened_for_check = crate::operations::widening::widen_type(
+                        self.interner.as_type_database(),
+                        arg_ty,
+                    );
+                    widened_for_check != arg_ty
+                        && !self.checker.is_assignable_to(widened_for_check, ctx_type)
+                        && self.checker.is_assignable_to(arg_ty, ctx_type)
+                });
+                if should_preserve_literal {
+                    arg_ty
+                } else {
+                    crate::operations::widening::widen_type_for_inference(
+                        self.interner.as_type_database(),
+                        arg_ty,
+                    )
                 }
             }
         };

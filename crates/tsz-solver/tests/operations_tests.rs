@@ -8,6 +8,32 @@ use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::types::{CallableShape, MappedType, TypeData, Visibility};
 
+/// Build a `<param_name>(arg_name: param_name): param_name` identity `FunctionShape`.
+/// Reused across multiple tests that verify unconstrained-T inference behavior.
+fn make_identity_shape(interner: &TypeInterner, param_name: &str, arg_name: &str) -> FunctionShape {
+    let t_param = TypeParamInfo {
+        name: interner.intern_string(param_name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string(arg_name)),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    }
+}
+
 #[test]
 fn test_call_simple_function() {
     let interner = TypeInterner::new();
@@ -3334,36 +3360,140 @@ fn test_generic_call_resets_fixed_union_member_cache() {
 }
 
 #[test]
-fn test_infer_generic_function_identity_preserves_non_const_literal() {
+fn test_infer_generic_function_identity_widens_unconstrained_literal() {
+    // tsc widens fresh literals for unconstrained T: `identity("hello")` → T = string.
+    // The fast path and normal inference path must agree.
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
-    let t_param = TypeParamInfo {
-        name: interner.intern_string("T"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param));
-
-    let func = FunctionShape {
-        type_params: vec![t_param],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: t_type,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: t_type,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    };
-
     let hello = interner.literal_string("hello");
-    let result = infer_generic_function(&interner, &mut subtype, &func, &[hello]);
-    assert_eq!(result, hello);
+    let result = infer_generic_function(
+        &interner,
+        &mut subtype,
+        &make_identity_shape(&interner, "T", "x"),
+        &[hello],
+    );
+    assert_eq!(result, TypeId::STRING);
+
+    // Different param name proves the rule is structural, not name-specific.
+    let world = interner.literal_string("world");
+    let result2 = infer_generic_function(
+        &interner,
+        &mut subtype,
+        &make_identity_shape(&interner, "U", "value"),
+        &[world],
+    );
+    assert_eq!(result2, TypeId::STRING);
+}
+
+/// When a fresh object literal `{ x: 1 }` is passed to `identity<T>(x: T): T` with
+/// unconstrained T, tsc infers T = `{ x: number }` (widened), not `{ x: 1 }`.
+/// This mirrors tsc's `getWidenedType` behavior in inference resolution.
+#[test]
+fn test_identity_widens_fresh_object_literal_properties_for_unconstrained_t() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Case 1: { x: 1 } passed to identity<T>(x: T): T → T = { x: number }
+    let prop_x = interner.intern_string("x");
+    let lit_1 = interner.literal_number(1.0);
+    let obj_x1 = interner.object_fresh(vec![PropertyInfo::new(prop_x, lit_1)]);
+    let ret = infer_generic_function(
+        &interner,
+        &mut checker,
+        &make_identity_shape(&interner, "T", "x"),
+        &[obj_x1],
+    );
+    let shape = match interner.lookup(ret) {
+        Some(TypeData::Object(s)) | Some(TypeData::ObjectWithIndex(s)) => interner.object_shape(s),
+        other => panic!("Expected object return type, got {other:?}"),
+    };
+    assert_eq!(shape.properties.len(), 1);
+    assert_eq!(
+        shape.properties[0].type_id,
+        TypeId::NUMBER,
+        "Property 'x' should be widened to number"
+    );
+    assert!(
+        !shape
+            .flags
+            .contains(crate::types::ObjectFlags::FRESH_LITERAL),
+        "FRESH_LITERAL should be stripped from widened result"
+    );
+
+    // Case 2: { alpha: false } passed to wrap<U>(v: U): U → U = { alpha: boolean }
+    // Different param name, property name, and value type — proves rule is structural.
+    let prop_alpha = interner.intern_string("alpha");
+    let obj_alpha_false =
+        interner.object_fresh(vec![PropertyInfo::new(prop_alpha, TypeId::BOOLEAN_FALSE)]);
+    let ret2 = infer_generic_function(
+        &interner,
+        &mut checker,
+        &make_identity_shape(&interner, "U", "v"),
+        &[obj_alpha_false],
+    );
+    let shape2 = match interner.lookup(ret2) {
+        Some(TypeData::Object(s)) | Some(TypeData::ObjectWithIndex(s)) => interner.object_shape(s),
+        other => panic!("Expected object return type, got {other:?}"),
+    };
+    assert_eq!(
+        shape2.properties[0].type_id,
+        TypeId::BOOLEAN,
+        "Property 'alpha' should be widened to boolean"
+    );
+
+    // Case 3: multi-property object { name: "hi", count: 42 } → { name: string, count: number }
+    let prop_name = interner.intern_string("name");
+    let prop_count = interner.intern_string("count");
+    let lit_hi = interner.literal_string("hi");
+    let lit_42 = interner.literal_number(42.0);
+    let obj_multi = interner.object_fresh(vec![
+        PropertyInfo::new(prop_name, lit_hi),
+        PropertyInfo::new(prop_count, lit_42),
+    ]);
+    let ret3 = infer_generic_function(
+        &interner,
+        &mut checker,
+        &make_identity_shape(&interner, "K", "input"),
+        &[obj_multi],
+    );
+    let shape3 = match interner.lookup(ret3) {
+        Some(TypeData::Object(s)) | Some(TypeData::ObjectWithIndex(s)) => interner.object_shape(s),
+        other => panic!("Expected object return type, got {other:?}"),
+    };
+    let by_name: std::collections::HashMap<_, _> = shape3
+        .properties
+        .iter()
+        .map(|p| (interner.resolve_atom(p.name), p.type_id))
+        .collect();
+    assert_eq!(
+        by_name["name"],
+        TypeId::STRING,
+        "Property 'name' should be widened to string"
+    );
+    assert_eq!(
+        by_name["count"],
+        TypeId::NUMBER,
+        "Property 'count' should be widened to number"
+    );
+}
+
+/// Scalar literals also widen for unconstrained T (tsc: `identity(1)` → T = number).
+#[test]
+fn test_identity_widens_scalar_literals_for_unconstrained_t() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    for (param_name, arg_name) in [("T", "x"), ("U", "value"), ("R", "item")] {
+        let func = make_identity_shape(&interner, param_name, arg_name);
+        let n = interner.literal_number(5.0);
+        let result = infer_generic_function(&interner, &mut checker, &func, &[n]);
+        assert_eq!(
+            result,
+            TypeId::NUMBER,
+            "{param_name}: literal number 5 should widen to number"
+        );
+    }
 }
 
 #[test]
@@ -11918,50 +12048,21 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
     }
 }
 
-/// Tests that without a contextual type, the identity fast path preserves direct
-/// literal arguments. `identity('ELSE')` should infer T = "ELSE".
+/// Tests that without a contextual type, the identity fast path widens fresh literal
+/// arguments: `identity('ELSE')` should infer T = string (matching tsc behavior).
 #[test]
-fn test_trivial_identity_preserves_literal_without_contextual_type() {
+fn test_trivial_identity_widens_unconstrained_literal_without_contextual_type() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
-    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
 
     let lit_else = interner.literal_string("ELSE");
-
-    let t_param = TypeParamInfo {
-        name: interner.intern_string("T"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let t_type = interner.type_param(t_param);
-    let identity = interner.function(FunctionShape {
-        type_params: vec![t_param],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: t_type,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: t_type,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-
-    // Call identity("ELSE") WITHOUT contextual type
-    let result = evaluator.resolve_call(identity, &[lit_else]);
-
-    match result {
-        CallResult::Success(ret) => {
-            assert_eq!(
-                ret, lit_else,
-                "identity('ELSE') without context should preserve the literal"
-            );
-        }
-        other => panic!("Expected success for identity call without context, got {other:?}"),
-    }
+    let result = infer_generic_function(
+        &interner,
+        &mut checker,
+        &make_identity_shape(&interner, "T", "x"),
+        &[lit_else],
+    );
+    assert_eq!(result, TypeId::STRING);
 }
 
 /// Test that a union of a single-overload function and a multi-overload callable
