@@ -14,20 +14,20 @@
     "compute_type_of_symbol": true
   },
   "delegate": {
-    "calls": 984,
-    "cache_hits_lib": 2,
+    "calls": 991,
+    "cache_hits_lib": 3,
     "cache_hits_cross_file": 434,
-    "misses": 36,
+    "misses": 54,
     "max_recursion_depth": 3,
     "cross_file_type_params_cache_hits": 0,
     "cross_file_type_params_cache_misses": 1
   },
   "checker": {
     "state_constructed": 5251,
-    "with_parent_cache_constructed": 37,
+    "with_parent_cache_constructed": 55,
     "file_session_resets": 0,
-    "compute_type_of_symbol_calls": 26381,
-    "compute_type_of_symbol_cache_hits": 252078
+    "compute_type_of_symbol_calls": 26396,
+    "compute_type_of_symbol_cache_hits": 252035
   },
   "overlay": {
     "copy_calls": 0,
@@ -47,22 +47,22 @@
     "candidate_paths_total": 0
   },
   "interner": {
-    "intern_calls": 479264,
-    "intern_hits": 402466,
-    "intern_misses": 76798,
-    "string_intern_calls": 3326595,
-    "type_list_intern_calls": 375,
-    "object_shape_intern_calls": 101043,
-    "function_shape_intern_calls": 174,
-    "callable_shape_intern_calls": 521,
-    "application_intern_calls": 629,
-    "conditional_intern_calls": 2027,
-    "mapped_intern_calls": 2727,
+    "intern_calls": 480135,
+    "intern_hits": 403277,
+    "intern_misses": 76858,
+    "string_intern_calls": 3330067,
+    "type_list_intern_calls": 446,
+    "object_shape_intern_calls": 101126,
+    "function_shape_intern_calls": 319,
+    "callable_shape_intern_calls": 669,
+    "application_intern_calls": 660,
+    "conditional_intern_calls": 2026,
+    "mapped_intern_calls": 2730,
     "lock_wait_histogram_ns": [
-      179377,
-      80,
-      2,
-      0,
+      179470,
+      165,
+      1,
+      1,
       0,
       0,
       0,
@@ -72,7 +72,7 @@
   "by_reason": [
     {
       "reason": "DelegateCrossArenaSymbol",
-      "with_parent_cache_constructed": 28,
+      "with_parent_cache_constructed": 40,
       "overlay_copy_calls": 0,
       "overlay_copy_entries": 0,
       "overlay_copy_max_entries": 0
@@ -163,7 +163,7 @@
     },
     {
       "reason": "CallHelpers",
-      "with_parent_cache_constructed": 8,
+      "with_parent_cache_constructed": 14,
       "overlay_copy_calls": 0,
       "overlay_copy_entries": 0,
       "overlay_copy_max_entries": 0
@@ -194,7 +194,7 @@
     "by_source": [
       {
         "name": "symbol_arenas",
-        "count": 28
+        "count": 40
       },
       {
         "name": "declaration_arenas",
@@ -216,7 +216,7 @@
       },
       {
         "name": "interface",
-        "count": 12
+        "count": 24
       },
       {
         "name": "class",
@@ -283,7 +283,7 @@
         "count": 0
       }
     ],
-    "target_declaration_files": 28,
+    "target_declaration_files": 40,
     "target_source_files": 0
   },
   "alias_shortcut_outcomes": [
@@ -359,7 +359,7 @@
     },
     {
       "name": "rejected_non_direct_arena",
-      "count": 28
+      "count": 40
     },
     {
       "name": "missing_symbol",
@@ -435,7 +435,7 @@
     },
     {
       "name": "target_declaration_file",
-      "count": 43
+      "count": 44
     },
     {
       "name": "missing_symbol",

@@ -70,6 +70,20 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .is_some_and(|source_file| !source_file.is_declaration_file)
 }
 
+fn is_direct_actual_lib_interface_name(name: &str) -> bool {
+    matches!(
+        name,
+        "BigIntToLocaleStringOptions"
+            | "CollatorOptions"
+            | "DateTimeFormatOptions"
+            | "Locale"
+            | "NumberFormatOptions"
+            | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsStyleRegistry"
+            | "NumberFormatOptionsUseGroupingRegistry"
+    )
+}
+
 impl<'a> CheckerState<'a> {
     fn symbol_declarations_are_builtin_lib_only(
         &self,
@@ -123,6 +137,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let name = symbol.escaped_name.clone();
+        if !is_direct_actual_lib_interface_name(&name) {
+            return None;
+        }
         let direct_type = self.resolve_lib_type_by_name(&name);
         let params = Vec::new();
         let direct_type = direct_type?;
