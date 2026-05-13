@@ -13,8 +13,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-mod super_accessor;
-
 impl<'a> CheckerState<'a> {
     fn report_computed_this_property_missing(&mut self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
@@ -188,10 +186,6 @@ impl<'a> CheckerState<'a> {
                     .borrow_mut()
                     .insert(member_sym_id);
             }
-        }
-
-        if self.super_accessor_error(object_expr, property_name, error_node, class_idx, is_static) {
-            return false;
         }
 
         let in_static_context = self.is_in_static_class_member_context(error_node);
