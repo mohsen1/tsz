@@ -97,6 +97,31 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .is_some_and(|source_file| !source_file.is_declaration_file)
 }
 
+fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
+    matches!(
+        name,
+        "ArrayIterator"
+            | "BigIntToLocaleStringOptions"
+            | "ConcatArray"
+            | "DateTimeFormatOptions"
+            | "Disposable"
+            | "Iterable"
+            | "IteratorObject"
+            | "IteratorReturnResult"
+            | "IteratorYieldResult"
+            | "Locale"
+            | "NumberFormatOptions"
+            | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsStyleRegistry"
+            | "NumberFormatOptionsUseGroupingRegistry"
+            | "RegExpExecArray"
+            | "RegExpIndicesArray"
+            | "RegExpMatchArray"
+            | "RegExpStringIterator"
+            | "StringIterator"
+    )
+}
+
 fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
     matches!(name, "CollatorOptions")
 }
@@ -180,21 +205,27 @@ impl<'a> CheckerState<'a> {
         if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name) {
             return None;
         }
-        let direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
-            if !is_direct_actual_intl_lib_interface_name(&name) {
-                return None;
-            }
-            let namespace_sym_id = self.resolve_lib_namespace_export_symbol("Intl", &name)?;
-            if namespace_sym_id != sym_id {
-                return None;
-            }
-            let cache_name = format!("Intl.{name}");
-            self.resolve_lib_interface_type_by_symbol(&cache_name, namespace_sym_id)
-        })?;
+        let (direct_type, params) = if should_resolve_actual_lib_interface_with_params(&name) {
+            let (direct_type, params) = self.resolve_lib_type_with_params(&name);
+            (direct_type?, params)
+        } else {
+            let direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
+                if !is_direct_actual_intl_lib_interface_name(&name) {
+                    return None;
+                }
+                let namespace_sym_id = self.resolve_lib_namespace_export_symbol("Intl", &name)?;
+                if namespace_sym_id != sym_id {
+                    return None;
+                }
+                let cache_name = format!("Intl.{name}");
+                self.resolve_lib_interface_type_by_symbol(&cache_name, namespace_sym_id)
+            })?;
+            let params = self.get_type_params_for_symbol(sym_id);
+            (direct_type, params)
+        };
         if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
             return None;
         }
-        let params = self.get_type_params_for_symbol(sym_id);
         self.ctx.symbol_types.insert(sym_id, direct_type);
         self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
         Some((direct_type, params))
