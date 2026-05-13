@@ -534,6 +534,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // `T extends unknown ? T : never` and `T extends any ? T : never`
+        // are transparent identity conditionals in target position. Keep this
+        // narrower than the general Extract-like path: `T extends object ? T :
+        // never` is not transparent for unconstrained T.
+        if source == target.check_type
+            && target.true_type == target.check_type
+            && target.false_type == TypeId::NEVER
+            && (target.extends_type == TypeId::UNKNOWN || target.extends_type == TypeId::ANY)
+        {
+            return SubtypeResult::True;
+        }
+
         let target_contains_unbound_infer =
             crate::type_queries::contains_infer_types_db(self.interner, target.extends_type)
                 || crate::type_queries::contains_infer_types_db(self.interner, target.true_type)

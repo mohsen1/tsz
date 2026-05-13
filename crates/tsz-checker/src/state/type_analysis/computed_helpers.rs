@@ -476,6 +476,11 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
 
             if is_in_resolution_chain && is_type_alias {
+                if target_sym_id == sym_id
+                    && self.type_node_contains_value_type_query_for_alias(type_node, sym_id)
+                {
+                    return false;
+                }
                 let is_direct = if in_union_or_intersection {
                     if target_sym_id == sym_id {
                         !self
@@ -883,6 +888,52 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn type_node_contains_value_type_query_for_alias(
+        &self,
+        type_node: NodeIndex,
+        alias_sym_id: SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_QUERY
+            && let Some(type_query) = self.ctx.arena.get_type_query(node)
+            && let Some(raw_query_sym) =
+                self.resolve_value_symbol_for_lowering(type_query.expr_name)
+        {
+            let query_sym_id = SymbolId(raw_query_sym);
+            if self.value_symbol_matches_alias_name(query_sym_id, alias_sym_id) {
+                return true;
+            }
+        }
+
+        self.ctx
+            .arena
+            .get_children(type_node)
+            .into_iter()
+            .any(|child| self.type_node_contains_value_type_query_for_alias(child, alias_sym_id))
+    }
+
+    fn value_symbol_matches_alias_name(
+        &self,
+        query_sym_id: SymbolId,
+        alias_sym_id: SymbolId,
+    ) -> bool {
+        let Some(alias_symbol) = self.ctx.binder.get_symbol(alias_sym_id) else {
+            return false;
+        };
+        if alias_symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0 {
+            return false;
+        }
+        let Some(query_symbol) = self.ctx.binder.get_symbol(query_sym_id) else {
+            return false;
+        };
+        let query_has_value = query_symbol.value_declaration.is_some()
+            || query_symbol.flags & tsz_binder::symbol_flags::VALUE != 0;
+        query_has_value && query_symbol.escaped_name == alias_symbol.escaped_name
     }
 
     /// True when the `typeof X` target's variable annotation references any type

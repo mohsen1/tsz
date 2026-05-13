@@ -784,6 +784,21 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
+        // The child checker inherits the parent's caches for performance, but
+        // raw SymbolIds are local to each file binder. Clear entries for symbols
+        // owned by the delegate binder so a parent cache entry for an unrelated
+        // same-numbered symbol (for example lib `Readonly`) cannot poison a
+        // target-file annotation like `type FooFactory = Readonly<...>`.
+        checker.ctx.symbol_types.remove(&sym_id);
+        checker.ctx.symbol_instance_types.remove(&sym_id);
+        for &owned_sym_id in delegate_binder.node_symbols.values() {
+            checker.ctx.symbol_types.remove(&owned_sym_id);
+            checker.ctx.symbol_instance_types.remove(&owned_sym_id);
+        }
+        for (_, &owned_sym_id) in delegate_binder.file_locals.iter() {
+            checker.ctx.symbol_types.remove(&owned_sym_id);
+            checker.ctx.symbol_instance_types.remove(&owned_sym_id);
+        }
         let mut result = checker.type_of_value_declaration_with_mode(decl_idx, true);
         if result.is_unknown_or_error()
             && let Some(node) = target_arena.get(decl_idx)

@@ -6,13 +6,15 @@
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::common::{
     enum_components, is_assignment_operator as boundary_is_assignment_operator,
-    is_compound_assignment_operator, map_compound_assignment_to_binary,
+    is_compound_assignment_operator, is_logical_compound_assignment_operator,
+    map_compound_assignment_to_binary,
 };
 use crate::query_boundaries::flow_analysis::{
     array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
     get_array_element_type, get_lazy_def_id, is_assignable, is_assignable_with_env,
     tuple_elements_for_type, union_members_for_type, widen_literal_to_primitive,
 };
+use crate::query_boundaries::type_computation::core::BinaryOpResult;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeAccess;
@@ -236,7 +238,6 @@ impl<'a> FlowAnalyzer<'a> {
                     if self.is_access_reference(target) {
                         return None;
                     }
-                    use crate::query_boundaries::type_computation::core::BinaryOpResult;
 
                     // When node_types is not available, use heuristics for flow narrowing
                     if self.node_types.is_none() {
@@ -247,23 +248,17 @@ impl<'a> FlowAnalyzer<'a> {
                         );
                     }
 
-                    if crate::query_boundaries::common::is_logical_compound_assignment_operator(
-                        bin.operator_token,
-                    ) {
+                    if is_logical_compound_assignment_operator(bin.operator_token) {
                         // For logical assignments (&&=, ||=, ??=), the post-assignment
                         // type of the LHS must reflect the full expression semantics:
-                        //   x ??= y  →  NonNullable<x> | typeof y
-                        //   x ||= y  →  Truthy<x> | typeof y
-                        //   x &&= y  →  Falsy<x> | typeof y
-                        // Use the expression result type (from the entire binary expr
-                        // node), not just the RHS type. This ensures that after
-                        // `f ??= expr`, the flow type of `f` excludes null/undefined.
+                        //   x ??= y  -> NonNullable<x> | typeof y
+                        //   x ||= y  -> Truthy<x> | typeof y
+                        //   x &&= y  -> Falsy<x> | typeof y
                         if let Some(node_types) = self.node_types
                             && let Some(&expr_type) = node_types.get(&assignment_node.0)
                         {
                             return Some(expr_type);
                         }
-                        // Fallback to RHS type if expression type not available
                         if let Some(node_types) = self.node_types
                             && let Some(&rhs_type) = node_types.get(&bin.right.0)
                         {
@@ -272,35 +267,34 @@ impl<'a> FlowAnalyzer<'a> {
                         return None;
                     }
 
-                    // Get LHS type (current narrowed type of the variable)
+                    if let Some(node_types) = self.node_types
+                        && let Some(&expr_type) = node_types.get(&assignment_node.0)
+                    {
+                        if expr_type.is_any_unknown_or_error() {
+                            return Some(TypeId::ANY);
+                        }
+                        return Some(expr_type);
+                    }
+
                     let left_type = if let Some(node_types) = self.node_types
                         && let Some(&lhs_type) = node_types.get(&bin.left.0)
                     {
                         lhs_type
                     } else {
-                        // Fall back - shouldn't happen due to the check above
                         return None;
                     };
-
-                    // Get RHS type
                     let right_type = if let Some(node_types) = self.node_types
                         && let Some(&rhs_type) = node_types.get(&bin.right.0)
                     {
                         rhs_type
                     } else {
-                        // Fall back - shouldn't happen due to the check above
                         return None;
                     };
-
-                    // Map compound assignment operator to binary operator
                     let op_str = map_compound_assignment_to_binary(bin.operator_token)?;
-
-                    // Evaluate the binary operation to get result type
                     let evaluator =
                         crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
                     return match evaluator.evaluate(left_type, right_type, op_str) {
                         BinaryOpResult::Success(result) => Some(result),
-                        // For type errors, return ANY to prevent cascading errors
                         BinaryOpResult::TypeError { .. } => Some(TypeId::ANY),
                     };
                 }

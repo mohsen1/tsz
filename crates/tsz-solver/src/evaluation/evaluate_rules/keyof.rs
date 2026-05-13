@@ -8,8 +8,8 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
 use crate::types::{
-    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, PropertyInfo, SymbolRef, TupleElement,
-    TypeData, TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags, PropertyInfo, SymbolRef,
+    TupleElement, TypeData, TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -87,11 +87,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(SymbolRef(symbol_ref))
     }
 
+    fn unique_symbol_ref_from_symbol_named_atom(&self, name: Atom) -> Option<SymbolRef> {
+        self.unique_symbol_ref_from_synthetic_atom(name)
+            .or_else(|| {
+                let name_text = self.interner().resolve_atom_ref(name);
+                self.resolver().resolve_well_known_symbol_name(&name_text)
+            })
+    }
+
     fn property_name_to_key_type(&self, prop: &PropertyInfo) -> TypeId {
-        if prop.is_symbol_named
-            && let Some(symbol_ref) = self.unique_symbol_ref_from_synthetic_atom(prop.name)
-        {
-            return self.interner().unique_symbol(symbol_ref);
+        if prop.is_symbol_named {
+            if let Some(symbol_ref) = self.unique_symbol_ref_from_symbol_named_atom(prop.name) {
+                return self.interner().unique_symbol(symbol_ref);
+            }
+            return TypeId::SYMBOL;
         }
         self.interner().literal_string_atom(prop.name)
     }
@@ -100,10 +109,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         key: crate::type_queries::ExactLiteralPropertyKey,
     ) -> TypeId {
-        if key.is_symbol_named
-            && let Some(symbol_ref) = self.unique_symbol_ref_from_synthetic_atom(key.name)
-        {
-            return self.interner().unique_symbol(symbol_ref);
+        if key.is_symbol_named {
+            if let Some(symbol_ref) = self.unique_symbol_ref_from_symbol_named_atom(key.name) {
+                return self.interner().unique_symbol(symbol_ref);
+            }
+            return TypeId::SYMBOL;
         }
         self.interner().literal_string_atom(key.name)
     }
@@ -420,7 +430,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if shape.string_index.is_some() {
                         key_types.push(TypeId::STRING);
                         key_types.push(TypeId::NUMBER);
-                    } else if shape.number_index.is_some() {
+                    } else if shape.number_index.is_some()
+                        // Enum namespace types carry `[index: number]: string` only for
+                        // reverse-lookup bracket access (E[0]). tsc excludes this from
+                        // `keyof typeof E` — the keyof is just the named member keys.
+                        && !shape.flags.contains(ObjectFlags::ENUM_NAMESPACE)
+                    {
                         key_types.push(TypeId::NUMBER);
                     }
 

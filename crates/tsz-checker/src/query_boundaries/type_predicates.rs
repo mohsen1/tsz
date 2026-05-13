@@ -9,7 +9,7 @@ pub(crate) fn type_predicate_type_assignable_to_parameter_with<F>(
 where
     F: FnMut(TypeId, TypeId) -> bool,
 {
-    if is_assignable(predicate_type, param_type) {
+    if predicate_type == param_type || is_assignable(predicate_type, param_type) {
         return true;
     }
 
@@ -43,7 +43,8 @@ where
     };
 
     for member in members {
-        if is_assignable(member, param_type)
+        if member == param_type
+            || is_assignable(member, param_type)
             || intersection_member_assignable_to_parameter(
                 db,
                 member,

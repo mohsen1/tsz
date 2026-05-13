@@ -2094,7 +2094,7 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        self.emit_expression(func.body);
+        self.emit_expression_in_statement_position(func.body);
         self.write_semicolon();
         true
     }
