@@ -1594,15 +1594,17 @@ pub fn contains_free_type_parameters_except_name(
                     if info.name != excluded_name {
                         return true;
                     }
-                    // Skip walking into K's `constraint`/`default` — those
-                    // are metadata for the parameter, not uses by the
-                    // enclosing type.
+                    // Skip the parameter's `constraint`/`default` — those are
+                    // metadata for the parameter, not uses by the enclosing
+                    // type. Same reason applies to Mapped/Function/Callable
+                    // type-param lists handled in the visit_structural_children
+                    // path below.
                     continue;
                 }
                 TypeData::ThisType | TypeData::BoundParameter(_) => return true,
                 _ => {}
             }
-            super::visitor::for_each_child_by_id(types, current, |child| {
+            visit_structural_children(types, current, &data, |child| {
                 if !visited.contains(&child) {
                     stack.push(child);
                 }
@@ -1610,6 +1612,75 @@ pub fn contains_free_type_parameters_except_name(
         }
         false
     })
+}
+
+/// Variant of [`super::visitor::for_each_child_by_id`] that skips type-
+/// parameter `constraint`/`default` metadata on `Mapped`, `Function`, and
+/// `Callable` types. Used by free-type-parameter checks that must treat
+/// parameter-declaration metadata as bound by the host, not as free uses.
+fn visit_structural_children<F>(db: &dyn TypeDatabase, type_id: TypeId, data: &TypeData, mut f: F)
+where
+    F: FnMut(TypeId),
+{
+    match data {
+        TypeData::Mapped(mapped_id) => {
+            let mapped = db.get_mapped(*mapped_id);
+            f(mapped.constraint);
+            f(mapped.template);
+            if let Some(name_type) = mapped.name_type {
+                f(name_type);
+            }
+        }
+        TypeData::Function(func_id) => {
+            let sig = db.function_shape(*func_id);
+            f(sig.return_type);
+            if let Some(this_type) = sig.this_type {
+                f(this_type);
+            }
+            if let Some(predicate) = sig.type_predicate.as_ref()
+                && let Some(predicate_type) = predicate.type_id
+            {
+                f(predicate_type);
+            }
+            for param in &sig.params {
+                f(param.type_id);
+            }
+        }
+        TypeData::Callable(callable_id) => {
+            let callable = db.callable_shape(*callable_id);
+            for sig in callable
+                .call_signatures
+                .iter()
+                .chain(callable.construct_signatures.iter())
+            {
+                f(sig.return_type);
+                if let Some(this_type) = sig.this_type {
+                    f(this_type);
+                }
+                if let Some(predicate) = sig.type_predicate.as_ref()
+                    && let Some(predicate_type) = predicate.type_id
+                {
+                    f(predicate_type);
+                }
+                for param in &sig.params {
+                    f(param.type_id);
+                }
+            }
+            for prop in &callable.properties {
+                f(prop.type_id);
+                f(prop.write_type);
+            }
+            if let Some(sig) = callable.string_index.as_ref() {
+                f(sig.key_type);
+                f(sig.value_type);
+            }
+            if let Some(sig) = callable.number_index.as_ref() {
+                f(sig.key_type);
+                f(sig.value_type);
+            }
+        }
+        _ => super::visitor::for_each_child_by_id(db, type_id, f),
+    }
 }
 
 // =============================================================================

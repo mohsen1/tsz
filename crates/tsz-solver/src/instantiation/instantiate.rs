@@ -2525,12 +2525,11 @@ fn template_has_lazy_application_in_composite(
 /// Callers defer evaluation to an outer evaluator with a real resolver.
 fn type_contains_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
     crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
-        if let TypeData::Application(app_id) = key {
-            let app = interner.type_application(*app_id);
-            matches!(interner.lookup(app.base), Some(TypeData::Lazy(_)))
-        } else {
-            false
-        }
+        let TypeData::Application(app_id) = key else {
+            return false;
+        };
+        let app = interner.type_application(*app_id);
+        matches!(interner.lookup(app.base), Some(TypeData::Lazy(_)))
     })
 }
 

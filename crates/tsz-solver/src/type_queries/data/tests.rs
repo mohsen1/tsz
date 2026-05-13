@@ -987,6 +987,65 @@ fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
     ));
 }
 
+#[test]
+fn contains_type_parameters_except_name_ignores_nested_mapped_param_metadata() {
+    // When a `Mapped` appears inside the type being checked, the visitor must
+    // not descend into the nested mapped's `type_param.constraint`/`default`
+    // either — same rule, recursive case. Without this guard,
+    // `for_each_child_by_id`'s default Mapped child enumeration would surface
+    // the outer alias parameter `T` through the inner mapped's iter-var
+    // metadata.
+    use crate::types::{MappedType, PropertyInfo, Visibility};
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+    let inner_iter_name = interner.intern_string("InnerKey");
+    let a_name = interner.intern_string("a");
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let keyof_t = interner.keyof(t_param);
+    let inner_iter = TypeParamInfo {
+        name: inner_iter_name,
+        constraint: Some(keyof_t),
+        default: None,
+        is_const: false,
+    };
+    let inner_obj = interner.object(vec![PropertyInfo {
+        name: a_name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }]);
+    let nested_mapped = interner.mapped(MappedType {
+        type_param: inner_iter,
+        constraint: inner_obj,
+        name_type: None,
+        template: TypeId::STRING,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    assert!(
+        !contains_type_parameters_except_name_db(&interner, nested_mapped, k_name),
+        "nested Mapped's iter-var constraint metadata must not surface T"
+    );
+}
+
 // =========================================================================
 // is_literal_or_primitive_or_compound_of_those
 // =========================================================================
