@@ -1674,32 +1674,6 @@ impl<'a> CheckerState<'a> {
             // primitive types, and other lib-registered types are available.
             let mut result =
                 self.resolve_property_access_with_env(object_type_for_access, property_name);
-            if matches!(
-                result,
-                PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
-            ) {
-                if let Some((receiver_type, retry)) = self
-                    .retry_property_access_from_const_identifier_initializer(
-                        access.expression,
-                        property_name,
-                    )
-                {
-                    object_type_for_access = receiver_type;
-                    result = retry;
-                } else if let Some(member_type) = self
-                    .same_file_namespace_value_member_for_identifier(
-                        access.expression,
-                        property_name,
-                    )
-                {
-                    return self.finalize_property_access_result(
-                        idx,
-                        member_type,
-                        skip_flow_narrowing,
-                        false,
-                    );
-                }
-            }
             // Flow predicate narrowing can produce unions/intersections like
             // `C2 | (C2 & C1)` or `(D1 & C2) | (D1 & C1)`. Looking up properties
             // directly on those unevaluated shells may fall back to a bare `any`.

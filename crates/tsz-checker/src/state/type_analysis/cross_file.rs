@@ -12,10 +12,52 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
-
 thread_local! {
     static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Typed identifier for the cross-file query bucket a cache lookup or write
+/// targets. Replaces the four `u8` constants that used to live here, matching
+/// the API shape proposed in `docs/plan/PERFORMANCE_PLAN.md` §7 ("Typed
+/// Cross-File Queries"):
+///
+/// > pub enum CrossFileQueryKind {
+/// >     SymbolType,
+/// >     ClassInstanceType,
+/// >     InterfaceType,
+/// >     InterfaceMemberSimpleType,
+/// > }
+///
+/// The discriminant values are the historical `u8` numbers already stored in
+/// `DefinitionStore` cache keys, so the enum remains `#[repr(u8)]`-compatible
+/// with the cache key layout via `as u8`.
+///
+/// Adding a new bucket: add the variant, give it a fresh `u8` discriminant,
+/// and ensure it doesn't collide with existing ones (the storage layer keys
+/// caches by `(u8, file_idx, primary, secondary, args_hash)` so
+/// re-purposing a discriminant would silently corrupt unrelated cache
+/// entries).
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(u8)]
+// Variant names mirror PERFORMANCE_PLAN.md §7 verbatim; the shared "Type"
+// suffix is part of the plan's API contract and must stay.
+#[allow(clippy::enum_variant_names)]
+pub(crate) enum CrossFileQueryKind {
+    InterfaceType = 1,
+    ClassInstanceType = 2,
+    InterfaceMemberSimpleType = 3,
+    SymbolType = 4,
+}
+
+impl CrossFileQueryKind {
+    /// Discriminant value used as the first component of
+    /// `DefinitionStore::resolved_cross_file_queries` cache keys. Stable —
+    /// changing this for an existing variant would invalidate every cached
+    /// entry under that discriminant.
+    #[inline]
+    pub(crate) const fn as_storage_kind(self) -> u8 {
+        self as u8
+    }
 }
 
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
@@ -1088,23 +1130,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        // Prefer an explicit cross-file owner over `symbol_arenas`: SymbolIds are
-        // local to each binder, so a same-numbered local symbol can have an arena
-        // entry that is unrelated to the exported symbol we are resolving.
-        let explicit_file_idx = self
+        // Find the symbol's home arena
+        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
             .ctx
-            .resolve_symbol_file_index(sym_id)
-            .filter(|&file_idx| file_idx != self.ctx.current_file_idx);
-        let mut delegate_arena: Option<&tsz_parser::NodeArena> = explicit_file_idx
-            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .symbol_arenas
-                    .get(&sym_id)
-                    .map(std::convert::AsRef::as_ref)
-            });
-        let mut delegate_file_idx = explicit_file_idx;
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref);
+        let mut delegate_file_idx = None;
 
         let needs_cross_file_delegation = delegate_arena
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
@@ -1932,5 +1965,26 @@ impl<'a> CheckerState<'a> {
         }
 
         derived_type
+    }
+}
+
+#[cfg(test)]
+mod cross_file_query_kind_tests {
+    use super::CrossFileQueryKind;
+
+    /// Discriminants must be stable: the `DefinitionStore` cache keys store
+    /// these as `u8` and re-using a discriminant for a different variant
+    /// would silently corrupt unrelated cache entries. If you intentionally
+    /// re-number variants, also bump a cache-format version somewhere
+    /// downstream and clear the affected cache.
+    #[test]
+    fn discriminants_match_historical_constants() {
+        assert_eq!(CrossFileQueryKind::InterfaceType.as_storage_kind(), 1);
+        assert_eq!(CrossFileQueryKind::ClassInstanceType.as_storage_kind(), 2);
+        assert_eq!(
+            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            3
+        );
+        assert_eq!(CrossFileQueryKind::SymbolType.as_storage_kind(), 4);
     }
 }

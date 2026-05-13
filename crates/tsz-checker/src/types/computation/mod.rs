@@ -33,7 +33,6 @@ pub(crate) mod call_display;
 pub(crate) mod call_finalize;
 pub(crate) mod call_helpers;
 pub(crate) mod call_inference;
-pub(crate) mod call_namespace;
 pub(crate) mod call_result;
 pub(crate) mod complex;
 pub(crate) mod complex_constructors;

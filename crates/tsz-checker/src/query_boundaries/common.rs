@@ -1,5 +1,6 @@
 use tsz_solver::{
-    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeId, TypePredicate,
+    CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
+    TypePredicate,
 };
 
 // Re-export solver value types used by checker call computation.
@@ -29,7 +30,6 @@ pub(crate) use tsz_solver::IndexKind;
 pub(crate) use tsz_solver::IndexSignatureResolver;
 pub(crate) use tsz_solver::QueryDatabase;
 pub(crate) use tsz_solver::SubtypeFailureReason;
-pub(crate) use tsz_solver::TypeDatabase;
 pub(crate) use tsz_solver::TypeEnvironment;
 pub(crate) use tsz_solver::TypeResolver;
 pub(crate) use tsz_solver::instantiate_generic;

@@ -62,29 +62,6 @@ const sql: any = q.sql
 }
 
 #[test]
-fn local_value_shadowing_type_only_import_keeps_literal_members() {
-    let diagnostics = check(
-        &[
-            ("a.ts", r#"export type A = "a";"#),
-            (
-                "b.ts",
-                r#"
-import type { A } from "./a";
-const A: A = "a";
-A.toUpperCase();
-"#,
-            ),
-        ],
-        "b.ts",
-    );
-
-    assert!(
-        diagnostics.iter().all(|(code, _)| *code != 2339),
-        "local value shadowing import type should not lose string-literal members, got: {diagnostics:?}"
-    );
-}
-
-#[test]
 fn imported_companion_const_keeps_readonly_alias_annotation_when_eval_fails() {
     let diagnostics = check(
         &[

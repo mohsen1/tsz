@@ -901,29 +901,6 @@ impl<'a> CheckerState<'a> {
         if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
             return None;
         }
-        if let Some(member_symbol) = self
-            .get_cross_file_symbol(resolved_member_id)
-            .or_else(|| self.ctx.binder.get_symbol(resolved_member_id))
-            && !member_symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
-            && member_symbol.has_any_flags(
-                symbol_flags::VALUE | symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
-            )
-        {
-            let exported = if self
-                .ctx
-                .resolve_symbol_file_index(resolved_member_id)
-                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
-            {
-                member_symbol.is_exported
-            } else if self.ctx.binder.get_symbol(resolved_member_id).is_some() {
-                self.symbol_has_exported_value_declaration(resolved_member_id)
-            } else {
-                member_symbol.is_exported
-            };
-            if !exported {
-                return None;
-            }
-        }
         // Namespace export tables may point at EXPORT_VALUE wrapper symbols
         // (e.g. `export { x }`). Treat them as runtime-value members.
         if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
@@ -2247,21 +2224,13 @@ impl<'a> CheckerState<'a> {
                     })
             };
 
-            let decl_file_idx = self
-                .ctx
-                .resolve_symbol_file_index(sym_id)
-                .or_else(|| {
-                    (symbol.decl_file_idx != u32::MAX).then_some(symbol.decl_file_idx as usize)
-                })
-                .unwrap_or(self.ctx.current_file_idx);
-
             (
                 symbol.flags,
                 symbol.escaped_name.clone(),
                 direct_member_id,
                 module_export_member_id,
                 symbol.import_module.clone(),
-                decl_file_idx,
+                symbol.decl_file_idx as usize,
             )
         };
 

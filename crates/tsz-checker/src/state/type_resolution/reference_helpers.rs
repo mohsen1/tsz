@@ -916,14 +916,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        if self
-            .ctx
-            .resolve_symbol_file_index(sym_id)
-            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
-        {
-            return self.delegate_cross_arena_class_instance_type(sym_id);
-        }
-
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let mut decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         // When the primary declaration doesn't resolve to a class in the current
@@ -935,22 +927,8 @@ impl<'a> CheckerState<'a> {
         if decl_idx.is_none() || self.ctx.arena.get_class_at(decl_idx).is_none() {
             let expected_name = &symbol.escaped_name;
             for &d in &symbol.declarations {
-                let class_decl = if self.ctx.arena.get_class_at(d).is_some() {
-                    d
-                } else if let Some(parent) = self.ctx.arena.parent_of(d)
-                    && self.ctx.arena.get_class_at(parent).is_some()
-                {
-                    parent
-                } else if let Some(parent) = self.ctx.arena.parent_of(d)
-                    && let Some(grandparent) = self.ctx.arena.parent_of(parent)
-                    && self.ctx.arena.get_class_at(grandparent).is_some()
-                {
-                    grandparent
-                } else {
-                    NodeIndex::NONE
-                };
-                if class_decl.is_some()
-                    && let Some(class) = self.ctx.arena.get_class_at(class_decl)
+                if d.is_some()
+                    && let Some(class) = self.ctx.arena.get_class_at(d)
                     && self
                         .ctx
                         .arena
@@ -958,7 +936,7 @@ impl<'a> CheckerState<'a> {
                         .and_then(|n| self.ctx.arena.get_identifier(n))
                         .is_some_and(|ident| ident.escaped_text.as_str() == expected_name)
                 {
-                    decl_idx = class_decl;
+                    decl_idx = d;
                     break;
                 }
             }

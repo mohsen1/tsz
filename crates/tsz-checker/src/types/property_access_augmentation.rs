@@ -540,16 +540,8 @@ impl<'a> CheckerState<'a> {
             false
         }
 
-        if let Some(sym_id) = self.resolve_identifier_symbol(object_expr_idx) {
-            let is_namespace = self
-                .get_cross_file_symbol(sym_id)
-                .or_else(|| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| {
-                    symbol.has_any_flags(symbol_flags::MODULE | symbol_flags::ENUM)
-                });
-            if !is_namespace {
-                return None;
-            }
+        if self.resolve_identifier_symbol(object_expr_idx).is_some() {
+            return None;
         }
 
         let parent_name = rightmost_namespace_name(self.ctx.arena, object_expr_idx)?;

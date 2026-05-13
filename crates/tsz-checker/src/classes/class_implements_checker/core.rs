@@ -252,6 +252,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
         (properties, has_index_signature, display_name)
     }
 

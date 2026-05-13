@@ -10,9 +10,6 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-use crate::query_boundaries::common::{TypeDatabase, TypeEnvironment};
-use crate::query_boundaries::flow_analysis as flow_query;
-
 const fn primitive_keyword_intrinsic(kind: u16) -> Option<TypeId> {
     match kind {
         k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
@@ -99,27 +96,4 @@ pub(super) fn const_annotation_intrinsic_type(
     let name_node = arena.get(ty_ref.type_name)?;
     let ident = arena.get_identifier(name_node)?;
     primitive_name_intrinsic(ident.escaped_text.as_str())
-}
-
-pub(super) fn evaluate_predicate_instantiation(
-    db: &dyn TypeDatabase,
-    type_environment: Option<&std::cell::RefCell<TypeEnvironment>>,
-    instantiated: TypeId,
-) -> TypeId {
-    let evaluated = if let Some(env) = type_environment {
-        let env_borrow = env.borrow();
-        let with_env = flow_query::evaluate_application_type(db, &env_borrow, instantiated);
-        if with_env == instantiated {
-            flow_query::evaluate_type_structure(db, instantiated)
-        } else {
-            with_env
-        }
-    } else {
-        flow_query::evaluate_type_structure(db, instantiated)
-    };
-    if evaluated == TypeId::ANY && instantiated != TypeId::ANY {
-        instantiated
-    } else {
-        evaluated
-    }
 }

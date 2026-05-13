@@ -145,6 +145,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 extends_key = ?self.interner().lookup(extends_type),
                 "evaluate_conditional"
             );
+
             // PERF: Cache predicate results for extends_type once per iteration.
             // type_contains_infer is called up to 5 times and contains_free_type_parameters
             // at least once, each creating fresh FxHashSet/FxHashMap allocations.
@@ -369,10 +370,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // resolved TypeParameter references (not Lazy(DefId) wrappers).
                 // This is critical for the subtype checker's get_conditional_constraint
                 // which needs to recognize TypeParameter check_types via is_check_type_param.
-                // Evaluate ordinary branches for display/canonicalization, but keep
-                // recursive alias branches suspended. Eagerly evaluating a branch like
-                // `_Enumerate<...> & number` while deferring `N extends A["length"]`
-                // expands the recursive alias before `N` is instantiated.
+                // Also evaluate true/false types to resolve Lazy alias references.
                 //
                 // EXCEPTION: When the raw extends_type is an Application containing infer
                 // patterns (e.g., `Synthetic<T, infer V>`), preserve the raw form.
@@ -380,18 +378,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // the Application structure that `try_application_infer_match` needs when
                 // this deferred conditional is later instantiated with concrete type args
                 // and re-evaluated.
-                let true_type =
-                    if self.should_preserve_deferred_type_parameter_branch(cond.true_type) {
-                        cond.true_type
-                    } else {
-                        self.evaluate(cond.true_type)
-                    };
-                let false_type =
-                    if self.should_preserve_deferred_type_parameter_branch(cond.false_type) {
-                        cond.false_type
-                    } else {
-                        self.evaluate(cond.false_type)
-                    };
+                let true_type = self.evaluate(cond.true_type);
+                let false_type = self.evaluate(cond.false_type);
                 // Preserve the raw extends_type when it's an Application containing infer.
                 // Evaluating an Application like `Synthetic<T, infer V>` can collapse it
                 // to a structural Object (e.g., empty `{}`), losing the infer pattern.
@@ -922,23 +910,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .and_then(|&member| self.interner().lookup(member)),
             Some(TypeData::Application(_))
         ) && !crate::type_queries::contains_generic_type_parameters_db(self.interner(), type_id)
-    }
-
-    fn should_preserve_deferred_type_parameter_branch(&self, type_id: TypeId) -> bool {
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        match self.interner().lookup(type_id) {
-            Some(TypeData::Intersection(members)) => {
-                self.interner().type_list(members).iter().any(|&member| {
-                    matches!(
-                        self.interner().lookup(member),
-                        Some(TypeData::Application(_))
-                    )
-                })
-            }
-            _ => false,
-        }
     }
 
     /// Resolve the base constraint of a generic type by substituting type parameters

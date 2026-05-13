@@ -591,11 +591,8 @@ impl<'a> FlowAnalyzer<'a> {
                 &substitution,
             );
             if instantiated != pred_type {
-                let evaluated = super::narrowing_helpers::evaluate_predicate_instantiation(
-                    self.interner,
-                    self.type_environment,
-                    instantiated,
-                );
+                // Evaluate to resolve mapped types (e.g., `{ [K in "length"]: unknown }` -> `{ length: unknown }`)
+                let evaluated = flow_query::evaluate_type_structure(self.interner, instantiated);
                 return TypePredicate {
                     type_id: Some(evaluated),
                     ..*predicate

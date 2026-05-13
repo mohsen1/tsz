@@ -748,14 +748,6 @@ impl<'a> NarrowingContext<'a> {
             let mut matching: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
-                    let target_is_function = resolved_target == TypeId::FUNCTION
-                        || crate::type_queries::is_function_interface_structural(
-                            self.db,
-                            resolved_target,
-                        );
-                    if target_is_function && self.is_js_primitive(member) {
-                        return None;
-                    }
                     if let Some(narrowed) = self.narrow_type_param(member, target_type) {
                         return Some(narrowed);
                     }
@@ -2040,14 +2032,6 @@ impl<'a> NarrowingContext<'a> {
                     Some(target_type) => {
                         // Type guard with specific type: is T or asserts T
                         if sense {
-                            // Error recovery: if the predicate target itself
-                            // degraded to `any` (for example from an unresolved
-                            // utility type in a no-lib test), the true branch is
-                            // `any`, not a partially-filtered source union.
-                            if *target_type == TypeId::ANY {
-                                return TypeId::ANY;
-                            }
-
                             // True branch: narrow source to the predicate type.
                             // Following TSC's narrowType logic:
                             // 1. For unions: filter members using narrow_to_type

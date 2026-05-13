@@ -1161,14 +1161,6 @@ impl<'a> CheckerState<'a> {
         if !member_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS) {
             return None;
         }
-        let exported = if self.ctx.binder.get_symbol(member_sym_id).is_some() {
-            self.symbol_has_exported_value_declaration(member_sym_id)
-        } else {
-            member_sym.is_exported
-        };
-        if !exported && !member_sym.has_any_flags(symbol_flags::ENUM_MEMBER) {
-            return None;
-        }
 
         let is_pure_namespace = member_sym
             .has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)

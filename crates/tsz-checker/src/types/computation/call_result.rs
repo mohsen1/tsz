@@ -886,23 +886,9 @@ impl<'a> CheckerState<'a> {
                 } else if self.is_get_accessor_call(callee_expr) {
                     self.error_get_accessor_not_callable_at(callee_expr);
                 } else if self.ctx.compiler_options.strict_null_checks {
-                    let (non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
+                    let (_non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
                     if let Some(cause) = nullish_cause {
-                        if cause == TypeId::UNDEFINED
-                            && let Some(namespace_type) =
-                                self.same_file_namespace_value_type_for_call(callee_expr)
-                        {
-                            self.error_not_callable_at(namespace_type, callee_expr);
-                        } else if let Some(non_nullish) = non_nullish
-                            && !crate::query_boundaries::common::is_callable_type(
-                                self.ctx.types,
-                                non_nullish,
-                            )
-                        {
-                            self.error_not_callable_at(non_nullish, callee_expr);
-                        } else {
-                            self.error_cannot_invoke_possibly_nullish_at(cause, callee_expr);
-                        }
+                        self.error_cannot_invoke_possibly_nullish_at(cause, callee_expr);
                     } else if !self.is_in_decorator_expression(callee_expr) {
                         // Don't emit TS2349 for calls inside decorators - decorators
                         // are resolved at runtime and should not be checked for callability.

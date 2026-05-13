@@ -646,8 +646,9 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|symbol| symbol.import_module.is_some())
         };
 
-        if let Some(exports_table) =
-            self.binder_module_exports_for_module(target_binder, &target_file_name)
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
             && !is_reexport_alias(sym_id)
@@ -655,8 +656,9 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
-        if let Some(exports_table) =
-            self.binder_module_exports_for_module(target_binder, module_specifier)
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, module_specifier)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
             && !is_reexport_alias(sym_id)
@@ -720,7 +722,8 @@ impl<'a> CheckerState<'a> {
         // `import * as ns from "./self"` see the file's local imports through
         // `ns.x`, which `tsc` rejects with TS2339 (issue #3585).
         let has_module_exports = self
-            .binder_module_exports_for_module(target_binder, &target_file_name)
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             .is_some_and(|e| !e.is_empty());
         if !target_binder.is_external_module
             && !has_module_exports
@@ -810,58 +813,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn binder_module_exports_for_module<'b>(
-        &self,
-        binder: &'b tsz_binder::BinderState,
-        module_key: &str,
-    ) -> Option<&'b tsz_binder::SymbolTable> {
-        if let Some(exports) = binder.module_exports.get(module_key) {
-            return Some(exports);
-        }
-        if let Some(stripped) = module_key.strip_prefix("./")
-            && let Some(exports) = binder.module_exports.get(stripped)
-        {
-            return Some(exports);
-        }
-        let normalized = if module_key.contains('\\') {
-            Some(module_key.replace('\\', "/"))
-        } else {
-            None
-        };
-        if let Some(ref normalized) = normalized {
-            if let Some(exports) = binder.module_exports.get(normalized) {
-                return Some(exports);
-            }
-            if let Some(stripped) = normalized.strip_prefix("./")
-                && let Some(exports) = binder.module_exports.get(stripped)
-            {
-                return Some(exports);
-            }
-        }
-        let bare_prefix_needed = |key: &str| {
-            !key.starts_with("./")
-                && !key.starts_with("../")
-                && !key.starts_with('/')
-                && !key.starts_with(".\\")
-                && !key.starts_with("..\\")
-        };
-        if bare_prefix_needed(module_key) {
-            let prefixed = format!("./{module_key}");
-            if let Some(exports) = binder.module_exports.get(&prefixed) {
-                return Some(exports);
-            }
-        }
-        if let Some(ref normalized) = normalized
-            && bare_prefix_needed(normalized)
-        {
-            let prefixed = format!("./{normalized}");
-            if let Some(exports) = binder.module_exports.get(&prefixed) {
-                return Some(exports);
-            }
-        }
-        None
-    }
-
     fn resolve_ambient_module_export(
         &self,
         module_specifier: &str,
@@ -870,7 +821,7 @@ impl<'a> CheckerState<'a> {
         let binders = self.ctx.all_binders.as_ref()?;
         for (idx, binder) in binders.iter().enumerate() {
             if let Some(exports_table) =
-                self.binder_module_exports_for_module(binder, module_specifier)
+                self.ctx.module_exports_for_module(binder, module_specifier)
                 && let Some(sym_id) =
                     self.resolve_export_from_table(binder, exports_table, export_name)
             {

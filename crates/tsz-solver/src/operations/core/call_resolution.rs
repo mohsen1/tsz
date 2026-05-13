@@ -135,9 +135,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub fn resolve_call(&mut self, func_type: TypeId, arg_types: &[TypeId]) -> CallResult {
         self.last_instantiated_predicate = None;
         self.last_instantiated_params = None;
-        if crate::type_queries::is_function_interface_structural(self.interner, func_type) {
-            return CallResult::Success(TypeId::ANY);
-        }
         // Look up the function shape
         let key = match self.interner.lookup(func_type) {
             Some(k) => k,
