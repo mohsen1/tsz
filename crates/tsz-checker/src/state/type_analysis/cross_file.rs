@@ -847,13 +847,15 @@ impl<'a> CheckerState<'a> {
             } else {
                 delegate_arena
             };
-            let miss_target_is_declaration_file = miss_target_arena
-                .and_then(|arena| arena.source_files.first())
-                .is_some_and(|source_file| source_file.is_declaration_file);
-            tsz_common::perf_counters::record_cross_arena_symbol_miss(
+            let miss_target_source_file =
+                miss_target_arena.and_then(|arena| arena.source_files.first());
+            let miss_kind = self.cross_arena_symbol_miss_kind(sym_id);
+            self.record_cross_arena_symbol_miss_residue(
+                sym_id,
                 miss_source,
-                self.cross_arena_symbol_miss_kind(sym_id),
-                miss_target_is_declaration_file,
+                miss_kind,
+                miss_target_source_file.is_some_and(|source_file| source_file.is_declaration_file),
+                miss_target_source_file.map(|source_file| source_file.file_name.as_str()),
             );
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
