@@ -993,10 +993,13 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Only emit TS2420 for inaccessible private base members if
-                    // there are no accessible ones from other merged declarations.
-                    // When both exist, the interface itself has TS2320 (conflicting
-                    // base types) which already covers the error.
-                    let emit_inaccessible_private_implements_error =
+                    // there are no accessible ones from other merged declarations,
+                    // and only after member checks confirm there is not a more
+                    // specific missing/incompatible member diagnostic to report.
+                    // When both private-base shapes exist, the interface itself
+                    // has TS2320 (conflicting base types), which already covers
+                    // the error.
+                    let report_inaccessible_privates =
                         any_inaccessible_privates && !any_accessible_privates;
 
                     if has_private_members {
@@ -1567,7 +1570,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    if emit_inaccessible_private_implements_error
+                    if report_inaccessible_privates
                         && missing_members.is_empty()
                         && incompatible_members.is_empty()
                     {

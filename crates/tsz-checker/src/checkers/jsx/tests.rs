@@ -955,7 +955,7 @@ fn jsx_react_component_type_union_does_not_emit_ts2786() {
             c?: any;
             d?: any;
         }
-        declare const C: React.ComponentType<P1> | React.ComponentType<P2>;
+        var C: React.ComponentType<P1> | React.ComponentType<P2> = null as any;
         const a = <C p={true} />;
         "#,
     );

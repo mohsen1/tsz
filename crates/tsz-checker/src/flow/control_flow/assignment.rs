@@ -11,7 +11,8 @@ use crate::query_boundaries::common::{
 };
 use crate::query_boundaries::flow_analysis::{
     array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
-    get_array_element_type, get_lazy_def_id, is_assignable, is_assignable_with_env,
+    get_array_element_type, get_lazy_def_id, is_assignable,
+    is_assignable_strict_null as is_assignable_to_strict_null, is_assignable_with_env,
     tuple_elements_for_type, union_members_for_type, widen_literal_to_primitive,
 };
 use crate::query_boundaries::type_computation::core::BinaryOpResult;
@@ -382,7 +383,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if (literal_type == TypeId::NULL || literal_type == TypeId::UNDEFINED)
                     && let Some(annotation_type) =
                         self.annotation_type_from_assignment_node(assignment_node, target)
-                    && !self.is_assignable_to_strict_null(literal_type, annotation_type)
+                    && !self.annotation_type_allows_nullish(annotation_type, literal_type)
                 {
                     return None;
                 }
@@ -437,7 +438,7 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
                 if let Some(annotation_type) =
                     self.annotation_type_from_assignment_node(assignment_node, target)
-                    && !self.is_assignable_to_strict_null(nullish_type, annotation_type)
+                    && !self.annotation_type_allows_nullish(annotation_type, nullish_type)
                 {
                     return None;
                 }
@@ -574,6 +575,33 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    fn annotation_type_allows_nullish(
+        &self,
+        annotation_type: TypeId,
+        nullish_type: TypeId,
+    ) -> bool {
+        if self.is_assignable_to_strict_null(nullish_type, annotation_type) {
+            return true;
+        }
+        if matches!(
+            annotation_type,
+            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+        ) {
+            return true;
+        }
+        if annotation_type == nullish_type {
+            return true;
+        }
+        if nullish_type == TypeId::UNDEFINED && annotation_type == TypeId::VOID {
+            return true;
+        }
+        union_members_for_type(self.interner, annotation_type).is_some_and(|members| {
+            members
+                .iter()
+                .any(|&member| self.annotation_type_allows_nullish(member, nullish_type))
+        })
     }
 
     fn get_destructuring_assigned_type_for_reference(
@@ -1789,7 +1817,7 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(env) = &self.type_environment {
             is_assignable_with_env(self.interner, &env.borrow(), source, member, true)
         } else {
-            is_assignable(self.interner, source, member)
+            is_assignable_to_strict_null(self.interner, source, member)
         }
     }
 

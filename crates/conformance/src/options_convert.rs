@@ -67,7 +67,6 @@ fn is_harness_directive(key: &str) -> bool {
         "filename"
             | "symlink"
             | "skip"
-            | "nocheck"
             | "notypesandscript"
             | "declarationdir"
             | "declarationmap"
@@ -97,6 +96,7 @@ pub fn has_unsupported_server_options(directives: &HashMap<String, String>) -> b
         "baseurl",
         "types",
         "typeroots",
+        "nocheck",
     ];
     directives
         .keys()
@@ -637,6 +637,7 @@ fn directive_to_field_name(key: &str) -> Option<&'static str> {
         "noresolve" => "noResolve",
         "allowjs" => "allowJs",
         "checkjs" => "checkJs",
+        "nocheck" => "noCheck",
         "resolvejsonmodule" => "resolveJsonModule",
         "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
         "noimplicitoverride" => "noImplicitOverride",

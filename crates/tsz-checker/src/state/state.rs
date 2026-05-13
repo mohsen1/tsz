@@ -1361,6 +1361,13 @@ impl<'a> CheckerState<'a> {
                 node_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || node_kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             };
+            if let Some((name, _)) = crate::dispatch_helpers::keyword_type_mapping(node_kind)
+                && self.is_keyword_type_used_as_value_position(idx)
+            {
+                use crate::query_boundaries::name_resolution::NameLookupKind;
+                self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
+                return TypeId::ERROR;
+            }
             let needs_flow_or_super =
                 is_identifier || is_this_keyword || is_super_keyword || is_access_expr;
 

@@ -13,6 +13,53 @@ use tsz_solver::is_compiler_managed_type;
 use super::type_node::TypeNodeChecker;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    pub(super) fn resolve_import_alias_type_target_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+            return None;
+        }
+        if !symbol.is_type_only {
+            return None;
+        }
+        let module_name = symbol.import_module.as_ref()?;
+        let import_name = symbol.import_name.as_deref()?;
+        if import_name == "*" {
+            return None;
+        }
+
+        let source_file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(self.ctx.current_file_idx);
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_name)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.as_str();
+
+        let target_sym_id = self
+            .ctx
+            .module_exports_for_module(target_binder, target_file_name)
+            .and_then(|exports| exports.get(import_name))
+            .or_else(|| {
+                self.ctx
+                    .module_exports_for_module(target_binder, module_name)
+                    .and_then(|exports| exports.get(import_name))
+            })
+            .or_else(|| target_binder.file_locals.get(import_name))?;
+        let target_symbol = target_binder.get_symbol(target_sym_id)?;
+        if !target_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE) {
+            return None;
+        }
+        self.ctx
+            .register_symbol_file_target(target_sym_id, target_file_idx);
+        Some(target_sym_id)
+    }
+
     pub(super) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
         entity_name_text_in_arena(self.ctx.arena, idx)
     }
