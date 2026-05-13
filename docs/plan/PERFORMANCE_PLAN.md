@@ -24,14 +24,36 @@ Current guidance:
    pooling, and migrate child-checker cases into typed cross-file queries one
    reason at a time.
 5. Keep lib snapshot Phase 2/3 and interner redesign counter-gated.
+6. Every project benchmark fixture that currently fails to run (OOM, stack
+   overflow, panic, hang, or any non-zero exit before the runner records a
+   timing) must eventually pass. A failing fixture is a correctness/scaling
+   bug masquerading as a missing data point: it withholds the very baseline
+   the rest of this plan depends on, so "we can't measure it" is never an
+   acceptable end state. Each currently-failing fixture (e.g. `large-ts-repo`
+   OOM/stack-overflow, monorepo-006 cliff failures) must have either an open
+   issue with a root-cause hypothesis or a tier-2 task that is expected to
+   resolve it; once resolved, the fixture rejoins the standard bench matrix
+   and its result is required in PR descriptions that quote large-project
+   numbers.
+
+### Parallel PR Coordination (as of 2026-05-13)
+
+- Open overlap watchlist: [#6260](https://github.com/mohsen1/tsz/pull/6260)
+  (`perf(checker): reduce declaration symbol-arena delegation`) updates the
+  T2.2 declaration-file residue and related status-row numbers in this plan.
+- Until #6260 merges, prefer non-overlapping documentation slices in other PRs
+  (metadata fixes, measurement-model clarifications, and new decision records)
+  rather than editing the same status-row counters.
+- After #6260 merges, rebase and fold its `41 -> 11` declaration-file residue
+  update into any pending local branch before further T2.2 plan edits.
 
 ---
 
 ## 1. Current Main Baseline
 
-This plan is rebased against current `main` as of 2026-05-10. The important
-fact is that the codebase has moved since the original plan. Treat the items
-below as the starting point.
+This plan is rebased against current `main` as of 2026-05-13 (`b745f6aa40`).
+The important fact is that the codebase has moved since the original plan.
+Treat the items below as the starting point.
 
 | Area | Current state | Planning consequence |
 | --- | --- | --- |
@@ -1228,3 +1250,19 @@ numbers move frequently; prefer symbol search over stale line references.
 
 - `crates/tsz-core/src/parallel/lib_snapshot.rs` - existing lib snapshot cache.
 - `crates/tsz-solver/src/types.rs` - `TypeId`, `TypeData`, and layout-sensitive type definitions.
+
+---
+
+## 16. Focused PR Update Contract
+
+Use this contract for changes that update measured claims in this document.
+
+1. One measurable hypothesis per PR.
+2. Update one status-row trajectory at a time unless a second row is directly
+   coupled to the same measurement.
+3. Include a decision record under `docs/plan/perf-runs/` and link it from the
+   updated row or section.
+4. Include raw attribution/diagnostics JSON paths for any new quoted numbers.
+5. When another open PR already edits the same status-row counters, land an
+   additive/non-overlapping docs slice first and rebase the counter edits after
+   that PR merges.
