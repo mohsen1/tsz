@@ -62,6 +62,33 @@ function removeNothing(y = cond ? true : undefined) {
 }
 
 #[test]
+fn object_shorthand_uses_declared_annotation_after_type_guard_narrowing() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+}
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+let a: RoyalGuard = new LeadGuard();
+if (a.isLeader()) {
+    a.lead();
+}
+
+var holder = { a };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare var holder: {\n    a: RoyalGuard;\n};"),
+        "Expected shorthand property to use the declared variable annotation: {output}"
+    );
+}
+
+#[test]
 fn strip_internal_omits_exported_top_level_declarations() {
     let source = r#"
 /** @internal */

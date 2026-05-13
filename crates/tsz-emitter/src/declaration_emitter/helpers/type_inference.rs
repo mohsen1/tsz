@@ -1361,6 +1361,43 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    fn declared_type_annotation_text_for_identifier_name(
+        &self,
+        expr_idx: NodeIndex,
+        ident: &str,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let no_libs: &[Arc<BinderState>] = &[];
+        let sym_id =
+            binder.resolve_name_with_filter(ident, self.arena, expr_idx, no_libs, |sym| {
+                self.declared_type_annotation_text_for_symbol(sym).is_some()
+            })?;
+        self.declared_type_annotation_text_for_symbol(sym_id)
+    }
+
+    fn remove_nullish_from_union_text(type_text: &str) -> Option<String> {
+        let parts = Self::split_top_level_union_type_parts(type_text);
+        if parts.len() <= 1
+            || !parts
+                .iter()
+                .any(|part| matches!(part.as_str(), "null" | "undefined"))
+        {
+            return None;
+        }
+        let remaining: Vec<String> = parts
+            .into_iter()
+            .filter(|part| !matches!(part.as_str(), "null" | "undefined"))
+            .map(|part| Self::parenthesize_type_text_in_union_position(&part))
+            .collect();
+        if remaining.is_empty() {
+            return Some("never".to_string());
+        }
+        if let [single] = remaining.as_slice() {
+            return Some(single.clone());
+        }
+        Some(remaining.join(" | "))
+    }
+
     fn annotation_bearing_declaration_from_arena(
         arena: &NodeArena,
         decl_idx: NodeIndex,
@@ -8099,9 +8136,21 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     data.object_assignment_initializer
                 };
-                let type_text = self
-                    .preferred_object_member_initializer_type_text(initializer, depth)
-                    .unwrap_or_else(|| "any".to_string());
+                let type_text = if data.object_assignment_initializer == NodeIndex::NONE {
+                    self.declared_type_annotation_text_for_identifier_name(data.name, name)
+                        .map(|type_text| {
+                            if data.exclamation_token_pos != 0 {
+                                Self::remove_nullish_from_union_text(&type_text)
+                                    .unwrap_or(type_text)
+                            } else {
+                                type_text
+                            }
+                        })
+                } else {
+                    None
+                }
+                .or_else(|| self.preferred_object_member_initializer_type_text(initializer, depth))
+                .unwrap_or_else(|| "any".to_string());
                 Some(Self::format_object_member_type_text(
                     name, &type_text, depth,
                 ))
@@ -8739,6 +8788,7 @@ impl<'a> DeclarationEmitter<'a> {
         let mut synthetic_number_index_member = None;
         let mut negative_numeric_computed_names = Vec::new();
         let mut computed_method_value_types = Vec::new();
+        let mut has_declared_shorthand_override = false;
 
         for &member_idx in &object.elements.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -8811,6 +8861,14 @@ impl<'a> DeclarationEmitter<'a> {
             ) else {
                 continue;
             };
+            if let Some(data) = self.arena.get_shorthand_property(member_node)
+                && data.object_assignment_initializer == NodeIndex::NONE
+                && self
+                    .declared_type_annotation_text_for_identifier_name(data.name, &name_text)
+                    .is_some()
+            {
+                has_declared_shorthand_override = true;
+            }
             if preserve_computed_syntax {
                 if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
                     if let Some(value_type) = Self::object_literal_property_value_type(&member_text)
@@ -8832,6 +8890,7 @@ impl<'a> DeclarationEmitter<'a> {
         if overridden_members
             .iter()
             .any(|(_, member_text)| member_text.contains('\n'))
+            || has_declared_shorthand_override
         {
             return self.infer_object_literal_type_text_at(initializer, self.indent_level);
         }
@@ -9367,6 +9426,16 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .get(name_idx)
             .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        {
+            return true;
+        }
+
+        if let Some(data) = self.arena.get_shorthand_property(member_node)
+            && data.object_assignment_initializer == NodeIndex::NONE
+            && let Some(name) = self.object_literal_member_name_text(data.name)
+            && self
+                .declared_type_annotation_text_for_identifier_name(data.name, &name)
+                .is_some()
         {
             return true;
         }
