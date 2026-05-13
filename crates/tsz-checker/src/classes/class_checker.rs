@@ -1684,18 +1684,12 @@ impl<'a> CheckerState<'a> {
             rustc_hash::FxHashSet::default();
         let mut class_extends_error_reported = false;
 
-        // Externally-visible overload-method types for the derived class.
-        // Methods with multiple METHOD_DECLARATION nodes (overloaded methods)
-        // have their visible API spelled by the overload sigs (bodyless
-        // declarations) or, when absent, the single implementation signature.
-        // The plain per-node type compat check below is incorrect for these
-        // methods because the implementation signature is internal and may
-        // be intentionally wider than the externally visible overload set.
+        // For overloaded methods, the implementation signature is internal and
+        // may be intentionally wider than the visible overload set. The
+        // per-node TS2416 check below would compare the impl against the base
+        // and falsely flag it; instead we compare the combined CallableShapes.
         let (derived_instance_method_overloads, derived_static_method_overloads) =
             self.build_class_method_overload_types(class_data);
-
-        // Track method (name, is_static) pairs that already had the overloaded
-        // type compat check emitted so we run it once per name.
         let mut overload_compat_checked: rustc_hash::FxHashSet<(String, bool)> =
             rustc_hash::FxHashSet::default();
 

@@ -296,8 +296,36 @@ impl<'a> CheckerState<'a> {
     ) -> (FxHashMap<String, TypeId>, FxHashMap<String, TypeId>) {
         use tsz_solver::CallableShape;
 
-        // Group `METHOD_DECLARATION` nodes by (name, is_static), preserving
-        // declaration order and per-declaration body presence.
+        // Common case fast path: scan member names once with a small seen set
+        // and only build the heavier per-name grouping once a second method
+        // declaration with the same `(name, is_static)` key is observed. Most
+        // classes have no overloaded methods, so we return empty maps without
+        // allocating a `Vec` per group.
+        let mut seen: FxHashSet<(String, bool)> = FxHashSet::default();
+        let mut has_overload = false;
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                continue;
+            }
+            let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                continue;
+            };
+            let Some(name) = self.get_property_name(method.name) else {
+                continue;
+            };
+            let is_static = self.has_static_modifier(&method.modifiers);
+            if !seen.insert((name, is_static)) {
+                has_overload = true;
+                break;
+            }
+        }
+        if !has_overload {
+            return (FxHashMap::default(), FxHashMap::default());
+        }
+
         let mut groups: FxHashMap<(String, bool), Vec<(NodeIndex, bool)>> = FxHashMap::default();
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
