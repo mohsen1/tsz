@@ -38,6 +38,10 @@ name = "generic_return_fingerprint_tests"
 path = "tests/generic_return_fingerprint_tests.rs"
 
 [[test]]
+name = "generic_conflicting_argument_type_display_tests"
+path = "tests/generic_conflicting_argument_type_display_tests.rs"
+
+[[test]]
 name = "generator_annotation_mismatch_display_tests"
 path = "tests/generator_annotation_mismatch_display_tests.rs"
 
