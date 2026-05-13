@@ -414,6 +414,21 @@ const fs1: FS1 = "hello";
 }
 
 #[test]
+fn named_function_parameter_infer_extracts_first_arg() {
+    let source = r#"
+type FirstArg<T> = T extends (first: infer F, ...args: any[]) => any ? F : never;
+type FA = FirstArg<(a: number, b: string) => void>;
+
+const fa: FA = 42;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected named function parameter infer to extract number. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn test_constrained_infer_preserves_function_return_literal() {
     let source = r#"
 type ReturnString<T> = T extends (...args: any[]) => (infer R extends string) ? R : never;
@@ -429,6 +444,21 @@ const rs1: RS1 = "hello";
 }
 
 #[test]
+fn named_single_function_parameter_infer_extracts_arg() {
+    let source = r#"
+type Arg<T> = T extends (x: infer X) => any ? X : never;
+type A = Arg<(value: string) => void>;
+
+const a: A = "value";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected single named function parameter infer to extract string. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn test_constrained_infer_preserves_object_property_literal() {
     let source = r#"
 type ExtractValue<T> = T extends { value: infer V extends string | number } ? V : never;
@@ -440,5 +470,20 @@ const ev1: EV1 = "test";
     assert!(
         !has_error(&diags, 2322),
         "Expected constrained object-property infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn named_method_parameter_infer_extracts_arg() {
+    let source = r#"
+type MethodArg<T> = T extends { method(arg: infer A): any } ? A : never;
+type A = MethodArg<{ method(value: boolean): void }>;
+
+const a: A = true;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected named method parameter infer to extract boolean. Got: {diags:#?}"
     );
 }
