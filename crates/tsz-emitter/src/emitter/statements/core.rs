@@ -679,6 +679,9 @@ impl<'a> Printer<'a> {
         if self.emit_recovered_template_property_name_variable_statement(node) {
             return;
         }
+        if self.emit_recovered_array_literal_semicolon_variable_statement(node) {
+            return;
+        }
 
         let is_exported = self.ctx.is_commonjs()
             && self
@@ -1369,6 +1372,109 @@ impl<'a> Printer<'a> {
         self.emit_expression(prop.initializer);
         self.write(";");
         true
+    }
+
+    fn emit_recovered_array_literal_semicolon_variable_statement(&mut self, node: &Node) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        if var_stmt
+            .modifiers
+            .as_ref()
+            .is_some_and(|modifiers| !modifiers.nodes.is_empty())
+            || var_stmt.declarations.nodes.len() != 1
+        {
+            return false;
+        }
+
+        let Some(decl_list_idx) = var_stmt.declarations.nodes.first().copied() else {
+            return false;
+        };
+        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+            return false;
+        };
+        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        if decl_list.declarations.nodes.len() != 1 {
+            return false;
+        }
+
+        let Some(decl_idx) = decl_list.declarations.nodes.first().copied() else {
+            return false;
+        };
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if decl.initializer.is_none() {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(decl.initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(array) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+        let Some(split_index) =
+            self.array_literal_semicolon_split_index(init_node, &array.elements.nodes)
+        else {
+            return false;
+        };
+
+        let head_elements = array.elements.nodes[..split_index].to_vec();
+        let tail_elements = array.elements.nodes[split_index..].to_vec();
+        let decl_name = decl.name;
+        let flags = decl_list_node.flags as u32;
+        let keyword = if self.ctx.target_es5 {
+            "var"
+        } else if flags & node_flags::CONST != 0 {
+            "const"
+        } else if flags & node_flags::LET != 0 {
+            "let"
+        } else {
+            "var"
+        };
+
+        self.write(keyword);
+        self.write(" ");
+        self.emit_decl_name(decl_name);
+        self.write(" = [");
+        self.emit_comma_separated(&head_elements);
+        self.write("];");
+        self.write_line();
+        self.emit_comma_separated(&tail_elements);
+        self.write(";");
+        self.write_line();
+        self.write(";");
+        true
+    }
+
+    fn array_literal_semicolon_split_index(
+        &self,
+        _node: &Node,
+        elements: &[NodeIndex],
+    ) -> Option<usize> {
+        let text = self.source_text?;
+        if elements.len() < 2 {
+            return None;
+        }
+
+        for i in 0..elements.len() - 1 {
+            let prev = self.arena.get(elements[i])?;
+            let next = self.arena.get(elements[i + 1])?;
+            let start = std::cmp::min(prev.end as usize, text.len());
+            let end = std::cmp::min(next.pos as usize, text.len());
+            if start <= end && text[start..end].contains(';') {
+                return Some(i + 1);
+            }
+        }
+        None
     }
 
     fn recovered_ambiguous_generic_assertion_parts(line: &str) -> Option<(String, String)> {
