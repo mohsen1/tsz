@@ -1133,6 +1133,9 @@ impl<'a> CheckerState<'a> {
             ) {
                 return;
             }
+            if self.is_numeric_index_on_parameters_utility(data.object_type, index_type_for_check) {
+                return;
+            }
             if self.canonical_numeric_string_literal_valid_for_object(
                 index_type_for_check,
                 object_type_for_check,

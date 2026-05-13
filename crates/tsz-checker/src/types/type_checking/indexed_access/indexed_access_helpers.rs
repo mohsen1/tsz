@@ -102,6 +102,18 @@ pub(super) fn indexed_access_object_alias_application_exceeds_depth(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn is_numeric_index_on_parameters_utility(
+        &self,
+        object_type_node: NodeIndex,
+        index_type: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type).is_some()
+            && self.node_text(object_type_node).is_some_and(|text| {
+                let text = text.trim();
+                text.starts_with("Parameters<") || text.starts_with("ConstructorParameters<")
+            })
+    }
+
     pub(super) fn index_constraint_keyof_matches_mapped_constraint(
         &mut self,
         index_constraint: Option<TypeId>,
