@@ -173,8 +173,10 @@ impl<'a> CheckerState<'a> {
         // predicate is replayed over `object & Record<K, unknown>`. Keep
         // concrete declared unions replayable so loop fixed-point rechecks can
         // observe stabilized back-edge types.
+        let unknown_narrowing_needs_second_pass =
+            declared_type == TypeId::UNKNOWN && self.split_nullish_type(narrowed_type).1.is_some();
         if (declared_type == TypeId::ANY
-            || declared_type == TypeId::UNKNOWN
+            || (declared_type == TypeId::UNKNOWN && !unknown_narrowing_needs_second_pass)
             || generic_narrowing_shape)
             && narrowed_type != declared_type
             && narrowed_type != TypeId::ERROR

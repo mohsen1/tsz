@@ -82,6 +82,10 @@ name = "await_thenable_this_context_tests"
 path = "tests/await_thenable_this_context_tests.rs"
 
 [[test]]
+name = "for_await_promise_array_tests"
+path = "tests/for_await_promise_array_tests.rs"
+
+[[test]]
 name = "promise_callback_variance_tests"
 path = "tests/promise_callback_variance_tests.rs"
 
@@ -352,6 +356,14 @@ path = "tests/ts2353_omit_pick_excess_property_tests.rs"
 [[test]]
 name = "ts2353_mapped_template_literal_key_tests"
 path = "tests/ts2353_mapped_template_literal_key_tests.rs"
+
+[[test]]
+name = "ts2677_intersection_predicate_tests"
+path = "tests/ts2677_intersection_predicate_tests.rs"
+
+[[test]]
+name = "ts2352_merged_type_alias_const_tests"
+path = "tests/ts2352_merged_type_alias_const_tests.rs"
 
 [[test]]
 name = "ts2683_tests"

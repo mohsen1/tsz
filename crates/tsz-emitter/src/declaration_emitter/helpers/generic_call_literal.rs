@@ -16,10 +16,60 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
+                    .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
             })
             .map(Self::normalize_constructor_arrow_return_object_text)
+            .map(|type_text| {
+                self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &type_text)
+                    .unwrap_or(type_text)
+            })
+    }
+
+    fn bind_call_remaining_function_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+        let callee_name = self.get_identifier_text(callee_idx)?;
+        if callee_name != "bind" {
+            return None;
+        }
+        let args = call.arguments.as_ref()?;
+        if args.nodes.len() < 2 {
+            return None;
+        }
+        let source_function = self.function_type_parts_for_expression(*args.nodes.first()?)?;
+        let bound_count = args.nodes.len().saturating_sub(1);
+        let remaining = source_function
+            .parameters
+            .iter()
+            .skip(bound_count)
+            .map(|param| {
+                let type_text = param.type_text.trim();
+                let name = param.name.as_deref().unwrap_or("arg");
+                if param.rest {
+                    return format!("...{name}: {type_text}");
+                }
+                if param.optional {
+                    let type_text = if Self::contains_whole_word_in_text(type_text, "undefined") {
+                        type_text.to_string()
+                    } else {
+                        format!("{type_text} | undefined")
+                    };
+                    return format!("{name}?: {type_text}");
+                }
+                format!("{name}: {type_text}")
+            })
+            .collect::<Vec<_>>();
+        Some(format!(
+            "({}) => {}",
+            remaining.join(", "),
+            source_function.return_type
+        ))
     }
 
     fn normalize_constructor_arrow_return_object_text(type_text: String) -> String {
