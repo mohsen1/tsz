@@ -8271,7 +8271,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
     }
 
-    fn format_object_member_type_text(name: &str, type_text: &str, depth: u32) -> String {
+    pub(in crate::declaration_emitter) fn format_object_member_type_text(
+        name: &str,
+        type_text: &str,
+        depth: u32,
+    ) -> String {
         if !type_text.contains('\n') {
             return format!("{name}: {type_text}");
         }
@@ -8413,7 +8417,10 @@ impl<'a> DeclarationEmitter<'a> {
         returned
     }
 
-    fn format_object_member_entry(member_indent: &str, member_text: &str) -> String {
+    pub(in crate::declaration_emitter) fn format_object_member_entry(
+        member_indent: &str,
+        member_text: &str,
+    ) -> String {
         let mut lines = member_text.lines();
         let first = lines.next().unwrap_or(member_text);
         let mut result = String::new();
