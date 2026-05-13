@@ -3774,3 +3774,21 @@ const _check: [1, "x", true] = r;
         "three-way variadic spread with asserted tuples must preserve all literals. Got: {diags:#?}"
     );
 }
+
+#[test]
+fn conditional_type_parameter_default_evaluates_after_prior_arg_known() {
+    let source = r#"
+type Wrapper<T, W = T extends string ? number : boolean> = {
+  value: T;
+  wrapped: W;
+};
+
+type WrapStr = Wrapper<string>;
+const ws: WrapStr = { value: "hello", wrapped: 42 };
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "conditional default depending on earlier known type parameter must evaluate. Got: {diags:#?}"
+    );
+}
