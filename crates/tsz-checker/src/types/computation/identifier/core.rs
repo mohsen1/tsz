@@ -220,6 +220,8 @@ impl<'a> CheckerState<'a> {
             };
             if candidate.escaped_name != type_symbol.escaped_name
                 || (candidate.flags & tsz_binder::symbol_flags::VALUE) == 0
+                || (candidate.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                || candidate.import_module.is_some()
                 || !candidate.value_declaration.is_some()
             {
                 continue;
@@ -996,11 +998,15 @@ impl<'a> CheckerState<'a> {
                 && let Some((value_sym_id, value_decl, value_file_idx)) =
                     self.same_file_value_symbol_for_type_symbol(sym_id)
             {
-                let value_type = self.type_of_value_declaration_for_cross_file_symbol(
-                    value_sym_id,
-                    value_decl,
-                    value_file_idx,
-                );
+                let value_type = if value_file_idx == self.ctx.current_file_idx {
+                    self.type_of_value_declaration_for_symbol(value_sym_id, value_decl)
+                } else {
+                    self.type_of_value_declaration_for_cross_file_symbol(
+                        value_sym_id,
+                        value_decl,
+                        value_file_idx,
+                    )
+                };
                 if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                     return self.check_flow_usage(idx, value_type, sym_id);
                 }
@@ -1101,6 +1107,16 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
+            if !self.is_identifier_in_type_position(idx)
+                && self.ctx.import_conflict_names.contains(name)
+                && (flags & tsz_binder::symbol_flags::NAMESPACE_MODULE) != 0
+            {
+                let namespace_type = self.get_type_of_symbol(sym_id);
+                if namespace_type != TypeId::UNKNOWN && namespace_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, namespace_type, sym_id);
+                }
+            }
+
             // NOTE: tsc 6.0 does NOT emit TS2585 based on target version alone.
             // ES2015+ globals (Symbol, Promise, Map, Set, etc.) may be available
             // even with target ES5 because lib.dom.d.ts transitively loads
@@ -1179,6 +1195,8 @@ impl<'a> CheckerState<'a> {
                         if let Some(target) = self.get_symbol_globally(target_sym_id)
                             && (target.flags & tsz_binder::symbol_flags::ALIAS) != 0
                             && target.import_module.is_none()
+                            && (target.escaped_name == "default"
+                                || target.import_name.as_deref() == Some("default"))
                             && let Some(decl_idx) = target.primary_declaration()
                             && let Some(target_file_idx) =
                                 self.ctx.resolve_symbol_file_index(target_sym_id)
@@ -1203,6 +1221,8 @@ impl<'a> CheckerState<'a> {
                                 | tsz_binder::symbol_flags::TYPE_ALIAS))
                             != 0
                             && (tflags & tsz_binder::symbol_flags::VALUE) != 0
+                            && (tflags & tsz_binder::symbol_flags::ALIAS) == 0
+                            && target.import_module.is_none()
                             && target.value_declaration.is_some()
                         {
                             let target_value_decl = target.value_declaration;
