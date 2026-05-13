@@ -236,6 +236,41 @@ function f<T extends string>(x: T) {{
 }
 
 #[test]
+fn jsx_function_component_same_name_as_props_interface_does_not_recurse() {
+    let source = r#"
+declare namespace JSX {
+  interface Element {
+    type: string;
+    props: Record<string, unknown>;
+  }
+  interface IntrinsicElements {
+    div: { children?: unknown };
+    span: { children?: unknown };
+  }
+}
+
+interface Fragment {
+  children?: unknown[];
+}
+
+function Fragment(props: Fragment): JSX.Element {
+  return <div>{props.children}</div>;
+}
+
+const frag = (
+  <Fragment>
+    <span>A</span>
+    <span>B</span>
+  </Fragment>
+);
+
+export {};
+"#;
+
+    let _ = jsx_diagnostics(source);
+}
+
+#[test]
 fn test_sfc_type_mismatch_emits_ts2322() {
     let source = format!(
         r#"
