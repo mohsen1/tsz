@@ -4,6 +4,7 @@ use super::super::DeclarationEmitter;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::types::TypeId;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(super) fn short_circuit_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
@@ -13,6 +14,20 @@ impl<'a> DeclarationEmitter<'a> {
         if binary.operator_token == SyntaxKind::BarBarToken as u16
             || binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
         {
+            if self.expression_type_is_never_for_decl_emit(binary.right)
+                && let Some(left_text) = self
+                    .short_circuit_operand_type_text(binary.left)
+                    .filter(|text| text != "any" && text != "unknown")
+                    .or_else(|| {
+                        self.enclosing_parameter_type_annotation_text_for_identifier(binary.left)
+                    })
+                    .or_else(|| self.reference_declared_type_annotation_text(binary.left))
+                && let Some(non_undefined) = Self::remove_undefined_from_union_text(&left_text)
+                && Self::is_simple_identifier_text(&non_undefined)
+            {
+                return Some(format!("NonNullable<{non_undefined}>"));
+            }
+
             if let (Some(left_text), Some(right_text)) = (
                 self.short_circuit_operand_type_text(binary.left),
                 self.short_circuit_operand_type_text(binary.right),
@@ -45,6 +60,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn expression_type_is_never_for_decl_emit(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
+            return false;
+        };
+        self.get_node_type_or_names(&[expr_idx])
+            .is_some_and(|type_id| type_id == TypeId::NEVER)
     }
 
     fn short_circuit_operand_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
@@ -172,7 +198,9 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!("{prefix}{instantiated}{suffix}"))
     }
 
-    fn remove_undefined_from_union_text(type_text: &str) -> Option<String> {
+    pub(in crate::declaration_emitter) fn remove_undefined_from_union_text(
+        type_text: &str,
+    ) -> Option<String> {
         let parts = Self::split_top_level_union_type_parts(type_text);
         if parts.len() <= 1 || !parts.iter().any(|part| part == "undefined") {
             return None;

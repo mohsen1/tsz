@@ -252,7 +252,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
             {
-                if return_type_id == tsz_solver::types::TypeId::ANY
+                if (return_type_id == tsz_solver::types::TypeId::ANY
+                    || return_type_id == tsz_solver::types::TypeId::NEVER)
                     && method_body.is_some()
                     && self.body_returns_void(method_body)
                 {
@@ -274,7 +275,8 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&self.print_type_id(return_type_id));
                 }
             } else if let Some(method_type_id) = method_type_id {
-                if method_type_id == tsz_solver::types::TypeId::ANY
+                if (method_type_id == tsz_solver::types::TypeId::ANY
+                    || method_type_id == tsz_solver::types::TypeId::NEVER)
                     && method_body.is_some()
                     && self.body_returns_void(method_body)
                 {
@@ -354,7 +356,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
             {
-                if return_type_id == tsz_solver::types::TypeId::ANY
+                if (return_type_id == tsz_solver::types::TypeId::ANY
+                    || return_type_id == tsz_solver::types::TypeId::NEVER)
                     && method_body.is_some()
                     && self.body_returns_void(method_body)
                 {
@@ -369,7 +372,8 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write_type_text_with_current_indent(&type_text);
                 }
             } else if let Some(method_type_id) = method_type_id {
-                if method_type_id == tsz_solver::types::TypeId::ANY
+                if (method_type_id == tsz_solver::types::TypeId::ANY
+                    || method_type_id == tsz_solver::types::TypeId::NEVER)
                     && method_body.is_some()
                     && self.body_returns_void(method_body)
                 {

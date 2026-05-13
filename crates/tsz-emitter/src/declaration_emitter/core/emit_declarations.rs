@@ -1145,7 +1145,8 @@ impl<'a> DeclarationEmitter<'a> {
                 let solver_undefined_or_any = effective_return_type_id
                     == tsz_solver::types::TypeId::ANY
                     || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED;
-                if solver_undefined_or_any
+                if (solver_undefined_or_any
+                    || effective_return_type_id == tsz_solver::types::TypeId::NEVER)
                     && func_body.is_some()
                     && self.body_returns_void(func_body)
                 {

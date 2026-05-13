@@ -4341,7 +4341,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn enclosing_parameter_type_annotation_text_for_identifier(
+    pub(in crate::declaration_emitter) fn enclosing_parameter_type_annotation_text_for_identifier(
         &self,
         arg_idx: NodeIndex,
     ) -> Option<String> {
@@ -4355,12 +4355,18 @@ impl<'a> DeclarationEmitter<'a> {
                     let param_node = self.arena.get(param_idx)?;
                     let param = self.arena.get_parameter(param_node)?;
                     if self.get_identifier_text(param.name).as_deref() == Some(arg_name.as_str()) {
-                        return self
-                            .type_annotation_text_from_arena_node(self.arena, param.type_annotation)
-                            .or_else(|| {
-                                self.source_slice_from_arena(self.arena, param.type_annotation)
-                            })
-                            .map(|text| text.trim().to_string());
+                        let typed = self.type_annotation_text_from_arena_node(
+                            self.arena,
+                            param.type_annotation,
+                        );
+                        let source =
+                            self.source_slice_from_arena(self.arena, param.type_annotation);
+                        return match typed.as_deref() {
+                            Some("any" | "unknown") => source.or(typed),
+                            Some(_) => typed,
+                            None => source,
+                        }
+                        .map(|text| text.trim().to_string());
                     }
                 }
                 return None;
@@ -6740,6 +6746,11 @@ impl<'a> DeclarationEmitter<'a> {
             source_type_text,
             &self.print_type_id(inferred_return_type),
         ) {
+            return true;
+        }
+        if source_type_text.starts_with("NonNullable<")
+            && self.print_type_id(inferred_return_type) != source_type_text
+        {
             return true;
         }
         if source_type_text.contains("{\n    new ")

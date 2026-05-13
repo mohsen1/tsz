@@ -117,19 +117,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(expr_idx) = self.skip_parenthesized_expression(ret.expression) else {
                     return false;
                 };
-                let Some(expr_node) = self.arena.get(expr_idx) else {
-                    return false;
-                };
-                if expr_node.kind != SyntaxKind::NumericLiteral as u16 {
-                    return false;
-                }
-                let Some(type_text) = self.js_literal_type_text(expr_idx) else {
-                    return false;
-                };
-                if !literals.contains(&type_text) {
-                    literals.push(type_text);
-                }
-                true
+                self.collect_numeric_literal_return_type_text_from_expression(expr_idx, literals)
             }
             k if k == syntax_kind_ext::BLOCK => {
                 self.arena.get_block(stmt_node).is_some_and(|block| {
@@ -207,5 +195,69 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
+    }
+
+    fn collect_numeric_literal_return_type_text_from_expression(
+        &self,
+        expr_idx: NodeIndex,
+        literals: &mut Vec<String>,
+    ) -> bool {
+        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
+            return false;
+        };
+        if self.expression_type_is_never_for_decl_emit(expr_idx) {
+            return true;
+        }
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        let type_text = match expr_node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => self.js_literal_type_text(expr_idx),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let Some(unary) = self.arena.get_unary_expr(expr_node) else {
+                    return false;
+                };
+                let Some(operand_idx) = self.skip_parenthesized_expression(unary.operand) else {
+                    return false;
+                };
+                let Some(operand_node) = self.arena.get(operand_idx) else {
+                    return false;
+                };
+                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                    return false;
+                }
+                let Some(literal) = self.arena.get_literal(operand_node) else {
+                    return false;
+                };
+                let normalized = Self::normalize_numeric_literal(literal.text.as_ref());
+                match unary.operator {
+                    k if k == SyntaxKind::MinusToken as u16 => Some(format!("-{normalized}")),
+                    k if k == SyntaxKind::PlusToken as u16 => Some(normalized),
+                    _ => None,
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                let Some(conditional) = self.arena.get_conditional_expr(expr_node) else {
+                    return false;
+                };
+                return self.collect_numeric_literal_return_type_text_from_expression(
+                    conditional.when_true,
+                    literals,
+                ) && self.collect_numeric_literal_return_type_text_from_expression(
+                    conditional.when_false,
+                    literals,
+                );
+            }
+            _ => None,
+        };
+
+        let Some(type_text) = type_text else {
+            return false;
+        };
+        if !literals.contains(&type_text) {
+            literals.push(type_text);
+        }
+        true
     }
 }

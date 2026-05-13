@@ -495,6 +495,25 @@ fn fix_numeric_property_name_separator() {
     );
 }
 
+#[test]
+fn fix_never_return_declarations_match_tsc_text() {
+    let output = emit_dts(
+        r#"export function errorVoid(message: string) { throw new Error(message); }
+export class C {
+    void1() { throw new Error(); }
+}"#,
+    );
+    println!("never return declarations:\n{output}");
+    assert!(
+        output.contains("export declare function errorVoid(message: string): void;"),
+        "throw-only function should emit void: {output}"
+    );
+    assert!(
+        output.contains("void1(): void;"),
+        "throw-only class method should emit void: {output}"
+    );
+}
+
 // =============================================================================
 // Edge case exploration tests (Round 5 - finding new issues)
 // =============================================================================

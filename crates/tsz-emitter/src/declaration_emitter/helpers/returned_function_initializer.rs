@@ -336,12 +336,54 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
         let has_direct_function_return = direct_function_return.is_some();
         let return_text = direct_function_return
+            .or_else(|| self.function_body_nonnullable_short_circuit_return_text(func, func_body))
             .or_else(|| self.function_body_preferred_return_type_text(func_body))
             .map(|type_text| {
                 self.expand_rest_tuple_parameters_in_function_type_text(func_body, &type_text)
                     .unwrap_or(type_text)
             });
         (return_text, has_direct_function_return)
+    }
+
+    fn function_body_nonnullable_short_circuit_return_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+    ) -> Option<String> {
+        let body_node = self.arena.get(func_body)?;
+        let block = self.arena.get_block(body_node)?;
+        let [return_idx] = block.statements.nodes.as_slice() else {
+            return None;
+        };
+        let return_node = self.arena.get(*return_idx)?;
+        let ret = self.arena.get_return_statement(return_node)?;
+        let expr_idx = self.skip_parenthesized_expression(ret.expression)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::BarBarToken as u16
+            && binary.operator_token != SyntaxKind::QuestionQuestionToken as u16
+        {
+            return None;
+        }
+        if !self.expression_type_is_never_for_decl_emit(binary.right) {
+            return None;
+        }
+        let left_name = self.get_identifier_text(binary.left)?;
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if self.get_identifier_text(param.name).as_deref() != Some(left_name.as_str()) {
+                continue;
+            }
+            let param_text = self
+                .emit_type_node_text(param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))?;
+            let non_undefined = Self::remove_undefined_from_union_text(param_text.trim())?;
+            if Self::is_simple_identifier_text(&non_undefined) {
+                return Some(format!("NonNullable<{non_undefined}>"));
+            }
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn class_property_function_initializer_type_text(
