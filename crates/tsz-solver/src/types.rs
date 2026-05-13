@@ -1647,6 +1647,18 @@ pub struct TypeParamInfo {
     pub is_const: bool,
 }
 
+impl TypeParamInfo {
+    /// Unconstrained, non-const type parameter with no default.
+    pub const fn simple(name: Atom) -> Self {
+        Self {
+            name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }
+    }
+}
+
 /// Reference to a symbol (for named types)
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SymbolRef(pub u32);

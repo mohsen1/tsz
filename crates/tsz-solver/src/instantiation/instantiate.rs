@@ -1323,6 +1323,64 @@ impl<'a> TypeInstantiator<'a> {
                     )
                 });
 
+                // HOMOMORPHIC UNION DISTRIBUTION (tsc: instantiateMappedType → mapTypeWithAlias)
+                // Excluded: array/tuple-like unions are handled by the blocks below.
+                if let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
+                    && let Some(TypeData::TypeParameter(tp_info)) =
+                        self.interner.lookup(keyof_source)
+                    && !self.is_shadowed(tp_info.name)
+                    && let Some(substituted) = self.substitution.get(tp_info.name)
+                {
+                    let resolved =
+                        crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+                    if let Some(TypeData::Union(list_id)) = self.interner.lookup(resolved)
+                        && !Self::is_array_or_tuple_like(self.interner, resolved)
+                    {
+                        let members: Vec<TypeId> =
+                            self.interner.type_list(list_id).to_vec();
+                        let mut results = Vec::with_capacity(members.len());
+                        for &member in &members {
+                            if crate::visitors::visitor_predicates::is_primitive_type(
+                                self.interner,
+                                member,
+                            ) {
+                                results.push(member);
+                                continue;
+                            }
+                            let mut member_subst = self.substitution.clone();
+                            member_subst.insert(tp_info.name, member);
+                            let new_constraint =
+                                instantiate_type(self.interner, mapped.constraint, &member_subst);
+                            let new_template =
+                                instantiate_type(self.interner, mapped.template, &member_subst);
+                            let new_name_type = mapped
+                                .name_type
+                                .map(|t| instantiate_type(self.interner, t, &member_subst));
+                            let new_param_constraint = mapped
+                                .type_param
+                                .constraint
+                                .map(|c| instantiate_type(self.interner, c, &member_subst));
+                            let new_param_default = mapped
+                                .type_param
+                                .default
+                                .map(|d| instantiate_type(self.interner, d, &member_subst));
+                            results.push(self.interner.mapped(MappedType {
+                                constraint: new_constraint,
+                                template: new_template,
+                                name_type: new_name_type,
+                                type_param: TypeParamInfo {
+                                    constraint: new_param_constraint,
+                                    default: new_param_default,
+                                    ..mapped.type_param
+                                },
+                                ..mapped
+                            }));
+                        }
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                        return self.interner.union(results);
+                    }
+                }
+
                 // tsc's `instantiateMappedType`: when the homomorphic source T
                 // resolves to `any` and T is constrained to array/tuple types,
                 // the result is an array shape — independent of whether the
