@@ -580,6 +580,15 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
     Some(db.union(members))
 }
 
+/// Element type of an array-like source.
+///
+/// Returns the element type for `Array<T>`, or the union of element types for
+/// a tuple (rest/optional folded via [`get_tuple_element_type_union`]).
+/// `None` for any other type.
+pub fn get_array_or_tuple_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    crate::array_element_type(db, type_id).or_else(|| get_tuple_element_type_union(db, type_id))
+}
+
 /// Compute the `keyof` type for an object shape.
 ///
 /// Returns the union of string literal types for all property names in the object.

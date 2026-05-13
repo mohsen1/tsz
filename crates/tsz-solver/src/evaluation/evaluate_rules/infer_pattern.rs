@@ -1094,43 +1094,67 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 visited,
                 checker,
             ),
-            TypeData::Array(pattern_elem) => match self.interner().lookup(source) {
-                Some(TypeData::Array(source_elem)) => {
-                    self.match_infer_pattern(source_elem, pattern_elem, bindings, visited, checker)
-                }
-                Some(TypeData::Union(members)) => {
-                    let members = self.interner().type_list(members);
-                    let mut combined = FxHashMap::default();
-                    for &member in members.iter() {
-                        let Some(TypeData::Array(source_elem)) = self.interner().lookup(member)
+            TypeData::Array(pattern_elem) => {
+                // Structural rule: a tuple `[A, B, C]` projects to
+                // `Array<A | B | C>` for element-only operations, so an Array
+                // pattern matches a Tuple source by decomposing the tuple to
+                // its element-type union before recursing into the element.
+                match self.interner().lookup(source) {
+                    Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
+                        let Some(source_elem) =
+                            crate::type_queries::get_array_or_tuple_element_type(
+                                self.interner(),
+                                source,
+                            )
                         else {
                             return false;
                         };
-                        let mut member_bindings = FxHashMap::default();
-                        let mut local_visited = FxHashSet::default();
-                        if !self.match_infer_pattern(
+                        self.match_infer_pattern(
                             source_elem,
                             pattern_elem,
-                            &mut member_bindings,
-                            &mut local_visited,
+                            bindings,
+                            visited,
                             checker,
-                        ) {
-                            return false;
-                        }
-                        for (name, ty) in member_bindings {
-                            combined
-                                .entry(name)
-                                .and_modify(|existing| {
-                                    *existing = self.interner().union2(*existing, ty);
-                                })
-                                .or_insert(ty);
-                        }
+                        )
                     }
-                    bindings.extend(combined);
-                    true
+                    Some(TypeData::Union(members)) => {
+                        let members = self.interner().type_list(members);
+                        let mut combined = FxHashMap::default();
+                        for &member in members.iter() {
+                            let Some(source_elem) =
+                                crate::type_queries::get_array_or_tuple_element_type(
+                                    self.interner(),
+                                    member,
+                                )
+                            else {
+                                return false;
+                            };
+                            let mut member_bindings = FxHashMap::default();
+                            let mut local_visited = FxHashSet::default();
+                            if !self.match_infer_pattern(
+                                source_elem,
+                                pattern_elem,
+                                &mut member_bindings,
+                                &mut local_visited,
+                                checker,
+                            ) {
+                                return false;
+                            }
+                            for (name, ty) in member_bindings {
+                                combined
+                                    .entry(name)
+                                    .and_modify(|existing| {
+                                        *existing = self.interner().union2(*existing, ty);
+                                    })
+                                    .or_insert(ty);
+                            }
+                        }
+                        bindings.extend(combined);
+                        true
+                    }
+                    _ => false,
                 }
-                _ => false,
-            },
+            }
             TypeData::Tuple(pattern_elems) => match self.interner().lookup(source) {
                 Some(TypeData::Tuple(source_elems)) => {
                     let source_elems = self.interner().tuple_list(source_elems);

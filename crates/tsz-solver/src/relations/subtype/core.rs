@@ -1184,9 +1184,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // direct `source <: array-branch` check may fail before expanding
             // that element alias, so compare the evaluated source element to
             // each array branch's element type.
-            if let Some(source_elem) = array_element_type(self.interner, source).or_else(|| {
-                crate::type_queries::get_tuple_element_type_union(self.interner, source)
-            }) {
+            if let Some(source_elem) =
+                crate::type_queries::get_array_or_tuple_element_type(self.interner, source)
+            {
                 let source_elem_eval = self.evaluate_type(source_elem);
                 for &member in member_list.iter() {
                     if let Some(target_elem) = array_element_type(self.interner, member)
@@ -2435,9 +2435,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Try the Array<T> interface for full structural comparison.
                 // This handles cases like: number[] <: { toString(): string }
                 // and tuple rest inference against evaluated Array<T> constraints.
-                if let Some(elem) = array_element_type(self.interner, source).or_else(|| {
-                    crate::type_queries::get_tuple_element_type_union(self.interner, source)
-                }) && let Some(result) = self.check_array_interface_subtype(elem, target)
+                if let Some(elem) =
+                    crate::type_queries::get_array_or_tuple_element_type(self.interner, source)
+                    && let Some(result) = self.check_array_interface_subtype(elem, target)
                 {
                     return result;
                 }
@@ -2494,9 +2494,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // Target has non-empty properties + index signature.
                 // Try the Array<T> interface for full structural comparison.
-                if let Some(elem) = array_element_type(self.interner, source).or_else(|| {
-                    crate::type_queries::get_tuple_element_type_union(self.interner, source)
-                }) && let Some(result) = self.check_array_interface_subtype(elem, target)
+                if let Some(elem) =
+                    crate::type_queries::get_array_or_tuple_element_type(self.interner, source)
+                    && let Some(result) = self.check_array_interface_subtype(elem, target)
                 {
                     return result;
                 }

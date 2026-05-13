@@ -340,3 +340,156 @@ let c: "no_match" = r;  // should NOT error: R should be "no_match"
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tuple pattern `[infer F extends C, ...Array<X>]` — issue #6179
+//
+// Structural rule: when matching a `Tuple` source against an `Array(P)` pattern
+// inside a conditional's tuple rest position, the tuple is structurally an
+// array whose element type is the union of its element types. Infer variables
+// inside `P` (and the prefix infer's constraint check) must use that union.
+// ---------------------------------------------------------------------------
+
+/// The reported repro: `[infer F extends string, ...unknown[]]` against a
+/// concrete tuple should infer F as the first element when that element
+/// satisfies the constraint.
+#[test]
+fn test_infer_extends_string_with_unknown_array_rest_picks_first_string() {
+    let source = r#"
+type FirstString<T> = T extends [infer F extends string, ...unknown[]] ? F : never;
+type FS = FirstString<["a", 1, 2]>;
+const fs: FS = "a";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "FirstString<[\"a\",1,2]> should be \"a\", not never. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Same rule with `number` constraint and a different first element type —
+/// proves the fix is not specific to `string`.
+#[test]
+fn test_infer_extends_number_with_unknown_array_rest_picks_first_number() {
+    let source = r#"
+type FirstNumber<T> = T extends [infer F extends number, ...unknown[]] ? F : never;
+type FN = FirstNumber<[1, "x", 2]>;
+const n: FN = 1;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "FirstNumber<[1,\"x\",2]> should be 1, not never. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Rename invariance: the same rule must apply when the infer variable has a
+/// different name. If a name appears in the fix, this regression catches it.
+#[test]
+fn test_infer_extends_string_rest_array_rename_invariance() {
+    let source = r#"
+type Head<T> = T extends [infer X extends string, ...unknown[]] ? X : never;
+type H = Head<["abc", 1, 2]>;
+const h: H = "abc";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Renamed-X variant should still infer the first string element. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// When the prefix infer's constraint fails (first element does not satisfy
+/// `extends string`), evaluation must fall through to the false branch
+/// rather than incorrectly binding the wrong element.
+#[test]
+fn test_infer_extends_string_rest_array_constraint_failure_takes_false_branch() {
+    let source = r#"
+type FirstString<T> = T extends [infer F extends string, ...unknown[]] ? F : "no_match";
+type R = FirstString<[42, "y"]>;
+const r: R = "no_match";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "First element 42 doesn't extend string → R should be \"no_match\". Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Infer variable in the rest pattern's array element position must bind to
+/// the union of the remaining tuple element types.
+#[test]
+fn test_infer_in_array_rest_pattern_binds_to_union_of_remaining_tuple_elements() {
+    let source = r#"
+type TailUnion<T> = T extends [unknown, ...(infer R)[]] ? R : never;
+type U = TailUnion<["a", 1, true]>;
+declare let u: U;
+const a: 1 | true = u;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "TailUnion<[\"a\",1,true]> should bind R to 1 | true. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Standalone Array pattern (no tuple wrapper) against a Tuple source:
+/// `T extends (infer X)[] ? X : never` with `T = [1, "a"]` should bind
+/// `X = 1 | "a"`.
+#[test]
+fn test_array_pattern_against_tuple_source_binds_element_union() {
+    let source = r#"
+type Elem<T> = T extends (infer X)[] ? X : never;
+type E = Elem<[1, "a"]>;
+declare let e: E;
+const r: 1 | "a" = e;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Elem<[1,\"a\"]> should be 1 | \"a\". Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Existing array-vs-array path must still work unchanged.
+#[test]
+fn test_array_pattern_against_array_source_still_works() {
+    let source = r#"
+type Elem<T> = T extends (infer X)[] ? X : never;
+type E = Elem<string[]>;
+const r: E = "ok";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Elem<string[]> should still be string. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
