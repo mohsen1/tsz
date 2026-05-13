@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `codex/parameters-numeric-index-6586-20260513`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #6610
+- **Status**: ready
 - **Workstream**: conformance / solver false positives
 
 ## Intent
@@ -14,10 +14,12 @@ the false TS2536 while preserving real invalid indexed-access diagnostics.
 
 ## Files Touched
 
-- `crates/tsz-solver/src/*` (expected)
-- `crates/tsz-checker/tests/*` (expected)
+- `crates/tsz-checker/src/types/type_checking/indexed_access.rs`
+- `crates/tsz-checker/tests/tuple_index_access_tests.rs`
 - `docs/plan/claims/codex-parameters-numeric-index-6586-20260513.md`
 
 ## Verification
 
-- Pending.
+- `cargo test -p tsz-checker --test tuple_index_access_tests parameters_of_generic_function_allows_numeric_index -- --nocapture` (1 passed)
+- `cargo test -p tsz-checker --test tuple_index_access_tests -- --nocapture` (15 passed)
+- `cargo fmt --all --check`

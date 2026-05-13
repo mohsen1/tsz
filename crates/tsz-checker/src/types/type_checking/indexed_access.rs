@@ -1133,6 +1133,23 @@ impl<'a> CheckerState<'a> {
             ) {
                 return;
             }
+            // `Parameters<T>` and `ConstructorParameters<T>` are lib utility
+            // aliases whose result is always tuple-like when their constraints
+            // are satisfied. While the generic alias remains deferred, accept
+            // concrete numeric indices and let constraint validation handle
+            // non-callable / non-constructable arguments separately.
+            if crate::query_boundaries::common::number_literal_value(
+                self.ctx.types,
+                index_type_for_check,
+            )
+            .is_some()
+                && self.node_text(data.object_type).is_some_and(|text| {
+                    let text = text.trim();
+                    text.starts_with("Parameters<") || text.starts_with("ConstructorParameters<")
+                })
+            {
+                return;
+            }
             if self.canonical_numeric_string_literal_valid_for_object(
                 index_type_for_check,
                 object_type_for_check,
