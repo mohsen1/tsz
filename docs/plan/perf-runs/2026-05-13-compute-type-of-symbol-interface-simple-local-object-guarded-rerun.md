@@ -38,6 +38,9 @@ Stable counter signal:
   - `reject_declaration_count=1`
   - `reject_heritage_extends=1`
   - `reject_non_primitive_annotation=24,760`
+- non-primitive annotation split (new):
+  - `type_reference=24,760`
+  - all other annotation-kind buckets `=0`
 
 Interpretation:
 
@@ -50,5 +53,6 @@ Interpretation:
 1. Treat the earlier broad-shortcut hit/success ratios as historical only.
 2. Use this guarded rerun as the active baseline for future interface-demand work.
 3. Next shortcut work should be either:
-   - a conformance-proven guard relaxation that restores meaningful `success`, or
+   - a conformance-proven `type_reference` guard relaxation that restores
+     meaningful `success`, or
    - deletion/simplification of dead shortcut branches if they remain inactive.

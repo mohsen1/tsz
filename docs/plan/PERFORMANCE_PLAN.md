@@ -1241,10 +1241,13 @@ The counter signal stays clear: `checker.compute_type_of_symbol_interface_simple
 The active residue remains `reject_out_of_arena_decl=16`,
 `reject_missing_interface_decl=7`, `reject_declaration_count=1`,
 `reject_heritage_extends=1`, and
-`reject_non_primitive_annotation=24,760`. Timing remains noisy under
-shared-runner contention (`102.01s/98.43s` total/check in the latest run), so treat this rerun as a
+`reject_non_primitive_annotation=24,760`. A new annotation-kind split shows the
+non-primitive residue is entirely `type_reference` (`24,760`) with all other
+kind buckets at `0`, making `type_reference` the only viable near-term
+relaxation target. Timing remains noisy under shared-runner contention
+(`78.41s/76.69s` total/check in the latest run), so treat this rerun as a
 counter-baseline refresh, not a timing claim. Next step: either conformance-
-proven guard relaxation that restores meaningful `success`, or dead-path
+proven `type_reference` guard relaxation that restores meaningful `success`, or dead-path
 simplification if the shortcut remains inactive.
 
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
