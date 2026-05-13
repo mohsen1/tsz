@@ -1151,8 +1151,8 @@ fn test_contra_candidate_wins_when_only_unknown_covariant() {
 /// `function f<T>(x: { [k: string]: T }): T;` called with
 /// `{ a?: string, b?: number | undefined }` (with `exactOptionalPropertyTypes`)
 /// should infer `T = string | number | undefined` because `b`'s explicit
-/// `| undefined` is preserved. Without EOPT (or under tsc's pre-EOPT semantics)
-/// the synthetic optional `| undefined` is stripped and `T = string | number`.
+/// `| undefined` is preserved. The optional marker itself represents missingness;
+/// it does not erase an explicitly written `undefined` member.
 ///
 /// Regression for declaration-emit baseline `inferenceOptionalProperties.d.ts`
 /// where `declare const y2: string | number | undefined;` was previously
@@ -1229,11 +1229,12 @@ fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
     );
 }
 
-/// Without `exactOptionalPropertyTypes`, the same call should infer
-/// `T = string | number` (the synthetic optional `| undefined` is stripped),
-/// matching tsc's behavior under default settings.
+/// Without `exactOptionalPropertyTypes`, the same call still preserves the
+/// explicitly written `| undefined`. The optional marker itself does not add an
+/// inference candidate for `undefined`, but it also must not remove one from the
+/// stored property type.
 #[test]
-fn test_no_eopt_strips_optional_undefined_in_index_signature_inference() {
+fn test_no_eopt_preserves_explicit_undefined_in_index_signature_inference() {
     let interner = TypeInterner::new();
     interner.set_exact_optional_property_types(false);
 
@@ -1295,10 +1296,11 @@ fn test_no_eopt_strips_optional_undefined_in_index_signature_inference() {
         other => panic!("Expected success, got {other:?}"),
     };
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
     assert_eq!(
         ret, expected,
-        "Without exactOptionalPropertyTypes, the synthetic optional `| undefined` is stripped. \
-         Expected `string | number`, got TypeId({ret:?})"
+        "Without exactOptionalPropertyTypes, explicit `| undefined` from `b?: number | undefined` \
+         must be preserved in the inferred index-signature value type. \
+         Expected `string | number | undefined`, got TypeId({ret:?})"
     );
 }
