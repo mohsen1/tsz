@@ -1497,6 +1497,26 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        self.emit_expression_in_statement_position(expr_stmt.expression);
+        if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
+            self.write_line();
+        }
+        self.map_trailing_semicolon(node);
+        if !self.output_ends_with_semicolon() {
+            self.write_semicolon();
+        }
+        self.emit_trailing_comment_after_semicolon(node);
+    }
+
+    /// Emit an arbitrary expression as a standalone statement expression.
+    ///
+    /// This shares the same parenthesization/disambiguation behavior as
+    /// `emit_expression_statement` (e.g. wrapping leading object/function
+    /// expressions, ES5 arrow wrapping, and `import<T>;` erasure handling).
+    pub(in crate::emitter) fn emit_expression_in_statement_position(
+        &mut self,
+        expression: NodeIndex,
+    ) {
         // When a function/object expression appears at the start of a statement, it needs
         // wrapping parentheses: `function` would be parsed as a declaration, and `{` as a
         // block. We use a leftmost-expression walker that follows the left chain through
@@ -1510,22 +1530,22 @@ impl<'a> Printer<'a> {
         // disambiguate the leading `{`/`function` token. Adding another pair here would
         // produce double parens like `(({a:0}))`. Skip the wrapping in that case —
         // `emit_parenthesized` will print `({a:0})`.
-        let needs_parens = if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
+        let needs_parens = if let Some(expr_node) = self.arena.get(expression) {
             let leftmost = self
-                .leftmost_expression_kind_after_erasure(expr_stmt.expression)
+                .leftmost_expression_kind_after_erasure(expression)
                 .unwrap_or(expr_node.kind);
             let leftmost_needs_parens = leftmost == syntax_kind_ext::FUNCTION_EXPRESSION
                 || leftmost == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION);
             leftmost_needs_parens
-                && !self.outer_paren_will_survive_emit(expr_stmt.expression)
-                && !self.is_erased_object_literal_access_call_expression(expr_stmt.expression)
+                && !self.outer_paren_will_survive_emit(expression)
+                && !self.is_erased_object_literal_access_call_expression(expression)
         } else {
             false
         };
         let needs_legacy_asterisk_padding = self
             .arena
-            .get(expr_stmt.expression)
+            .get(expression)
             .and_then(|expr_node| self.arena.get_unary_expr(expr_node))
             .is_some_and(|unary| unary.operator == SyntaxKind::AsteriskToken as u16);
 
@@ -1540,31 +1560,23 @@ impl<'a> Printer<'a> {
             // CallExpression whose direct callee is a function/object expression,
             // wrap only the callee — producing `(function(){})()` instead of
             // `(function(){}())`.
-            if self.is_call_with_function_or_object_callee(expr_stmt.expression) {
+            if self.is_call_with_function_or_object_callee(expression) {
                 self.ctx.flags.paren_leftmost_function_or_object = true;
-                self.emit(expr_stmt.expression);
+                self.emit(expression);
                 self.ctx.flags.paren_leftmost_function_or_object = false;
             } else {
                 self.write("(");
-                self.emit(expr_stmt.expression);
+                self.emit(expression);
                 self.write(")");
             }
-        } else if self.emit_import_type_arguments_statement_expression(expr_stmt.expression) {
+        } else if self.emit_import_type_arguments_statement_expression(expression) {
             // Handled above: `import<T>;` erases to `import;`, while the same
             // expression in value position still uses the generic
             // ExpressionWithTypeArguments paren path.
         } else {
-            self.emit(expr_stmt.expression);
+            self.emit(expression);
         }
         self.ctx.flags.in_statement_expression = prev_stmt_expr;
-        if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
-            self.write_line();
-        }
-        self.map_trailing_semicolon(node);
-        if !self.output_ends_with_semicolon() {
-            self.write_semicolon();
-        }
-        self.emit_trailing_comment_after_semicolon(node);
     }
 
     fn emit_recovered_regex_slash_tail_after_variable_statement(

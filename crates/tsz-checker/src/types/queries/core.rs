@@ -1114,6 +1114,11 @@ impl<'a> CheckerState<'a> {
             {
                 return None;
             }
+            if name.starts_with("[Symbol.")
+                && let Some(symbol_ref) = self.resolve_well_known_symbol_ref_from_name(&name)
+            {
+                self.register_well_known_symbol_name_mapping(&name, symbol_ref);
+            }
             return Some(name);
         }
 
@@ -1150,6 +1155,10 @@ impl<'a> CheckerState<'a> {
                 && let Some(well_known) =
                     self.resolve_computed_symbol_property_name(computed.expression)
             {
+                if let Some(symbol_ref) = self.resolve_well_known_symbol_ref_from_name(&well_known)
+                {
+                    self.register_well_known_symbol_name_mapping(&well_known, symbol_ref);
+                }
                 return Some(well_known);
             }
             // When the computed property type resolves to a unique symbol (e.g.
@@ -1175,7 +1184,9 @@ impl<'a> CheckerState<'a> {
                             && let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent)
                             && parent_sym.escaped_name == "Symbol"
                         {
-                            return Some(format!("[Symbol.{sym_name}]"));
+                            let well_known = format!("[Symbol.{sym_name}]");
+                            self.register_well_known_symbol_name_mapping(&well_known, sym_ref);
+                            return Some(well_known);
                         }
                     }
                     return Some(format!("__unique_{}", sym_ref.0));
@@ -1325,6 +1336,46 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn register_well_known_symbol_name_mapping(
+        &self,
+        name: &str,
+        symbol_ref: tsz_solver::SymbolRef,
+    ) {
+        if !name.starts_with("[Symbol.") {
+            return;
+        }
+        let name_key = name.to_string();
+
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            env.register_well_known_symbol_name(name_key.clone(), symbol_ref);
+        }
+        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+            env.register_well_known_symbol_name(name_key, symbol_ref);
+        }
+    }
+
+    fn resolve_well_known_symbol_ref_from_name(&self, name: &str) -> Option<tsz_solver::SymbolRef> {
+        let member_name = name.strip_prefix("[Symbol.")?.strip_suffix(']')?;
+        let symbol_ctor = self.resolve_global_value_symbol("Symbol")?;
+        let lib_binders = self.get_lib_binders();
+        let symbol_ctor_sym = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(symbol_ctor, &lib_binders)?;
+        let member_sym = symbol_ctor_sym
+            .members
+            .as_ref()
+            .and_then(|members| members.get(member_name))
+            .or_else(|| {
+                symbol_ctor_sym
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(member_name))
+            })?;
+
+        Some(tsz_solver::SymbolRef(member_sym.0))
     }
 
     pub(crate) fn get_bound_class_name_from_decl(&self, class_idx: NodeIndex) -> Option<String> {

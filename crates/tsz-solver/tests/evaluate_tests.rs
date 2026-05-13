@@ -780,6 +780,94 @@ fn test_conditional_infer_array_element_with_constraint() {
 }
 
 #[test]
+fn test_conditional_infer_array_element_with_object_constraint() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends (infer R extends object)[] ? R : never, with T = { name: string }[].
+    let extends_array = interner.array(infer_r);
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_array,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.array(object_member));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    assert_eq!(result, object_member);
+}
+
+#[test]
+fn test_conditional_infer_array_element_rejects_non_array_application() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_array = interner.array(infer_r);
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_array,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
+    let non_array_application = interner.application(TypeId::OBJECT, vec![object_member]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, non_array_application);
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    assert_eq!(result, TypeId::NEVER);
+}
+
+#[test]
 fn test_conditional_infer_array_element_non_distributive() {
     let interner = TypeInterner::new();
 
@@ -42775,5 +42863,87 @@ fn test_index_access_with_keyof_type_as_index() {
         expected,
         "T[keyof T] should evaluate to number | string, got {:?}",
         interner.lookup(result)
+    );
+}
+
+#[test]
+fn intermediate_application_alias_skips_preexisting_application_occurrence() {
+    let interner = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Inner"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let outer_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Outer"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let one = interner.literal_number(1.0);
+
+    // Simulate a user-authored Inner<1> that predates evaluating Outer<1>.
+    let inner_app = interner.application(interner.lazy(inner_def), vec![one]);
+    let outer_app = interner.application(interner.lazy(outer_def), vec![one]);
+    let evaluated = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(inner_app, outer_app, evaluated, &[one]);
+
+    assert_eq!(
+        interner.get_display_alias(inner_app),
+        None,
+        "Pre-existing instantiated applications should not be globally repainted"
+    );
+}
+
+#[test]
+fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
+    let interner = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Inner"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let outer_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Outer"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let one = interner.literal_number(1.0);
+
+    // Outer exists first; Inner<1> is introduced later as an intermediate.
+    let outer_app = interner.application(interner.lazy(outer_def), vec![one]);
+    let inner_app = interner.application(interner.lazy(inner_def), vec![one]);
+    let evaluated = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(inner_app, outer_app, evaluated, &[one]);
+
+    assert_eq!(
+        interner.get_display_alias(inner_app),
+        Some(outer_app),
+        "Fresh intermediate applications should still carry the forward alias"
     );
 }

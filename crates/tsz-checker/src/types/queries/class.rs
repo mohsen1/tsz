@@ -1796,7 +1796,10 @@ impl<'a> CheckerState<'a> {
                 if refers_to_current_class && !is_static {
                     // For instance methods with `this: CurrentClass`, use the cached instance type
                     // This ensures we get the fully-constructed class type with all properties
-                    if let Some(cached) = cached_instance_this {
+                    if let Some(cached) = cached_instance_this
+                        && cached != TypeId::ANY
+                        && cached != TypeId::ERROR
+                    {
                         return Some(cached);
                     }
                     if let Some(node) = self.ctx.arena.get(class_idx)
@@ -1896,6 +1899,10 @@ impl<'a> CheckerState<'a> {
     /// Recursively check for TS7006 in nested function/arrow expressions within a node.
     /// This handles cases like `async function foo(a = x => x)` where the nested arrow function
     /// parameter `x` should trigger TS7006 if it lacks a type annotation.
+    ///
+    /// Must be called *after* `get_type_of_node_with_request` for the enclosing initializer, so
+    /// that closures already processed with a contextual callable type are in
+    /// `implicit_any_checked_closures` and can be skipped here.
     pub(crate) fn check_for_nested_function_ts7006(&mut self, node_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return;
@@ -1909,23 +1916,21 @@ impl<'a> CheckerState<'a> {
         };
 
         if is_function {
-            // Check all parameters of this function for TS7006
             if let Some(func) = self.ctx.arena.get_function(node) {
-                for (pi, &param_idx) in func.parameters.nodes.iter().enumerate() {
-                    if let Some(param_node) = self.ctx.arena.get(param_idx)
-                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                    {
-                        // Nested functions in default values don't have contextual types
-                        self.maybe_report_implicit_any_parameter(param, false, pi);
+                if !self.closure_has_contextual_type(node_idx) {
+                    for (pi, &param_idx) in func.parameters.nodes.iter().enumerate() {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            self.maybe_report_implicit_any_parameter(param, false, pi);
+                        }
                     }
                 }
-            }
-
-            // Recursively check the function body for more nested functions
-            if let Some(func) = self.ctx.arena.get_function(node)
-                && func.body.is_some()
-            {
-                self.check_for_nested_function_ts7006(func.body);
+                // Always recurse into the body: deeply nested functions may not have
+                // been contextually typed even when the outer closure was.
+                if func.body.is_some() {
+                    self.check_for_nested_function_ts7006(func.body);
+                }
             }
         } else {
             // Recursively check child nodes for function expressions

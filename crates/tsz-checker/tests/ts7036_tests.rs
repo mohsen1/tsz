@@ -1,11 +1,6 @@
 //! Tests for TS7036: Dynamic import's specifier must be of type 'string'.
 
-fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    crate::test_utils::check_source(source, "test.ts", crate::context::CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
-}
+use crate::test_utils::check_source_code_messages as get_diagnostics;
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)

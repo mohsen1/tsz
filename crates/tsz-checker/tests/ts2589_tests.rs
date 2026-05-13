@@ -3,14 +3,10 @@
 use crate::context::CheckerOptions;
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
-use crate::test_utils::{check_source_code_messages, check_source_diagnostics};
+use crate::test_utils::{check_source_code_messages as get_diagnostics, check_source_diagnostics};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{PropertyInfo, TupleElement, TypeId, TypeParamInfo};
-
-fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source_code_messages(source)
-}
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
