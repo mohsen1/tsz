@@ -6082,6 +6082,29 @@ class Text extends Component<{{}}, {{}}> {{
     );
 }
 
+#[test]
+fn test_ts2604_this_tag_not_suppressed_by_component_union_this_annotation() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+type C1 = (props: {{ ok?: boolean }}) => JSX.Element;
+type C2 = (props: {{ ok?: boolean }}) => JSX.Element;
+
+function render(this: C1 | C2) {{
+    return <this ok />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
+        ),
+        "Expected TS2604 for <this/> even when `this` annotation is a component-union, got: {diags:?}"
+    );
+}
+
 // =============================================================================
 // JSX explicit type arguments: TS2558, TS2344, TS2322
 // =============================================================================

@@ -7,6 +7,7 @@ use crate::query_boundaries::checkers::iterable::{
     function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_this_type,
     is_tuple_type, union_members_for_type,
 };
+use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -1678,11 +1679,8 @@ impl<'a> CheckerState<'a> {
         if next_type == TypeId::ANY
             || next_type == TypeId::UNKNOWN
             || next_type == TypeId::UNDEFINED
-            || crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, next_type)
-            || crate::query_boundaries::common::contains_free_type_parameters(
-                self.ctx.types,
-                next_type,
-            )
+            || common::is_type_parameter_like(self.ctx.types, next_type)
+            || common::contains_free_type_parameters(self.ctx.types, next_type)
         {
             return true;
         }

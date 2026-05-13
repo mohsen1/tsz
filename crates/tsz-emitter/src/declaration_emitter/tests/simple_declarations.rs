@@ -2732,6 +2732,53 @@ export declare namespace foo {
 }
 
 #[test]
+fn test_mutable_generic_call_literal_result_widens_in_declaration_emit() {
+    let source = r#"
+function foo<T>(x: T) { return x; }
+var x = foo(5);
+"#;
+    let (parser, root) = parse_test_source(source);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let get_var_decl = |stmt_idx: NodeIndex| {
+        parser
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| parser.arena.get_variable(node))
+            .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+            .and_then(|node| parser.arena.get_variable(node))
+            .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+            .and_then(|node| parser.arena.get_variable_declaration(node))
+            .expect("missing variable declaration")
+    };
+    let var_x_decl = get_var_decl(source_file.statements.nodes[1]);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    let literal_five = tsz_solver::type_queries::create_number_literal_type(&interner, 5.0);
+    type_cache
+        .node_types
+        .insert(var_x_decl.initializer.0, literal_five);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+    assert!(
+        output.contains("declare var x: number;"),
+        "Expected mutable generic call literal result to widen in DTS: {output}"
+    );
+    assert!(
+        !output.contains("declare var x: 5;"),
+        "Did not expect mutable generic call literal result to stay narrow: {output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_function_assignments_ignore_block_scoped_shadow() {
     let source = r#"
 export function X() {}
@@ -2810,6 +2857,7 @@ function foo() {}
 foo.null = true;
 
 function bar() {}
+bar.async = true;
 bar.normal = false;
 
 function baz() {}
@@ -2825,6 +2873,7 @@ declare namespace foo {
 }
 declare function bar(): void;
 declare namespace bar {
+    let async: boolean;
     let normal: boolean;
 }
 declare function baz(): void;
@@ -2837,6 +2886,28 @@ declare namespace baz {
     assert!(
         output.contains(expected),
         "Expected JS reserved function expandos to use keyword aliases and avoid reused local names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_js_late_bound_function_alias_generation_avoids_existing_namespace_members() {
+    let source = r#"
+export const normal = 1;
+export function foo() {}
+foo.normal = false;
+foo.normal_1 = true;
+"#;
+
+    let output = emit_js_dts_with_usage_analysis(source);
+    let expected = r#"export function foo(): void;
+export namespace foo {
+    let normal_2: boolean;
+    export { normal_2 as normal };
+    let normal_1: boolean;
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected namespace alias generation to skip existing member names when resolving collisions: {output}"
     );
 }
 

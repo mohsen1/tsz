@@ -89,6 +89,24 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn source_return_type_mentions_type_parameter(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        type_text: &str,
+    ) -> bool {
+        let Some(type_params) = func.type_parameters.as_ref() else {
+            return false;
+        };
+        type_params.nodes.iter().copied().any(|param_idx| {
+            source_arena
+                .get(param_idx)
+                .and_then(|param_node| source_arena.get_type_parameter(param_node))
+                .and_then(|param| self.identifier_text_from_arena(source_arena, param.name))
+                .is_some_and(|name| Self::contains_whole_word_in_text(type_text, &name))
+        })
+    }
+
     pub(in crate::declaration_emitter) fn substitute_source_call_type_parameters(
         &self,
         source_arena: &NodeArena,
@@ -125,13 +143,22 @@ impl<'a> DeclarationEmitter<'a> {
             type_param_names.push(name_text);
         }
 
-        let substitutions = self.infer_call_type_param_substitutions_from_arguments(
-            source_arena,
-            &func.parameters,
-            call,
-            &type_param_names,
-            &type_param_constraints,
-        );
+        let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
+        let substitutions = if explicit_type_args.is_empty() {
+            self.infer_call_type_param_substitutions_from_arguments(
+                source_arena,
+                &func.parameters,
+                call,
+                &type_param_names,
+                &type_param_constraints,
+            )
+        } else {
+            type_param_names
+                .iter()
+                .zip(explicit_type_args.iter())
+                .map(|(name_text, arg_text)| (name_text.clone(), arg_text.clone()))
+                .collect()
+        };
         if substitutions.is_empty()
             && type_param_names
                 .iter()

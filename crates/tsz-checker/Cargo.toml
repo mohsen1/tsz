@@ -1010,6 +1010,10 @@ name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 
 [[test]]
+name = "dynamic_names_ts2720_tests"
+path = "tests/dynamic_names_ts2720_tests.rs"
+
+[[test]]
 name = "issue_3768_outer_call_inference_regression_tests"
 path = "tests/issue_3768_outer_call_inference_regression_tests.rs"
 
