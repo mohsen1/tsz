@@ -101,22 +101,12 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
     matches!(
         name,
         "ArrayIterator"
-            | "BigIntToLocaleStringOptions"
-            | "ConcatArray"
             | "DateTimeFormatOptions"
-            | "Disposable"
-            | "Iterable"
-            | "IteratorObject"
-            | "IteratorReturnResult"
-            | "IteratorYieldResult"
             | "Locale"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
-            | "RegExpExecArray"
-            | "RegExpIndicesArray"
-            | "RegExpMatchArray"
             | "RegExpStringIterator"
             | "StringIterator"
     )
