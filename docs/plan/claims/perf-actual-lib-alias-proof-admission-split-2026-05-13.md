@@ -30,6 +30,8 @@ behavior, and keeps generic aliases plus `PropertyKey` on fallback.
   - `PropertyKey` has a proven body but remains unadmitted/fallback.
   - `Record` has a proven generic body with two type params but remains
     fallback.
+  - `Record`'s direct proof body and type-parameter arity match the existing
+    child-checker fallback result.
 
 ## Validation
 
