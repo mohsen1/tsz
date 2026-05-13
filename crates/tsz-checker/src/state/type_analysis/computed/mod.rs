@@ -715,31 +715,82 @@ impl<'a> CheckerState<'a> {
 
         // Use get_symbol_globally to find symbols in lib files and other files
         // Extract needed data to avoid holding borrow across mutable operations
-        let (flags, value_decl, declarations, import_module, import_name, escaped_name) =
-            match self.get_symbol_globally(sym_id) {
-                Some(symbol) => (
+        let (flags, value_decl, declarations, import_module, import_name, escaped_name) = match self
+            .get_symbol_globally(sym_id)
+        {
+            Some(symbol) => {
+                tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                    tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::GlobalSymbol,
+                );
+                (
                     symbol.flags,
                     symbol.value_declaration,
                     symbol.declarations.clone(),
                     symbol.import_module.clone(),
                     symbol.import_name.clone(),
                     symbol.escaped_name.clone(),
-                ),
-                None => {
-                    // Also try the cross-file symbol
-                    match self.get_cross_file_symbol(sym_id) {
-                        Some(symbol) => (
+                )
+            }
+            None => {
+                // Also try the cross-file symbol
+                match self.get_cross_file_symbol(sym_id) {
+                    Some(symbol) => {
+                        tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                                tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::CrossFileSymbol,
+                            );
+                        (
                             symbol.flags,
                             symbol.value_declaration,
                             symbol.declarations.clone(),
                             symbol.import_module.clone(),
                             symbol.import_name.clone(),
                             symbol.escaped_name.clone(),
-                        ),
-                        None => return (TypeId::UNKNOWN, Vec::new()),
+                        )
+                    }
+                    None => {
+                        tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                                tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::MissingSymbol,
+                            );
+                        return (TypeId::UNKNOWN, Vec::new());
                     }
                 }
-            };
+            }
+        };
+
+        let kind_outcome = if flags & symbol_flags::ALIAS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Alias
+        } else if flags & symbol_flags::TYPE_ALIAS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeAlias
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Interface
+        } else if flags & symbol_flags::CLASS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Class
+        } else if flags & symbol_flags::FUNCTION != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Function
+        } else if flags & symbol_flags::VARIABLE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Variable
+        } else if flags & symbol_flags::MODULE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Module
+        } else if flags & symbol_flags::PROPERTY != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Property
+        } else if flags & symbol_flags::METHOD != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Method
+        } else if flags & symbol_flags::ACCESSOR != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Accessor
+        } else if flags & symbol_flags::ENUM != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Enum
+        } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeParameter
+        } else if flags & symbol_flags::TYPE_LITERAL != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeLiteral
+        } else if flags & symbol_flags::OBJECT_LITERAL != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::ObjectLiteral
+        } else if flags & symbol_flags::SIGNATURE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Signature
+        } else {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Other
+        };
+        tsz_common::perf_counters::record_compute_type_of_symbol_kind_outcome(kind_outcome);
 
         tracing::trace!(
         sym_id = sym_id.0,
