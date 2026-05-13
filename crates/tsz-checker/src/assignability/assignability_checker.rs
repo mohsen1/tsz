@@ -1717,6 +1717,27 @@ impl<'a> CheckerState<'a> {
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        thread_local! {
+            static ASSIGNABILITY_EVAL_VISITING: std::cell::RefCell<FxHashSet<TypeId>> =
+                Default::default();
+        }
+
+        let entered =
+            ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().insert(type_id));
+        if !entered {
+            return type_id;
+        }
+
+        let result = self.evaluate_type_for_assignability_inner(type_id);
+        ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().remove(&type_id));
+        result
+    }
+
+    fn evaluate_type_for_assignability_inner(&mut self, type_id: TypeId) -> TypeId {
         let kind = classify_for_assignability_eval(self.ctx.types, type_id);
         let mut evaluated = match kind {
             AssignabilityEvalKind::Application => {
