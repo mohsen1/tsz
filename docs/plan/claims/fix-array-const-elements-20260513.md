@@ -4,7 +4,7 @@
 - **Branch**: `fix-array-const-elements-20260513`
 - **Base**: `upstream/main`
 - **Issue**: #6112
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/6119
 - **Status**: wip
 - **Workstream**: solver false-positive
 
