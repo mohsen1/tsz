@@ -82,6 +82,24 @@ fn test_generic_new_expression_infers_forwarded_base_type_argument() {
 }
 
 #[test]
+fn test_generic_rest_tuple_inference_preserves_rest_parameter() {
+    let output = emit_dts_with_binding(
+        r#"
+    declare function f<T extends any[], U>(fn: (...args: T) => U): (...args: T) => U;
+    let g = f((...args) => true);
+    "#,
+    );
+    assert!(
+        output.contains("declare let g: (...args: any[]) => boolean;"),
+        "Expected rest parameter to remain rest after generic tuple inference: {output}"
+    );
+    assert!(
+        !output.contains("declare let g: (args: any[]) => boolean;"),
+        "Rest tuple inference should not collapse to a regular array parameter: {output}"
+    );
+}
+
+#[test]
 fn test_multiple_type_parameters() {
     let output = emit_dts(
         "export function map<T, U>(arr: T[], fn: (x: T) => U): U[] { return arr.map(fn); }",

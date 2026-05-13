@@ -70,6 +70,16 @@ impl<'a> DeclarationEmitter<'a> {
                             .iter()
                             .any(|(name, _)| name.as_str() == source_param.type_text)
                     {
+                        if let Some(argument_param) = argument.parameters.get(source_param_index)
+                            && argument_param.rest
+                            && argument.parameters.len() == source_param_index + 1
+                        {
+                            substitutions.push((
+                                source_param.type_text.clone(),
+                                argument_param.type_text.clone(),
+                            ));
+                            continue;
+                        }
                         let tuple_items = argument
                             .parameters
                             .iter()
