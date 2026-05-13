@@ -1401,6 +1401,39 @@ impl<'a> CheckerState<'a> {
 
         // Interface - return interface type with call signatures
         if flags & symbol_flags::INTERFACE != 0 {
+            if tsz_common::perf_counters::enabled_fast() {
+                let interface_callsite_outcome = if self.ctx.symbol_resolution_stack.len() < 2 {
+                    tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::Root
+                } else {
+                    let parent_sym_id = self.ctx.symbol_resolution_stack
+                        [self.ctx.symbol_resolution_stack.len() - 2];
+                    let parent_flags = self
+                        .get_symbol_globally(parent_sym_id)
+                        .map(|symbol| symbol.flags)
+                        .or_else(|| self.get_cross_file_symbol(parent_sym_id).map(|s| s.flags));
+                    match parent_flags {
+                        Some(parent_flags) if parent_flags & symbol_flags::INTERFACE != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentInterface
+                        }
+                        Some(parent_flags) if parent_flags & symbol_flags::TYPE_ALIAS != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentTypeAlias
+                        }
+                        Some(parent_flags) if parent_flags & symbol_flags::ALIAS != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentAlias
+                        }
+                        Some(_) => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentOther
+                        }
+                        None => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentMissing
+                        }
+                    }
+                };
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_callsite_outcome(
+                    interface_callsite_outcome,
+                );
+            }
+
             // Merged lib symbols can live in the main binder but still carry
             // declaration nodes from other arenas. Lowering those declarations
             // against the current arena produces incomplete interface shapes

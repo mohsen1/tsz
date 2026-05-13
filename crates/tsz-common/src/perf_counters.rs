@@ -472,6 +472,42 @@ impl ComputeTypeOfSymbolInterfaceFastPathOutcome {
     }
 }
 
+/// Call-site parent classification for interface-symbol calls in
+/// `compute_type_of_symbol`.
+///
+/// Uses the caller frame from `symbol_resolution_stack`:
+/// - `root`: no parent symbol in the current resolution chain
+/// - `parent_*`: parent symbol kind bucket
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum ComputeTypeOfSymbolInterfaceCallsiteOutcome {
+    Root = 0,
+    ParentInterface = 1,
+    ParentTypeAlias = 2,
+    ParentAlias = 3,
+    ParentOther = 4,
+    ParentMissing = 5,
+}
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT: usize = 6;
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES: [&str;
+    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT] = [
+    "root",
+    "parent_interface",
+    "parent_type_alias",
+    "parent_alias",
+    "parent_other",
+    "parent_missing",
+];
+
+impl ComputeTypeOfSymbolInterfaceCallsiteOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Why a cross-file cache reader (`cached_cross_file_*` in
 /// `tsz-checker/src/context/cross_file_query.rs`) returned `None`.
 ///
@@ -716,6 +752,8 @@ pub struct PerfCounters {
     pub compute_type_of_symbol_kind_outcome: [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT],
     pub compute_type_of_symbol_interface_fastpath_outcome:
         [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT],
+    pub compute_type_of_symbol_interface_callsite_outcome:
+        [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT],
 
     // ─── resolver / VFS ──────────────────────────────────────────────────
     pub resolver_lookup_calls: AtomicU64,
@@ -791,6 +829,8 @@ impl PerfCounters {
                 COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT],
             compute_type_of_symbol_interface_fastpath_outcome: [const { AtomicU64::new(0) };
                 COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT],
+            compute_type_of_symbol_interface_callsite_outcome: [const { AtomicU64::new(0) };
+                COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT],
             resolver_lookup_calls: AtomicU64::new(0),
             resolver_is_file_calls: AtomicU64::new(0),
             resolver_is_dir_calls: AtomicU64::new(0),
@@ -1307,6 +1347,19 @@ pub fn record_compute_type_of_symbol_interface_fastpath_outcome(
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record call-site parent-kind attribution for interface calls in
+/// `compute_type_of_symbol`.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_callsite_outcome(
+    outcome: ComputeTypeOfSymbolInterfaceCallsiteOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().compute_type_of_symbol_interface_callsite_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record a `TypeInterner::intern_string` call. Mirrors the existing
 /// `record_compute_type_of_symbol_*` shape: gate once, one `counters()`
 /// lookup, increment exactly the named field.
@@ -1657,7 +1710,16 @@ impl PerfCounters {
             .iter()
             .map(load)
             .sum();
-        if source_total == 0 && kind_total == 0 && interface_fastpath_total == 0 {
+        let interface_callsite_total: u64 = c
+            .compute_type_of_symbol_interface_callsite_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if source_total == 0
+            && kind_total == 0
+            && interface_fastpath_total == 0
+            && interface_callsite_total == 0
+        {
             return String::new();
         }
 
@@ -1690,6 +1752,18 @@ impl PerfCounters {
                 .enumerate()
             {
                 let count = load(&c.compute_type_of_symbol_interface_fastpath_outcome[idx]);
+                if count > 0 {
+                    out.push_str(&format!("  {name:<28} {count:>12}\n"));
+                }
+            }
+        }
+        if interface_callsite_total > 0 {
+            out.push_str("\ncompute_type_of_symbol interface callsite outcomes:\n");
+            for (idx, name) in COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES
+                .iter()
+                .enumerate()
+            {
+                let count = load(&c.compute_type_of_symbol_interface_callsite_outcome[idx]);
                 if count > 0 {
                     out.push_str(&format!("  {name:<28} {count:>12}\n"));
                 }
@@ -1954,6 +2028,13 @@ pub struct PerfCounterSnapshot {
     /// long, in
     /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES` order.
     pub compute_type_of_symbol_interface_fastpath_outcomes: Vec<NamedCount>,
+    /// Call-site parent-kind attribution for interface-symbol calls in
+    /// `compute_type_of_symbol`.
+    ///
+    /// Always `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT`
+    /// long, in
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES` order.
+    pub compute_type_of_symbol_interface_callsite_outcomes: Vec<NamedCount>,
     /// Outcome buckets for direct cross-file interface lowering attempts.
     ///
     /// JSON counterpart of
@@ -2033,6 +2114,7 @@ pub struct CheckerCounters {
 /// Used for the `alias_shortcut_outcomes`,
 /// `compute_type_of_symbol_*_outcomes`,
 /// `compute_type_of_symbol_interface_fastpath_outcomes`, and
+/// `compute_type_of_symbol_interface_callsite_outcomes`, and
 /// `direct_interface_lowering_outcomes` arrays on
 /// [`PerfCounterSnapshot`]. Each array is always emitted at its full
 /// declared length, with zero counts for inactive buckets, so the JSON
@@ -2286,6 +2368,13 @@ impl PerfCounters {
                     count: load(&c.compute_type_of_symbol_interface_fastpath_outcome[i]),
                 })
                 .collect(),
+            compute_type_of_symbol_interface_callsite_outcomes: (0
+                ..COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES[i],
+                    count: load(&c.compute_type_of_symbol_interface_callsite_outcome[i]),
+                })
+                .collect(),
             direct_interface_lowering_outcomes: (0
                 ..DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -2373,6 +2462,7 @@ mod json_tests {
             "compute_type_of_symbol_source_outcomes",
             "compute_type_of_symbol_kind_outcomes",
             "compute_type_of_symbol_interface_fastpath_outcomes",
+            "compute_type_of_symbol_interface_callsite_outcomes",
             "direct_interface_lowering_outcomes",
             "cross_file_cache_miss_causes",
             "source_file_symbol_arena_cache_eligibility_outcomes",
@@ -2848,6 +2938,31 @@ mod json_tests {
     }
 
     #[test]
+    fn compute_type_of_symbol_interface_callsite_outcomes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["compute_type_of_symbol_interface_callsite_outcomes"]
+            .as_array()
+            .expect("compute_type_of_symbol_interface_callsite_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT,
+            "compute_type_of_symbol_interface_callsite_outcomes length must match \
+             COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES[i],
+                "compute_type_of_symbol_interface_callsite_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "compute_type_of_symbol_interface_callsite_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
     fn direct_interface_lowering_outcomes_locks_to_names_array() {
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -3078,6 +3193,7 @@ mod json_tests {
         let ctos_kind_idx = ComputeTypeOfSymbolKindOutcome::Interface.as_index();
         let ctos_fastpath_idx =
             ComputeTypeOfSymbolInterfaceFastPathOutcome::SkipAllThree.as_index();
+        let ctos_callsite_idx = ComputeTypeOfSymbolInterfaceCallsiteOutcome::Root.as_index();
 
         let before_source =
             c.delegate_cross_arena_symbol_miss_by_source[source_idx].load(Ordering::Relaxed);
@@ -3099,6 +3215,9 @@ mod json_tests {
         let before_ctos_fastpath = c.compute_type_of_symbol_interface_fastpath_outcome
             [ctos_fastpath_idx]
             .load(Ordering::Relaxed);
+        let before_ctos_callsite = c.compute_type_of_symbol_interface_callsite_outcome
+            [ctos_callsite_idx]
+            .load(Ordering::Relaxed);
 
         c.delegate_cross_arena_symbol_miss_by_source[source_idx].fetch_add(1, Ordering::Relaxed);
         c.delegate_cross_arena_symbol_miss_by_kind[kind_idx].fetch_add(1, Ordering::Relaxed);
@@ -3111,6 +3230,8 @@ mod json_tests {
         c.compute_type_of_symbol_source_outcome[ctos_source_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_kind_outcome[ctos_kind_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_fastpath_outcome[ctos_fastpath_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        c.compute_type_of_symbol_interface_callsite_outcome[ctos_callsite_idx]
             .fetch_add(1, Ordering::Relaxed);
 
         let snap = PerfCounters::snapshot();
@@ -3202,6 +3323,16 @@ mod json_tests {
         assert!(
             ctos_fastpath_row["count"].as_u64().unwrap_or(0) > before_ctos_fastpath,
             "compute_type_of_symbol_interface_fastpath_outcomes[skip_all_three] did not reflect the bump",
+        );
+
+        let ctos_callsite = json["compute_type_of_symbol_interface_callsite_outcomes"]
+            .as_array()
+            .expect("compute_type_of_symbol_interface_callsite_outcomes is array");
+        let ctos_callsite_row = &ctos_callsite[ctos_callsite_idx];
+        assert_eq!(ctos_callsite_row["name"], "root");
+        assert!(
+            ctos_callsite_row["count"].as_u64().unwrap_or(0) > before_ctos_callsite,
+            "compute_type_of_symbol_interface_callsite_outcomes[root] did not reflect the bump",
         );
     }
 

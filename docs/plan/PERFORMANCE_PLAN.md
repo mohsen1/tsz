@@ -1168,6 +1168,15 @@ should target interface cold-call volume / lowering cost instead of more gate
 tuning. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath-outcomes.md).
 
+**2026-05-13 `compute_type_of_symbol` interface call-site outcomes:** new
+call-site counters classify interface calls by parent symbol kind in the
+resolution stack. On monorepo-006, root calls dominate
+(`24,782 / 24,796`, `99.94%`) while nested parent-interface calls are tiny
+(`14`, `0.06%`) and all other parent-kind buckets are zero. This narrows the
+next optimization lane to reducing top-level/root interface demand, not
+interface-to-interface recursion tuning. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-callsite-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-callsite-outcomes.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
