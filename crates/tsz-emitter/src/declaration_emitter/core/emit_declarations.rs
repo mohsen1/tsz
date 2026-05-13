@@ -737,6 +737,8 @@ impl<'a> DeclarationEmitter<'a> {
             .current_statement_jsdoc_chain
             .iter()
             .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
+        let suppress_jsdoc_type_alias_comments =
+            has_jsdoc_type_alias && self.statement_emits_js_object_literal_namespace(stmt_idx);
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
@@ -745,7 +747,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.writer.truncate(before_jsdoc_len);
             let mut filtered =
                 Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain);
-            if has_jsdoc_type_alias {
+            if suppress_jsdoc_type_alias_comments {
                 filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
             }
             self.emit_jsdoc_comment_chain(&filtered);
@@ -888,6 +890,50 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.suppress_current_statement_jsdoc_comments = false;
         self.current_statement_jsdoc_chain.clear();
+    }
+
+    fn statement_emits_js_object_literal_namespace(&self, stmt_idx: NodeIndex) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                continue;
+            }
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            if decl_list.declarations.nodes.len() != 1 {
+                continue;
+            }
+            let Some(&decl_idx) = decl_list.declarations.nodes.first() else {
+                continue;
+            };
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {

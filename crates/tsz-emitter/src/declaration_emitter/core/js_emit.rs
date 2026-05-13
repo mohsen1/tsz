@@ -381,11 +381,10 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_if_possible(
-        &mut self,
+    pub(in crate::declaration_emitter) fn is_js_object_literal_namespace_candidate(
+        &self,
         decl_name: NodeIndex,
         initializer: NodeIndex,
-        is_exported: bool,
     ) -> bool {
         if !self.source_is_js_file || !initializer.is_some() {
             return false;
@@ -444,6 +443,25 @@ impl<'a> DeclarationEmitter<'a> {
                 _ => return false,
             }
         }
+
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_if_possible(
+        &mut self,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+        is_exported: bool,
+    ) -> bool {
+        if !self.is_js_object_literal_namespace_candidate(decl_name, initializer) {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
 
         self.write_indent();
         if is_exported {
