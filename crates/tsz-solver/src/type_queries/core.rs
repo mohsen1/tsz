@@ -27,16 +27,47 @@ pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::F
 /// Returns true for `TypeData::Callable`, `TypeData::Function`, and the
 /// intrinsic `TypeId::FUNCTION` (the global `Function` interface).
 pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_callable_type_inner(db, type_id, &mut Vec::new())
+}
+
+fn is_callable_type_inner(db: &dyn TypeDatabase, type_id: TypeId, seen: &mut Vec<TypeId>) -> bool {
     if type_id == TypeId::FUNCTION {
         return true;
     }
     if type_id.is_intrinsic() {
         return false;
     }
-    matches!(
-        db.lookup(type_id),
-        Some(TypeData::Callable(_) | TypeData::Function(_))
-    )
+    if seen.contains(&type_id) {
+        return false;
+    }
+    seen.push(type_id);
+    if is_function_interface_structural(db, type_id) {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Callable(_) | TypeData::Function(_)) => true,
+        Some(TypeData::Union(members)) => db
+            .type_list(members)
+            .iter()
+            .all(|&member| is_callable_type_inner(db, member, seen)),
+        Some(TypeData::Intersection(members)) => db
+            .type_list(members)
+            .iter()
+            .any(|&member| is_callable_type_inner(db, member, seen)),
+        Some(TypeData::TypeParameter(info)) => info
+            .constraint
+            .is_some_and(|constraint| is_callable_type_inner(db, constraint, seen)),
+        Some(
+            TypeData::Application(_)
+            | TypeData::Conditional(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::Lazy(_),
+        ) => {
+            let evaluated = evaluate_type(db, type_id);
+            evaluated != type_id && is_callable_type_inner(db, evaluated, seen)
+        }
+        _ => false,
+    }
 }
 
 /// Check if a type has call signatures (not just construct signatures).

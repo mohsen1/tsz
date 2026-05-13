@@ -120,17 +120,14 @@ impl<'a> CheckerState<'a> {
             interface_name.to_string()
         };
 
+        let mut properties = Vec::new();
+        let mut has_index_signature = false;
         if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
         {
-            let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
-            if !shape.properties.is_empty() {
-                return (shape.properties.to_vec(), has_index_signature, display_name);
-            }
+            has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
+            properties.extend(shape.properties.iter().cloned());
         }
-
-        let mut properties = Vec::new();
-        let mut has_index_signature = false;
 
         for &decl_idx in interface_declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
@@ -192,7 +189,7 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
-                properties.push(PropertyInfo {
+                let property = PropertyInfo {
                     name: self.ctx.types.intern_string(&name),
                     type_id: member_type,
                     write_type: member_type,
@@ -206,10 +203,14 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
-                });
+                };
+                if let Some(existing) = properties.iter_mut().find(|p| p.name == property.name) {
+                    *existing = property;
+                } else {
+                    properties.push(property);
+                }
             }
         }
-
         (properties, has_index_signature, display_name)
     }
 
@@ -1428,7 +1429,7 @@ impl<'a> CheckerState<'a> {
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
                     let check_whole_type = extends_same_base
-                        || ((is_class || interface_has_index_signature)
+                        || (interface_has_index_signature
                             && missing_members.is_empty()
                             && incompatible_members.is_empty());
                     if check_whole_type {

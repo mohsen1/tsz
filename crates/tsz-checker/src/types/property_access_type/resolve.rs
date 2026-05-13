@@ -1526,8 +1526,7 @@ impl<'a> CheckerState<'a> {
                 self.apparent_enum_instance_type(object_type)
                     .unwrap_or_else(|| self.resolve_type_for_property_access(object_type))
             } else {
-                let evaluated = self.evaluate_type_for_assignability(object_type);
-                self.resolve_type_for_property_access(evaluated)
+                self.resolve_type_for_property_access(object_type)
             };
             if object_type_for_access == TypeId::ANY
                 && is_this_access
@@ -2647,44 +2646,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Handles import.meta property access.
-    /// Returns Some(type) if this is an import.meta access, None otherwise.
-    fn try_resolve_import_meta_access(
-        &mut self,
-        idx: NodeIndex,
-        expression: NodeIndex,
-        name_or_argument: NodeIndex,
-    ) -> Option<TypeId> {
-        let expr_node = self.ctx.arena.get(expression)?;
-        if expr_node.kind != SyntaxKind::ImportKeyword as u16 {
-            return None;
-        }
-
-        let is_meta = self
-            .ctx
-            .arena
-            .get(name_or_argument)
-            .and_then(|n| self.ctx.arena.get_identifier(n))
-            .is_some_and(|ident| ident.escaped_text == "meta");
-
-        if is_meta {
-            self.check_import_meta_in_cjs(idx);
-            // import.meta resolves to the global `ImportMeta` interface
-            // (declared in lib.es2020.full.d.ts). Returning that type
-            // enables TS2339 on unknown properties (`import.meta.blah`)
-            // and merges `declare global { interface ImportMeta { ... } }`
-            // augmentations through lib-heritage merging.
-            if let Some(import_meta_ty) = self.resolve_lib_type_by_name("ImportMeta") {
-                return Some(import_meta_ty);
-            }
-        }
-        // Fallback (ImportMeta not in lib scope, or non-`meta` meta-property
-        // like `import.metal`): return ANY so downstream access doesn't
-        // cascade misleading TS2339s. A separate grammar check is expected
-        // to emit TS17012 for the invalid meta-property name.
-        Some(TypeId::ANY)
-    }
-
     /// Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).
     /// Returns Some(type) if this is an enum/namespace member access that can be resolved
     /// directly, None otherwise (fall through to general property-access pipeline).
@@ -3096,90 +3057,6 @@ impl<'a> CheckerState<'a> {
             skip_flow_narrowing,
             false,
         )
-    }
-
-    fn retry_property_access_from_const_identifier_initializer(
-        &mut self,
-        expression: NodeIndex,
-        property_name: &str,
-    ) -> Option<(
-        TypeId,
-        crate::query_boundaries::common::PropertyAccessResult,
-    )> {
-        let expr_idx = self.ctx.arena.skip_parenthesized(expression);
-        let expr_node = self.ctx.arena.get(expr_idx)?;
-        let ident = self.ctx.arena.get_identifier(expr_node)?;
-        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.escaped_name != ident.escaped_text || symbol.value_declaration.is_none() {
-            return None;
-        }
-        let decl_idx = symbol.value_declaration;
-        if !self.ctx.arena.is_const_variable_declaration(decl_idx) {
-            return None;
-        }
-        let decl_node = self.ctx.arena.get(decl_idx)?;
-        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-        let initializer = decl.initializer;
-        if initializer.is_none() {
-            return None;
-        }
-        let init_type = self.get_type_of_node(initializer);
-        if matches!(init_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
-            return None;
-        }
-        let evaluated = self.evaluate_type_with_env(init_type);
-        let resolved = self.resolve_type_for_property_access(evaluated);
-        let retry = self.resolve_property_access_with_env(resolved, property_name);
-        match retry {
-            crate::query_boundaries::common::PropertyAccessResult::Success { .. }
-            | crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
-                property_type: Some(_),
-                ..
-            } => Some((resolved, retry)),
-            _ => None,
-        }
-    }
-
-    fn same_file_namespace_value_member_for_identifier(
-        &mut self,
-        expression: NodeIndex,
-        property_name: &str,
-    ) -> Option<TypeId> {
-        let expr_idx = self.ctx.arena.skip_parenthesized(expression);
-        let expr_node = self.ctx.arena.get(expr_idx)?;
-        let ident = self.ctx.arena.get_identifier(expr_node)?;
-        let candidates: Vec<_> = self
-            .ctx
-            .binder
-            .symbols
-            .find_all_by_name(ident.escaped_text.as_str())
-            .to_vec();
-        for sym_id in candidates {
-            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                continue;
-            };
-            if !symbol.has_any_flags(symbol_flags::MODULE) {
-                continue;
-            }
-            let Some(exports) = symbol.exports.as_ref() else {
-                continue;
-            };
-            let Some(member_sym_id) = exports.get(property_name) else {
-                continue;
-            };
-            let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id) else {
-                continue;
-            };
-            if member_symbol.is_type_only || !member_symbol.has_any_flags(symbol_flags::VALUE) {
-                continue;
-            }
-            let member_type = self.get_type_of_symbol(member_sym_id);
-            if !matches!(member_type, TypeId::UNKNOWN | TypeId::ERROR) {
-                return Some(member_type);
-            }
-        }
-        None
     }
 
     /// Handles property access on globalThis or Window-like expressions.
