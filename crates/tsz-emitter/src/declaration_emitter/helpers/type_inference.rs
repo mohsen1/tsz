@@ -6977,6 +6977,11 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some(type_text);
         }
+        if let Some(type_text) =
+            self.function_body_string_literal_return_union_type_text(&block.statements)
+        {
+            return Some(type_text);
+        }
         let mut preferred = None;
         if self.collect_unique_return_type_text_from_block(&block.statements, &mut preferred) {
             preferred
@@ -6991,6 +6996,12 @@ impl<'a> DeclarationEmitter<'a> {
         inferred_return_type: tsz_solver::types::TypeId,
     ) -> bool {
         if Self::numeric_literal_union_widens_to_number(
+            source_type_text,
+            &self.print_type_id(inferred_return_type),
+        ) {
+            return true;
+        }
+        if Self::string_literal_union_widens_to_string(
             source_type_text,
             &self.print_type_id(inferred_return_type),
         ) {
