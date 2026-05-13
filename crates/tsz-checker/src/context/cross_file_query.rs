@@ -51,12 +51,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
-        let ptr = self.all_binders.as_ref().map_or(
-            self.binder as *const tsz_binder::BinderState as usize,
-            |binders| std::sync::Arc::as_ptr(binders) as usize,
-        ) as u64;
-        let mixed = ptr.wrapping_mul(0x9E37_79B1_85EB_CA87) ^ (ptr >> 32);
-        mixed.max(1)
+        self.source_file_symbol_type_cache_scope.max(1)
     }
 
     pub fn symbol_arena_symbol_type_cache_is_stable(

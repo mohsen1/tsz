@@ -55,6 +55,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_common::interner::Atom;
 
 use crate::control_flow::FlowGraph;
@@ -80,6 +81,14 @@ use tsz_parser::parser::node::NodeArena;
 /// caller sees the first caller's work.
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
+
+static NEXT_SOURCE_FILE_SYMBOL_TYPE_CACHE_SCOPE: AtomicU64 = AtomicU64::new(1);
+
+fn next_source_file_symbol_type_cache_scope() -> u64 {
+    NEXT_SOURCE_FILE_SYMBOL_TYPE_CACHE_SCOPE
+        .fetch_add(1, Ordering::Relaxed)
+        .max(1)
+}
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
@@ -1022,6 +1031,12 @@ pub struct CheckerContext<'a> {
     /// speculative request-local results across editor operations.
     pub share_owner_symbol_type_results: bool,
 
+    /// Program-local scope for source-file symbol-arena entries in the shared
+    /// symbol-type query cache. This must be an identity token, not a pointer:
+    /// long-lived batch workers may reuse allocator addresses across separate
+    /// virtual programs while the shared query cache still contains old keys.
+    pub source_file_symbol_type_cache_scope: u64,
+
     /// Mapping from Binder `SymbolId` to Solver `DefId`.
     /// Used during migration to avoid creating duplicate `DefIds` for the same symbol.
     /// Wrapped in `RefCell` to allow mutation through shared references (for use in Fn closures).
@@ -1396,6 +1411,8 @@ pub struct ProgramContext {
     pub all_arenas: Arc<Vec<Arc<NodeArena>>>,
     /// All binders for cross-file resolution (indexed by `file_idx`).
     pub all_binders: Arc<Vec<Arc<BinderState>>>,
+    /// Unique cache scope for source-file symbol-arena symbol-type entries.
+    pub source_file_symbol_type_cache_scope: u64,
     /// Pre-computed declared modules from skeleton index.
     pub skeleton_declared_modules: Option<Arc<GlobalDeclaredModules>>,
     /// Pre-computed expando index from skeleton index.
@@ -1538,6 +1555,7 @@ impl Default for ProgramContext {
             lib_contexts: Arc::new(vec![]),
             all_arenas: Arc::new(vec![]),
             all_binders: Arc::new(vec![]),
+            source_file_symbol_type_cache_scope: next_source_file_symbol_type_cache_scope(),
             skeleton_declared_modules: None,
             skeleton_expando_index: None,
             skeleton_module_augmentations_index: None,
@@ -1647,6 +1665,7 @@ impl ProgramContext {
             ctx.definition_store = Arc::clone(store);
             ctx.share_owner_symbol_type_results = true;
         }
+        ctx.source_file_symbol_type_cache_scope = self.source_file_symbol_type_cache_scope;
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // When the shared DefinitionStore was fully populated (via from_semantic_defs
         // during project setup), skip the expensive per-binder iteration. Instead,
