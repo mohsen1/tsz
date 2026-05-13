@@ -71,6 +71,49 @@ impl ParserState {
         self.next_token(); // consume '#'
     }
 
+    fn recover_after_unknown_token(
+        &mut self,
+        previous_statement_was_block: &mut bool,
+        resync_after_unknown: bool,
+    ) -> bool {
+        if !self.is_token(SyntaxKind::Unknown) {
+            return false;
+        }
+
+        use tsz_common::diagnostics::diagnostic_codes;
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+            diagnostic_codes::INVALID_CHARACTER,
+        );
+        self.next_token();
+
+        if self.is_token(SyntaxKind::EqualsToken) {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+            self.next_token();
+            *previous_statement_was_block = false;
+            return true;
+        }
+
+        if self.is_identifier_or_keyword() && self.look_ahead_next_is_open_brace_on_same_line() {
+            self.parse_error_at_current_token(
+                "Unexpected keyword or identifier.",
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+            );
+            self.next_token();
+            *previous_statement_was_block = false;
+            return true;
+        }
+
+        if resync_after_unknown {
+            self.resync_after_error_with_statement_starts(false);
+        }
+        *previous_statement_was_block = false;
+        true
+    }
+
     // =========================================================================
     // Parse Methods - Core Expressions
     // =========================================================================
@@ -230,41 +273,10 @@ impl ParserState {
                 continue;
             }
 
-            // Handle Unknown tokens (invalid characters) - must be checked FIRST
-            // In tsc, the scanner emits TS1127 for each invalid character individually.
-            // We must NOT resync here, because resync would skip over subsequent Unknown
-            // tokens without emitting TS1127 for each one. Just advance one token.
-            if self.is_token(SyntaxKind::Unknown) {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                    diagnostic_codes::INVALID_CHARACTER,
-                );
-                self.next_token();
-
-                if self.is_token(SyntaxKind::EqualsToken) {
-                    self.parse_error_at_current_token(
-                        "Declaration or statement expected.",
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                    );
-                    self.next_token();
-                    previous_statement_was_block = false;
-                    continue;
-                }
-
-                if self.is_identifier_or_keyword()
-                    && self.look_ahead_next_is_open_brace_on_same_line()
-                {
-                    self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    );
-                    self.next_token();
-                    previous_statement_was_block = false;
-                    continue;
-                }
-
-                previous_statement_was_block = false;
+            // Handle Unknown tokens (invalid characters) - must be checked FIRST.
+            // In top-level lists we intentionally avoid resync here so each invalid
+            // character still gets its own TS1127 instead of being skipped.
+            if self.recover_after_unknown_token(&mut previous_statement_was_block, false) {
                 continue;
             }
 
@@ -570,39 +582,9 @@ impl ParserState {
                 break;
             }
 
-            // Handle Unknown tokens (invalid characters)
-            if self.is_token(SyntaxKind::Unknown) {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
-                    diagnostic_codes::INVALID_CHARACTER,
-                );
-                self.next_token();
-
-                if self.is_token(SyntaxKind::EqualsToken) {
-                    self.parse_error_at_current_token(
-                        "Declaration or statement expected.",
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                    );
-                    self.next_token();
-                    previous_statement_was_block = false;
-                    continue;
-                }
-
-                if self.is_identifier_or_keyword()
-                    && self.look_ahead_next_is_open_brace_on_same_line()
-                {
-                    self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    );
-                    self.next_token();
-                    previous_statement_was_block = false;
-                    continue;
-                }
-
-                self.resync_after_error_with_statement_starts(false);
-                previous_statement_was_block = false;
+            // Handle Unknown tokens (invalid characters). Nested lists keep the
+            // existing behavior of resyncing after the immediate recovery.
+            if self.recover_after_unknown_token(&mut previous_statement_was_block, true) {
                 continue;
             }
 

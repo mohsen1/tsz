@@ -512,6 +512,9 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some(params);
         }
+        if param.dot_dot_dot_token {
+            return Some(format!("...{name}: {type_text}"));
+        }
         Some(format!("{name}: {type_text}"))
     }
 
@@ -548,16 +551,21 @@ impl<'a> DeclarationEmitter<'a> {
         type_text: &str,
     ) -> Option<String> {
         let elements = self.expand_tuple_type_elements(from_idx, type_text, 0)?;
-        if elements.is_empty() {
-            return None;
-        }
 
         let mut seen = Vec::<String>::new();
         Some(
             elements
                 .into_iter()
-                .map(|(name, ty)| {
+                .map(|(name, ty, optional)| {
                     let unique = Self::unique_parameter_name(&name, &mut seen);
+                    if optional {
+                        let ty = if Self::contains_whole_word_in_text(&ty, "undefined") {
+                            ty
+                        } else {
+                            format!("{ty} | undefined")
+                        };
+                        return format!("{unique}?: {ty}");
+                    }
                     format!("{unique}: {ty}")
                 })
                 .collect::<Vec<_>>()
@@ -601,7 +609,7 @@ impl<'a> DeclarationEmitter<'a> {
         from_idx: NodeIndex,
         type_text: &str,
         depth: usize,
-    ) -> Option<Vec<(String, String)>> {
+    ) -> Option<Vec<(String, String, bool)>> {
         if depth > 8 {
             return None;
         }
@@ -633,12 +641,13 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let (name, ty) = part.split_once(':')?;
             let name = name.trim().trim_start_matches("...");
+            let optional = name.ends_with('?');
             let name = name.strip_suffix('?').unwrap_or(name).trim();
             let ty = ty.trim();
             if name.is_empty() || ty.is_empty() {
                 return None;
             }
-            elements.push((name.to_string(), ty.to_string()));
+            elements.push((name.to_string(), ty.to_string(), optional));
         }
         Some(elements)
     }
@@ -697,25 +706,33 @@ impl<'a> DeclarationEmitter<'a> {
                 .const_asserted_expression(inner_func.body)
                 .unwrap_or(inner_func.body);
             let return_node = self.arena.get(return_expr)?;
-            if return_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-                return None;
+            if let Some(type_text) = self.returned_call_expression_type_text_from_outer_parameter(
+                outer_func,
+                return_expr,
+                inner_type_param_renames,
+            ) {
+                type_text
+            } else {
+                if return_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                    return None;
+                }
+                let array = self.arena.get_literal_expr(return_node)?;
+                let elements = array
+                    .elements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .map(|elem_idx| {
+                        self.function_scope_identifier_type_text(
+                            outer_func,
+                            inner_func,
+                            elem_idx,
+                            inner_type_param_renames,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                format!("readonly [{}]", elements.join(", "))
             }
-            let array = self.arena.get_literal_expr(return_node)?;
-            let elements = array
-                .elements
-                .nodes
-                .iter()
-                .copied()
-                .map(|elem_idx| {
-                    self.function_scope_identifier_type_text(
-                        outer_func,
-                        inner_func,
-                        elem_idx,
-                        inner_type_param_renames,
-                    )
-                })
-                .collect::<Option<Vec<_>>>()?;
-            format!("readonly [{}]", elements.join(", "))
         };
 
         if inner_func.is_async
@@ -727,6 +744,30 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(return_text)
         }
+    }
+
+    fn returned_call_expression_type_text_from_outer_parameter(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+        return_expr: NodeIndex,
+        inner_type_param_renames: &[(String, String)],
+    ) -> Option<String> {
+        let return_node = self.arena.get(return_expr)?;
+        if return_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(return_node)?;
+        let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let parameter_type = self.function_parameter_type_text(outer_func, callee_idx)?;
+        let parts = Self::parse_function_type_text(&parameter_type)?;
+        Some(Self::rename_type_text_identifiers(
+            &parts.return_type,
+            inner_type_param_renames,
+        ))
     }
 
     fn jsdoc_returned_function_return_type_text(

@@ -3345,6 +3345,23 @@ fn apply_cli_overrides_with_config_options(
             crate::args::JsxEmit::ReactNative => crate::config::JsxEmit::ReactNative,
         };
         options.jsx = Some(jsx_emit);
+        // Propagate to the checker's `jsx_mode` so JSX-mode-sensitive checks
+        // (e.g. TS2874 "JSX tag requires React in scope") see the CLI value.
+        // The tsconfig-driven path mirrors this in `tsz-core/config`, but the
+        // CLI override only touched `options.jsx` before — leaving
+        // `checker.jsx_mode` at its `JsxMode::None` default and silently
+        // skipping the scope check (#6021).
+        options.checker.jsx_mode = match jsx_emit {
+            crate::config::JsxEmit::Preserve => tsz_common::checker_options::JsxMode::Preserve,
+            crate::config::JsxEmit::React => tsz_common::checker_options::JsxMode::React,
+            crate::config::JsxEmit::ReactJsx => tsz_common::checker_options::JsxMode::ReactJsx,
+            crate::config::JsxEmit::ReactJsxDev => {
+                tsz_common::checker_options::JsxMode::ReactJsxDev
+            }
+            crate::config::JsxEmit::ReactNative => {
+                tsz_common::checker_options::JsxMode::ReactNative
+            }
+        };
     }
     if let Some(ref factory) = args.jsx_factory {
         // tsc preserves `jsxFactory` verbatim — even when invalid (e.g.

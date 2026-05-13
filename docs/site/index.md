@@ -22,7 +22,7 @@ extra_scripts: '<script src="/home.js" defer></script>'
 
 <blockquote class="wip-warning">
   <h3>Project Status</h3>
-  <p><strong>Work in progress.</strong> Reaching 100% conformance compatibility is a major milestone: <code>tsz</code> now passes TypeScript's own compiler test cases. Performance work is underway. Current micro-benchmarks are saturated, so the focus is moving to large, complex, type-heavy projects.</p>
+  <p><strong>Work in progress.</strong> The chart above only reflects micro benchmarks. Large-project performance work is still underway, and at the moment <code>tsz</code> is not optimized for large projects.</p>
 </blockquote>
 
 ## TypeScript compatibility

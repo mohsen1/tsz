@@ -1424,6 +1424,28 @@ class C {
 }
 
 #[test]
+fn explicit_this_current_class_does_not_use_any_cached_placeholder() {
+    let diags = check_source_diagnostics(
+        r#"
+const C = class C {
+    static getInstance() { return new C(); }
+    m(this: C) {
+        return this.missing;
+    }
+};
+"#,
+    );
+    let ts2339: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2339 && d.message_text.contains("missing"))
+        .collect();
+    assert!(
+        !ts2339.is_empty(),
+        "Expected TS2339 for explicit `this: C` missing member access, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_contextual_typing_uses_request_path() {
     let diags = check_source(
         r#"
