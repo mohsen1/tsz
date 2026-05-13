@@ -2249,6 +2249,9 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.function_expression_type_text_from_ast(expr_idx)
             }
+            k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
+                self.instantiation_expression_type_text(expr_idx)
+            }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 self.short_circuit_expression_type_text(expr_idx)
             }
@@ -6570,26 +6573,6 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn short_circuit_expression_type_text(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_node = self.arena.get(expr_idx)?;
-        let binary = self.arena.get_binary_expr(expr_node)?;
-        if binary.operator_token != SyntaxKind::BarBarToken as u16 {
-            return None;
-        }
-        if !self.expression_is_always_truthy_for_decl_emit(binary.left) {
-            return None;
-        }
-
-        self.preferred_expression_type_text(binary.left)
-            .or_else(|| {
-                self.get_node_type_or_names(&[binary.left])
-                    .map(|type_id| self.print_type_id(type_id))
-            })
-    }
-
     pub(in crate::declaration_emitter) fn emit_type_node_text(
         &self,
         type_idx: NodeIndex,
@@ -8494,7 +8477,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.infer_fallback_type_text_at(initializer, self.indent_level + 1))
     }
 
-    fn parenthesize_type_text_in_union_position(type_text: &str) -> String {
+    pub(super) fn parenthesize_type_text_in_union_position(type_text: &str) -> String {
         let trimmed = type_text.trim();
         if (trimmed.contains("=>") || trimmed.starts_with("new "))
             && !(trimmed.starts_with('(') && trimmed.ends_with(')'))
@@ -8529,7 +8512,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn split_top_level_union_type_parts(type_text: &str) -> Vec<String> {
+    pub(super) fn split_top_level_union_type_parts(type_text: &str) -> Vec<String> {
         let bytes = type_text.as_bytes();
         let mut parts = Vec::new();
         let mut paren_depth = 0usize;
