@@ -1,6 +1,6 @@
 # codex/template-literal-middle-infer-6573-20260513
 
-Status: claim
+Status: ready
 Owner: Codex
 Created: 2026-05-13
 Issue: #6573
@@ -16,4 +16,6 @@ Fix template literal conditional matching for middle known substrings in pattern
 
 ## Validation log
 
-- pending
+- `cargo test -p tsz-checker --test infer_extends_constraint_substitution_tests template_literal_middle_infer_matches_known_substring -- --nocapture` passed.
+- `cargo test -p tsz-checker --test infer_extends_constraint_substitution_tests -- --nocapture` passed: 14 passed.
+- `cargo fmt --all --check` passed.

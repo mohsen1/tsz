@@ -43,6 +43,26 @@ fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool 
     diags.iter().any(|d| d.code == code)
 }
 
+#[test]
+fn template_literal_middle_infer_matches_known_substring() {
+    let source = r#"
+type DropString<S extends string, T extends string> =
+  S extends `${infer Before}${T}${infer After}`
+    ? `${Before}${After}`
+    : S;
+
+type DS1 = DropString<'hello', 'l'>;
+const ds1: DS1 = 'helo';
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected DropString<'hello', 'l'> to evaluate to 'helo', got diagnostics: {:?}",
+        diags
+    );
+}
+
 /// `infer A extends keyof T` should work when T is a substituted type parameter.
 /// `GetPath<T, P>` recursively walks a path through an object type.
 #[test]
