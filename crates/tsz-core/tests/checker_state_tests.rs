@@ -34472,3 +34472,65 @@ function f12(x: string | (() => string) | undefined) {
         "Should not emit TS2348 for Extract-narrowed function call. Diagnostics: {all_codes:?}",
     );
 }
+
+/// Regression test for issue #6439: decimal number strings must match
+/// `${number}suffix` even when the suffix begins with 'e' or 'E'.
+///
+/// Structural rule: when matching a string against `${number}X` in a template
+/// literal type, the number prefix is the longest valid number string such that
+/// the remainder equals X.  An 'e' that is not followed by a valid exponent
+/// (at least one digit, optionally preceded by '+'/'-') must NOT be consumed
+/// as part of the number.
+#[test]
+fn test_template_literal_number_decimal_before_e_suffix_no_false_positive() {
+    let source = r#"
+type EmUnit = `${number}em`;
+type ExUnit = `${number}ex`;
+type PxUnit = `${number}px`;
+type EachUnit = `${number}each`;
+
+// Integer + e-suffix — must stay error-free (regression guard)
+const a1: EmUnit = "1em";
+const a2: EmUnit = "10em";
+
+// Decimal + e-suffix — tsc accepts, tsz must not emit TS2322
+const b1: EmUnit  = "1.5em";
+const b2: EmUnit  = "0.5em";
+const b3: EmUnit  = "3.14em";
+const b4: ExUnit  = "1.5ex";
+const b5: ExUnit  = "0.5ex";
+const b6: EachUnit = "1.5each";
+
+// Decimal + non-e-suffix — must stay error-free (regression guard)
+const c1: PxUnit = "1.5px";
+const c2: PxUnit = "0.5px";
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.is_empty(),
+        "Expected no diagnostics for decimal + e-suffix template matches, got: {codes:?}"
+    );
+}

@@ -854,3 +854,83 @@ fn test_plus_signed_string_matches_number_pattern() {
         );
     }
 }
+
+// ==========================================================================
+// Decimal number followed by suffix starting with 'e' — issue #6439
+// ==========================================================================
+
+#[test]
+fn test_number_with_e_suffix_matches_number_template() {
+    // Strings like "1.5em" and "1em" are assignable to `${number}em`.
+    // The 'e' in the suffix must not be greedily consumed as a
+    // scientific-notation exponent prefix.
+    let interner = TypeInterner::new();
+
+    let make_pattern = |suffix: &str| {
+        interner.template_literal(vec![
+            TemplateSpan::Type(TypeId::NUMBER),
+            TemplateSpan::Text(interner.intern_string(suffix)),
+        ])
+    };
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for (value, suffix) in [
+        // Decimals — previously broken (issue #6439)
+        ("1.5em", "em"),
+        ("0.5em", "em"),
+        ("3.14em", "em"),
+        ("1.5ex", "ex"),
+        ("0.5ex", "ex"),
+        ("1.5each", "each"),
+        ("2.0em", "em"),
+        // Integers — regression guard
+        ("1em", "em"),
+        ("10em", "em"),
+        ("42ex", "ex"),
+        // Signed-exponent suffixes ("e+..." or "e-...") — the sign must not be
+        // consumed as part of a number exponent when no digit follows.
+        ("1.5e+px", "e+px"),
+        ("1e+px", "e+px"),
+        ("2.5e-rem", "e-rem"),
+    ] {
+        let pattern = make_pattern(suffix);
+        assert!(
+            checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should match `${{number}}{suffix}`"
+        );
+    }
+}
+
+#[test]
+fn test_non_decimal_with_e_suffix_does_not_match_unrelated_template() {
+    // "abcem" must NOT match `${number}em`; guards against false negatives.
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string("em")),
+    ]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for bad in ["abcem", "em", ".em", "1.em2"] {
+        assert!(
+            !checker.is_subtype_of(interner.literal_string(bad), pattern),
+            "{bad:?} should NOT match `${{number}}em`"
+        );
+    }
+}
+
+#[test]
+fn test_valid_scientific_notation_string_still_matches_number_template() {
+    // "1.5e10" IS a parseable number string; it should still match `${number}`.
+    let interner = TypeInterner::new();
+    let pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    for value in ["1.5e10", "1.5e+10", "1.5e-10", "2e3"] {
+        assert!(
+            checker.is_subtype_of(interner.literal_string(value), pattern),
+            "{value:?} should match `${{number}}`"
+        );
+    }
+}

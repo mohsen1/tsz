@@ -1064,41 +1064,41 @@ pub(crate) fn format_number_for_template(num: f64) -> String {
 
 /// Find the length of a valid number at the start of a string.
 pub(crate) fn find_number_length(s: &str) -> usize {
-    let chars: Vec<char> = s.chars().collect();
+    let bytes = s.as_bytes();
     let mut i = 0;
 
     // Handle optional sign
-    if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
         i += 1;
     }
 
     // Check for 0x/0o/0b prefixes (valid JS number literals)
-    if i < chars.len() && chars[i] == '0' && i + 1 < chars.len() {
-        match chars[i + 1] {
-            'x' | 'X' => {
+    if i < bytes.len() && bytes[i] == b'0' && i + 1 < bytes.len() {
+        match bytes[i + 1] {
+            b'x' | b'X' => {
                 let mut j = i + 2;
                 let digit_start = j;
-                while j < chars.len() && chars[j].is_ascii_hexdigit() {
+                while j < bytes.len() && bytes[j].is_ascii_hexdigit() {
                     j += 1;
                 }
                 if j > digit_start {
                     return j;
                 }
             }
-            'o' | 'O' => {
+            b'o' | b'O' => {
                 let mut j = i + 2;
                 let digit_start = j;
-                while j < chars.len() && matches!(chars[j], '0'..='7') {
+                while j < bytes.len() && matches!(bytes[j], b'0'..=b'7') {
                     j += 1;
                 }
                 if j > digit_start {
                     return j;
                 }
             }
-            'b' | 'B' => {
+            b'b' | b'B' => {
                 let mut j = i + 2;
                 let digit_start = j;
-                while j < chars.len() && matches!(chars[j], '0' | '1') {
+                while j < bytes.len() && matches!(bytes[j], b'0' | b'1') {
                     j += 1;
                 }
                 if j > digit_start {
@@ -1115,27 +1115,28 @@ pub(crate) fn find_number_length(s: &str) -> usize {
     let mut has_exponent = false;
 
     // Integer or decimal part
-    while i < chars.len() {
-        if chars[i].is_ascii_digit() {
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
             has_digits = true;
             i += 1;
-        } else if chars[i] == '.' && !has_dot && !has_exponent {
+        } else if bytes[i] == b'.' && !has_dot && !has_exponent {
             has_dot = true;
             i += 1;
-        } else if (chars[i] == 'e' || chars[i] == 'E') && has_digits && !has_exponent {
+        } else if (bytes[i] == b'e' || bytes[i] == b'E') && has_digits && !has_exponent {
             has_exponent = true;
             i += 1;
             // Optional sign after exponent
-            if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+            if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
                 i += 1;
             }
-            // Must have at least one digit after exponent
-            if i >= chars.len() || !chars[i].is_ascii_digit() {
-                // Invalid exponent, backtrack
-                i = if has_dot { i - 2 } else { i - 1 };
-                if i > 0 && (chars[i - 1] == '+' || chars[i - 1] == '-') {
+            // Must have at least one digit after exponent.
+            // When invalid, undo sign (if consumed) and undo 'e'/'E' so the
+            // number prefix ends just before the 'e'/'E' character.
+            if i >= bytes.len() || !bytes[i].is_ascii_digit() {
+                if i > 0 && (bytes[i - 1] == b'+' || bytes[i - 1] == b'-') {
                     i -= 1;
                 }
+                i -= 1;
                 break;
             }
         } else {
@@ -1148,7 +1149,7 @@ pub(crate) fn find_number_length(s: &str) -> usize {
     }
 
     // Don't count trailing dot without digits
-    if i > start && chars[i - 1] == '.' && (i == start + 1 || !chars[i - 2].is_ascii_digit()) {
+    if i > start && bytes[i - 1] == b'.' && (i == start + 1 || !bytes[i - 2].is_ascii_digit()) {
         i -= 1;
     }
 
