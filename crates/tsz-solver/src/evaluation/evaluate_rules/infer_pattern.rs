@@ -14,8 +14,7 @@
 use crate::instantiation::application::ApplicationEvaluator;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
-    TypeParamInfo,
+    LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -1289,12 +1288,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             checker,
                         )
                     }
-                    Some(TypeData::Intrinsic(IntrinsicKind::String)) => self
-                        .match_template_literal_string_type(
-                            pattern_spans.as_ref(),
-                            bindings,
-                            checker,
-                        ),
+                    // Primitive string does not match template literal patterns; tsc takes the false branch.
                     _ => false,
                 }
             }
