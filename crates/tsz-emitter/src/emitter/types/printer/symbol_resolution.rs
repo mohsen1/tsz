@@ -434,7 +434,11 @@ impl<'a> TypePrinter<'a> {
         needs_typeof: bool,
     ) -> Option<String> {
         if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
-            && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
+            && (self.can_reference_symbol_by_name(sym_id)
+                || self.is_global_symbol(sym_id)
+                || (!needs_typeof
+                    && self.type_param_scope_contains_name(&name)
+                    && self.global_class_symbol_can_use_global_this(sym_id)))
         {
             if !needs_typeof
                 && self.type_param_scope_contains_name(&name)
