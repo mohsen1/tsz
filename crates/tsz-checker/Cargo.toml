@@ -1085,5 +1085,9 @@ path = "tests/template_literal_record_key_tests.rs"
 name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
 
+[[test]]
+name = "abstract_method_overload_ts2416_tests"
+path = "tests/abstract_method_overload_ts2416_tests.rs"
+
 [lints]
 workspace = true

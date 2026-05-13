@@ -1684,6 +1684,21 @@ impl<'a> CheckerState<'a> {
             rustc_hash::FxHashSet::default();
         let mut class_extends_error_reported = false;
 
+        // Externally-visible overload-method types for the derived class.
+        // Methods with multiple METHOD_DECLARATION nodes (overloaded methods)
+        // have their visible API spelled by the overload sigs (bodyless
+        // declarations) or, when absent, the single implementation signature.
+        // The plain per-node type compat check below is incorrect for these
+        // methods because the implementation signature is internal and may
+        // be intentionally wider than the externally visible overload set.
+        let (derived_instance_method_overloads, derived_static_method_overloads) =
+            self.build_class_method_overload_types(class_data);
+
+        // Track method (name, is_static) pairs that already had the overloaded
+        // type compat check emitted so we run it once per name.
+        let mut overload_compat_checked: rustc_hash::FxHashSet<(String, bool)> =
+            rustc_hash::FxHashSet::default();
+
         // Check each member in the derived class
         for &member_idx in &class_data.members.nodes {
             let Some(info) = self.extract_class_member_info(member_idx, false) else {
@@ -2082,6 +2097,63 @@ impl<'a> CheckerState<'a> {
             // Skip type compatibility check if either type is ANY
             if member_type == TypeId::ANY || base_type == TypeId::ANY {
                 continue;
+            }
+
+            // Overloaded-method compat: when this method has multiple
+            // declarations in derived (overload sigs + impl, or multiple
+            // overload sigs in an abstract class) or the base side has
+            // multiple declarations, the externally-visible API is the
+            // overload set, not the per-AST-node signature. Compare the
+            // combined `CallableShape` instead of the impl/overload-sig
+            // node's individual function type. This single pass covers
+            // every declaration of the same name, so emit at most once.
+            if is_method {
+                let derived_overload_type = if is_static {
+                    derived_static_method_overloads.get(&member_name).copied()
+                } else {
+                    derived_instance_method_overloads.get(&member_name).copied()
+                };
+                let base_overload_type =
+                    base_chain_summary.method_overload_type(&member_name, is_static);
+                if derived_overload_type.is_some() || base_overload_type.is_some() {
+                    if overload_compat_checked.insert((member_name.clone(), is_static)) {
+                        let derived_combined = derived_overload_type.unwrap_or(member_type);
+                        let base_combined = base_overload_type.unwrap_or(base_info.type_id);
+                        let base_combined =
+                            instantiate_type(self.ctx.types, base_combined, &substitution);
+                        let resolved_member_type = self.resolve_type_query_type(derived_combined);
+                        let resolved_base_type = self.resolve_type_query_type(base_combined);
+                        if resolved_member_type != TypeId::ANY
+                            && resolved_base_type != TypeId::ANY
+                            && should_report_member_type_mismatch_bivariant(
+                                self,
+                                resolved_member_type,
+                                resolved_base_type,
+                                member_name_idx,
+                            )
+                        {
+                            let member_type_str = self.format_type(resolved_member_type);
+                            let base_type_str = self.format_type(resolved_base_type);
+                            let display_name = format_property_name_for_diagnostic(&member_name);
+                            let base_class_display_name =
+                                base_class_name_for_diagnostic(&base_class_name);
+                            self.error_at_node(
+                                member_name_idx,
+                                &format!(
+                                    "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_display_name}'."
+                                ),
+                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                            );
+                            self.report_type_not_assignable_detail(
+                                member_name_idx,
+                                &member_type_str,
+                                &base_type_str,
+                                diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                            );
+                        }
+                    }
+                    continue;
+                }
             }
 
             // Skip type compatibility for overload signatures. tsc checks
