@@ -1254,14 +1254,7 @@ impl<'a> DeclarationEmitter<'a> {
                         && !tp.nodes.is_empty()
                     {
                         let printed_type_text =
-                            self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
-                        let printed_type_text = self
-                            .restore_mapped_return_type_param_constraints(func, &printed_type_text);
-                        let printed_type_text = self
-                            .rewrite_returned_auto_accessor_parameter_unknowns(
-                                func,
-                                &printed_type_text,
-                            );
+                            self.inferred_function_return_type_text(func, effective_return_type_id);
                         let printed_type_text = self
                             .expand_rest_tuple_parameters_in_function_type_text(
                                 func_body,

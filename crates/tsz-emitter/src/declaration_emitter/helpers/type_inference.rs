@@ -6449,6 +6449,10 @@ impl<'a> DeclarationEmitter<'a> {
         let (text, substituted_parameter_type_query) =
             self.substitute_function_parameter_type_queries(func, source_type_text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
+        let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
+        let text = self
+            .expand_mapped_alias_index_conditional_text(self.arena, &text)
+            .unwrap_or(text);
         let Some(ref type_params) = func.type_parameters else {
             return (text, substituted_parameter_type_query);
         };
@@ -6476,7 +6480,11 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             self.print_type_id(return_type_id)
         };
-        self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text)
+        let text = self.restore_mapped_return_type_param_constraints(func, &text);
+        let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
+        let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
+        self.expand_mapped_alias_index_conditional_text(self.arena, &text)
+            .unwrap_or(text)
     }
 
     pub(in crate::declaration_emitter) fn restore_mapped_return_type_param_constraints(
@@ -6556,6 +6564,200 @@ impl<'a> DeclarationEmitter<'a> {
             return format!("{prefix}; }}");
         }
         type_text.to_string()
+    }
+
+    fn rewrite_returned_call_conditional_unknown_subject(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> String {
+        let Some(rest) = source_type_text.strip_prefix("unknown extends ") else {
+            return source_type_text.to_string();
+        };
+        let fallback_type_param = func
+            .type_parameters
+            .as_ref()
+            .and_then(|type_params| (type_params.nodes.len() == 1).then_some(type_params.nodes[0]))
+            .and_then(|type_param_idx| self.arena.get(type_param_idx))
+            .and_then(|type_param_node| self.arena.get_type_parameter(type_param_node))
+            .and_then(|type_param| self.get_identifier_text(type_param.name));
+        let Some(return_arg_idx) = self.single_returned_call_first_argument(func.body) else {
+            return fallback_type_param
+                .map(|type_param| format!("{type_param} extends {rest}"))
+                .unwrap_or_else(|| source_type_text.to_string());
+        };
+        let Some(return_arg_name) = self.get_identifier_text(return_arg_idx) else {
+            return source_type_text.to_string();
+        };
+        let Some(type_params) = func.type_parameters.as_ref() else {
+            return source_type_text.to_string();
+        };
+        let type_param_names = self.collect_type_param_names(type_params);
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if self.get_identifier_text(param.name).as_deref() != Some(return_arg_name.as_str()) {
+                continue;
+            }
+            let Some(param_type_text) = self
+                .type_annotation_text_from_arena_node(self.arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+                .map(|text| text.trim().to_string())
+            else {
+                continue;
+            };
+            if type_param_names.iter().any(|name| name == &param_type_text) {
+                return format!("{param_type_text} extends {rest}");
+            }
+        }
+        fallback_type_param
+            .map(|type_param| format!("{type_param} extends {rest}"))
+            .unwrap_or_else(|| source_type_text.to_string())
+    }
+
+    fn single_returned_call_first_argument(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        if block.statements.nodes.len() != 1 {
+            return None;
+        }
+        let stmt_idx = block.statements.nodes[0];
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let ret = self.arena.get_return_statement(stmt_node)?;
+        let expr_idx = self.skip_parenthesized_expression(ret.expression)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        call.arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+    }
+
+    fn expand_mapped_alias_index_conditional_text(
+        &self,
+        source_arena: &NodeArena,
+        type_text: &str,
+    ) -> Option<String> {
+        let object_start = type_text.find("{ [")?;
+        let object_rest = &type_text[object_start..];
+        let object_end = object_rest.find(" ?").map(|idx| object_start + idx)?;
+        let mapped_text = object_rest.strip_prefix("{ [")?;
+        let in_pos = mapped_text.find(" in keyof ")?;
+        let key_param = mapped_text[..in_pos].trim();
+        if !Self::is_simple_identifier_text(key_param) {
+            return None;
+        }
+        let alias_start = in_pos + " in keyof ".len();
+        let mapped_tail = &mapped_text[alias_start..];
+        let alias_application_end = mapped_tail.find("]:").or_else(|| mapped_tail.find('>'))?;
+        let alias_application = mapped_tail[..alias_application_end]
+            .trim()
+            .trim_end_matches(']')
+            .trim();
+        let (alias_name, alias_arg) = Self::single_type_reference_application(alias_application)?;
+        let alias_body =
+            self.expand_single_object_type_alias_application(source_arena, alias_name, alias_arg)?;
+        Some(format!(
+            "{}{alias_body}{}",
+            &type_text[..object_start],
+            &type_text[object_end..]
+        ))
+    }
+
+    fn single_type_reference_application(type_text: &str) -> Option<(&str, &str)> {
+        let (name, rest) = type_text.split_once('<')?;
+        let arg = rest.strip_suffix('>')?;
+        let name = name.trim();
+        if !Self::is_simple_identifier_text(name) {
+            return None;
+        }
+        Some((name, arg.trim()))
+    }
+
+    fn expand_single_object_type_alias_application(
+        &self,
+        source_arena: &NodeArena,
+        alias_name: &str,
+        alias_arg: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            let Some(alias) = source_arena.get_type_alias(stmt_node) else {
+                continue;
+            };
+            if self
+                .identifier_text_from_arena(source_arena, alias.name)
+                .as_deref()
+                != Some(alias_name)
+            {
+                continue;
+            }
+            let type_params = alias.type_parameters.as_ref()?;
+            if type_params.nodes.len() != 1 {
+                return None;
+            }
+            let type_param_node = source_arena.get(type_params.nodes[0])?;
+            let type_param = source_arena.get_type_parameter(type_param_node)?;
+            let type_param_name = self.identifier_text_from_arena(source_arena, type_param.name)?;
+            let alias_text = self
+                .source_slice_from_arena(source_arena, alias.type_node)
+                .or_else(|| self.emit_type_node_text_from_arena(source_arena, alias.type_node))?;
+            let inner = alias_text
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .strip_prefix('{')?
+                .strip_suffix('}')?
+                .trim();
+            if inner.is_empty() || inner.contains('\n') {
+                return None;
+            }
+            let member = Self::replace_whole_words_in_text(
+                inner.trim_end_matches(';').trim(),
+                &[(type_param_name, alias_arg.to_string())],
+            );
+            return Some(format!("{{\n    {member};\n}}"));
+        }
+        self.expand_single_object_type_alias_application_from_source_text(
+            source_arena,
+            alias_name,
+            alias_arg,
+        )
+    }
+
+    fn expand_single_object_type_alias_application_from_source_text(
+        &self,
+        source_arena: &NodeArena,
+        alias_name: &str,
+        alias_arg: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        let marker = format!("type {alias_name}<");
+        let alias_start = source_file.text.find(&marker)?;
+        let param_start = alias_start + marker.len();
+        let param_end = source_file.text[param_start..].find('>')? + param_start;
+        let type_param_name = source_file.text[param_start..param_end].trim();
+        if !Self::is_simple_identifier_text(type_param_name) {
+            return None;
+        }
+        let after_param = &source_file.text[param_end + 1..];
+        let equals_pos = after_param.find('=')? + param_end + 1;
+        let type_start = equals_pos + 1;
+        let type_end = source_file.text[type_start..].find(';')? + type_start;
+        let alias_text = source_file.text[type_start..type_end].trim();
+        let inner = alias_text.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if inner.is_empty() || inner.contains('\n') {
+            return None;
+        }
+        let member = Self::replace_whole_words_in_text(
+            inner.trim_end_matches(';').trim(),
+            &[(type_param_name.to_string(), alias_arg.to_string())],
+        );
+        Some(format!("{{\n    {member};\n}}"))
     }
 
     fn whole_word_boundary(type_text: &str, start: usize, end: usize) -> bool {
