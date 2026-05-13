@@ -125,6 +125,21 @@ impl<'a> CheckerState<'a> {
                 &[source_display, &target_display],
             );
         }
+        if let Some(expr_idx) = self.assignment_target_expression(anchor_idx)
+            && let Some(annotation_text) =
+                self.declared_type_annotation_text_for_expression(expr_idx)
+            && annotation_text.contains('<')
+            && target_display.contains('<')
+            && let Some(annotation_name) = Self::generic_alias_name_from_display(&annotation_text)
+            && let Some(target_name) = Self::generic_alias_name_from_display(target_display)
+            && annotation_name != target_name
+        {
+            let target_display = self.format_declared_annotation_for_diagnostic(&annotation_text);
+            return format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[source_display, &target_display],
+            );
+        }
         if let Some(source_display) = self.declared_generic_alias_source_display_for_target_display(
             anchor_idx,
             source_display,

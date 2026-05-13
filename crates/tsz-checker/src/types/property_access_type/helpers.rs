@@ -8,6 +8,7 @@ use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
 use tsz_common::common::Visibility;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::AccessExprData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -859,6 +860,88 @@ impl<'a> CheckerState<'a> {
                         || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 )
             })
+    }
+
+    pub(crate) fn report_loop_widened_receiver_property_error(
+        &mut self,
+        property_access_idx: NodeIndex,
+        access: &AccessExprData,
+        property_name: &str,
+        receiver_type: TypeId,
+        property_type: TypeId,
+        skip_flow_narrowing: bool,
+    ) -> bool {
+        if skip_flow_narrowing
+            || self.ctx.iteration_depth == 0
+            || access.question_dot_token
+            || matches!(property_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+        {
+            return false;
+        }
+
+        // A self-recursive loop assignment can make the next iteration's
+        // receiver wider than the first-pass receiver, e.g. `x = x.length`
+        // turns `x` from `string` into `string | number`.
+        let mut current = property_access_idx;
+        while let Some(parent_idx) = self.ctx.arena.parent_of(current) {
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+            {
+                let assignment_is_statement = self
+                    .ctx
+                    .arena
+                    .parent_of(parent_idx)
+                    .and_then(|statement_idx| self.ctx.arena.get(statement_idx))
+                    .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT);
+                if binary.operator_token == SyntaxKind::EqualsToken as u16
+                    && binary.right == property_access_idx
+                    && assignment_is_statement
+                {
+                    let analyzer = self.flow_analyzer_for_property_reads();
+                    if analyzer.is_matching_reference(binary.left, access.expression) {
+                        let loop_receiver_type = self
+                            .ctx
+                            .types
+                            .factory()
+                            .union2(receiver_type, property_type);
+                        let loop_receiver_for_access =
+                            self.resolve_type_for_property_access(loop_receiver_type);
+                        if matches!(
+                            self.resolve_property_access_with_env(
+                                loop_receiver_for_access,
+                                property_name,
+                            ),
+                            PropertyAccessResult::PropertyNotFound { .. }
+                        ) {
+                            self.error_property_not_exist_at(
+                                property_name,
+                                loop_receiver_type,
+                                access.name_or_argument,
+                            );
+                            return true;
+                        }
+                    }
+                }
+                break;
+            }
+            if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                || parent_node.kind == syntax_kind_ext::BLOCK
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                break;
+            }
+            current = parent_idx;
+        }
+
+        false
     }
 
     pub(crate) fn recover_self_recursive_property_access_type(

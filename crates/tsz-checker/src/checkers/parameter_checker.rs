@@ -804,11 +804,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Check for TS7006 in nested function expressions within the default value
-            if param.initializer.is_some() {
-                self.check_for_nested_function_ts7006(param.initializer);
-            }
-
             if self.ctx.no_implicit_any()
                 && !self.ctx.has_real_syntax_errors
                 && !self.parameter_pattern_has_concrete_type(param_idx, param)
@@ -957,6 +952,10 @@ impl<'a> CheckerState<'a> {
             // IMPORTANT: Always resolve the initializer expression to check for undefined identifiers (TS2304)
             // This must happen regardless of whether there's a type annotation.
             let init_type = self.get_type_of_node_with_request(param.initializer, &request);
+
+            // Must run after get_type_of_node_with_request so that closures typed via
+            // the contextual type above are already in implicit_any_checked_closures.
+            self.check_for_nested_function_ts7006(param.initializer);
 
             // Only check type assignability if there's a type annotation
             let Some(declared_type) = declared_type else {

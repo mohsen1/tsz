@@ -1878,6 +1878,16 @@ impl<'a> CheckerState<'a> {
                         );
                         return TypeId::ERROR;
                     }
+                    if self.report_loop_widened_receiver_property_error(
+                        idx,
+                        access,
+                        property_name,
+                        object_type,
+                        prop_type,
+                        skip_flow_narrowing,
+                    ) {
+                        return TypeId::ERROR;
+                    }
                     // When in a write context (assignment target), use the setter
                     // type if the property has divergent getter/setter types.
                     let effective_type = effective_write_result(prop_type, write_type);

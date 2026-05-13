@@ -9,7 +9,7 @@
 //! inferability that `signature_builder` already runs, hiding real mismatches.
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
+use tsz_checker::test_utils::{check_source, check_source_with_libs, load_lib_files};
 
 /// A class method whose body genuinely narrows (e.g. `typeof x === "string"`)
 /// gets a predicate inferred by tsz (mirroring TS 5.5+ inferred predicates),
@@ -106,5 +106,36 @@ class Annotated implements IsString {
     assert!(
         predicate_mismatch_reported,
         "Expected TS2416/TS2420 when class method explicitly annotates `: boolean`, got: {diags:#?}"
+    );
+}
+
+#[test]
+fn implements_public_computed_name_class_shape_does_not_emit_ts2720() {
+    let source = r#"
+const c0 = "a";
+const c1 = 1;
+const s0 = Symbol();
+
+declare class T1 {
+    [c0]: number;
+    [c1]: string;
+    [s0]: boolean;
+}
+declare class T2 extends T1 {
+}
+
+const s2: typeof s0 = s0;
+
+declare class T13 implements T2 {
+    a: number;
+    1: string;
+    [s2]: boolean;
+}
+"#;
+    let libs = load_lib_files(&["es2015.d.ts"]);
+    let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
+    assert!(
+        diags.iter().all(|diag| diag.code != 2720),
+        "Expected no TS2720 for public computed-name class shape, got: {diags:#?}",
     );
 }

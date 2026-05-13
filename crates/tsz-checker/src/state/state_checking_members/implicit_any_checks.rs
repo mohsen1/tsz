@@ -629,6 +629,21 @@ impl<'a> CheckerState<'a> {
         self.filter_receiver_is_array_like_for_implicit_any(access.expression)
     }
 
+    /// Returns `true` when `node_idx` has already been processed with a contextual
+    /// callable type by `get_type_of_function_impl`, meaning its parameters were
+    /// typed (or suppressed) there and must not be re-checked for TS7006.
+    ///
+    /// Example: `fn: (x: number) => number = x => x * 2` — the arrow function is
+    /// processed with contextual type `(x: number) => number`, so `x` is inferred
+    /// as `number` and no TS7006 is emitted.
+    pub(crate) fn closure_has_contextual_type(&self, node_idx: NodeIndex) -> bool {
+        self.ctx.implicit_any_checked_closures.contains(&node_idx)
+            || self
+                .ctx
+                .implicit_any_contextual_closures
+                .contains(&node_idx)
+    }
+
     pub(crate) fn maybe_report_implicit_any_parameter(
         &mut self,
         param: &tsz_parser::parser::node::ParameterData,
@@ -1503,14 +1518,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn recheck_deferred_implicit_any_closures(&mut self) {
         let deferred = std::mem::take(&mut self.ctx.deferred_implicit_any_closures);
         for func_idx in deferred {
-            // Skip if already checked (e.g., re-processed with contextual type
-            // during statement checking, or checked via contextual call inference)
-            if self.ctx.implicit_any_checked_closures.contains(&func_idx)
-                || self
-                    .ctx
-                    .implicit_any_contextual_closures
-                    .contains(&func_idx)
-            {
+            if self.closure_has_contextual_type(func_idx) {
                 continue;
             }
             // Skip closures with JSDoc annotations — JSDoc @param, @type, @template
