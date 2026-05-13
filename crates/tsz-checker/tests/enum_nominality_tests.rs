@@ -321,3 +321,66 @@ let other: A.X = a;
 ";
     test_enum_assignability(source, 1);
 }
+
+#[test]
+fn test_numeric_enum_reverse_lookup_no_error() {
+    let diagnostics = collect_diagnostics(
+        r"
+enum Direction { Up = 0, Down = 1 }
+const up = Direction[0];
+const down = Direction[1];
+",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for numeric enum reverse lookup, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_mixed_enum_numeric_reverse_lookup_no_error() {
+    let diagnostics = collect_diagnostics(
+        r"
+enum Mixed { A = 0, B = 'B', C = 1, D = 'D' }
+const v0 = Mixed[0];
+const v1 = Mixed[1];
+",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for mixed enum numeric reverse lookup, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_mixed_enum_string_only_access_no_error() {
+    let diagnostics = collect_diagnostics(
+        r"
+enum Mixed { A = 0, B = 'B', C = 1, D = 'D' }
+const a = Mixed['A'];
+const b = Mixed['B'];
+",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for string-key access on mixed enum, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_numeric_enum_reverse_lookup_with_different_iteration_var() {
+    // The fix must not be tied to a specific iteration variable name — it's structural.
+    // Test auto-incremented members too.
+    let diagnostics = collect_diagnostics(
+        r"
+enum E { X, Y, Z }
+const x = E[0];
+const y = E[1];
+const z = E[2];
+",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for auto-increment enum reverse lookup, got: {diagnostics:?}"
+    );
+}
