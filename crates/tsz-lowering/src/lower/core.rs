@@ -1709,10 +1709,15 @@ impl<'a> TypeLowering<'a> {
 
         let collected_params = if let Some(params) = type_params {
             self.push_type_param_scope();
-            self.collect_type_parameters(params)
+            let collected = self.collect_type_parameters(params);
+            self.pop_type_param_scope();
+            collected
         } else {
             Vec::new()
         };
+
+        let saved_type_param_scopes = self.type_param_scopes.borrow().clone();
+        *self.type_param_scopes.borrow_mut() = Vec::new();
 
         // Process declarations in reverse order: TypeScript's interface merging
         // rule puts later declarations' members first for overload resolution.
@@ -1729,18 +1734,25 @@ impl<'a> TypeLowering<'a> {
             let Some(interface) = self.arena.get_interface(node) else {
                 continue;
             };
-            self.collect_interface_members(&interface.members, &mut parts);
+            if let Some(params) = &interface.type_parameters
+                && !params.nodes.is_empty()
+            {
+                self.push_type_param_scope();
+                let _ = self.collect_type_parameters(params);
+                self.collect_interface_members(&interface.members, &mut parts);
+                self.pop_type_param_scope();
+            } else {
+                self.collect_interface_members(&interface.members, &mut parts);
+            }
         }
+
+        *self.type_param_scopes.borrow_mut() = saved_type_param_scopes;
 
         // Assign declaration_order in FORWARD declaration order for diagnostics.
         // The reverse iteration above is needed for overload resolution priority,
         // but TS2740 "missing properties" messages should list properties in the
         // order they first appear across declarations (earliest declaration first).
         self.assign_forward_declaration_order(&mut parts, declarations.iter().copied());
-
-        if type_params.is_some() {
-            self.pop_type_param_scope();
-        }
 
         (
             self.finish_interface_parts(parts, symbol_id),
