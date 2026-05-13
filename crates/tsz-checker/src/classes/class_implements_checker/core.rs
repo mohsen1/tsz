@@ -999,7 +999,7 @@ impl<'a> CheckerState<'a> {
                     // When both private-base shapes exist, the interface itself
                     // has TS2320 (conflicting base types), which already covers
                     // the error.
-                    let report_inaccessible_privates =
+                    let emit_inaccessible_private_implements_error =
                         any_inaccessible_privates && !any_accessible_privates;
 
                     if has_private_members {
@@ -1570,7 +1570,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    if report_inaccessible_privates
+                    if emit_inaccessible_private_implements_error
                         && missing_members.is_empty()
                         && incompatible_members.is_empty()
                     {
