@@ -516,6 +516,118 @@ fn trace_resolution_prints_relative_import_resolution() {
 }
 
 #[test]
+fn readonly_companion_factories_do_not_reuse_cross_file_symbol_cache_entries() {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("readonly_companion_factory_cache").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"target":"es2018","module":"esnext","strict":true,"lib":["es2022"],"types":[],"skipLibCheck":true,"noEmit":true,"moduleResolution":"bundler"},"include":["*.ts"]}"#,
+    );
+    write_file(
+        &temp.path.join("object-utils.ts"),
+        r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value
+}
+"#,
+    );
+    write_file(
+        &temp.path.join("operation-node.ts"),
+        r#"
+export type OperationNodeKind = "AliasNode" | "IdentifierNode"
+
+export interface OperationNode {
+  readonly kind: OperationNodeKind
+}
+"#,
+    );
+    write_file(
+        &temp.path.join("alias-node.ts"),
+        r#"
+import { freeze } from "./object-utils.js"
+import type { OperationNode } from "./operation-node.js"
+
+export interface AliasNode extends OperationNode {
+  readonly kind: "AliasNode"
+  readonly node: OperationNode
+  readonly alias: OperationNode
+}
+
+type AliasNodeFactory = Readonly<{
+  is(node: OperationNode): node is AliasNode
+  create(node: OperationNode, alias: OperationNode): Readonly<AliasNode>
+}>
+
+export const AliasNode: AliasNodeFactory = freeze<AliasNodeFactory>({
+  is(node): node is AliasNode {
+    return node.kind === "AliasNode"
+  },
+  create(node, alias) {
+    return freeze({ kind: "AliasNode", node, alias })
+  },
+})
+"#,
+    );
+    write_file(
+        &temp.path.join("identifier-node.ts"),
+        r#"
+import { freeze } from "./object-utils.js"
+import type { OperationNode } from "./operation-node.js"
+
+export interface IdentifierNode extends OperationNode {
+  readonly kind: "IdentifierNode"
+  readonly name: string
+}
+
+type IdentifierNodeFactory = Readonly<{
+  is(node: OperationNode): node is IdentifierNode
+  create(name: string): Readonly<IdentifierNode>
+}>
+
+export const IdentifierNode: IdentifierNodeFactory =
+  freeze<IdentifierNodeFactory>({
+    is(node): node is IdentifierNode {
+      return node.kind === "IdentifierNode"
+    },
+    create(name) {
+      return freeze({ kind: "IdentifierNode", name })
+    },
+  })
+"#,
+    );
+    write_file(
+        &temp.path.join("use.ts"),
+        r#"
+import { AliasNode } from "./alias-node.js"
+import { IdentifierNode } from "./identifier-node.js"
+
+const alias = AliasNode.create(
+  IdentifierNode.create("x"),
+  IdentifierNode.create("y"),
+)
+const id = IdentifierNode.create("z")
+const name: string = id.name
+"#,
+    );
+
+    let output = Command::new(tsz_bin)
+        .args(["--noEmit", "-p", "tsconfig.json", "--pretty", "false"])
+        .current_dir(&temp.path)
+        .output()
+        .expect("run tsz readonly companion factory cache regression");
+
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "tsz should preserve each imported companion factory shape.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn positional_file_no_lib_no_emit_returns_from_binary() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
