@@ -1,0 +1,776 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "mode": "attribution",
+  "wired": {
+    "delegate_cross_arena": true,
+    "checker_construction": true,
+    "overlay_copy": true,
+    "interner_intern_calls": true,
+    "interner_per_kind": true,
+    "interner_lock_wait": true,
+    "resolver_lookup": true,
+    "resolver_fs_probes": true,
+    "compute_type_of_symbol": true
+  },
+  "delegate": {
+    "calls": 977,
+    "cache_hits_lib": 1,
+    "cache_hits_cross_file": 434,
+    "misses": 23,
+    "max_recursion_depth": 3,
+    "cross_file_type_params_cache_hits": 0,
+    "cross_file_type_params_cache_misses": 1
+  },
+  "checker": {
+    "state_constructed": 5251,
+    "with_parent_cache_constructed": 24,
+    "file_session_resets": 0,
+    "compute_type_of_symbol_calls": 26372,
+    "compute_type_of_symbol_cache_hits": 252059,
+    "compute_type_of_symbol_interface_simple_object_fastpath_hits": 0
+  },
+  "overlay": {
+    "copy_calls": 0,
+    "entries_total": 0,
+    "entries_max": 0,
+    "len_ge_1k": 0,
+    "len_ge_10k": 0,
+    "len_ge_100k": 0,
+    "len_ge_1m": 0
+  },
+  "resolver": {
+    "lookup_calls": 5199,
+    "is_file_calls": 1,
+    "is_dir_calls": 1,
+    "read_dir_calls": 0,
+    "package_json_reads": 102,
+    "candidate_paths_total": 0
+  },
+  "interner": {
+    "intern_calls": 479143,
+    "intern_hits": 402373,
+    "intern_misses": 76770,
+    "string_intern_calls": 3351353,
+    "type_list_intern_calls": 370,
+    "object_shape_intern_calls": 101042,
+    "function_shape_intern_calls": 174,
+    "callable_shape_intern_calls": 513,
+    "application_intern_calls": 611,
+    "conditional_intern_calls": 2027,
+    "mapped_intern_calls": 2724,
+    "lock_wait_histogram_ns": [
+      179202,
+      170,
+      5,
+      1,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "by_reason": [
+    {
+      "reason": "DelegateCrossArenaSymbol",
+      "with_parent_cache_constructed": 21,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "DelegateCrossArenaClass",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "DelegateCrossArenaInterface",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "DelegateCrossArenaOther",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "JsDocLookup",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "JsDocTypeConstruction",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "CjsExports",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "AliasResolution",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "ImportType",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "TypeEnvironmentCore",
+      "with_parent_cache_constructed": 1,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "CallableTruthiness",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "ExpandoProperty",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "IdentifierResolution",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "CallHelpers",
+      "with_parent_cache_constructed": 2,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "BindingHelpers",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "ClassAbstract",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    },
+    {
+      "reason": "Other",
+      "with_parent_cache_constructed": 0,
+      "overlay_copy_calls": 0,
+      "overlay_copy_entries": 0,
+      "overlay_copy_max_entries": 0
+    }
+  ],
+  "delegate_miss_classification": {
+    "by_source": [
+      {
+        "name": "symbol_arenas",
+        "count": 21
+      },
+      {
+        "name": "declaration_arenas",
+        "count": 0
+      },
+      {
+        "name": "symbol_file_targets",
+        "count": 0
+      },
+      {
+        "name": "unknown",
+        "count": 0
+      }
+    ],
+    "by_kind": [
+      {
+        "name": "type_alias",
+        "count": 12
+      },
+      {
+        "name": "interface",
+        "count": 9
+      },
+      {
+        "name": "class",
+        "count": 0
+      },
+      {
+        "name": "function",
+        "count": 0
+      },
+      {
+        "name": "variable",
+        "count": 0
+      },
+      {
+        "name": "property",
+        "count": 0
+      },
+      {
+        "name": "method",
+        "count": 0
+      },
+      {
+        "name": "accessor",
+        "count": 0
+      },
+      {
+        "name": "enum",
+        "count": 0
+      },
+      {
+        "name": "module",
+        "count": 0
+      },
+      {
+        "name": "alias",
+        "count": 0
+      },
+      {
+        "name": "type_parameter",
+        "count": 0
+      },
+      {
+        "name": "type_literal",
+        "count": 0
+      },
+      {
+        "name": "signature",
+        "count": 0
+      },
+      {
+        "name": "constructor",
+        "count": 0
+      },
+      {
+        "name": "object_literal",
+        "count": 0
+      },
+      {
+        "name": "unresolved",
+        "count": 0
+      },
+      {
+        "name": "other",
+        "count": 0
+      }
+    ],
+    "target_declaration_files": 21,
+    "target_source_files": 0
+  },
+  "delegate_declaration_file_miss_residues": [
+    {
+      "name": "FlatArray",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es2019.array.d.ts",
+      "count": 2
+    },
+    {
+      "name": "IteratorResult",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es2015.iterable.d.ts",
+      "count": 2
+    },
+    {
+      "name": "Record",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 2
+    },
+    {
+      "name": "DateTimeFormatOptions",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "Iterator",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.esnext.iterator.d.ts",
+      "count": 1
+    },
+    {
+      "name": "IteratorObject",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.es2015.iterable.d.ts",
+      "count": 1
+    },
+    {
+      "name": "Locale",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.es2020.intl.d.ts",
+      "count": 1
+    },
+    {
+      "name": "LocalesArgument",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es2020.intl.d.ts",
+      "count": 1
+    },
+    {
+      "name": "NumberFormatOptions",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "NumberFormatOptionsCurrencyDisplay",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "NumberFormatOptionsCurrencyDisplayRegistry",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "NumberFormatOptionsStyle",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "NumberFormatOptionsStyleRegistry",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "NumberFormatOptionsUseGrouping",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "NumberFormatOptionsUseGroupingRegistry",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "Partial",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "Symbol",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.es5.d.ts",
+      "count": 1
+    },
+    {
+      "name": "UnicodeBCP47LocaleIdentifier",
+      "kind": "type_alias",
+      "source": "symbol_arenas",
+      "target_file": "lib.es2020.intl.d.ts",
+      "count": 1
+    }
+  ],
+  "alias_shortcut_outcomes": [
+    {
+      "name": "success",
+      "count": 0
+    },
+    {
+      "name": "not_alias",
+      "count": 540
+    },
+    {
+      "name": "missing_symbol",
+      "count": 0
+    },
+    {
+      "name": "missing_module",
+      "count": 0
+    },
+    {
+      "name": "missing_import_name",
+      "count": 0
+    },
+    {
+      "name": "namespace_import",
+      "count": 0
+    },
+    {
+      "name": "default_import",
+      "count": 0
+    },
+    {
+      "name": "missing_alias_file",
+      "count": 0
+    },
+    {
+      "name": "missing_target",
+      "count": 0
+    },
+    {
+      "name": "self_target",
+      "count": 0
+    },
+    {
+      "name": "missing_target_symbol",
+      "count": 0
+    },
+    {
+      "name": "target_alias",
+      "count": 0
+    },
+    {
+      "name": "alias_partner",
+      "count": 0
+    },
+    {
+      "name": "interface_value_merge",
+      "count": 0
+    },
+    {
+      "name": "unknown_result",
+      "count": 0
+    },
+    {
+      "name": "error_result",
+      "count": 0
+    }
+  ],
+  "compute_type_of_symbol_source_outcomes": [
+    {
+      "name": "global_symbol",
+      "count": 25397
+    },
+    {
+      "name": "cross_file_symbol",
+      "count": 0
+    },
+    {
+      "name": "missing_symbol",
+      "count": 0
+    }
+  ],
+  "compute_type_of_symbol_kind_outcomes": [
+    {
+      "name": "alias",
+      "count": 148
+    },
+    {
+      "name": "type_alias",
+      "count": 309
+    },
+    {
+      "name": "interface",
+      "count": 24793
+    },
+    {
+      "name": "class",
+      "count": 0
+    },
+    {
+      "name": "function",
+      "count": 0
+    },
+    {
+      "name": "variable",
+      "count": 0
+    },
+    {
+      "name": "module",
+      "count": 0
+    },
+    {
+      "name": "property",
+      "count": 0
+    },
+    {
+      "name": "method",
+      "count": 0
+    },
+    {
+      "name": "accessor",
+      "count": 0
+    },
+    {
+      "name": "enum",
+      "count": 0
+    },
+    {
+      "name": "type_parameter",
+      "count": 147
+    },
+    {
+      "name": "type_literal",
+      "count": 0
+    },
+    {
+      "name": "object_literal",
+      "count": 0
+    },
+    {
+      "name": "signature",
+      "count": 0
+    },
+    {
+      "name": "other",
+      "count": 0
+    }
+  ],
+  "compute_type_of_symbol_interface_fastpath_outcomes": [
+    {
+      "name": "full_path",
+      "count": 1
+    },
+    {
+      "name": "skip_computed_name_map",
+      "count": 1
+    },
+    {
+      "name": "skip_prewarm",
+      "count": 0
+    },
+    {
+      "name": "skip_local_heritage_merge",
+      "count": 0
+    },
+    {
+      "name": "skip_computed_name_map_and_prewarm",
+      "count": 0
+    },
+    {
+      "name": "skip_computed_name_map_and_local_heritage_merge",
+      "count": 13
+    },
+    {
+      "name": "skip_prewarm_and_local_heritage_merge",
+      "count": 0
+    },
+    {
+      "name": "skip_all_three",
+      "count": 24767
+    }
+  ],
+  "compute_type_of_symbol_interface_callsite_outcomes": [
+    {
+      "name": "root",
+      "count": 24779
+    },
+    {
+      "name": "parent_interface",
+      "count": 14
+    },
+    {
+      "name": "parent_type_alias",
+      "count": 0
+    },
+    {
+      "name": "parent_alias",
+      "count": 0
+    },
+    {
+      "name": "parent_other",
+      "count": 0
+    },
+    {
+      "name": "parent_missing",
+      "count": 0
+    }
+  ],
+  "direct_interface_lowering_outcomes": [
+    {
+      "name": "success",
+      "count": 499
+    },
+    {
+      "name": "rejected_non_direct_arena",
+      "count": 21
+    },
+    {
+      "name": "missing_symbol",
+      "count": 0
+    },
+    {
+      "name": "not_interface",
+      "count": 251
+    },
+    {
+      "name": "disallowed_merge_flags",
+      "count": 0
+    },
+    {
+      "name": "missing_declarations",
+      "count": 0
+    },
+    {
+      "name": "complex_declaration",
+      "count": 0
+    },
+    {
+      "name": "unknown_or_error",
+      "count": 0
+    }
+  ],
+  "direct_actual_lib_alias_body_outcomes": [
+    {
+      "name": "success",
+      "count": 4
+    },
+    {
+      "name": "name_not_admitted",
+      "count": 0
+    },
+    {
+      "name": "not_type_alias",
+      "count": 0
+    },
+    {
+      "name": "value_merge",
+      "count": 0
+    },
+    {
+      "name": "unproven_actual_lib_declarations",
+      "count": 0
+    },
+    {
+      "name": "missing_resolver_type",
+      "count": 5
+    },
+    {
+      "name": "resolver_not_lazy_def",
+      "count": 0
+    },
+    {
+      "name": "missing_definition",
+      "count": 0
+    },
+    {
+      "name": "non_type_alias_definition",
+      "count": 0
+    },
+    {
+      "name": "missing_body",
+      "count": 0
+    },
+    {
+      "name": "generic_alias",
+      "count": 7
+    }
+  ],
+  "cross_file_cache_miss_causes": [
+    {
+      "name": "gate_off",
+      "count": 0
+    },
+    {
+      "name": "bucket_empty",
+      "count": 499
+    },
+    {
+      "name": "sentinel_error_unknown",
+      "count": 0
+    },
+    {
+      "name": "type_id_not_interned",
+      "count": 0
+    }
+  ],
+  "source_file_symbol_arena_cache_eligibility_outcomes": [
+    {
+      "name": "cacheable",
+      "count": 933
+    },
+    {
+      "name": "cross_file_target",
+      "count": 0
+    },
+    {
+      "name": "non_symbol_arena",
+      "count": 0
+    },
+    {
+      "name": "module_augmentation",
+      "count": 0
+    },
+    {
+      "name": "missing_delegate_arena",
+      "count": 0
+    },
+    {
+      "name": "current_arena",
+      "count": 0
+    },
+    {
+      "name": "missing_source_file",
+      "count": 0
+    },
+    {
+      "name": "target_declaration_file",
+      "count": 42
+    },
+    {
+      "name": "missing_symbol",
+      "count": 0
+    },
+    {
+      "name": "not_class_or_interface",
+      "count": 0
+    },
+    {
+      "name": "multiple_declarations",
+      "count": 0
+    },
+    {
+      "name": "declaration_arena_mismatch",
+      "count": 0
+    },
+    {
+      "name": "missing_file_index",
+      "count": 0
+    }
+  ]
+}
