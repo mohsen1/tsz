@@ -2476,6 +2476,26 @@ pub fn substitute_this_type_at_return_position(
 /// We intentionally do NOT match a top-level Application (e.g. `Selector<S, T[K]>`)
 /// because the evaluator correctly passes those through as-is.  Only unions/
 /// intersections are at risk of member loss.
+fn type_is_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+
+    let Some(TypeData::Application(app_id)) = interner.lookup(type_id) else {
+        return false;
+    };
+    let app = interner.type_application(app_id);
+    !app.base.is_intrinsic() && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
+}
+
+/// Check whether `type_id` is a lazy application, or a union/intersection whose
+/// immediate members contain one.
+///
+/// This intentionally does not recursively inspect arbitrary nested types.
+/// Eager evaluation only loses members for the immediate mapped-template shape;
+/// recursive matching also catches unrelated implementation details and can
+/// change assignability/display behavior for conditionals that should still be
+/// evaluated in place.
 fn template_has_lazy_application_in_composite(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
@@ -2489,18 +2509,7 @@ fn template_has_lazy_application_in_composite(
     match data {
         TypeData::Union(members) | TypeData::Intersection(members) => {
             let list = interner.type_list(members);
-            list.iter().any(|&m| {
-                if m.is_intrinsic() {
-                    return false;
-                }
-                if let Some(TypeData::Application(app_id)) = interner.lookup(m) {
-                    let app = interner.type_application(app_id);
-                    !app.base.is_intrinsic()
-                        && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
-                } else {
-                    false
-                }
-            })
+            list.iter().any(|&m| type_is_lazy_application(interner, m))
         }
         TypeData::Conditional(cond_id) => {
             let cond = interner.get_conditional(cond_id);
