@@ -43,7 +43,30 @@ impl<'a> DeclarationEmitter<'a> {
         if callee_node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
-        let parts = self.function_type_parts_for_expression(callee_idx)?;
+        if let Some(sym_id) = self.value_reference_symbol(callee_idx) {
+            let binder = self.binder?;
+            let sym_id = self
+                .resolve_portability_import_alias(sym_id, binder)
+                .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+            if self
+                .with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+                    let decl_node = source_arena.get(decl_idx)?;
+                    Some(
+                        // A local function variable can call itself inside its
+                        // own initializer; reusing that initializer type would
+                        // recursively re-enter declaration inference.
+                        std::ptr::eq(source_arena, self.arena)
+                            && decl_node.pos <= expr_node.pos
+                            && expr_node.end <= decl_node.end,
+                    )
+                })
+                .unwrap_or(false)
+            {
+                return None;
+            }
+        }
+        let type_text = self.local_variable_initializer_type_text(callee_idx)?;
+        let parts = Self::parse_function_type_text(&type_text)?;
         let return_type = parts.return_type.trim();
         if return_type == "any" || return_type == "unknown" || !return_type.contains('"') {
             return None;
@@ -72,6 +95,14 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
 
         self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            // Do not infer from the declaration currently being emitted.
+            if std::ptr::eq(source_arena, self.arena)
+                && decl_node.pos <= expr_node.pos
+                && expr_node.end <= decl_node.end
+            {
+                return None;
+            }
             let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
             let returned_param_index =
                 self.returned_parameter_index_from_function_body(source_arena, func)?;
