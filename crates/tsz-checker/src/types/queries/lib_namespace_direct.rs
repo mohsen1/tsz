@@ -8,7 +8,7 @@ use tsz_solver::TypeId;
 
 use super::lib_resolution::{
     collect_lib_decls_with_arenas_in_contexts, dedup_decl_arenas, lib_def_id_from_node,
-    resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
+    no_value_resolver, resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
 };
 
 impl<'a> CheckerState<'a> {
@@ -156,6 +156,140 @@ impl<'a> CheckerState<'a> {
                 .insert(cache_name.to_string(), None);
             return None;
         }
+
+        self.ctx.register_lib_def_resolved(sym_id, ty, params);
+        self.ensure_relation_input_ready(ty);
+        self.ctx
+            .lib_type_resolution_cache
+            .insert(cache_name.to_string(), Some(ty));
+        if !self.lib_name_locally_augmented(cache_name)
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
+        {
+            shared.insert(cache_name.to_string(), Some(ty));
+        }
+
+        Some(ty)
+    }
+
+    pub(crate) fn resolve_lib_alias_type_by_symbol(
+        &mut self,
+        cache_name: &str,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        if self.ctx.skip_lib_type_resolution {
+            return None;
+        }
+
+        if let Some(cached) = self.ctx.lib_type_resolution_cache.get(cache_name)
+            && self.cached_lib_type_is_usable(cache_name, *cached)
+        {
+            return *cached;
+        }
+
+        if !self.lib_name_locally_augmented(cache_name)
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
+            && let Some(entry) = shared.get(cache_name)
+        {
+            let cached = *entry;
+            if self.cached_lib_type_is_usable(cache_name, cached) {
+                self.ctx
+                    .lib_type_resolution_cache
+                    .insert(cache_name.to_string(), cached);
+                return cached;
+            }
+        }
+
+        self.ctx
+            .lib_type_resolution_cache
+            .insert(cache_name.to_string(), None);
+
+        let lib_contexts = self.ctx.lib_contexts.clone();
+        let lib_binders = self.get_lib_binders();
+        let (declarations, has_type_alias) = {
+            let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+            (
+                symbol.declarations.clone(),
+                symbol.has_any_flags(symbol_flags::TYPE_ALIAS),
+            )
+        };
+        if !has_type_alias || declarations.is_empty() {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(cache_name.to_string(), None);
+            return None;
+        }
+
+        let fallback_arena =
+            resolve_lib_fallback_arena(self.ctx.binder, sym_id, &lib_contexts, self.ctx.arena);
+        let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
+            self.ctx.binder,
+            sym_id,
+            &declarations,
+            fallback_arena,
+            &lib_contexts,
+            Some(self.ctx.arena),
+        );
+        if decls_with_arenas.is_empty() {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(cache_name.to_string(), None);
+            return None;
+        }
+
+        let binder = &self.ctx.binder;
+        let resolver = |node_idx: NodeIndex| -> Option<u32> {
+            resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
+                .map(|sym_id| sym_id.0)
+        };
+        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+            lib_def_id_from_node(
+                &self.ctx,
+                binder,
+                node_idx,
+                &decls_with_arenas,
+                fallback_arena,
+            )
+        };
+        let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
+            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+        };
+
+        let lowering = TypeLowering::with_hybrid_resolver(
+            fallback_arena,
+            self.ctx.types,
+            &resolver,
+            &def_id_resolver,
+            &no_value_resolver,
+        )
+        .with_name_def_id_resolver(&name_resolver);
+        let lowering =
+            if self.ctx.all_binders.is_some() || self.ctx.global_file_locals_index.is_some() {
+                lowering.prefer_name_def_id_resolution()
+            } else {
+                lowering
+            };
+
+        let mut resolved: Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> = None;
+        for (decl_idx, decl_arena) in &decls_with_arenas {
+            let Some(node) = decl_arena.get(*decl_idx) else {
+                continue;
+            };
+            let Some(alias) = decl_arena.get_type_alias(node) else {
+                continue;
+            };
+            let alias_lowering = lowering.with_arena(decl_arena);
+            let (ty, params) = alias_lowering.lower_type_alias_declaration(alias);
+            if ty != TypeId::ERROR && ty != TypeId::UNKNOWN {
+                resolved = Some((ty, params));
+                break;
+            }
+        }
+        let Some((ty, params)) = resolved else {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(cache_name.to_string(), None);
+            return None;
+        };
 
         self.ctx.register_lib_def_resolved(sym_id, ty, params);
         self.ensure_relation_input_ready(ty);

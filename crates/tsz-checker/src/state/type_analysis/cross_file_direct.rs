@@ -118,6 +118,16 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
     )
 }
 
+fn is_direct_actual_lib_alias_name(name: &str) -> bool {
+    matches!(
+        name,
+        "NumberFormatOptionsCurrencyDisplay"
+            | "NumberFormatOptionsSignDisplay"
+            | "NumberFormatOptionsStyle"
+            | "NumberFormatOptionsUseGrouping"
+    )
+}
+
 fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
     matches!(
         name,
@@ -237,7 +247,8 @@ impl<'a> CheckerState<'a> {
         }
         // Lib utility aliases must stay on the existing lazy alias path so
         // application/indexed-access behavior sees the declared alias shape.
-        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) && !is_direct_actual_lib_alias_name(&name)
+        {
             return None;
         }
         let declarations_are_direct =
@@ -269,6 +280,12 @@ impl<'a> CheckerState<'a> {
         };
         if direct_type.is_none() {
             direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
+                if is_direct_actual_lib_alias_name(&name) {
+                    let namespace_sym_id =
+                        self.resolve_lib_namespace_export_symbol("Intl", &name)?;
+                    let cache_name = format!("Intl.{name}");
+                    return self.resolve_lib_alias_type_by_symbol(&cache_name, namespace_sym_id);
+                }
                 if !is_direct_actual_intl_lib_interface_name(&name) {
                     return None;
                 }
@@ -1233,6 +1250,66 @@ mod tests {
                     })
             })
             .expect("direct actual-lib declaration arena should exist")
+            .as_ref();
+
+        let (ty, _) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(delegate_arena),
+                false,
+            )
+            .expect("direct actual-lib lowering should succeed");
+
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_intl_sign_display_alias_symbol() {
+        let lib_files = load_lib_files(&["es5.d.ts", "es2020.intl.d.ts", "es2023.intl.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .resolve_lib_namespace_export_symbol("Intl", "NumberFormatOptionsSignDisplay")
+            .expect("Intl.NumberFormatOptionsSignDisplay export should resolve");
+        let symbol = state
+            .get_cross_file_symbol(sym_id)
+            .expect("symbol should resolve");
+        let decl_idx = *symbol
+            .declarations
+            .first()
+            .expect("symbol should have declarations");
+        let delegate_arena = state
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .and_then(|arenas| arenas.first())
+            .expect("declaration arena should exist")
             .as_ref();
 
         let (ty, _) = state
