@@ -10,6 +10,7 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
+use tsz_solver::def::DefKind;
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
     let basename = std::path::Path::new(file_name)
@@ -143,6 +144,32 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn symbol_type_alias_declarations_are_proven_actual_lib_only(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        name: &str,
+        delegate_arena: &NodeArena,
+    ) -> bool {
+        !symbol.declarations.is_empty()
+            && symbol.declarations.iter().all(|&decl_idx| {
+                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    return !arenas.is_empty()
+                        && arenas.iter().all(|arena| {
+                            is_direct_actual_lib_declaration_arena(arena.as_ref())
+                                && Self::lib_type_alias_declaration_name_matches(
+                                    arena.as_ref(),
+                                    decl_idx,
+                                    name,
+                                )
+                        });
+                }
+
+                is_direct_actual_lib_declaration_arena(delegate_arena)
+                    && Self::lib_type_alias_declaration_name_matches(delegate_arena, decl_idx, name)
+            })
+    }
+
     fn lib_declaration_name_matches(arena: &NodeArena, decl_idx: NodeIndex, name: &str) -> bool {
         let Some(node) = arena.get(decl_idx) else {
             return false;
@@ -164,6 +191,58 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn lib_type_alias_declaration_name_matches(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(alias) = arena.get_type_alias(node) else {
+            return false;
+        };
+        arena
+            .get(alias.name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .is_some_and(|ident| ident.escaped_text == name)
+    }
+
+    fn direct_actual_lib_type_alias_body(
+        &mut self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        name: &str,
+        delegate_arena: &NodeArena,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if !matches!(name, "DecoratorMetadata" | "DecoratorMetadataObject")
+            || !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+            || symbol.has_any_flags(symbol_flags::VALUE)
+            || !self.symbol_type_alias_declarations_are_proven_actual_lib_only(
+                sym_id,
+                symbol,
+                name,
+                delegate_arena,
+            )
+        {
+            return None;
+        }
+
+        let alias_type = self.resolve_lib_type_by_name(name)?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)?;
+        let def_info = self.ctx.definition_store.get(def_id)?;
+        if !matches!(def_info.kind, DefKind::TypeAlias) {
+            return None;
+        }
+        let body = self.ctx.definition_store.get_body(def_id)?;
+
+        let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+        if !params.is_empty() {
+            return None;
+        }
+        Some((body, params))
+    }
+
     pub(super) fn direct_actual_lib_symbol_type(
         &mut self,
         sym_id: SymbolId,
@@ -179,20 +258,26 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let symbol = self.get_cross_file_symbol(sym_id)?.clone();
+        let name = symbol.escaped_name.clone();
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
         if symbol.has_any_flags(symbol_flags::VALUE) {
             return None;
         }
-        // Lib utility aliases must stay on the existing lazy alias path so
-        // application/indexed-access behavior sees the declared alias shape.
+        // Generic lib utility aliases stay on fallback so application/indexed-access
+        // behavior sees the declared alias shape with type parameters in scope.
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
-            return None;
+            let (alias_type, params) =
+                self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
+            self.ctx.symbol_types.insert(sym_id, alias_type);
+            self.ctx
+                .lib_delegation_cache
+                .insert(sym_id, (alias_type, params.clone()));
+            return Some((alias_type, params));
         }
-        let name = symbol.escaped_name.clone();
-        if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name) {
+        if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name) {
             return None;
         }
         let (direct_type, params) = if should_resolve_actual_lib_interface_with_params(&name) {
@@ -1017,6 +1102,182 @@ mod tests {
             cached_params.len(),
             params.len(),
             "cache hits must preserve generic application metadata",
+        );
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_non_generic_alias_body_query() {
+        let lib_files = load_lib_files(&["es5.d.ts", "decorators.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("DecoratorMetadataObject")
+            .expect("DecoratorMetadataObject should resolve to a lib symbol");
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref);
+
+        let (ty, params) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                delegate_arena,
+                false,
+            )
+            .expect("non-generic actual-lib alias body should lower directly");
+
+        assert!(
+            params.is_empty(),
+            "DecoratorMetadataObject should be non-generic",
+        );
+        assert!(
+            crate::query_boundaries::common::lazy_def_id(&types, ty).is_none(),
+            "direct alias result should return the registered alias body, not the opaque Lazy alias",
+        );
+
+        let (cached_ty, cached_params) = state
+            .ctx
+            .lib_delegation_cache
+            .get(&sym_id)
+            .expect("direct alias path should populate the delegation cache");
+        assert_eq!(*cached_ty, ty);
+        assert!(cached_params.is_empty());
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_leaves_property_key_on_fallback() {
+        let lib_files = load_lib_files(&["es5.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("PropertyKey")
+            .expect("PropertyKey should resolve to a lib symbol");
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref);
+
+        assert!(
+            state
+                .direct_actual_lib_symbol_type(
+                    sym_id,
+                    CrossArenaSymbolMissSource::SymbolArena,
+                    delegate_arena,
+                    false,
+                )
+                .is_none(),
+            "PropertyKey stays on fallback because it is used in assignability-sensitive lib signatures",
+        );
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_leaves_generic_alias_on_fallback() {
+        let lib_files = load_lib_files(&["es5.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("Record")
+            .expect("Record should resolve to a lib symbol");
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref);
+
+        assert!(
+            state
+                .direct_actual_lib_symbol_type(
+                    sym_id,
+                    CrossArenaSymbolMissSource::SymbolArena,
+                    delegate_arena,
+                    false,
+                )
+                .is_none(),
+            "generic utility aliases should stay on the existing fallback path",
         );
     }
 }
