@@ -109,7 +109,16 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_attaches_through_var_prefix(between: &str) -> bool {
-        let trimmed = between.trim();
+        let mut without_line_comments = String::new();
+        for line in between.lines() {
+            let line = line
+                .split_once("//")
+                .map(|(before, _)| before)
+                .unwrap_or(line);
+            without_line_comments.push_str(line);
+            without_line_comments.push('\n');
+        }
+        let trimmed = without_line_comments.trim();
         if trimmed.is_empty() {
             return true;
         }
@@ -1830,37 +1839,141 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             let mut rest = Self::trim_jsdoc_same_line_following_tags(rest.trim());
-            if let Some((constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
-                && let Some((name, remaining)) = Self::take_jsdoc_template_name(name_rest)
+            let mut constraint = None;
+            if let Some((raw_constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
             {
-                let constraint = Self::normalize_jsdoc_type_text(constraint, false);
-                let name_key = name.to_string();
-                if seen.insert(name_key) {
-                    params.push(format!("{name} extends {constraint}"));
-                }
-                rest = remaining;
+                constraint = Some(Self::normalize_jsdoc_type_text(raw_constraint, false));
+                rest = name_rest;
             }
 
-            for name in rest
-                .split([',', ' ', '\t'])
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
-                // Bracket-default form `@template [T=string]` declares type
-                // parameter `T` with default `string`. Without unwrapping the
-                // brackets, the verbatim segment `[T=string]` would be
-                // emitted between `<` and `>` and produce invalid `.d.ts`
-                // output (issue #4005).
-                let normalized = Self::normalize_jsdoc_template_bracket_default(name);
-                let name_str = normalized.into_owned();
-                let key = Self::jsdoc_template_param_name_key(&name_str).to_string();
+            let mut applied_constraint = false;
+            for (name, default) in Self::parse_jsdoc_template_param_parts(rest) {
+                let constraint = if applied_constraint {
+                    None
+                } else {
+                    constraint.as_deref()
+                };
+                let rendered =
+                    Self::render_jsdoc_template_param(&name, default.as_deref(), constraint);
+                let key = Self::jsdoc_template_param_name_key(&rendered).to_string();
                 if seen.insert(key) {
-                    params.push(name_str);
+                    params.push(rendered);
                 }
+                applied_constraint = true;
             }
         }
 
         params
+    }
+
+    fn parse_jsdoc_template_param_parts(text: &str) -> Vec<(String, Option<String>)> {
+        let mut parts = Vec::new();
+        let mut cursor = 0usize;
+        let bytes = text.as_bytes();
+        let mut parsed_any = false;
+
+        while cursor < bytes.len() {
+            let mut saw_comma = false;
+            while cursor < bytes.len() {
+                let ch = bytes[cursor] as char;
+                if ch == ',' {
+                    saw_comma = true;
+                    cursor += 1;
+                } else if ch.is_ascii_whitespace() {
+                    cursor += 1;
+                } else {
+                    break;
+                }
+            }
+            if cursor >= bytes.len() || (parsed_any && !saw_comma) {
+                break;
+            }
+
+            let (name, default, end) = if bytes[cursor] == b'[' {
+                let Some(close_offset) = text[cursor + 1..].find(']') else {
+                    break;
+                };
+                let close = cursor + 1 + close_offset;
+                let inner = text[cursor + 1..close].trim();
+                let (name, default) = if let Some((name, default)) = inner.split_once('=') {
+                    (name.trim(), Some(default.trim()))
+                } else {
+                    (inner, Some("any"))
+                };
+                if name.is_empty() {
+                    break;
+                }
+                (name.to_string(), default.map(str::to_string), close + 1)
+            } else {
+                let start = cursor;
+                while cursor < bytes.len() {
+                    let ch = bytes[cursor] as char;
+                    if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                        cursor += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if start == cursor {
+                    break;
+                }
+
+                let first = &text[start..cursor];
+                if first == "const" {
+                    let mut name_start = cursor;
+                    while name_start < bytes.len()
+                        && (bytes[name_start] as char).is_ascii_whitespace()
+                    {
+                        name_start += 1;
+                    }
+                    let mut name_end = name_start;
+                    while name_end < bytes.len() {
+                        let ch = bytes[name_end] as char;
+                        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                            name_end += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if name_start == name_end {
+                        break;
+                    }
+                    (
+                        format!("const {}", &text[name_start..name_end]),
+                        None,
+                        name_end,
+                    )
+                } else {
+                    (first.to_string(), None, cursor)
+                }
+            };
+
+            parts.push((name, default));
+            parsed_any = true;
+            cursor = end;
+        }
+
+        parts
+    }
+
+    fn render_jsdoc_template_param(
+        name: &str,
+        default: Option<&str>,
+        constraint: Option<&str>,
+    ) -> String {
+        let mut rendered = name.trim().to_string();
+        if let Some(constraint) = constraint
+            && !constraint.trim().is_empty()
+        {
+            rendered.push_str(" extends ");
+            rendered.push_str(constraint.trim());
+        }
+        if let Some(default) = default {
+            rendered.push_str(" = ");
+            let default = default.trim();
+            rendered.push_str(if default.is_empty() { "any" } else { default });
+        }
+        rendered
     }
 
     fn trim_jsdoc_same_line_following_tags(text: &str) -> &str {
@@ -1869,42 +1982,13 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(text)
     }
 
-    /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
-    /// `T = default` so the result is valid TypeScript type-parameter
-    /// syntax. Non-bracket segments are returned unchanged.
-    fn normalize_jsdoc_template_bracket_default(segment: &str) -> std::borrow::Cow<'_, str> {
-        let trimmed = segment.trim();
-        if !(trimmed.starts_with('[') && trimmed.ends_with(']')) {
-            return std::borrow::Cow::Borrowed(segment);
-        }
-        let inner = &trimmed[1..trimmed.len() - 1];
-        if let Some((name, default)) = inner.split_once('=') {
-            std::borrow::Cow::Owned(format!("{} = {}", name.trim(), default.trim()))
-        } else {
-            std::borrow::Cow::Owned(inner.trim().to_string())
-        }
-    }
-
     fn jsdoc_template_param_name_key(text: &str) -> &str {
         let trimmed = text.trim();
+        let trimmed = trimmed.strip_prefix("const ").unwrap_or(trimmed);
         let end = trimmed
             .find(|c: char| c == '=' || c.is_whitespace())
             .unwrap_or(trimmed.len());
         trimmed[..end].trim()
-    }
-
-    fn take_jsdoc_template_name(text: &str) -> Option<(&str, &str)> {
-        let text = text.trim_start_matches([',', ' ', '\t']);
-        if text.is_empty() {
-            return None;
-        }
-
-        let end = text.find([',', ' ', '\t']).unwrap_or(text.len());
-        let name = text[..end].trim();
-        if name.is_empty() {
-            return None;
-        }
-        Some((name, &text[end..]))
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_typedef_alias(

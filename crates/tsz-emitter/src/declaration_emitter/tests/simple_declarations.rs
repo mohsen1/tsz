@@ -1591,6 +1591,76 @@ export function id(x) {
 }
 
 #[test]
+fn test_js_function_declaration_emits_jsdoc_template_defaults() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ * @template [U=T] - ok: default can reference earlier type parameter
+ * @param {T} a
+ * @param {U} b
+ */
+export function f1(a, b) {}
+
+/**
+ * @template {string | number} [T=string]
+ * @template U - error: Required type parameters cannot follow optional type parameters
+ * @param {T} a
+ * @param {U} b
+ */
+export function f2(a, b) {}
+"#,
+    );
+
+    assert!(
+        output.contains("export function f1<T, U = T>(a: T, b: U): void;"),
+        "Expected bracket JSDoc template defaults to emit as type parameter defaults: {output}"
+    );
+    assert!(
+        output.contains(
+            "export function f2<T extends string | number = string, U>(a: T, b: U): void;"
+        ),
+        "Expected constrained bracket JSDoc template defaults to emit in TypeScript syntax: {output}"
+    );
+    assert!(
+        !output.contains("f1<T, U = T, -")
+            && !output.contains("f2<T extends string | number = string, U, -")
+            && !output.contains("parameter, [T]"),
+        "Did not expect @template descriptions to become type parameters: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_emits_jsdoc_template_default() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template {string | number} [T=string] - ok: defaults are permitted
+ * @typedef {[T]} A
+ */
+
+/** @type {A} */ // ok: default for T applies
+const aDefault = [""];
+/** @type {A<number>} */ // ok: explicit T applies
+const aNumber = [0];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const aDefault: A;"),
+        "Expected value @type to preserve the defaulted typedef alias reference: {output}"
+    );
+    assert!(
+        output.contains("declare const aNumber: A<number>;"),
+        "Expected generic value @type to preserve the typedef alias reference: {output}"
+    );
+    assert!(
+        output.contains("type A<T extends string | number = string> = [T];"),
+        "Expected constrained defaulted JSDoc typedef to emit as a generic type alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_type_alias_signature() {
     let output = emit_js_dts(
         r#"
