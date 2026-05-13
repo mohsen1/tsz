@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `fix-class-index-implements-6370-20260513`
-- **PR**: TBD
+- **PR**: #6396
 - **Status**: ready
 - **Workstream**: conformance / public false-positive fixes
 
