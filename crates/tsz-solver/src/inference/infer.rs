@@ -14,7 +14,7 @@ use crate::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
-use crate::visitor::is_literal_type;
+use crate::visitor::{is_literal_type, is_union_of_fresh_literals};
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -66,6 +66,9 @@ pub(crate) struct InferenceCandidate {
     pub object_property_index: Option<u32>,
     pub object_property_name: Option<Atom>,
     pub(crate) source_is_type_annotation: bool,
+    /// Candidate came from array element inference (`T[]` vs a literal array).
+    /// tsc's BCT widening applies to these in `NoInfer<T>` positions.
+    pub(crate) from_array_element: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -303,6 +306,8 @@ pub(crate) struct InferenceContext<'a> {
     /// pre-rewrite placeholder candidate, so resolution may drop only those
     /// stale call-local placeholders for these vars.
     pub(crate) vars_with_substituted_candidates: FxHashSet<InferenceVar>,
+    /// Set during array element inference so candidates get `from_array_element = true`.
+    pub(crate) in_array_element_context: bool,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -335,6 +340,7 @@ impl<'a> InferenceContext<'a> {
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
+            in_array_element_context: false,
         }
     }
 
@@ -359,6 +365,7 @@ impl<'a> InferenceContext<'a> {
             infer_visited: FxHashSet::default(),
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
+            in_array_element_context: false,
         }
     }
 
@@ -592,6 +599,7 @@ impl<'a> InferenceContext<'a> {
                 object_property_index: candidate.object_property_index,
                 object_property_name: candidate.object_property_name,
                 source_is_type_annotation: candidate.source_is_type_annotation,
+                from_array_element: candidate.from_array_element,
             });
         }
 
@@ -1121,6 +1129,7 @@ impl<'a> InferenceContext<'a> {
             object_property_index: None,
             object_property_name: None,
             source_is_type_annotation: self.source_is_type_annotation,
+            from_array_element: self.in_array_element_context,
         };
         self.table.union_value(
             root,
@@ -1201,13 +1210,15 @@ impl<'a> InferenceContext<'a> {
             type_id: ty,
             priority,
             is_fresh_literal: (!context.from_object_property || context.source_is_fresh)
-                && is_literal_type(self.interner, ty)
+                && (is_literal_type(self.interner, ty)
+                    || is_union_of_fresh_literals(self.interner, ty))
                 && !self.source_is_type_annotation,
             from_object_property: context.from_object_property,
             from_index_signature: context.from_index_signature,
             object_property_index: context.object_property_index,
             object_property_name: context.object_property_name,
             source_is_type_annotation: self.source_is_type_annotation,
+            from_array_element: self.in_array_element_context,
         };
         if self.in_contra_mode {
             // In contravariant context (e.g., callback parameter structural
@@ -1354,6 +1365,15 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
         !info.candidates.is_empty() && info.candidates.iter().all(|c| c.is_fresh_literal)
+    }
+
+    /// Returns true when every candidate for `var` was inferred from an array
+    /// element match (`T[]` vs `"a"[]`). Used to widen scalar fresh literals in
+    /// `NoInfer<T>` positions, matching tsc's BCT widening of array literals.
+    pub fn all_candidates_from_array_elements(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        !info.candidates.is_empty() && info.candidates.iter().all(|c| c.from_array_element)
     }
 }
 
