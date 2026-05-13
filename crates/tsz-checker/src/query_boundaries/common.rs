@@ -54,6 +54,10 @@ pub(crate) fn instantiate_type(
     tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
 }
 
+pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
+    tsz_solver::is_compiler_managed_type(name)
+}
+
 /// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the
 /// canonical self-keyof indexed-access shape `Foo[keyof Foo]`, return the
 /// body `TypeId` so the caller can evaluate it with a resolver-equipped
