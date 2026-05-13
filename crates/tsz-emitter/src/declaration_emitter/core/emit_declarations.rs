@@ -138,6 +138,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
         self.all_comments = source_file.comments.clone();
         self.comment_emit_idx = 0;
+        if self.emit_js_cross_file_commonjs_merge_diagnostic(source_file) {
+            return String::new();
+        }
         let (js_named_export_names, folded_named_exports, deferred_named_exports) =
             self.collect_js_folded_named_exports(source_file);
         self.js_named_export_names = js_named_export_names;

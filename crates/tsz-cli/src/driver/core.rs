@@ -1839,7 +1839,9 @@ fn compile_inner(
         diagnostics.extend(emit_diags);
         if should_emit {
             let blocked_declaration_sources = declaration_emit_blocking_source_files(&diagnostics);
-            if blocked_declaration_sources.is_empty() {
+            let block_all_declaration_outputs =
+                has_global_declaration_emit_blocking_diagnostic(&diagnostics);
+            if blocked_declaration_sources.is_empty() && !block_all_declaration_outputs {
                 write_outputs(&outputs, resolved.emit_bom)?
             } else {
                 let filtered_outputs: Vec<_> = outputs
@@ -1848,6 +1850,7 @@ fn compile_inner(
                         should_write_output_after_declaration_diagnostics(
                             output,
                             &blocked_declaration_sources,
+                            block_all_declaration_outputs,
                         )
                     })
                     .collect();
@@ -1992,6 +1995,14 @@ fn declaration_emit_blocking_source_files(diagnostics: &[Diagnostic]) -> FxHashS
         .collect()
 }
 
+fn has_global_declaration_emit_blocking_diagnostic(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics.iter().any(|diagnostic| {
+        diagnostic.category == DiagnosticCategory::Error
+            && diagnostic.code
+                == diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED
+    })
+}
+
 const fn is_declaration_emit_blocking_diagnostic_code(code: u32) -> bool {
     // TS9007–TS9039 are the `--isolatedDeclarations` family. tsc refuses to
     // emit a `.d.ts` for any source whose isolated-declaration constraints
@@ -2001,6 +2012,7 @@ const fn is_declaration_emit_blocking_diagnostic_code(code: u32) -> bool {
     matches!(
         code,
         diagnostic_codes::EXPORTED_VARIABLE_HAS_OR_IS_USING_NAME_FROM_EXTERNAL_MODULE_BUT_CANNOT_BE_NAMED
+            | diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED
             | 9007..=9039,
     )
 }
@@ -2008,9 +2020,13 @@ const fn is_declaration_emit_blocking_diagnostic_code(code: u32) -> bool {
 fn should_write_output_after_declaration_diagnostics(
     output: &OutputFile,
     blocked_sources: &FxHashSet<PathBuf>,
+    block_all_declaration_outputs: bool,
 ) -> bool {
     if !is_declaration_output_path(&output.path) {
         return true;
+    }
+    if block_all_declaration_outputs {
+        return false;
     }
 
     let Some(source_path) = output.source_path.as_ref() else {
