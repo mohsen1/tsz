@@ -21,7 +21,10 @@
 //! "no cache entry".
 
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_common::perf_counters::{CrossFileCacheMissCause, record_cross_file_cache_miss_cause};
+use tsz_common::perf_counters::{
+    CrossFileCacheMissCause, SourceFileSymbolArenaCacheEligibilityOutcome,
+    record_cross_file_cache_miss_cause,
+};
 
 use crate::query_boundaries::common::type_id_is_known_to_db;
 use crate::state_type_analysis::cross_file::CrossFileQueryKind;
@@ -60,13 +63,25 @@ impl<'a> CheckerContext<'a> {
         sym_id: SymbolId,
         delegate_arena: &tsz_parser::NodeArena,
     ) -> bool {
+        self.source_file_symbol_arena_cache_stability_outcome(sym_id, delegate_arena)
+            == SourceFileSymbolArenaCacheEligibilityOutcome::Cacheable
+    }
+
+    pub fn source_file_symbol_arena_cache_stability_outcome(
+        &self,
+        sym_id: SymbolId,
+        delegate_arena: &tsz_parser::NodeArena,
+    ) -> SourceFileSymbolArenaCacheEligibilityOutcome {
+        use SourceFileSymbolArenaCacheEligibilityOutcome as Outcome;
+
         let Some(symbol) = self.cross_file_cache_symbol(sym_id) else {
-            return false;
+            return Outcome::MissingSymbol;
         };
-        if !symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
-            || symbol.declarations.len() != 1
-        {
-            return false;
+        if !symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE) {
+            return Outcome::NotClassOrInterface;
+        }
+        if symbol.declarations.len() != 1 {
+            return Outcome::MultipleDeclarations;
         }
 
         // The `symbol_arenas` map stores one arena for the symbol, but merged
@@ -74,14 +89,19 @@ impl<'a> CheckerContext<'a> {
         // cached symbol type is reusable only for the small stable slice where
         // the single class/interface declaration is proven to belong solely to
         // the delegated source-file arena.
-        symbol.declarations.iter().all(|&decl_idx| {
+        let declarations_match = symbol.declarations.iter().all(|&decl_idx| {
             self.binder
                 .declaration_arenas
                 .get(&(sym_id, decl_idx))
                 .is_some_and(|arenas| {
                     arenas.len() == 1 && std::ptr::eq(arenas[0].as_ref(), delegate_arena)
                 })
-        })
+        });
+        if !declarations_match {
+            return Outcome::DeclarationArenaMismatch;
+        }
+
+        Outcome::Cacheable
     }
 
     fn cross_file_cache_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
