@@ -713,6 +713,7 @@ impl<'a> Printer<'a> {
         // ES2015 path: __awaiter + function* with yield
 
         // Check if the body is empty and was single-line in source for compact formatting
+        let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
         let body_is_empty_single_line = self
             .arena
             .get(body)
@@ -779,6 +780,35 @@ impl<'a> Printer<'a> {
         }
 
         if body_is_empty_single_line {
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            return;
+        }
+
+        if body_is_single_line {
+            let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+            let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
+            self.ctx.emit_await_as_yield = true;
+            if body_captures_arguments {
+                self.ctx.rewrite_arguments_to_arguments_1 = true;
+                self.ctx.arguments_capture_name = arguments_capture_name;
+            }
+            self.function_scope_depth += 1;
+            if let Some(body_node) = self.arena.get(body)
+                && let Some(block) = self.arena.get_block(body_node)
+            {
+                for &stmt in &block.statements.nodes {
+                    self.write(" ");
+                    self.emit(stmt);
+                }
+            }
+            self.function_scope_depth -= 1;
+            self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+            self.ctx.arguments_capture_name = saved_arguments_capture_name;
+            self.write(" });");
             self.write_line();
             self.decrease_indent();
             self.write("}");

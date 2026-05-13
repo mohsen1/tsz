@@ -195,6 +195,7 @@ impl<'a> Printer<'a> {
         self.prepare_logical_assignment_value_temps(func.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
+        let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
@@ -208,6 +209,7 @@ impl<'a> Printer<'a> {
         self.emit(func.body);
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
+        self.ctx.arguments_capture_name = prev_arguments_capture_name;
         self.ctx.flags.in_generator = prev_in_generator;
         if self.function_has_recovered_pre_body_token(node, func.body) {
             self.write_line();
