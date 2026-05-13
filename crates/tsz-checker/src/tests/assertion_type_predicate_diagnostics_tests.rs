@@ -121,6 +121,20 @@ v.toUpperCase();
 }
 
 #[test]
+fn type_predicate_target_must_name_function_parameter() {
+    let codes = check_source_codes(
+        r#"
+type PredicateCheck<T> = T extends (...args: any[]) => T is infer U ? U : never;
+type PC = PredicateCheck<(x: unknown) => x is string>;
+"#,
+    );
+    assert!(
+        codes.contains(&1225),
+        "expected TS1225 when a type predicate names type parameter `T` instead of a function parameter, got {codes:?}"
+    );
+}
+
+#[test]
 fn assertion_element_access_emits_ts2776() {
     let codes = check_source_codes(
         r#"

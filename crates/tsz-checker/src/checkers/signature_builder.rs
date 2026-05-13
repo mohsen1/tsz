@@ -637,6 +637,17 @@ impl<'a> CheckerState<'a> {
         let mut parameter_index = None;
         if let TypePredicateTarget::Identifier(name) = &target {
             parameter_index = params.iter().position(|p| p.name == Some(*name));
+            if parameter_index.is_none() {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                let name_text = self.ctx.types.resolve_atom(*name);
+                self.ctx.error(
+                    node.pos,
+                    node.end.saturating_sub(node.pos),
+                    diagnostic_messages::CANNOT_FIND_PARAMETER.replace("{0}", &name_text),
+                    diagnostic_codes::CANNOT_FIND_PARAMETER,
+                );
+                return (return_type, None);
+            }
         }
 
         let predicate = TypePredicate {
