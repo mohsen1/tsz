@@ -74,8 +74,78 @@ fn jsx_full_diagnostics_with_mode(source: &str, jsx_mode: JsxMode) -> Vec<Diagno
     checker.ctx.diagnostics.clone()
 }
 
+fn diagnostic_messages(diags: &[(u32, String)], code: u32) -> Vec<&str> {
+    diags
+        .iter()
+        .filter_map(|(actual, message)| (*actual == code).then_some(message.as_str()))
+        .collect()
+}
+
+fn diagnostic_count(diags: &[(u32, String)], code: u32) -> usize {
+    diagnostic_messages(diags, code).len()
+}
+
 fn has_code(diags: &[(u32, String)], code: u32) -> bool {
-    diags.iter().any(|(c, _)| *c == code)
+    diagnostic_count(diags, code) > 0
+}
+
+fn lacks_code(diags: &[(u32, String)], code: u32) -> bool {
+    !has_code(diags, code)
+}
+
+fn has_any_code(diags: &[(u32, String)], codes: &[u32]) -> bool {
+    diags.iter().any(|(actual, _)| codes.contains(actual))
+}
+
+fn has_code_message(diags: &[(u32, String)], code: u32, fragments: &[&str]) -> bool {
+    diagnostic_messages(diags, code)
+        .iter()
+        .any(|message| fragments.iter().all(|fragment| message.contains(fragment)))
+}
+
+fn lacks_code_message(diags: &[(u32, String)], code: u32, fragments: &[&str]) -> bool {
+    !has_code_message(diags, code, fragments)
+}
+
+fn diagnostic_messages_with_pos(diags: &[(u32, u32, String)], code: u32) -> Vec<(u32, &str)> {
+    diags
+        .iter()
+        .filter_map(|(actual, start, message)| {
+            (*actual == code).then_some((*start, message.as_str()))
+        })
+        .collect()
+}
+
+fn has_pos_code_message(diags: &[(u32, u32, String)], code: u32, fragments: &[&str]) -> bool {
+    diagnostic_messages_with_pos(diags, code)
+        .iter()
+        .any(|(_, message)| fragments.iter().all(|fragment| message.contains(fragment)))
+}
+
+fn has_pos_code_message_at(
+    diags: &[(u32, u32, String)],
+    code: u32,
+    start_range: std::ops::RangeInclusive<u32>,
+    fragments: &[&str],
+) -> bool {
+    diagnostic_messages_with_pos(diags, code)
+        .iter()
+        .any(|(start, message)| {
+            start_range.contains(start)
+                && fragments.iter().all(|fragment| message.contains(fragment))
+        })
+}
+
+fn diagnostic_code_count(codes: &[u32], code: u32) -> usize {
+    codes.iter().filter(|actual| **actual == code).count()
+}
+
+fn has_diagnostic_code(codes: &[u32], code: u32) -> bool {
+    diagnostic_code_count(codes, code) > 0
+}
+
+fn lacks_diagnostic_code(codes: &[u32], code: u32) -> bool {
+    !has_diagnostic_code(codes, code)
 }
 
 /// Return diagnostics with position info (code, start, message).
@@ -230,7 +300,7 @@ function f<T extends string>(x: T) {{
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Constrained `T extends string` should be assignable to a `string` prop, got: {diags:?}"
     );
 }
@@ -322,11 +392,11 @@ let x = <Greet name="world" />;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 for correct props, got: {diags:?}"
     );
     assert!(
-        !has_code(
+        lacks_code(
             &diags,
             diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
         ),
@@ -374,7 +444,7 @@ let x = <GenericComp unknownProp="anything" />;
     let diags = jsx_diagnostics(&source);
     // Should NOT produce TS2322 because we skip generic SFCs
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should skip checking for generic SFCs, got: {diags:?}"
     );
 }
@@ -396,7 +466,7 @@ let x = <UnionComp kind="a" x={{42}} />;
     let diags = jsx_diagnostics(&source);
     // Should NOT produce TS2322 because we skip union props
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should skip checking for union props, got: {diags:?}"
     );
 }
@@ -437,7 +507,7 @@ let x = <Comp name="hi" anyOtherProp="fine" />;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 with string index signature, got: {diags:?}"
     );
 }
@@ -517,7 +587,7 @@ let b = <test1 />;
 "#;
     let diags = jsx_diagnostics(source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 for correct interface-ref props, got: {diags:?}"
     );
 }
@@ -579,7 +649,7 @@ let x = <Comp name="hi" data-testid="foo" aria-label="bar" />;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not type-check hyphenated attributes, got: {diags:?}"
     );
 }
@@ -598,19 +668,19 @@ declare namespace JSX {
 "#;
     let diags = jsx_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("data-foo")
-                && message.contains("number")
-                && message.contains("not assignable")
-        }),
+        has_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["data-foo", "number", "not assignable"]
+        ),
         "Declared hyphenated attrs should use synthesized JSX-attrs assignability, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("Type 'number' is not assignable to type 'string'")
-        }),
+        lacks_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["Type 'number' is not assignable to type 'string'"]
+        ),
         "Declared hyphenated attrs should not use the per-attribute TS2322 path, got: {diags:?}"
     );
 }
@@ -720,7 +790,7 @@ var CustomTag: "h1" = "h1";
 "#;
     let diags = jsx_diagnostics(source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        lacks_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Should not emit TS2339 when the literal string tag exists in IntrinsicElements, got: {diags:?}"
     );
     assert!(
@@ -746,7 +816,7 @@ const tags: { header: "h1" } = { header: "h1" };
 "#;
     let diags = jsx_diagnostics(source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        lacks_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Property access tags should not be forced through intrinsic lookup, got: {diags:?}"
     );
     assert!(
@@ -802,7 +872,7 @@ declare namespace JSX {
         "Expected TS2322 when intrinsic template-literal index signature requires string props, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        lacks_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Template-literal intrinsic match should not fall through to TS2339, got: {diags:?}"
     );
 }
@@ -825,7 +895,7 @@ declare namespace JSX {
         "Expected TS2322 from the more specific template-literal intrinsic match, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        lacks_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "More specific template-literal intrinsic match should not fall through to TS2339, got: {diags:?}"
     );
 }
@@ -845,11 +915,11 @@ declare namespace JSX {
 "#;
     let diags = jsx_diagnostics(source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Valid intrinsic template-literal props should not emit TS2322, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        lacks_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "Valid intrinsic template-literal props should not emit TS2339, got: {diags:?}"
     );
 }
@@ -1206,7 +1276,7 @@ let c = <ruhroh />;
     );
 
     assert!(
-        !has_code(&diags, diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER),
+        lacks_code(&diags, diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER),
         "JSX.IntrinsicElements should resolve through merged global JSX augmentations, got: {diags:?}"
     );
     assert!(
@@ -1256,11 +1326,8 @@ declare global {
 "#,
     );
 
-    let ts2339_messages: Vec<_> = diags
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
-        .map(|(_, message)| message.as_str())
-        .collect();
+    let ts2339_messages =
+        diagnostic_messages(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE);
     assert_eq!(
         ts2339_messages.len(),
         1,
@@ -1398,7 +1465,7 @@ let p = <Poisoned x />;
     );
     // The export= resolution should work — no TS2307 "Cannot find module"
     assert!(
-        !has_code(&diags, 2307),
+        lacks_code(&diags, 2307),
         "Should not emit TS2307 for resolvable ambient module, got: {diags:?}"
     );
 }
@@ -1453,19 +1520,19 @@ let y = <Poisoned />;
         true,
     );
     assert!(
-        diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-                && message.contains("PoisonedProp")
-                && message.contains("x, y")
-        }),
+        has_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+            &["PoisonedProp", "x, y"]
+        ),
         "Expected TS2739 against bare PoisonedProp for empty React class attrs, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("IntrinsicClassAttributes")
-                && message.contains("Type '{}'")
-        }),
+        lacks_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["IntrinsicClassAttributes", "Type '{}'"]
+        ),
         "Empty React class attrs should not fall through to whole-target TS2322, got: {diags:?}"
     );
 }
@@ -1579,7 +1646,7 @@ class B<U> extends React.Component<U, {}> {
 
     let diags = cross_file_jsx_diagnostics(lib_source, main_source);
     assert!(
-        !has_code(&diags, 2307),
+        lacks_code(&diags, 2307),
         "Should resolve the ambient React module, got: {diags:?}"
     );
     assert!(
@@ -1824,7 +1891,7 @@ const x: () => JSX.Element = f;
 "#;
     let diags = jsx_diagnostics(source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Intrinsic JSX element should have type JSX.Element, got: {diags:?}"
     );
 }
@@ -1854,7 +1921,7 @@ function test<T extends {{ x: number }}>(Component: SFC<T>) {{
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should NOT emit TS2322 for extra props when type has generic intersection, got: {diags:?}"
     );
 }
@@ -1904,7 +1971,7 @@ declare function Test<C extends keyof Elements>(props: Props<C>): null;
 
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "explicit generic JSX props alias should not lose the callback member, got: {diags:?}"
     );
     assert!(
@@ -1915,7 +1982,7 @@ declare function Test<C extends keyof Elements>(props: Props<C>): null;
         "explicit generic JSX props alias should not report excess-property errors for callback, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "callback parameter should remain contextually typed through the JSX props alias, got: {diags:?}"
     );
 }
@@ -1942,7 +2009,7 @@ declare function Test<C extends keyof Elements>(props: Props<C>): null;
 
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "inferred generic JSX props alias should not lose the callback member, got: {diags:?}"
     );
     assert!(
@@ -1953,7 +2020,7 @@ declare function Test<C extends keyof Elements>(props: Props<C>): null;
         "inferred generic JSX props alias should not report excess-property errors for callback, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "callback parameter should remain contextually typed through inferred JSX props alias, got: {diags:?}"
     );
 }
@@ -1979,11 +2046,11 @@ declare function UnwrappedLink<T extends Tag = "a">(props: Props<T>): null;
 
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "defaulted generic JSX props should contextually type callback attrs, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "defaulted generic JSX props should keep callback members assignable, got: {diags:?}"
     );
 }
@@ -2018,11 +2085,11 @@ declare function UnwrappedLink2<T extends ElementType = ElementType>(
 
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "defaulted conditional generic JSX props should contextually type callback attrs, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "defaulted conditional generic JSX props should keep callback members assignable, got: {diags:?}"
     );
 }
@@ -2092,11 +2159,11 @@ declare function UnwrappedLink2<T extends React.ElementType = React.ElementType>
 
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "React-style defaulted conditional generic JSX props should contextually type callback attrs, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "React-style defaulted conditional generic JSX props should keep callback members assignable, got: {diags:?}"
     );
 }
@@ -2131,10 +2198,11 @@ const Hoc = <Tag extends Tags>(
 
     let diags = jsx_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("LibraryManagedAttributes<Tag,")
-        }),
+        has_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["LibraryManagedAttributes<Tag,"]
+        ),
         "Expected TS2322 for empty attrs against generic intrinsic LibraryManagedAttributes target, got: {diags:?}"
     );
 }
@@ -2199,7 +2267,7 @@ const _ok = <Comp other={{0}} />;
             "JSX LibraryManagedAttributes must mark props with a default as optional regardless of user-chosen type names; user generic `{type_name}<T>` produced TS2741: {diags:?}"
         );
         assert!(
-            !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
             "JSX LibraryManagedAttributes erasure must not introduce TS2322 for user generic `{type_name}<T>`: {diags:?}"
         );
     }
@@ -2272,10 +2340,11 @@ function f1<T extends (props: {}) => JSX.Element>(Component: T) {
 
     let diags = jsx_diagnostics(source);
     assert!(
-        diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("LibraryManagedAttributes<T, {}>")
-        }),
+        has_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["LibraryManagedAttributes<T, {}>"]
+        ),
         "Expected empty attrs to be checked against JSX.LibraryManagedAttributes<T, {{}}>, got: {diags:?}"
     );
 }
@@ -2333,11 +2402,11 @@ function UnwrappedLink2<T extends ElementType = ElementType>(
 
     let diags = cross_file_jsx_diagnostics(lib_source, main_source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "conditional ComponentPropsWithRef generic JSX props should contextually type callback params, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        lacks_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "conditional ComponentPropsWithRef generic JSX props should preserve callback member access, got: {diags:?}"
     );
 }
@@ -2355,7 +2424,7 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts2322() {
 
     let diags = cross_file_jsx_diagnostics_with_mode(&react_types, &source, JsxMode::Preserve);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "real react16 fixture should not emit TS2322, got: {diags:?}"
     );
 }
@@ -2373,7 +2442,7 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
 
     let diags = cross_file_jsx_diagnostics_with_mode(&react_types, &source, JsxMode::Preserve);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "real react16 fixture should not emit TS7006, got: {diags:?}"
     );
 }
@@ -2417,10 +2486,11 @@ const myHoc = <ComposedComponentProps extends any>(
     );
 
     assert!(
-        diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("ComposedComponentProps & { myProp: number; }")
-        }),
+        has_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["ComposedComponentProps & { myProp: number; }"]
+        ),
         "expected generic spread plus numeric myProp to emit whole-object TS2322, got: {diags:?}"
     );
 }
@@ -2495,7 +2565,7 @@ render;
     );
 
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "number-valued WrapperComponentProps.myProp should accept a numeric JSX attr, got: {diags:?}"
     );
 }
@@ -2573,10 +2643,11 @@ render;
     );
 
     assert!(
-        diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("otherProp: number")
-        }),
+        has_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["otherProp: number"]
+        ),
         "generic ComponentClass annotation should report the numeric otherProp mismatch without recursing, got: {diags:?}"
     );
 }
@@ -2611,14 +2682,15 @@ fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
         "real react16 fixture should emit TS2322 for the number myProp JSX element, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("ComposedComponentProps & { myProp: string; }")
-        }),
+        lacks_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["ComposedComponentProps & { myProp: string; }"]
+        ),
         "real react16 fixture should not emit TS2322 for the string myProp JSX element, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT),
+        lacks_code(&diags, diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT),
         "ComponentClass<WrapperComponentProps> should be accepted as a JSX component, got: {diags:?}"
     );
 }
@@ -2654,10 +2726,11 @@ fn test_jsx_fragment_factory_no_unused_locals_react16_fixture_checks_nested_call
         "expected nested setCnt callback to emit TS7006 for prev, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ
-                && message.contains("'setCnt'")
-        }),
+        lacks_code_message(
+            &diags,
+            diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
+            &["'setCnt'"]
+        ),
         "setCnt is read inside the JSX onClick callback body and should not emit TS6133, got: {diags:?}"
     );
 }
@@ -2703,10 +2776,11 @@ export function Counter() {
         "any intrinsic props should still evaluate nested callback bodies, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ
-                && message.contains("'setCnt'")
-        }),
+        lacks_code_message(
+            &diags,
+            diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
+            &["'setCnt'"]
+        ),
         "setCnt is read inside an any-props JSX attribute callback, got: {diags:?}"
     );
 }
@@ -2733,11 +2807,11 @@ Test({{
 
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "generic props alias call should not lose the callback member, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "callback parameter should remain contextually typed through the call path, got: {diags:?}"
     );
 }
@@ -2983,11 +3057,11 @@ declare namespace JSX {
 
     let diags = jsx_diagnostics(source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "JSX spread callback props should contextually type parameters, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        lacks_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "JSX spread callback props should preserve callback member access, got: {diags:?}"
     );
 }
@@ -3096,11 +3170,11 @@ declare const TestComponentWithoutChildren: <T, TParam>(props: {{
 
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "Generic JSX body children should reuse inferred props for callback contextual typing, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Generic JSX body children inference should not fall back to TS2322, got: {diags:?}"
     );
 }
@@ -3133,7 +3207,7 @@ declare const Subscribe: <TSelected = State>(props: {{
 
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "Defaulted generic JSX children should get callback contextual typing from selector inference, got: {diags:?}"
     );
     assert!(
@@ -3182,7 +3256,7 @@ const Test = () => (
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "Body children should be contextually typed after union narrowing, got: {diags:?}"
     );
     assert!(
@@ -3193,7 +3267,7 @@ const Test = () => (
         "Destructured body children should be contextually typed after union narrowing, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Union narrowing on children presence should avoid TS2322 here, got: {diags:?}"
     );
 }
@@ -3234,7 +3308,7 @@ const Test = () => (
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "Explicit children attr should be contextually typed after union narrowing, got: {diags:?}"
     );
     assert!(
@@ -3245,7 +3319,7 @@ const Test = () => (
         "Destructured explicit children attr should be contextually typed after union narrowing, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Union narrowing on explicit children attr should avoid TS2322 here, got: {diags:?}"
     );
 }
@@ -3298,7 +3372,7 @@ const ExplicitChild = (
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "React.ComponentType wrappers should preserve children contextual typing, got: {diags:?}"
     );
     assert!(
@@ -3309,7 +3383,7 @@ const ExplicitChild = (
         "Destructured JSX children should be contextually typed through React wrappers, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "React.ComponentType wrapper normalization should avoid downstream TS2322 here, got: {diags:?}"
     );
 }
@@ -3349,7 +3423,7 @@ const good = <Elem someKey="ok" />;
         "React.ComponentType wrappers should report missing props via TS2741, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "React.ComponentType missing props should not fall back to TS2322, got: {diags:?}"
     );
 }
@@ -3404,7 +3478,7 @@ const ExplicitChild = (
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        lacks_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "Merged namespace/value React.ComponentType wrappers should preserve callback contextual typing, got: {diags:?}"
     );
     assert!(
@@ -3415,7 +3489,7 @@ const ExplicitChild = (
         "Merged namespace/value wrappers should contextually type destructured children callbacks, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Merged namespace/value wrapper normalization should avoid downstream TS2322 here, got: {diags:?}"
     );
 }
@@ -3454,10 +3528,7 @@ const mismatched = <ElemLit prop="x">{{() => 12}}</ElemLit>
 "#
     );
     let diags = jsx_diagnostics(&source);
-    let ts2322_count = diags
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
+    let ts2322_count = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         ts2322_count >= 3,
         "Expected JSX generic children to report three TS2322 mismatches, got: {diags:?}"
@@ -3522,7 +3593,7 @@ var obj = {{ x: "hello" }};
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 for compatible spread, got: {diags:?}"
     );
 }
@@ -3540,7 +3611,7 @@ var obj = {{ x: 32, y: 10 }};
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 when explicit attr overrides spread, got: {diags:?}"
     );
 }
@@ -3567,7 +3638,7 @@ var obj = {{ y: 10 }};
     );
     // Should NOT have TS2322 — missing properties are TS2741, not TS2322
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 for just-missing properties (use TS2741), got: {diags:?}"
     );
 }
@@ -3612,7 +3683,7 @@ function Target(props: TargetProps) {{
     );
     // Should NOT have TS2322 — tsc only reports TS2741 when there are missing required props
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 when TS2741 fires for missing required props, got: {diags:?}"
     );
 }
@@ -3636,7 +3707,7 @@ let x = <Greet {{...p}} />;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 for compatible spread, got: {diags:?}"
     );
     assert!(
@@ -3782,10 +3853,11 @@ let x = <App />;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        diags.iter().any(|(code, msg)| {
-            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                && msg.contains("ref")
-        }),
+        has_code_message(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            &["ref"]
+        ),
         "Expected TS2741 for missing required 'ref' even without ElementAttributesProperty, got: {diags:?}"
     );
 }
@@ -3838,11 +3910,18 @@ declare namespace JSX {
         .collect();
 
     assert!(
-        relevant_diags.iter().any(|(code, msg)| {
-            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                && msg.contains("Property 'ref' is missing")
-                && (msg.contains("IntrinsicClassAttributesAlias")
-                    || msg.contains("IntrinsicClassAttributes"))
+        has_code_message(
+            &relevant_diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            &["Property 'ref' is missing"]
+        ) && diagnostic_messages(
+            &relevant_diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+        )
+        .iter()
+        .any(|msg| {
+            msg.contains("IntrinsicClassAttributesAlias")
+                || msg.contains("IntrinsicClassAttributes")
         }),
         "Expected TS2741 for missing required 'ref' from alias-based IntrinsicClassAttributes<T>, got: {relevant_diags:?}"
     );
@@ -3875,11 +3954,10 @@ const d = <MyTagWithOptionalNonJSXBits x={{2}} />;
     );
 
     let diags = jsx_diagnostics_with_mode(&source, JsxMode::React);
-    let ts6229: Vec<&String> = diags
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TAG_EXPECTS_AT_LEAST_ARGUMENTS_BUT_THE_JSX_FACTORY_PROVIDES_AT_MOST)
-        .map(|(_, msg)| msg)
-        .collect();
+    let ts6229 = diagnostic_messages(
+        &diags,
+        diagnostic_codes::TAG_EXPECTS_AT_LEAST_ARGUMENTS_BUT_THE_JSX_FACTORY_PROVIDES_AT_MOST,
+    );
 
     assert_eq!(
         ts6229.len(),
@@ -3913,10 +3991,11 @@ let x = <App label="ok" />;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !diags.iter().any(|(code, msg)| {
-            *code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                && msg.contains("ref")
-        }),
+        lacks_code_message(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            &["ref"]
+        ),
         "Should not emit missing required 'ref' for function components, got: {diags:?}"
     );
 }
@@ -3965,7 +4044,7 @@ let x = <UnionComp kind="a" x={{42}} />;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should NOT emit TS2322 when attributes match union member, got: {diags:?}"
     );
 }
@@ -3985,7 +4064,7 @@ let x = <Comp multi={{false}} onChange={{val => {{}}}} />;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should skip union check when callback attributes present, got: {diags:?}"
     );
 }
@@ -4045,7 +4124,7 @@ let b = <PartRCComp data-extra="hello" />;
         "Expected one TS2741 per JSX use of a component-type union with missing required props, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not fall back to TS2322 for component-type unions missing required props, got: {diags:?}"
     );
 }
@@ -4488,7 +4567,7 @@ let k = <Comp a={{10}} b="hi"><div>hi</div></Comp>;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Single element child should satisfy JSX.Element children type, got: {diags:?}"
     );
 }
@@ -4593,40 +4672,46 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
 
     let diags = jsx_diagnostics_with_pos(&source);
     assert!(
-        diags.iter().any(|(code, _, msg)| {
-            *code == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
-                && msg.contains("expected type of 'children' is '(x: number) => string'")
-        }),
+        has_pos_code_message(
+            &diags,
+            diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU,
+            &["expected type of 'children' is '(x: number) => string"]
+        ),
         "Plain function children text diagnostic should use the declared function type, got: {diags:?}"
     );
     assert!(
-        diags.iter().any(|(code, _, msg)| {
-            *code == diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
-                && msg.contains("single child of type '(x: number) => string'")
-        }),
+        has_pos_code_message(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO,
+            &["single child of type '(x: number) => string"]
+        ),
         "Plain function children arity diagnostic should use the declared function type, got: {diags:?}"
     );
     assert!(
-        diags.iter().any(|(code, _, msg)| {
-            *code == diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING
-                && msg.contains("expects type '((x: number) => string)[]'")
-        }),
+        has_pos_code_message(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_TYPE_WHICH_REQUIRES_MULTIPLE_CHILDREN_BUT_ONLY_A_SING,
+            &["expects type '((x: number) => string)[]'"]
+        ),
         "Array children should keep the array target for single body children, got: {diags:?}"
     );
     assert!(
-        diags.iter().any(|(code, _, msg)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && msg.contains("Type '(x: number) => number' is not assignable to type")
-                && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
-        }),
+        has_pos_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[
+                "Type '(x: number) => number' is not assignable to type",
+                "Cb"
+            ]
+        ),
         "Union children mismatch should report against the declared union surface, got: {diags:?}"
     );
     assert!(
-        diags.iter().any(|(code, _, msg)| {
-            *code == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
-                && (msg.contains("expected type of 'children' is 'Cb[] | Cb'")
-                    || msg.contains("expected type of 'children' is 'Cb | Cb[]'"))
-        }),
+        has_pos_code_message(
+            &diags,
+            diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU,
+            &["expected type of 'children' is '", "Cb"]
+        ),
         "Union children text diagnostic should keep the declared union surface, got: {diags:?}"
     );
 
@@ -4644,12 +4729,12 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
         .expect("test source should contain the mixed child close")
         as u32;
     assert!(
-        diags.iter().any(|(code, start, msg)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && *start >= mixed_child_start
-                && *start <= mixed_child_end
-                && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
-        }),
+        has_pos_code_message_at(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            mixed_child_start..=mixed_child_end,
+            &["Cb"]
+        ),
         "Union child TS2322 should be anchored at the JSX child expression, got: {diags:?}"
     );
 }
@@ -4716,12 +4801,8 @@ const mismatched = <ElemLit prop="x" children={{() => 12}} />;
     let diags = jsx_diagnostics(&source);
     // After the TS2345 expression-body arrow change, these may report as
     // TS2322 or TS2345 depending on the callback shape. Accept either.
-    let type_error_count = diags
-        .iter()
-        .filter(|(code, _)| *code == 2322 || *code == 2345)
-        .count();
     assert!(
-        type_error_count >= 1,
+        has_any_code(&diags, &[2322, 2345]),
         "Generic JSX children attr should get contextual return typing, got: {diags:?}"
     );
 }
@@ -4741,12 +4822,8 @@ const mismatched = <ElemLit prop="x">{{() => 12}}</ElemLit>;
     let diags = jsx_diagnostics(&source);
     // After the TS2345 expression-body arrow change, these may report as
     // TS2322 or TS2345 depending on the callback shape. Accept either.
-    let type_error_count = diags
-        .iter()
-        .filter(|(code, _)| *code == 2322 || *code == 2345)
-        .count();
     assert!(
-        type_error_count >= 1,
+        has_any_code(&diags, &[2322, 2345]),
         "Generic JSX body children should get contextual return typing, got: {diags:?}"
     );
 }
@@ -5110,7 +5187,7 @@ let ok = <Comp>{{tabs}}</Comp>;
         "Single array-valued child expression should satisfy array children type without TS2745, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Single array-valued child expression should not fall through to TS2322, got: {diags:?}"
     );
 }
@@ -5205,7 +5282,7 @@ let ok = <Comp><div /><div /></Comp>;
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Exact tuple children should not emit TS2322, got: {diags:?}"
     );
 }
@@ -5274,7 +5351,7 @@ let ok =
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Formatting-only JSX whitespace should not emit TS2322, got: {diags:?}"
     );
     assert!(
@@ -5307,7 +5384,7 @@ let err = <Comp><div />  <div /></Comp>;
         "Inline JSX whitespace text should emit TS2747, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Text-child mismatch should not also emit TS2322, got: {diags:?}"
     );
 }
@@ -5340,7 +5417,7 @@ let err =
         "Render-prop children should preserve the TS2746 body-shape diagnostic, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Render-prop body-shape errors should not degrade into child-level TS2322, got: {diags:?}"
     );
 }
@@ -5426,15 +5503,12 @@ let err =
 "#
     );
     let diags = jsx_diagnostics(&source);
-    let ts2322: Vec<_> = diags
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322 = diagnostic_messages(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
     assert!(
         !ts2322.is_empty(),
         "Expected TS2322 for function children not assignable to ReactNode child type, got: {diags:?}"
     );
-    for (_, msg) in &ts2322 {
+    for msg in &ts2322 {
         assert!(
             msg.contains("boolean | any[] | ReactChild"),
             "TS2322 target type message should match tsc's ReactNode child union order. Got: {msg:?}"
@@ -5543,7 +5617,7 @@ let err =
         "Single text child for array-valued children should emit TS2745, got: {diags:?}"
     );
     assert!(
-        !has_code(
+        lacks_code(
             &diags,
             diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
         ),
@@ -5568,12 +5642,9 @@ let err =
 "#
     );
     let diags = jsx_diagnostics(&source);
-    let ts2322_count = diags
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
     assert_eq!(
-        ts2322_count, 2,
+        diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        2,
         "Array-valued callback children should emit one child-level TS2322 per callback, got: {diags:?}"
     );
     // Verify the diagnostics mention the right types (callback return mismatch).
@@ -5581,14 +5652,15 @@ let err =
     // mismatch at the arrow body rather than the full function type:
     // "Type 'number' is not assignable to type 'string'."
     assert!(
-        diags.iter().any(
-            |(code, msg)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && msg.contains("Type 'number' is not assignable to type 'string'")
+        has_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["Type 'number' is not assignable to type 'string'"]
         ),
         "TS2322 should mention number→string return mismatch, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, 7006),
+        lacks_code(&diags, 7006),
         "Array-valued callback children should keep contextual parameter typing, got: {diags:?}"
     );
 }
@@ -5615,10 +5687,11 @@ let err =
         "Union children with a single callback should still report TS2322, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|(code, message)| {
-            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && message.contains("Type 'number' is not assignable to type 'string'.")
-        }),
+        lacks_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["Type 'number' is not assignable to type 'string'."]
+        ),
         "Union children single-child errors should not collapse into return-type elaboration, got: {diags:?}"
     );
 }
@@ -5639,13 +5712,12 @@ const argchild = <ElemLit prop="x">{{p => "y"}}</ElemLit>;
 "#
     );
     let diags = jsx_diagnostics(&source);
-    let body_elab = diags.iter().any(|(code, message)| {
-        *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-            && message.contains("Type '\"y\"'")
-            && message.contains("'\"x\"'")
-    });
     assert!(
-        body_elab,
+        has_code_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &["Type '\"y\"'", "'\"x\"'"]
+        ),
         "Single-callable target should produce body-level TS2322 elaboration `Type '\"y\"' is not assignable to type '\"x\"'`, got: {diags:?}"
     );
 }
@@ -5668,16 +5740,13 @@ let err =
 "#
     );
     let diags = jsx_diagnostics(&source);
-    let ts2322_count = diags
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .count();
     assert_eq!(
-        ts2322_count, 2,
+        diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        2,
         "Union children in the multi-child form should use the array branch and report child-level TS2322, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, 7006),
+        lacks_code(&diags, 7006),
         "Union children in the multi-child form should preserve contextual typing, got: {diags:?}"
     );
 }
@@ -5824,7 +5893,7 @@ const element = (
     let diags = jsx_diagnostics(&source);
     // TS2746 should NOT fire — the empty expression {/* comment */} doesn't count
     assert!(
-        !diags.iter().any(|(c, _)| *c == 2746),
+        lacks_code(&diags, 2746),
         "Empty JSX expression should not count as child; got TS2746: {diags:?}"
     );
 }
@@ -5850,7 +5919,7 @@ const element = (
     let diags = jsx_diagnostics(&source);
     // Single child — TS2746 should NOT fire
     assert!(
-        !diags.iter().any(|(c, _)| *c == 2746),
+        lacks_code(&diags, 2746),
         "Single child should not trigger TS2746, got: {diags:?}"
     );
 }
@@ -5905,7 +5974,7 @@ let a = <div/>;
 
     // TS7026 should NOT fire — X.JSX.IntrinsicElements exists
     assert!(
-        !diags.iter().any(|(c, _)| *c == 7026),
+        lacks_code(&diags, 7026),
         "Factory namespace X.JSX should be found; got TS7026: {diags:?}"
     );
 }
@@ -5929,11 +5998,11 @@ declare const React: any;
         "Expected TS17017 for missing @jsxFrag pragma, got: {diags:?}"
     );
     assert!(
-        !has_code(&diags, 2874),
+        lacks_code(&diags, 2874),
         "React is in scope, TS2874 should not fire: {diags:?}"
     );
     assert!(
-        !has_code(&diags, 2879),
+        lacks_code(&diags, 2879),
         "React fragment factory is in scope, TS2879 should not fire: {diags:?}"
     );
 }
@@ -6043,7 +6112,7 @@ function A() {
         .collect();
 
     assert!(
-        !diags.iter().any(|(code, _)| *code == 2741),
+        lacks_code(&diags, 2741),
         "String-literal DOM generic inference should stay narrow enough to avoid TS2741, got: {diags:?}"
     );
 }
@@ -6167,11 +6236,11 @@ let x = <MyComp<{{a: number, b: string}}> a={{10}} b="hi" />;
     );
     let codes = jsx_codes(&source);
     assert!(
-        !codes.contains(&2322),
+        lacks_diagnostic_code(&codes, 2322),
         "TS2322 should NOT fire when attribute types match the explicit type arg, got: {codes:?}"
     );
     assert!(
-        !codes.contains(&2558),
+        lacks_diagnostic_code(&codes, 2558),
         "TS2558 should NOT fire with the correct number of type args, got: {codes:?}"
     );
 }
@@ -6191,7 +6260,7 @@ let x = <MyComp<Prop> a={{10}} b={{20}} />;
     );
     let codes = jsx_codes(&source);
     assert!(
-        codes.contains(&2322),
+        has_diagnostic_code(&codes, 2322),
         "TS2322 should fire when attribute type doesn't match the explicit type arg; \
          b is 'number' but declared 'string', got: {codes:?}"
     );
@@ -6212,12 +6281,12 @@ let x = <MyComp<Prop, Prop> a={{10}} />;
     );
     let codes = jsx_codes(&source);
     assert!(
-        codes.contains(&2558),
+        has_diagnostic_code(&codes, 2558),
         "TS2558 should fire when too many type arguments are provided, got: {codes:?}"
     );
     // tsc does NOT emit TS2322 when there is a type-arg arity mismatch.
     assert!(
-        !codes.contains(&2322),
+        lacks_diagnostic_code(&codes, 2322),
         "TS2322 should NOT fire when the type-arg arity is wrong (TS2558 already fired), \
          got: {codes:?}"
     );
@@ -6249,19 +6318,19 @@ const l = <div<number>/>;
 "#;
     let codes = jsx_codes(source);
     assert!(
-        codes.contains(&1009),
+        has_diagnostic_code(&codes, 1009),
         "intrinsic JSX trailing type-argument commas should emit TS1009, got: {codes:?}"
     );
     assert!(
-        codes.contains(&2304),
+        has_diagnostic_code(&codes, 2304),
         "intrinsic JSX type arguments should be visited for missing names, got: {codes:?}"
     );
     assert!(
-        codes.contains(&2344),
+        has_diagnostic_code(&codes, 2344),
         "intrinsic JSX type arguments should be checked for constraints, got: {codes:?}"
     );
     assert!(
-        codes.contains(&2558),
+        has_diagnostic_code(&codes, 2558),
         "intrinsic JSX elements should reject explicit type arguments, got: {codes:?}"
     );
 }
@@ -6281,7 +6350,7 @@ let x = <MyComp2<Prop> a={{10}} b="hi" />;
     );
     let codes = jsx_codes(&source);
     assert!(
-        codes.contains(&2344),
+        has_diagnostic_code(&codes, 2344),
         "TS2344 should fire when a type argument violates its constraint, got: {codes:?}"
     );
 }
@@ -6300,11 +6369,11 @@ let x = <MyComp2<{{a: string}}, {{b: string}}> a="hi" />;
     );
     let codes = jsx_codes(&source);
     assert!(
-        !codes.contains(&2558),
+        lacks_diagnostic_code(&codes, 2558),
         "TS2558 should NOT fire when using a defaulted 2nd type param, got: {codes:?}"
     );
     assert!(
-        !codes.contains(&2322),
+        lacks_diagnostic_code(&codes, 2322),
         "TS2322 should NOT fire for correct attribute value, got: {codes:?}"
     );
 }
@@ -6324,7 +6393,7 @@ let x = <MyComp2<{{a: string}}, {{b: string}}, Prop> a="hi" />;
     );
     let codes = jsx_codes(&source);
     assert!(
-        codes.contains(&2558),
+        has_diagnostic_code(&codes, 2558),
         "TS2558 should fire when more type args are given than the max (1-2), got: {codes:?}"
     );
 }
@@ -6361,7 +6430,7 @@ declare var Obj1: Obj1type;
     // Obj1 returns `any` → no TS2322 expected (any swallows attribute checks).
     let codes = jsx_codes(&source);
     assert!(
-        !codes.contains(&2322),
+        lacks_diagnostic_code(&codes, 2322),
         "TS2322 should NOT fire for class component that returns `any`, got: {codes:?}"
     );
 }
@@ -6445,17 +6514,15 @@ let d = <MyComponent initialValues={{ x: "y" }} nextValues={a => a.x} />;
 "#;
 
     let diags = cross_file_jsx_diagnostics(lib_source, main_source);
-    let ts2322_diags: Vec<_> = diags
-        .iter()
-        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
+    let ts2322_messages =
+        diagnostic_messages(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
 
     assert!(
-        !ts2322_diags.is_empty(),
+        !ts2322_messages.is_empty(),
         "Expected TS2322 for mismatched function-valued attr return type, got: {diags:?}"
     );
 
-    for (_, message) in &ts2322_diags {
+    for message in &ts2322_messages {
         assert!(
             message.contains(" & "),
             "TS2322 target should show intersection of callable types with '&', got: {message}"
@@ -6491,11 +6558,14 @@ declare var E: I;
 "#;
     let codes = jsx_codes(source);
     assert!(
-        codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        has_diagnostic_code(
+            &codes,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+        ),
         "Expected TS2741 (missing required `key`) for class JSX with primitive props, got: {codes:?}"
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        lacks_diagnostic_code(&codes, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected NO TS2322 for class JSX whole-attrs assignability against primitive props, got: {codes:?}"
     );
 }
@@ -6553,7 +6623,10 @@ fn jsx_lma_user_type_named_factory_does_not_disable_default_props() {
     // suppress the LMA-mapped optional props.
     let codes = jsx_lma_user_type_named_factory_does_not_disable_default_props_helper("Factory");
     assert!(
-        !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        lacks_diagnostic_code(
+            &codes,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+        ),
         "User type named `Factory` should not disable JSX.LibraryManagedAttributes; \
          expected no TS2741 for `<Comp />`, got: {codes:?}"
     );
@@ -6565,7 +6638,10 @@ fn jsx_lma_user_type_named_widget_does_not_emit_ts2741() {
     // tied to the literal spelling `Factory`.
     let codes = jsx_lma_user_type_named_factory_does_not_disable_default_props_helper("Widget");
     assert!(
-        !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
+        lacks_diagnostic_code(
+            &codes,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+        ),
         "User type named `Widget` should also not disable JSX.LibraryManagedAttributes; \
          expected no TS2741 for `<Comp />`, got: {codes:?}"
     );
