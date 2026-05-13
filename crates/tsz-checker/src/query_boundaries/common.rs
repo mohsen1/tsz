@@ -32,6 +32,7 @@ pub(crate) use tsz_solver::QueryDatabase;
 pub(crate) use tsz_solver::SubtypeFailureReason;
 pub(crate) use tsz_solver::TypeEnvironment;
 pub(crate) use tsz_solver::TypeResolver;
+pub(crate) use tsz_solver::fill_application_defaults;
 pub(crate) use tsz_solver::instantiate_generic;
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
