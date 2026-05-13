@@ -219,19 +219,18 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if let Some(ann) = self.ctx.arena.get(var_decl.type_annotation) {
-            if ann.kind == syntax_kind_ext::LITERAL_TYPE {
-                return true;
-            }
+        if let Some(ann) = self.ctx.arena.get(var_decl.type_annotation)
+            && ann.kind == syntax_kind_ext::LITERAL_TYPE
+        {
+            return true;
         }
 
-        if let Some(init) = self.ctx.arena.get(var_decl.initializer) {
-            if (init.kind == syntax_kind_ext::AS_EXPRESSION
+        if let Some(init) = self.ctx.arena.get(var_decl.initializer)
+            && (init.kind == syntax_kind_ext::AS_EXPRESSION
                 || init.kind == syntax_kind_ext::TYPE_ASSERTION)
-                && let Some(assertion) = self.ctx.arena.get_type_assertion(init)
-            {
-                return self.is_const_assertion_type_node(assertion.type_node);
-            }
+            && let Some(assertion) = self.ctx.arena.get_type_assertion(init)
+        {
+            return self.is_const_assertion_type_node(assertion.type_node);
         }
 
         false
