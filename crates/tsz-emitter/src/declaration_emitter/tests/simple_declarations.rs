@@ -1591,6 +1591,137 @@ export function id(x) {
 }
 
 #[test]
+fn test_js_function_declaration_emits_jsdoc_template_defaults() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ * @template [U=T] - ok: default can reference earlier type parameter
+ * @param {T} a
+ * @param {U} b
+ */
+export function f1(a, b) {}
+
+/**
+ * @template {string | number} [T=string]
+ * @template U - error: Required type parameters cannot follow optional type parameters
+ * @param {T} a
+ * @param {U} b
+ */
+export function f2(a, b) {}
+"#,
+    );
+
+    assert!(
+        output.contains("export function f1<T, U = T>(a: T, b: U): void;"),
+        "Expected bracket JSDoc template defaults to emit as type parameter defaults: {output}"
+    );
+    assert!(
+        output.contains(
+            "export function f2<T extends string | number = string, U>(a: T, b: U): void;"
+        ),
+        "Expected constrained bracket JSDoc template defaults to emit in TypeScript syntax: {output}"
+    );
+    assert!(
+        !output.contains("f1<T, U = T, -")
+            && !output.contains("f2<T extends string | number = string, U, -")
+            && !output.contains("parameter, [T]"),
+        "Did not expect @template descriptions to become type parameters: {output}"
+    );
+}
+
+#[test]
+fn test_guarded_generic_return_preserves_nullish_intersection() {
+    let output = emit_dts_with_binding(
+        r#"
+function ensureNotNull<T>(x: T) {
+    if (x === null) throw Error();
+    return x;
+}
+
+function ensureNotUndefined<T>(x: T) {
+    if (x === undefined) throw Error();
+    return x;
+}
+
+function ensureNotNullOrUndefined<T>(x: T) {
+    return ensureNotUndefined(ensureNotNull(x));
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function ensureNotNull<T>(x: T): T & ({} | undefined);"),
+        "Expected null guard to preserve undefined branch: {output}"
+    );
+    assert!(
+        output.contains("declare function ensureNotUndefined<T>(x: T): T & ({} | null);"),
+        "Expected undefined guard to preserve null branch: {output}"
+    );
+    assert!(
+        output.contains("declare function ensureNotNullOrUndefined<T>(x: T): T & {};"),
+        "Expected composed nullish guards to remove both nullish branches: {output}"
+    );
+}
+
+#[test]
+fn test_returned_local_function_object_expands_nested_function_signatures() {
+    let output = emit_dts_with_binding(
+        r#"
+function foo<T>(v: T) {
+    function a<T>(a: T) { return a; }
+    function b(): T { return v; }
+
+    function c<T>(v: T) {
+        function a<T>(a: T) { return a; }
+        function b(): T { return v; }
+        return { a, b };
+    }
+
+    return { a, b, c };
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function foo<T>(v: T): {\n    a: <T_1>(a: T_1) => T_1;\n    b: () => T;\n    c: <T_1>(v: T_1) => {\n        a: <T_2>(a: T_2) => T_2;\n        b: () => T_1;\n    };\n};"
+        ),
+        "Expected returned local functions to expand without typeof references: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_emits_jsdoc_template_default() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template {string | number} [T=string] - ok: defaults are permitted
+ * @typedef {[T]} A
+ */
+
+/** @type {A} */ // ok: default for T applies
+const aDefault = [""];
+/** @type {A<number>} */ // ok: explicit T applies
+const aNumber = [0];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const aDefault: A;"),
+        "Expected value @type to preserve the defaulted typedef alias reference: {output}"
+    );
+    assert!(
+        output.contains("declare const aNumber: A<number>;"),
+        "Expected generic value @type to preserve the typedef alias reference: {output}"
+    );
+    assert!(
+        output.contains("type A<T extends string | number = string> = [T];"),
+        "Expected constrained defaulted JSDoc typedef to emit as a generic type alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_type_alias_signature() {
     let output = emit_js_dts(
         r#"
@@ -6547,5 +6678,62 @@ const propValue = c.prop;
     assert!(
         output.contains("declare const propValue: number;"),
         "Expected property access to recover the paired setter type: {output}"
+    );
+}
+
+#[test]
+fn test_jsx_exported_arrow_destructured_literal_keys_emit_function_signature() {
+    let source = r#"
+import * as React from "react";
+const dynPropName = "data-dyn";
+export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynPropName]: dynProp }) => (
+    <>Hello</>
+);
+"#;
+    let mut parser = ParserState::new("test.jsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let computed_expr = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            (node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                .then(|| parser.arena.get_computed_property(node))
+                .flatten()
+                .map(|computed| computed.expression)
+        })
+        .expect("missing computed property name");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(computed_expr.0, interner.literal_string("data-dyn"));
+
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.jsx".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export function ExampleFunctionalComponent"),
+        "Expected exported JS arrow component to emit as a function declaration: {output}"
+    );
+    assert!(
+        output.contains("\"data-testid\": any;") && output.contains("\"data-dyn\": any;"),
+        "Expected destructured string and computed literal keys in synthesized param type: {output}"
+    );
+    assert!(
+        output.contains("): JSX.Element;"),
+        "Expected JSX expression body to emit JSX.Element return type: {output}"
+    );
+    assert!(
+        output.contains("declare const dynPropName: \"data-dyn\";"),
+        "Expected computed binding property name dependency to be retained: {output}"
     );
 }

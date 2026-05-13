@@ -109,7 +109,16 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_attaches_through_var_prefix(between: &str) -> bool {
-        let trimmed = between.trim();
+        let mut without_line_comments = String::new();
+        for line in between.lines() {
+            let line = line
+                .split_once("//")
+                .map(|(before, _)| before)
+                .unwrap_or(line);
+            without_line_comments.push_str(line);
+            without_line_comments.push('\n');
+        }
+        let trimmed = without_line_comments.trim();
         if trimmed.is_empty() {
             return true;
         }
@@ -1634,7 +1643,7 @@ impl<'a> DeclarationEmitter<'a> {
             .as_deref()
             .is_some_and(Self::jsdoc_has_function_signature_tags);
         let has_any_jsdoc = jsdoc.is_some();
-        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc {
+        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc && !is_exported {
             return false;
         }
 
@@ -1731,6 +1740,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_js_computed_binding_name_dependencies_for_function(&func.parameters);
         self.emit_js_function_like_class_if_needed(
             decl_name,
             &func.parameters,
@@ -1740,6 +1750,172 @@ impl<'a> DeclarationEmitter<'a> {
         );
         self.emit_js_namespace_export_aliases_for_name(decl_name, is_exported);
         true
+    }
+
+    pub(in crate::declaration_emitter) fn js_const_used_as_computed_binding_name_in_exported_function(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let target_symbol = binder.node_symbols.get(&name_idx.0).copied().or_else(|| {
+            self.get_identifier_text(name_idx)
+                .and_then(|name| binder.file_locals.get(&name))
+        });
+        let Some(target_symbol) = target_symbol else {
+            return false;
+        };
+
+        self.arena.nodes.iter().enumerate().any(|(idx, node)| {
+            let decl_idx = NodeIndex(idx as u32);
+            let Some(decl) = self.arena.get_variable_declaration(node) else {
+                return false;
+            };
+            if !self.variable_declaration_has_effective_export(decl_idx) {
+                return false;
+            }
+            let Some(init_node) = self.arena.get(decl.initializer) else {
+                return false;
+            };
+            if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return false;
+            }
+            let Some(func) = self.arena.get_function(init_node) else {
+                return false;
+            };
+            let mut symbols = Vec::new();
+            let mut seen = FxHashSet::default();
+            self.collect_computed_binding_name_symbols(&func.parameters, &mut symbols, &mut seen);
+            symbols.contains(&target_symbol)
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_computed_binding_name_dependencies_for_function(
+        &mut self,
+        params: &NodeList,
+    ) {
+        if !self.source_is_js_file {
+            return;
+        }
+        let mut symbols = Vec::new();
+        let mut seen = FxHashSet::default();
+        self.collect_computed_binding_name_symbols(params, &mut symbols, &mut seen);
+        for symbol_id in symbols {
+            self.emit_js_const_symbol_dependency(symbol_id);
+        }
+    }
+
+    fn collect_computed_binding_name_symbols(
+        &self,
+        params: &NodeList,
+        symbols: &mut Vec<SymbolId>,
+        seen: &mut FxHashSet<SymbolId>,
+    ) {
+        for &param_idx in &params.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.collect_computed_binding_name_symbols_from_pattern(param.name, symbols, seen);
+        }
+    }
+
+    fn collect_computed_binding_name_symbols_from_pattern(
+        &self,
+        pattern_idx: NodeIndex,
+        symbols: &mut Vec<SymbolId>,
+        seen: &mut FxHashSet<SymbolId>,
+    ) {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+            && pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+        for &elem_idx in &pattern.elements.nodes {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.property_name.is_some()
+                && let Some(prop_node) = self.arena.get(elem.property_name)
+                && prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.arena.get_computed_property(prop_node)
+            {
+                let expr_idx = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(computed.expression);
+                if let Some(sym_id) = self.value_reference_symbol(expr_idx)
+                    && seen.insert(sym_id)
+                {
+                    symbols.push(sym_id);
+                }
+            }
+            self.collect_computed_binding_name_symbols_from_pattern(elem.name, symbols, seen);
+        }
+    }
+
+    fn emit_js_const_symbol_dependency(&mut self, symbol_id: SymbolId) -> bool {
+        if !self.emitted_synthetic_dependency_symbols.insert(symbol_id) {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            self.emitted_synthetic_dependency_symbols.remove(&symbol_id);
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(symbol_id) else {
+            self.emitted_synthetic_dependency_symbols.remove(&symbol_id);
+            return false;
+        };
+        for decl_idx in symbol.all_declarations() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if !self.arena.is_const_variable_declaration(decl_idx) {
+                continue;
+            }
+            let Some(name) = self.get_identifier_text(decl.name) else {
+                continue;
+            };
+            let Some(type_text) = self.const_literal_initializer_text_deep(decl.initializer) else {
+                continue;
+            };
+            self.write_indent();
+            if self.should_emit_declare_keyword(false) {
+                self.write("declare ");
+            }
+            self.write("const ");
+            self.write(&name);
+            self.write(": ");
+            self.write(&type_text);
+            self.write(";");
+            self.write_line();
+            self.emitted_non_exported_declaration = true;
+            return true;
+        }
+        self.emitted_synthetic_dependency_symbols.remove(&symbol_id);
+        false
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_callback_alias(
@@ -1830,37 +2006,141 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             let mut rest = Self::trim_jsdoc_same_line_following_tags(rest.trim());
-            if let Some((constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
-                && let Some((name, remaining)) = Self::take_jsdoc_template_name(name_rest)
+            let mut constraint = None;
+            if let Some((raw_constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
             {
-                let constraint = Self::normalize_jsdoc_type_text(constraint, false);
-                let name_key = name.to_string();
-                if seen.insert(name_key) {
-                    params.push(format!("{name} extends {constraint}"));
-                }
-                rest = remaining;
+                constraint = Some(Self::normalize_jsdoc_type_text(raw_constraint, false));
+                rest = name_rest;
             }
 
-            for name in rest
-                .split([',', ' ', '\t'])
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
-                // Bracket-default form `@template [T=string]` declares type
-                // parameter `T` with default `string`. Without unwrapping the
-                // brackets, the verbatim segment `[T=string]` would be
-                // emitted between `<` and `>` and produce invalid `.d.ts`
-                // output (issue #4005).
-                let normalized = Self::normalize_jsdoc_template_bracket_default(name);
-                let name_str = normalized.into_owned();
-                let key = Self::jsdoc_template_param_name_key(&name_str).to_string();
+            let mut applied_constraint = false;
+            for (name, default) in Self::parse_jsdoc_template_param_parts(rest) {
+                let constraint = if applied_constraint {
+                    None
+                } else {
+                    constraint.as_deref()
+                };
+                let rendered =
+                    Self::render_jsdoc_template_param(&name, default.as_deref(), constraint);
+                let key = Self::jsdoc_template_param_name_key(&rendered).to_string();
                 if seen.insert(key) {
-                    params.push(name_str);
+                    params.push(rendered);
                 }
+                applied_constraint = true;
             }
         }
 
         params
+    }
+
+    fn parse_jsdoc_template_param_parts(text: &str) -> Vec<(String, Option<String>)> {
+        let mut parts = Vec::new();
+        let mut cursor = 0usize;
+        let bytes = text.as_bytes();
+        let mut parsed_any = false;
+
+        while cursor < bytes.len() {
+            let mut saw_comma = false;
+            while cursor < bytes.len() {
+                let ch = bytes[cursor] as char;
+                if ch == ',' {
+                    saw_comma = true;
+                    cursor += 1;
+                } else if ch.is_ascii_whitespace() {
+                    cursor += 1;
+                } else {
+                    break;
+                }
+            }
+            if cursor >= bytes.len() || (parsed_any && !saw_comma) {
+                break;
+            }
+
+            let (name, default, end) = if bytes[cursor] == b'[' {
+                let Some(close_offset) = text[cursor + 1..].find(']') else {
+                    break;
+                };
+                let close = cursor + 1 + close_offset;
+                let inner = text[cursor + 1..close].trim();
+                let (name, default) = if let Some((name, default)) = inner.split_once('=') {
+                    (name.trim(), Some(default.trim()))
+                } else {
+                    (inner, Some("any"))
+                };
+                if name.is_empty() {
+                    break;
+                }
+                (name.to_string(), default.map(str::to_string), close + 1)
+            } else {
+                let start = cursor;
+                while cursor < bytes.len() {
+                    let ch = bytes[cursor] as char;
+                    if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                        cursor += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if start == cursor {
+                    break;
+                }
+
+                let first = &text[start..cursor];
+                if first == "const" {
+                    let mut name_start = cursor;
+                    while name_start < bytes.len()
+                        && (bytes[name_start] as char).is_ascii_whitespace()
+                    {
+                        name_start += 1;
+                    }
+                    let mut name_end = name_start;
+                    while name_end < bytes.len() {
+                        let ch = bytes[name_end] as char;
+                        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                            name_end += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if name_start == name_end {
+                        break;
+                    }
+                    (
+                        format!("const {}", &text[name_start..name_end]),
+                        None,
+                        name_end,
+                    )
+                } else {
+                    (first.to_string(), None, cursor)
+                }
+            };
+
+            parts.push((name, default));
+            parsed_any = true;
+            cursor = end;
+        }
+
+        parts
+    }
+
+    fn render_jsdoc_template_param(
+        name: &str,
+        default: Option<&str>,
+        constraint: Option<&str>,
+    ) -> String {
+        let mut rendered = name.trim().to_string();
+        if let Some(constraint) = constraint
+            && !constraint.trim().is_empty()
+        {
+            rendered.push_str(" extends ");
+            rendered.push_str(constraint.trim());
+        }
+        if let Some(default) = default {
+            rendered.push_str(" = ");
+            let default = default.trim();
+            rendered.push_str(if default.is_empty() { "any" } else { default });
+        }
+        rendered
     }
 
     fn trim_jsdoc_same_line_following_tags(text: &str) -> &str {
@@ -1869,42 +2149,13 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(text)
     }
 
-    /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
-    /// `T = default` so the result is valid TypeScript type-parameter
-    /// syntax. Non-bracket segments are returned unchanged.
-    fn normalize_jsdoc_template_bracket_default(segment: &str) -> std::borrow::Cow<'_, str> {
-        let trimmed = segment.trim();
-        if !(trimmed.starts_with('[') && trimmed.ends_with(']')) {
-            return std::borrow::Cow::Borrowed(segment);
-        }
-        let inner = &trimmed[1..trimmed.len() - 1];
-        if let Some((name, default)) = inner.split_once('=') {
-            std::borrow::Cow::Owned(format!("{} = {}", name.trim(), default.trim()))
-        } else {
-            std::borrow::Cow::Owned(inner.trim().to_string())
-        }
-    }
-
     fn jsdoc_template_param_name_key(text: &str) -> &str {
         let trimmed = text.trim();
+        let trimmed = trimmed.strip_prefix("const ").unwrap_or(trimmed);
         let end = trimmed
             .find(|c: char| c == '=' || c.is_whitespace())
             .unwrap_or(trimmed.len());
         trimmed[..end].trim()
-    }
-
-    fn take_jsdoc_template_name(text: &str) -> Option<(&str, &str)> {
-        let text = text.trim_start_matches([',', ' ', '\t']);
-        if text.is_empty() {
-            return None;
-        }
-
-        let end = text.find([',', ' ', '\t']).unwrap_or(text.len());
-        let name = text[..end].trim();
-        if name.is_empty() {
-            return None;
-        }
-        Some((name, &text[end..]))
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_typedef_alias(
