@@ -3412,3 +3412,63 @@ match(item).with({ kind: "issue", priority: oneOf("medium", "high") }, () => tru
         "generic methods declared in type literals must retain method type params for call inference. Got: {diags:#?}"
     );
 }
+
+// ─── Variadic tuple spread with type-assertion arguments ─────────────────────
+
+#[test]
+fn variadic_tuple_spread_type_assertion_preserves_literals() {
+    let source = r#"
+declare function concat<T extends readonly unknown[], U extends readonly unknown[]>(a: T, b: U): [...T, ...U];
+const result = concat([1, 2] as [1, 2], ["a", "b"] as ["a", "b"]);
+const _r: [1, 2, "a", "b"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "variadic tuple spread with type-asserted args must preserve literal types. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_type_assertion_preserves_literals_renamed_params() {
+    let source = r#"
+declare function concat<K extends readonly unknown[], V extends readonly unknown[]>(a: K, b: V): [...K, ...V];
+const result = concat([true, false] as [true, false], [42] as [42]);
+const _r: [true, false, 42] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "variadic tuple spread literal preservation must not depend on parameter names K/V. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_without_assertion_widens_to_primitives() {
+    let source = r#"
+declare function concat<T extends readonly unknown[], U extends readonly unknown[]>(a: T, b: U): [...T, ...U];
+const result = concat([1, 2], ["a", "b"]);
+const _bad: [1, 2, "a", "b"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "variadic tuple spread from fresh (non-asserted) tuple must widen literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_three_way_with_assertions_preserves_literals() {
+    let source = r#"
+declare function concat3<A extends readonly unknown[], B extends readonly unknown[], C extends readonly unknown[]>(
+    a: A, b: B, c: C
+): [...A, ...B, ...C];
+const r = concat3([1] as [1], ["x"] as ["x"], [true] as [true]);
+const _check: [1, "x", true] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "three-way variadic spread with asserted tuples must preserve all literals. Got: {diags:#?}"
+    );
+}
