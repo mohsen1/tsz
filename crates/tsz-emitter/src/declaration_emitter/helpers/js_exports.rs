@@ -394,6 +394,13 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(access) = self.arena.get_access_expr(init_node) else {
             return false;
         };
+        if self
+            .js_commonjs_export_name_text(access.name_or_argument)
+            .as_deref()
+            == Some("default")
+        {
+            return false;
+        }
 
         let receiver = self
             .arena

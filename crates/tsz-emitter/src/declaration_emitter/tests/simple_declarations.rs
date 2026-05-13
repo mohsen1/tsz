@@ -736,6 +736,26 @@ type StringBox = Box<string>;
 }
 
 #[test]
+fn test_instantiation_expression_error_recovery_matches_tsc_declarations() {
+    let output = emit_dts_with_binding(
+        r#"
+declare let g: (<T>(x: T) => T) | undefined;
+const c1 = g<string> || ((x: string) => x);
+const c2 = g<string> ?? ((x: string) => x);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const c1: (x: string) => string;"),
+        "Expected || to collapse matching undefined fallback function: {output}"
+    );
+    assert!(
+        output.contains("declare const c2: (x: string) => string;"),
+        "Expected ?? to collapse matching undefined fallback function: {output}"
+    );
+}
+
+#[test]
 fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
     let output = emit_dts(
         r#"

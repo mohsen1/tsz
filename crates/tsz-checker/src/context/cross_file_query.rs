@@ -21,7 +21,10 @@
 //! "no cache entry".
 
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_common::perf_counters::{CrossFileCacheMissCause, record_cross_file_cache_miss_cause};
+use tsz_common::perf_counters::{
+    CrossFileCacheMissCause, SourceFileSymbolArenaCacheEligibilityOutcome,
+    record_cross_file_cache_miss_cause,
+};
 
 use crate::query_boundaries::common::type_id_is_known_to_db;
 use crate::state_type_analysis::cross_file::CrossFileQueryKind;
@@ -60,28 +63,76 @@ impl<'a> CheckerContext<'a> {
         sym_id: SymbolId,
         delegate_arena: &tsz_parser::NodeArena,
     ) -> bool {
+        self.source_file_symbol_arena_cache_stability_outcome(sym_id, delegate_arena)
+            == SourceFileSymbolArenaCacheEligibilityOutcome::Cacheable
+    }
+
+    pub fn source_file_symbol_arena_cache_stability_outcome(
+        &self,
+        sym_id: SymbolId,
+        delegate_arena: &tsz_parser::NodeArena,
+    ) -> SourceFileSymbolArenaCacheEligibilityOutcome {
+        use SourceFileSymbolArenaCacheEligibilityOutcome as Outcome;
+
         let Some(symbol) = self.cross_file_cache_symbol(sym_id) else {
-            return false;
+            return Outcome::MissingSymbol;
         };
+        if symbol.declarations.len() != 1 {
+            return Outcome::MultipleDeclarations;
+        }
+
         if !symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
-            || symbol.declarations.len() != 1
+            && !self.stable_annotated_variable_symbol(symbol, delegate_arena)
         {
-            return false;
+            return Outcome::NotClassOrInterface;
         }
 
         // The `symbol_arenas` map stores one arena for the symbol, but merged
         // or augmented symbols can also have declarations in other arenas. A
-        // cached symbol type is reusable only for the small stable slice where
-        // the single class/interface declaration is proven to belong solely to
-        // the delegated source-file arena.
-        symbol.declarations.iter().all(|&decl_idx| {
-            self.binder
-                .declaration_arenas
-                .get(&(sym_id, decl_idx))
-                .is_some_and(|arenas| {
-                    arenas.len() == 1 && std::ptr::eq(arenas[0].as_ref(), delegate_arena)
-                })
-        })
+        // cached symbol type is reusable only for the stable slice where the
+        // single declaration is proven to belong solely to the delegated
+        // source-file arena.
+        let decl_idx = symbol.declarations[0];
+        if !self.declaration_belongs_only_to_arena(sym_id, decl_idx, delegate_arena) {
+            return Outcome::DeclarationArenaMismatch;
+        }
+
+        Outcome::Cacheable
+    }
+
+    fn stable_annotated_variable_symbol(
+        &self,
+        symbol: &tsz_binder::Symbol,
+        delegate_arena: &tsz_parser::NodeArena,
+    ) -> bool {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
+            return false;
+        }
+        if symbol.has_any_flags(symbol_flags::MODULE | symbol_flags::ALIAS) {
+            return false;
+        }
+
+        let decl_idx = symbol.declarations[0];
+        let Some(decl_node) = delegate_arena.get(decl_idx) else {
+            return false;
+        };
+        delegate_arena
+            .get_variable_declaration(decl_node)
+            .is_some_and(|decl| decl.type_annotation.is_some())
+    }
+
+    fn declaration_belongs_only_to_arena(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: tsz_parser::NodeIndex,
+        delegate_arena: &tsz_parser::NodeArena,
+    ) -> bool {
+        self.binder
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .is_some_and(|arenas| {
+                arenas.len() == 1 && std::ptr::eq(arenas[0].as_ref(), delegate_arena)
+            })
     }
 
     fn cross_file_cache_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
@@ -507,7 +558,7 @@ mod tests {
     use super::CrossFileQueryKind;
     use crate::context::{CheckerContext, CheckerOptions};
     use tsz_binder::{BinderState, SymbolId};
-    use tsz_parser::parser::{NodeArena, NodeIndex};
+    use tsz_parser::parser::{NodeArena, NodeIndex, ParserState};
     use tsz_solver::def::DefinitionStore;
     use tsz_solver::{TypeId, TypeInterner};
 
@@ -527,6 +578,28 @@ mod tests {
         );
         ctx.share_owner_symbol_type_results = true;
         ctx
+    }
+
+    fn bound_symbol_context(
+        source: &str,
+        symbol_name: &str,
+    ) -> (Arc<NodeArena>, BinderState, TypeInterner, SymbolId) {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = Arc::new(parser.get_arena().clone());
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena.as_ref(), root);
+        let sym_id = binder
+            .file_locals
+            .get(symbol_name)
+            .unwrap_or_else(|| panic!("symbol {symbol_name:?} not found"));
+        let symbol = binder.symbols.get(sym_id).expect("symbol missing");
+        let decl_idx = symbol.declarations[0];
+        Arc::make_mut(&mut binder.declaration_arenas)
+            .entry((sym_id, decl_idx))
+            .or_default()
+            .push(Arc::clone(&arena));
+        (arena, binder, TypeInterner::new(), sym_id)
     }
 
     #[test]
@@ -589,6 +662,36 @@ mod tests {
             ctx.cached_cross_file_class_instance_type(SymbolId(13), 7),
             None
         );
+    }
+
+    #[test]
+    fn stable_source_file_symbol_type_cache_accepts_annotated_variable() {
+        let (arena, binder, types, sym_id) = bound_symbol_context(
+            "export const leaf1: { value: number } = { value: 1 };",
+            "leaf1",
+        );
+        let ctx = shared_context(
+            arena.as_ref(),
+            &binder,
+            &types,
+            Arc::new(DefinitionStore::new()),
+        );
+
+        assert!(ctx.symbol_arena_symbol_type_cache_is_stable(sym_id, arena.as_ref()));
+    }
+
+    #[test]
+    fn stable_source_file_symbol_type_cache_rejects_inferred_variable() {
+        let (arena, binder, types, sym_id) =
+            bound_symbol_context("export const leaf1 = { value: 1 };", "leaf1");
+        let ctx = shared_context(
+            arena.as_ref(),
+            &binder,
+            &types,
+            Arc::new(DefinitionStore::new()),
+        );
+
+        assert!(!ctx.symbol_arena_symbol_type_cache_is_stable(sym_id, arena.as_ref()));
     }
 
     #[test]

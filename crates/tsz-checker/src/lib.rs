@@ -141,6 +141,9 @@ mod generator_union_return_type_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "../tests/imported_generator_iterable_tests.rs"]
+mod imported_generator_iterable_tests;
+#[cfg(test)]
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
