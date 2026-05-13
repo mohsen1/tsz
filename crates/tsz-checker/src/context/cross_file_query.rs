@@ -28,19 +28,18 @@ use crate::state_type_analysis::cross_file::CrossFileQueryKind;
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
-    /// Look up a cached cross-file symbol-type via the canonical
-    /// `CrossFileQueryKind::SymbolType` bucket.
-    ///
-    /// Returns `None` when:
-    /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
-    /// - the bucket has no entry for `(sym_id, file_idx)`, or
-    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`,
-    /// - the cached non-intrinsic `TypeId` is not interned in this checker.
-    pub fn cached_cross_file_symbol_type(
+    fn cross_file_symbol_type_secondary(requester_file_idx: Option<u32>) -> u32 {
+        requester_file_idx.map_or(0, |idx| idx.saturating_add(1))
+    }
+
+    fn cached_cross_file_symbol_type_with_requester(
         &self,
         sym_id: SymbolId,
         file_idx: u32,
+        requester_file_idx: Option<u32>,
     ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let secondary = Self::cross_file_symbol_type_secondary(requester_file_idx);
+
         if !self.share_owner_symbol_type_results {
             record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
             return None;
@@ -49,7 +48,7 @@ impl<'a> CheckerContext<'a> {
             CrossFileQueryKind::SymbolType.as_storage_kind(),
             file_idx,
             sym_id.0,
-            0,
+            secondary,
             0,
         ) else {
             record_cross_file_cache_miss_cause(CrossFileCacheMissCause::BucketEmpty);
@@ -69,6 +68,69 @@ impl<'a> CheckerContext<'a> {
         Some((cached_type, params))
     }
 
+    /// Look up a cached cross-file symbol-type via the canonical
+    /// `CrossFileQueryKind::SymbolType` bucket.
+    ///
+    /// Returns `None` when:
+    /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
+    /// - the bucket has no entry for `(sym_id, file_idx)`, or
+    /// - the cached value is `TypeId::ERROR` / `TypeId::UNKNOWN`,
+    /// - the cached non-intrinsic `TypeId` is not interned in this checker.
+    pub fn cached_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        self.cached_cross_file_symbol_type_with_requester(sym_id, file_idx, None)
+    }
+
+    /// Look up a cached source-file symbol-arena delegation result. Unlike
+    /// genuine cross-file symbol targets, source-file symbol-arena answers can
+    /// depend on the requesting file's import and diagnostic context, so the
+    /// requester file is part of the key.
+    pub fn cached_source_file_symbol_arena_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        requester_file_idx: u32,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        self.cached_cross_file_symbol_type_with_requester(
+            sym_id,
+            file_idx,
+            Some(requester_file_idx),
+        )
+    }
+
+    fn cache_cross_file_symbol_type_with_requester(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        requester_file_idx: Option<u32>,
+        type_id: tsz_solver::TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        let secondary = Self::cross_file_symbol_type_secondary(requester_file_idx);
+
+        if !self.share_owner_symbol_type_results {
+            return;
+        }
+        if matches!(
+            type_id,
+            tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
+        ) {
+            return;
+        }
+        self.definition_store.cache_resolved_cross_file_query(
+            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            file_idx,
+            sym_id.0,
+            secondary,
+            0,
+            type_id,
+            type_params,
+        );
+    }
+
     /// Cache a cross-file symbol-type result in the canonical
     /// `CrossFileQueryKind::SymbolType` bucket.
     ///
@@ -85,21 +147,29 @@ impl<'a> CheckerContext<'a> {
         type_id: tsz_solver::TypeId,
         type_params: Vec<tsz_solver::TypeParamInfo>,
     ) {
-        if !self.share_owner_symbol_type_results {
-            return;
-        }
-        if matches!(
-            type_id,
-            tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
-        ) {
-            return;
-        }
-        self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+        self.cache_cross_file_symbol_type_with_requester(
+            sym_id,
             file_idx,
-            sym_id.0,
-            0,
-            0,
+            None,
+            type_id,
+            type_params,
+        );
+    }
+
+    /// Cache a source-file symbol-arena delegation result under a requester-
+    /// scoped key. See [`cached_source_file_symbol_arena_type`].
+    pub fn cache_source_file_symbol_arena_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        requester_file_idx: u32,
+        type_id: tsz_solver::TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        self.cache_cross_file_symbol_type_with_requester(
+            sym_id,
+            file_idx,
+            Some(requester_file_idx),
             type_id,
             type_params,
         );

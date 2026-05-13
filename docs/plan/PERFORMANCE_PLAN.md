@@ -1048,7 +1048,8 @@ reader helpers.
 **2026-05-13 in-flight update:** the symbol-arena source-file slice now
 routes proven single-declaration, non-generic class/interface declarations
 through the canonical `SymbolType` bucket when the program has no module
-augmentations. A broader prototype moved `delegate.cache_hits_cross_file`
+augmentations, keyed by target file plus requesting file for source-file
+symbol-arena entries. A broader prototype moved `delegate.cache_hits_cross_file`
 from 0 to 632 and reduced `DelegateCrossArenaSymbol` child checkers from
 924 to 292 on monorepo-006, but it regressed conformance by caching
 module-augmentation programs and merged, augmented, or generic payloads. The

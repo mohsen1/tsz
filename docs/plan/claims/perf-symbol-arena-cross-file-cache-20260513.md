@@ -58,8 +58,9 @@ An unguarded prototype observed on `monorepo-006`:
   41 declaration-file targets.
 
 That prototype regressed conformance by caching module-augmentation programs
-and merged, augmented, or generic source-file payloads. The PR now requires a
-program without module augmentations, a single class/interface declaration
-registered solely in the delegated arena, and skips writes with type
-parameters before using the shared bucket; re-measure this guarded version
-before treating the prototype counters as final.
+and merged, augmented, generic, or requester-sensitive source-file payloads.
+The PR now requires a program without module augmentations, a single
+class/interface declaration registered solely in the delegated arena, skips
+writes with type parameters, and includes the requesting file in source-file
+symbol-arena cache keys; re-measure this guarded version before treating the
+prototype counters as final.

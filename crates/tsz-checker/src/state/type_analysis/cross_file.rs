@@ -270,63 +270,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn program_has_module_augmentations(&self) -> bool {
-        // Module augmentation can make a source-file symbol type depend on the
-        // importer graph, so the shared `(file_idx, SymbolId)` cache key is
-        // only valid when the program has no module augmentation metadata.
-        if self
-            .ctx
-            .global_module_augmentations_index
-            .as_ref()
-            .is_some_and(|index| !index.is_empty())
-            || self
-                .ctx
-                .global_augmentation_targets_index
-                .as_ref()
-                .is_some_and(|index| !index.is_empty())
-        {
-            return true;
-        }
-
-        self.ctx.all_binders.as_ref().is_some_and(|binders| {
-            binders.iter().any(|binder| {
-                !binder.module_augmentations.is_empty()
-                    || !binder.augmentation_target_modules.is_empty()
-            })
-        }) || !self.ctx.binder.module_augmentations.is_empty()
-            || !self.ctx.binder.augmentation_target_modules.is_empty()
-    }
-
-    fn symbol_arena_symbol_type_cache_is_stable(
-        &self,
-        sym_id: SymbolId,
-        delegate_arena: &tsz_parser::NodeArena,
-    ) -> bool {
-        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
-            return false;
-        };
-        if !symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
-            || symbol.declarations.len() != 1
-        {
-            return false;
-        }
-
-        // The `symbol_arenas` map stores one arena for the symbol, but merged
-        // or augmented symbols can also have declarations in other arenas. A
-        // cached symbol type is reusable only for the small stable slice where
-        // the single class/interface declaration is proven to belong solely to
-        // the delegated source-file arena.
-        symbol.declarations.iter().all(|&decl_idx| {
-            self.ctx
-                .binder
-                .declaration_arenas
-                .get(&(sym_id, decl_idx))
-                .is_some_and(|arenas| {
-                    arenas.len() == 1 && std::ptr::eq(arenas[0].as_ref(), delegate_arena)
-                })
-        })
-    }
-
     fn try_resolve_cross_arena_named_alias_without_child(
         &mut self,
         sym_id: SymbolId,
@@ -734,25 +677,13 @@ impl<'a> CheckerState<'a> {
         };
 
         if should_delegate {
-            let can_cache_source_file_symbol_arena_type = delegate_arena_source
-                == CrossArenaSymbolMissSource::SymbolArena
-                && !self.program_has_module_augmentations();
-            let symbol_type_cache_file_idx = if needs_cross_file_delegation {
-                cross_file_idx
-            } else if can_cache_source_file_symbol_arena_type {
-                delegate_arena
-                    .filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))
-                    .filter(|arena| {
-                        arena
-                            .source_files
-                            .first()
-                            .is_some_and(|source_file| !source_file.is_declaration_file)
-                    })
-                    .filter(|arena| self.symbol_arena_symbol_type_cache_is_stable(sym_id, arena))
-                    .and_then(|arena| self.ctx.get_file_idx_for_arena(arena))
-            } else {
-                None
-            };
+            let symbol_type_cache_file_idx = self.symbol_arena_symbol_type_cache_file_idx(
+                needs_cross_file_delegation,
+                cross_file_idx,
+                delegate_arena_source,
+                delegate_arena,
+                sym_id,
+            );
             let symbol_type_cache_from_symbol_arena =
                 symbol_type_cache_file_idx.is_some() && !needs_cross_file_delegation;
 
@@ -797,9 +728,16 @@ impl<'a> CheckerState<'a> {
 
             // Thread-safe fast path: check the global resolved cross-file query cache.
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
-                && let Some((cached_type, cached_params)) = self
-                    .ctx
-                    .cached_cross_file_symbol_type(sym_id, cache_file_idx as u32)
+                && let Some((cached_type, cached_params)) = if symbol_type_cache_from_symbol_arena {
+                    self.ctx.cached_source_file_symbol_arena_type(
+                        sym_id,
+                        cache_file_idx as u32,
+                        self.ctx.current_file_idx as u32,
+                    )
+                } else {
+                    self.ctx
+                        .cached_cross_file_symbol_type(sym_id, cache_file_idx as u32)
+                }
             {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_cross_file
@@ -860,12 +798,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(file_idx) = symbol_type_cache_file_idx
                     && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
                 {
-                    self.ctx.cache_cross_file_symbol_type(
-                        sym_id,
-                        file_idx as u32,
-                        direct_type,
-                        direct_params.clone(),
-                    );
+                    if symbol_type_cache_from_symbol_arena {
+                        self.ctx.cache_source_file_symbol_arena_type(
+                            sym_id,
+                            file_idx as u32,
+                            self.ctx.current_file_idx as u32,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    } else {
+                        self.ctx.cache_cross_file_symbol_type(
+                            sym_id,
+                            file_idx as u32,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    }
                 }
                 if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
                     self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
@@ -1152,12 +1100,22 @@ impl<'a> CheckerState<'a> {
             if let Some(target_file_idx) = symbol_type_cache_file_idx
                 && (!symbol_type_cache_from_symbol_arena || result_params.is_empty())
             {
-                self.ctx.cache_cross_file_symbol_type(
-                    sym_id,
-                    target_file_idx as u32,
-                    result,
-                    result_params.clone(),
-                );
+                if symbol_type_cache_from_symbol_arena {
+                    self.ctx.cache_source_file_symbol_arena_type(
+                        sym_id,
+                        target_file_idx as u32,
+                        self.ctx.current_file_idx as u32,
+                        result,
+                        result_params.clone(),
+                    );
+                } else {
+                    self.ctx.cache_cross_file_symbol_type(
+                        sym_id,
+                        target_file_idx as u32,
+                        result,
+                        result_params.clone(),
+                    );
+                }
             }
 
             self.ctx.leave_recursion();
