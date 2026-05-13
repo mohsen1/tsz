@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `codex/export-as-namespace-ts1315-6609-20260513`
-- **PR**: #TBD
+- **PR**: #6621
 - **Status**: ready
 - **Workstream**: conformance / checker diagnostic
 
