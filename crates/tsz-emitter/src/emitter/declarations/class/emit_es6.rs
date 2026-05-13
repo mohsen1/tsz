@@ -1855,6 +1855,13 @@ impl<'a> Printer<'a> {
         let mut emitted_any_member = false;
         let target_supports_native_fields =
             (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
+        let target_supports_native_private_names =
+            (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
+        let has_legacy_private_name_member_decorators = self.ctx.options.legacy_decorators
+            && !class_name.is_empty()
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.legacy_member_decorator_needs_private_name_scope(member_idx)
+            });
         if self.ctx.options.use_define_for_class_fields && target_supports_native_fields {
             // Find the constructor and collect its parameter properties
             for &member_idx in &class.members.nodes {
@@ -2462,6 +2469,21 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 if emit_standalone_class_semicolon {
                     self.write(";");
+                    self.write_line();
+                }
+                if target_supports_native_private_names
+                    && has_legacy_private_name_member_decorators
+                    && self.legacy_member_decorator_needs_private_name_scope(member_idx)
+                {
+                    self.write("static {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_legacy_member_decorator_calls_requiring_private_name_scope(
+                        &class_name,
+                        &[member_idx],
+                    );
+                    self.decrease_indent();
+                    self.write("}");
                     self.write_line();
                 }
             }
@@ -3395,6 +3417,22 @@ impl<'a> Printer<'a> {
                 self.decrease_indent();
             }
 
+            if !target_supports_native_private_names && has_legacy_private_name_member_decorators {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write("(() => {");
+                self.write_line();
+                self.increase_indent();
+                self.emit_legacy_member_decorator_calls_requiring_private_name_scope(
+                    &class_name,
+                    &class.members.nodes,
+                );
+                self.decrease_indent();
+                self.write("})()");
+                self.decrease_indent();
+            }
+
             // Close the comma expression with the temp var, unless the static field
             // comma expr path will handle the closing.
             if !needs_static_comma_expr && let Some(ref temp) = class_expr_temp {
@@ -3550,6 +3588,24 @@ impl<'a> Printer<'a> {
             }
 
             self.write(";");
+        }
+
+        if !needs_private_comma_expr
+            && !target_supports_native_private_names
+            && has_legacy_private_name_member_decorators
+        {
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+            self.write("(() => {");
+            self.write_line();
+            self.increase_indent();
+            self.emit_legacy_member_decorator_calls_requiring_private_name_scope(
+                &class_name,
+                &class.members.nodes,
+            );
+            self.decrease_indent();
+            self.write("})();");
         }
 
         // Emit static private field value initializations after class body:

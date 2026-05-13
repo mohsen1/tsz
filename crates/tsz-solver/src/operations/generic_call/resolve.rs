@@ -2212,7 +2212,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 if literal_bounds.is_empty() {
                                     ty
                                 } else {
-                                    crate::utils::union_or_single(self.interner, literal_bounds)
+                                    let result = crate::utils::union_or_single(
+                                        self.interner,
+                                        literal_bounds,
+                                    );
+                                    // tsc's BCT widening: array element inference widens
+                                    // fresh literals to their primitive in NoInfer<T>
+                                    // positions. Direct scalar arguments are NOT widened
+                                    // (from_array_element = false on their candidates).
+                                    let db = self.interner.as_type_database();
+                                    let should_widen =
+                                        (crate::visitor::is_literal_type(db, result)
+                                            && infer_ctx.all_candidates_from_array_elements(var))
+                                            || crate::visitor::is_union_of_fresh_literals(
+                                                db, result,
+                                            );
+                                    if should_widen {
+                                        crate::widen_literal_type(db, result)
+                                    } else {
+                                        result
+                                    }
                                 }
                             } else {
                                 crate::widen_literal_type(self.interner.as_type_database(), ty)
@@ -3058,7 +3077,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 continue;
             }
-            if !self.checker.is_assignable_to(arg_type, constraint)
+            if !self.arg_satisfies_type_parameter_constraint(arg_type, constraint)
                 && !self.is_function_union_compat(arg_type, constraint)
                 && !self.callable_satisfies_top_rest_any_constraint(arg_type, constraint)
             {
