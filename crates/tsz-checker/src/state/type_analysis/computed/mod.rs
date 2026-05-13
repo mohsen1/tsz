@@ -2043,6 +2043,7 @@ impl<'a> CheckerState<'a> {
         type_idx: NodeIndex,
     ) -> tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome
     {
+        use crate::symbol_resolver::TypeSymbolResolution;
         use tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome as Outcome;
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
@@ -2060,10 +2061,10 @@ impl<'a> CheckerState<'a> {
         };
 
         if type_name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            if self
-                .resolve_type_symbol_for_lowering(type_name_idx)
-                .is_some()
-            {
+            if matches!(
+                self.resolve_qualified_symbol_in_type_position(type_name_idx),
+                TypeSymbolResolution::Type(_)
+            ) {
                 return Outcome::QualifiedNameResolvableSymbol;
             }
             return Outcome::QualifiedNameUnresolvedSymbol;
@@ -2075,10 +2076,10 @@ impl<'a> CheckerState<'a> {
             {
                 return Outcome::IdentifierCompilerManagedType;
             }
-            if self
-                .resolve_type_symbol_for_lowering(type_name_idx)
-                .is_some()
-            {
+            if matches!(
+                self.resolve_identifier_symbol_in_type_position(type_name_idx),
+                TypeSymbolResolution::Type(_)
+            ) {
                 return Outcome::IdentifierResolvableSymbol;
             }
             return Outcome::IdentifierUnresolvedSymbol;
