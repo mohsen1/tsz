@@ -409,6 +409,69 @@ impl ComputeTypeOfSymbolKindOutcome {
     }
 }
 
+/// Fast-path combination used for an interface symbol in
+/// `compute_type_of_symbol`.
+///
+/// The three skip gates are:
+/// - computed-name precompute map
+/// - member type-param prewarm scan
+/// - local heritage merge
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum ComputeTypeOfSymbolInterfaceFastPathOutcome {
+    FullPath = 0,
+    SkipComputedNameMap = 1,
+    SkipPrewarm = 2,
+    SkipLocalHeritageMerge = 3,
+    SkipComputedNameMapAndPrewarm = 4,
+    SkipComputedNameMapAndLocalHeritageMerge = 5,
+    SkipPrewarmAndLocalHeritageMerge = 6,
+    SkipAllThree = 7,
+}
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT: usize = 8;
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES: [&str;
+    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT] = [
+    "full_path",
+    "skip_computed_name_map",
+    "skip_prewarm",
+    "skip_local_heritage_merge",
+    "skip_computed_name_map_and_prewarm",
+    "skip_computed_name_map_and_local_heritage_merge",
+    "skip_prewarm_and_local_heritage_merge",
+    "skip_all_three",
+];
+
+impl ComputeTypeOfSymbolInterfaceFastPathOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+
+    #[inline(always)]
+    pub const fn from_skips(
+        skip_computed_name_map: bool,
+        skip_prewarm: bool,
+        skip_local_heritage_merge: bool,
+    ) -> Self {
+        match (
+            skip_computed_name_map,
+            skip_prewarm,
+            skip_local_heritage_merge,
+        ) {
+            (false, false, false) => Self::FullPath,
+            (true, false, false) => Self::SkipComputedNameMap,
+            (false, true, false) => Self::SkipPrewarm,
+            (false, false, true) => Self::SkipLocalHeritageMerge,
+            (true, true, false) => Self::SkipComputedNameMapAndPrewarm,
+            (true, false, true) => Self::SkipComputedNameMapAndLocalHeritageMerge,
+            (false, true, true) => Self::SkipPrewarmAndLocalHeritageMerge,
+            (true, true, true) => Self::SkipAllThree,
+        }
+    }
+}
+
 /// Why a cross-file cache reader (`cached_cross_file_*` in
 /// `tsz-checker/src/context/cross_file_query.rs`) returned `None`.
 ///
@@ -651,6 +714,8 @@ pub struct PerfCounters {
     pub compute_type_of_symbol_source_outcome:
         [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_COUNT],
     pub compute_type_of_symbol_kind_outcome: [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT],
+    pub compute_type_of_symbol_interface_fastpath_outcome:
+        [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT],
 
     // ─── resolver / VFS ──────────────────────────────────────────────────
     pub resolver_lookup_calls: AtomicU64,
@@ -724,6 +789,8 @@ impl PerfCounters {
                 COMPUTE_TYPE_OF_SYMBOL_SOURCE_OUTCOME_COUNT],
             compute_type_of_symbol_kind_outcome: [const { AtomicU64::new(0) };
                 COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT],
+            compute_type_of_symbol_interface_fastpath_outcome: [const { AtomicU64::new(0) };
+                COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT],
             resolver_lookup_calls: AtomicU64::new(0),
             resolver_is_file_calls: AtomicU64::new(0),
             resolver_is_dir_calls: AtomicU64::new(0),
@@ -1227,6 +1294,19 @@ pub fn record_compute_type_of_symbol_kind_outcome(outcome: ComputeTypeOfSymbolKi
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record which interface fast-path combination ran inside
+/// `compute_type_of_symbol`.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_fastpath_outcome(
+    outcome: ComputeTypeOfSymbolInterfaceFastPathOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().compute_type_of_symbol_interface_fastpath_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record a `TypeInterner::intern_string` call. Mirrors the existing
 /// `record_compute_type_of_symbol_*` shape: gate once, one `counters()`
 /// lookup, increment exactly the named field.
@@ -1572,7 +1652,12 @@ impl PerfCounters {
             .map(load)
             .sum();
         let kind_total: u64 = c.compute_type_of_symbol_kind_outcome.iter().map(load).sum();
-        if source_total == 0 && kind_total == 0 {
+        let interface_fastpath_total: u64 = c
+            .compute_type_of_symbol_interface_fastpath_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if source_total == 0 && kind_total == 0 && interface_fastpath_total == 0 {
             return String::new();
         }
 
@@ -1593,6 +1678,18 @@ impl PerfCounters {
             out.push_str("\ncompute_type_of_symbol kind outcomes:\n");
             for (idx, name) in COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_NAMES.iter().enumerate() {
                 let count = load(&c.compute_type_of_symbol_kind_outcome[idx]);
+                if count > 0 {
+                    out.push_str(&format!("  {name:<28} {count:>12}\n"));
+                }
+            }
+        }
+        if interface_fastpath_total > 0 {
+            out.push_str("\ncompute_type_of_symbol interface fastpath outcomes:\n");
+            for (idx, name) in COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES
+                .iter()
+                .enumerate()
+            {
+                let count = load(&c.compute_type_of_symbol_interface_fastpath_outcome[idx]);
                 if count > 0 {
                     out.push_str(&format!("  {name:<28} {count:>12}\n"));
                 }
@@ -1850,6 +1947,13 @@ pub struct PerfCounterSnapshot {
     /// Always `COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_COUNT` long, in
     /// `COMPUTE_TYPE_OF_SYMBOL_KIND_OUTCOME_NAMES` order.
     pub compute_type_of_symbol_kind_outcomes: Vec<NamedCount>,
+    /// Interface-branch fast-path combinations observed inside
+    /// `compute_type_of_symbol`.
+    ///
+    /// Always `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT`
+    /// long, in
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES` order.
+    pub compute_type_of_symbol_interface_fastpath_outcomes: Vec<NamedCount>,
     /// Outcome buckets for direct cross-file interface lowering attempts.
     ///
     /// JSON counterpart of
@@ -1927,7 +2031,8 @@ pub struct CheckerCounters {
 /// One `(name, count)` row in a named-counter JSON array.
 ///
 /// Used for the `alias_shortcut_outcomes`,
-/// `compute_type_of_symbol_*_outcomes`, and
+/// `compute_type_of_symbol_*_outcomes`,
+/// `compute_type_of_symbol_interface_fastpath_outcomes`, and
 /// `direct_interface_lowering_outcomes` arrays on
 /// [`PerfCounterSnapshot`]. Each array is always emitted at its full
 /// declared length, with zero counts for inactive buckets, so the JSON
@@ -2174,6 +2279,13 @@ impl PerfCounters {
                     count: load(&c.compute_type_of_symbol_kind_outcome[i]),
                 })
                 .collect(),
+            compute_type_of_symbol_interface_fastpath_outcomes: (0
+                ..COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES[i],
+                    count: load(&c.compute_type_of_symbol_interface_fastpath_outcome[i]),
+                })
+                .collect(),
             direct_interface_lowering_outcomes: (0
                 ..DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -2260,6 +2372,7 @@ mod json_tests {
             "alias_shortcut_outcomes",
             "compute_type_of_symbol_source_outcomes",
             "compute_type_of_symbol_kind_outcomes",
+            "compute_type_of_symbol_interface_fastpath_outcomes",
             "direct_interface_lowering_outcomes",
             "cross_file_cache_miss_causes",
             "source_file_symbol_arena_cache_eligibility_outcomes",
@@ -2710,6 +2823,31 @@ mod json_tests {
     }
 
     #[test]
+    fn compute_type_of_symbol_interface_fastpath_outcomes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["compute_type_of_symbol_interface_fastpath_outcomes"]
+            .as_array()
+            .expect("compute_type_of_symbol_interface_fastpath_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT,
+            "compute_type_of_symbol_interface_fastpath_outcomes length must match \
+             COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_NAMES[i],
+                "compute_type_of_symbol_interface_fastpath_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "compute_type_of_symbol_interface_fastpath_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
     fn direct_interface_lowering_outcomes_locks_to_names_array() {
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -2938,6 +3076,8 @@ mod json_tests {
         let dilo_idx = DirectCrossFileInterfaceLoweringOutcome::Success.as_index();
         let ctos_source_idx = ComputeTypeOfSymbolSourceOutcome::GlobalSymbol.as_index();
         let ctos_kind_idx = ComputeTypeOfSymbolKindOutcome::Interface.as_index();
+        let ctos_fastpath_idx =
+            ComputeTypeOfSymbolInterfaceFastPathOutcome::SkipAllThree.as_index();
 
         let before_source =
             c.delegate_cross_arena_symbol_miss_by_source[source_idx].load(Ordering::Relaxed);
@@ -2956,6 +3096,9 @@ mod json_tests {
             c.compute_type_of_symbol_source_outcome[ctos_source_idx].load(Ordering::Relaxed);
         let before_ctos_kind =
             c.compute_type_of_symbol_kind_outcome[ctos_kind_idx].load(Ordering::Relaxed);
+        let before_ctos_fastpath = c.compute_type_of_symbol_interface_fastpath_outcome
+            [ctos_fastpath_idx]
+            .load(Ordering::Relaxed);
 
         c.delegate_cross_arena_symbol_miss_by_source[source_idx].fetch_add(1, Ordering::Relaxed);
         c.delegate_cross_arena_symbol_miss_by_kind[kind_idx].fetch_add(1, Ordering::Relaxed);
@@ -2967,6 +3110,8 @@ mod json_tests {
         c.direct_cross_file_interface_lowering_outcome[dilo_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_source_outcome[ctos_source_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_kind_outcome[ctos_kind_idx].fetch_add(1, Ordering::Relaxed);
+        c.compute_type_of_symbol_interface_fastpath_outcome[ctos_fastpath_idx]
+            .fetch_add(1, Ordering::Relaxed);
 
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -3047,6 +3192,16 @@ mod json_tests {
         assert!(
             ctos_kind_row["count"].as_u64().unwrap_or(0) > before_ctos_kind,
             "compute_type_of_symbol_kind_outcomes[interface] did not reflect the bump",
+        );
+
+        let ctos_fastpath = json["compute_type_of_symbol_interface_fastpath_outcomes"]
+            .as_array()
+            .expect("compute_type_of_symbol_interface_fastpath_outcomes is array");
+        let ctos_fastpath_row = &ctos_fastpath[ctos_fastpath_idx];
+        assert_eq!(ctos_fastpath_row["name"], "skip_all_three");
+        assert!(
+            ctos_fastpath_row["count"].as_u64().unwrap_or(0) > before_ctos_fastpath,
+            "compute_type_of_symbol_interface_fastpath_outcomes[skip_all_three] did not reflect the bump",
         );
     }
 
