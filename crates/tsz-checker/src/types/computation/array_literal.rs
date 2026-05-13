@@ -629,13 +629,20 @@ impl<'a> CheckerState<'a> {
         // types should be inferred independently to preserve literal types during
         // generic inference (e.g., `fx<T extends [string, 'a'|'b']>(x: T)` called
         // with `['x', 'a']` should infer `["x", "a"]`, not `[string, string]`).
-        let effective_contextual = if union_array_context_is_ambiguous {
-            None
-        } else if tuple_context_from_constraint {
-            resolved_contextual_type
-        } else {
-            applicable_contextual_type.or(resolved_contextual_type)
-        };
+        //
+        // EXCEPTION: When the contextual union is ALL tuples (force_tuple_for_union_context),
+        // preserve the contextual type even when "ambiguous". Per-position typing
+        // (`get_tuple_element_type_with_count`) unions element types across union members
+        // (e.g. `["a"] | ["b"]` gives position-0 context `"a" | "b"`), which preserves
+        // literal types so `["a"]` correctly checks against `["a"] | ["b"]`.
+        let effective_contextual =
+            if union_array_context_is_ambiguous && !force_tuple_for_union_context {
+                None
+            } else if tuple_context_from_constraint {
+                resolved_contextual_type
+            } else {
+                applicable_contextual_type.or(resolved_contextual_type)
+            };
         let ctx_helper = match effective_contextual {
             Some(resolved) => Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -734,13 +741,20 @@ impl<'a> CheckerState<'a> {
             }
 
             // Build per-element typing request instead of mutating ctx.contextual_type
-            let elem_request = if union_array_context_is_ambiguous {
+            let elem_request = if union_array_context_is_ambiguous && !force_tuple_for_union_context
+            {
                 // When the contextual union is ambiguous (multiple applicable element types),
                 // clear the contextual type for each element so closures don't inherit
                 // the array's union contextual type and inadvertently get typed parameters.
+                // EXCEPTION: union-of-all-tuples is handled via per-position typing below.
                 crate::context::TypingRequest::NONE
             } else if let Some(ref helper) = ctx_helper {
-                if tuple_context.is_some() {
+                if tuple_context.is_some() || force_tuple_for_union_context {
+                    // For a union of all tuple types (force_tuple_for_union_context), use
+                    // per-position contextual typing: the element type at position `index`
+                    // is the union of each member tuple's type at that position.
+                    // e.g. `["a"] | ["b"]` gives position 0 context `"a" | "b"`,
+                    // preserving string literal types instead of widening to `string`.
                     match helper.get_tuple_element_type_with_count(index, total_elem_count) {
                         Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,
