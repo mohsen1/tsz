@@ -363,7 +363,7 @@ impl<'a> CheckerState<'a> {
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
 
-    pub(super) fn resolve_lib_symbol_by_name(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+    pub(crate) fn resolve_lib_symbol_by_name(&self, name: &str) -> Option<tsz_binder::SymbolId> {
         let lib_binders = self.get_lib_binders();
         self.ctx.binder.file_locals.get(name).or_else(|| {
             self.ctx
