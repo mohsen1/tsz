@@ -1149,6 +1149,16 @@ remain on the fallback path until a typed alias-body query or canonical
 allowlist. Claim:
 [`claims/perf-lib-delegation-cache-type-params-2026-05-13.md`](claims/perf-lib-delegation-cache-type-params-2026-05-13.md).
 
+**2026-05-13 `compute_type_of_symbol` interface fast path:** for local
+single-declaration interfaces, we now skip three high-frequency costs when not
+needed: computed-name precompute maps, member type-parameter prewarm scans, and
+heritage merging when there is no local `extends` clause. On monorepo-006
+attribution mode, this preserves diagnostics (`10,198`) and call buckets
+(`total calls = 26,370`, `interface = 24,781`) while reducing warm-run check
+time from `80.69s` to `79.60s` (`-1.35%`) and total time from `82.36s` to
+`81.25s` (`-1.35%`). Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`

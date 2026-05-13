@@ -1452,6 +1452,59 @@ impl<'a> CheckerState<'a> {
                                 .any(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
                     })
             });
+            let mut has_local_interface_decl = false;
+            let mut has_local_interface_heritage_extends = false;
+            let mut has_local_computed_property_name = false;
+            let mut namespace_prefix = None;
+            for decl_idx in declarations.iter().copied() {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(interface) = self.ctx.arena.get_interface(node) else {
+                    continue;
+                };
+                has_local_interface_decl = true;
+                if namespace_prefix.is_none() {
+                    namespace_prefix = self.declaration_namespace_prefix(self.ctx.arena, decl_idx);
+                }
+                if !has_local_interface_heritage_extends
+                    && let Some(heritage_clauses) = interface.heritage_clauses.as_ref()
+                {
+                    has_local_interface_heritage_extends =
+                        heritage_clauses.nodes.iter().copied().any(|clause_idx| {
+                            self.ctx
+                                .arena
+                                .get(clause_idx)
+                                .and_then(|clause_node| {
+                                    self.ctx.arena.get_heritage_clause(clause_node)
+                                })
+                                .is_some_and(|clause| {
+                                    clause.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16
+                                })
+                        });
+                }
+                if has_local_computed_property_name {
+                    continue;
+                }
+                has_local_computed_property_name =
+                    interface.members.nodes.iter().copied().any(|member_idx| {
+                        let Some(member) = self.ctx.arena.get(member_idx) else {
+                            return false;
+                        };
+                        let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member) {
+                            sig.name
+                        } else if let Some(acc) = self.ctx.arena.get_accessor(member) {
+                            acc.name
+                        } else {
+                            return false;
+                        };
+                        self.ctx.arena.get(name_idx).is_some_and(|name_node| {
+                            name_node.kind
+                                == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    });
+            }
+
             // Only use the is_lib_symbol fallback when the per-declaration check
             // couldn't determine the arena origin (i.e. no declaration_arenas entry
             // AND the declaration exists in the current arena). The is_lib_symbol
@@ -1467,27 +1520,13 @@ impl<'a> CheckerState<'a> {
                 // interfaces will have real interface nodes; cross-arena collisions
                 // will have NodeIndexes that point to unrelated nodes. Only fall
                 // back to lib resolution when there's no real interface decl.
-                let has_real_interface_decl = declarations.iter().any(|&decl_idx| {
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_interface(node))
-                        .is_some()
-                });
-                !has_real_interface_decl && self.ctx.binder.symbol_arenas.contains_key(&sym_id)
+                !has_local_interface_decl && self.ctx.binder.symbol_arenas.contains_key(&sym_id)
             };
             // When all declarations are from lib arenas (no local interface
             // declarations), resolve via the lib type directly. But when the
             // user has local interface declarations that augment/extend the lib
             // type (e.g., `interface Node { forEachChild(...) }`), we must fall
             // through to the full merge path so user-declared members are included.
-            let has_local_interface_decl = declarations.iter().any(|&decl_idx| {
-                self.ctx
-                    .arena
-                    .get(decl_idx)
-                    .and_then(|node| self.ctx.arena.get_interface(node))
-                    .is_some()
-            });
             if (has_out_of_arena_decl || is_lib_symbol)
                 && !has_local_interface_decl
                 && !self.ctx.lib_contexts.is_empty()
@@ -1546,18 +1585,24 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
-                let computed_names = self.precompute_computed_property_names(&declarations);
-                let computed_symbol_names =
-                    self.precompute_symbol_named_computed_property_names(&declarations);
+                let (computed_names, computed_symbol_names) = if has_local_computed_property_name {
+                    (
+                        self.precompute_computed_property_names(&declarations),
+                        self.precompute_symbol_named_computed_property_names(&declarations),
+                    )
+                } else {
+                    (
+                        rustc_hash::FxHashMap::default(),
+                        rustc_hash::FxHashSet::default(),
+                    )
+                };
                 let prewarmed_type_params =
-                    self.prewarm_member_type_reference_params(&declarations);
-                let namespace_prefix = declarations.iter().copied().find_map(|decl_idx| {
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_interface(node))
-                        .and_then(|_| self.declaration_namespace_prefix(self.ctx.arena, decl_idx))
-                });
+                    if declarations.len() > 1 || has_out_of_arena_decl || has_cross_file_same_index
+                    {
+                        self.prewarm_member_type_reference_params(&declarations)
+                    } else {
+                        rustc_hash::FxHashMap::default()
+                    };
 
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
@@ -1659,8 +1704,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let mut interface_type =
-                    self.merge_interface_heritage_types(&declarations, interface_type);
+                let mut interface_type = if has_local_interface_heritage_extends {
+                    self.merge_interface_heritage_types(&declarations, interface_type)
+                } else {
+                    interface_type
+                };
 
                 // Merge heritage types from cross-file declarations that
                 // merge_interface_heritage_types couldn't process (it uses
