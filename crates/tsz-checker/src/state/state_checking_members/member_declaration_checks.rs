@@ -1547,6 +1547,28 @@ impl<'a> CheckerState<'a> {
         let legacy_decorator_not_valid = self.ctx.compiler_options.experimental_decorators
             && (is_private_member || is_class_expression_member);
 
+        // tsc passes `ClassAccessorDecoratorTarget` (ANY here) for auto-accessors and
+        // `undefined` for plain fields. Computed once before the loop; it is loop-invariant.
+        let es_field_first_arg: Option<TypeId> =
+            if !self.ctx.compiler_options.experimental_decorators
+                && node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && !is_ambient_field
+            {
+                Some(
+                    if self
+                        .ctx
+                        .arena
+                        .has_modifier_ref(modifiers, SyntaxKind::AccessorKeyword)
+                    {
+                        TypeId::ANY
+                    } else {
+                        TypeId::UNDEFINED
+                    },
+                )
+            } else {
+                None
+            };
+
         if let Some(modifiers) = modifiers {
             for &modifier_idx in &modifiers.nodes {
                 let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
@@ -1585,18 +1607,14 @@ impl<'a> CheckerState<'a> {
 
                 let decorator_type = self.compute_type_of_node(decorator.expression);
 
-                if !self.ctx.compiler_options.experimental_decorators
-                    && node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                    && !is_ambient_field
-                {
-                    self.check_es_property_decorator_call_signature(modifier_idx, decorator_type);
+                if let Some(first_arg) = es_field_first_arg {
+                    self.check_es_member_decorator_call_signature(
+                        modifier_idx,
+                        decorator_type,
+                        first_arg,
+                    );
                 }
 
-                // TS1329: Check if the decorator accepts too few arguments for this position.
-                // For experimental decorators on methods/accessors, the decorator is called
-                // with 3 arguments (target, propertyKey, descriptor). If the decorator has
-                // call signatures but none can accept 3 args, it's likely a factory that
-                // should be called first: @dec() instead of @dec.
                 if self.ctx.compiler_options.experimental_decorators
                     && !is_abstract
                     && !legacy_decorator_not_valid

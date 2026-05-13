@@ -1,22 +1,29 @@
 //! Class-member decorator signature validation helpers.
 
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// TS1240 for ES field decorators: the runtime invokes field decorators as
-    /// `decorator(undefined, context)`. Resolve the decorator expression against
-    /// that value argument so signatures that require the field value itself are
-    /// rejected like tsc.
-    pub(crate) fn check_es_property_decorator_call_signature(
+    /// TS1240 for ES property/accessor decorators.
+    ///
+    /// The runtime calling convention for ES (TC39) class-member decorators varies
+    /// by member kind:
+    ///
+    /// - Plain field: `decorator(undefined, context)` — `first_arg` is `TypeId::UNDEFINED`
+    /// - Auto-accessor: `decorator(target, context)` where `target` is a
+    ///   `ClassAccessorDecoratorTarget<V>` object — `first_arg` is `TypeId::ANY`
+    ///   (the solver does not yet model `ClassAccessorDecoratorTarget` precisely, so
+    ///   `ANY` is the conservative safe choice that avoids false positives while still
+    ///   catching non-callable decorators).
+    pub(crate) fn check_es_member_decorator_call_signature(
         &mut self,
         decorator_node: NodeIndex,
         decorator_type: TypeId,
+        first_arg: TypeId,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use crate::query_boundaries::common::CallResult;
-
         if decorator_type == TypeId::ERROR
             || decorator_type == TypeId::ANY
             || decorator_type == TypeId::UNKNOWN
@@ -32,7 +39,7 @@ impl<'a> CheckerState<'a> {
 
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
-            &[TypeId::UNDEFINED, TypeId::ANY],
+            &[first_arg, TypeId::ANY],
             false,
             None,
             None,
@@ -59,8 +66,6 @@ impl<'a> CheckerState<'a> {
         decorator_type: TypeId,
         decorator_node: NodeIndex,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
         if decorator_type == TypeId::ERROR
             || decorator_type == TypeId::ANY
             || decorator_type == TypeId::UNKNOWN
@@ -127,9 +132,6 @@ impl<'a> CheckerState<'a> {
         decorator_type: TypeId,
         is_constructor_parameter: bool,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use crate::query_boundaries::common::CallResult;
-
         if decorator_type == TypeId::ERROR
             || decorator_type == TypeId::ANY
             || decorator_type == TypeId::UNKNOWN
@@ -143,8 +145,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Per the runtime calling convention above, only the key argument
-        // shape varies by parameter position.
+        // Only the key argument shape varies by parameter position.
         let key_arg = if is_constructor_parameter {
             TypeId::UNDEFINED
         } else {
