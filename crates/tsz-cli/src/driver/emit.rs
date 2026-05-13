@@ -120,6 +120,19 @@ pub(crate) fn emit_outputs(
         context.program,
         context.options.printer.preserve_const_enums,
     );
+    let bundled_duplicate_var_names = declaration_bundle_path
+        .is_some()
+        .then(|| collect_bundled_duplicate_var_names(context.program))
+        .unwrap_or_default();
+    let bundled_prior_duplicate_var_types = declaration_bundle_path
+        .is_some()
+        .then(|| {
+            build_bundled_prior_duplicate_var_types_by_file(
+                context.program,
+                &bundled_duplicate_var_names,
+            )
+        })
+        .unwrap_or_default();
 
     // Build the set of JS output paths produced by TypeScript source files
     // (.ts/.tsx/.mts/.cts). When --allowJs is set and a JS input file (e.g.
@@ -437,6 +450,13 @@ pub(crate) fn emit_outputs(
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
+                    emitter.set_bundled_duplicate_var_context(
+                        bundled_duplicate_var_names.clone(),
+                        bundled_prior_duplicate_var_types
+                            .get(file_idx)
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
@@ -451,6 +471,13 @@ pub(crate) fn emit_outputs(
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
+                    emitter.set_bundled_duplicate_var_context(
+                        bundled_duplicate_var_names.clone(),
+                        bundled_prior_duplicate_var_types
+                            .get(file_idx)
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
                     emitter.set_strict_null_checks(context.options.checker.strict_null_checks);
@@ -2041,6 +2068,124 @@ fn mark_ambient_global_type_only_export_specifiers(
                 type_only_nodes.insert(spec_idx);
             }
         }
+    }
+}
+
+fn collect_bundled_duplicate_var_names(program: &MergedProgram) -> FxHashSet<String> {
+    let mut counts: FxHashMap<String, usize> = FxHashMap::default();
+    for file in &program.files {
+        for (name, _) in collect_top_level_var_declaration_types(&file.arena, file.source_file) {
+            *counts.entry(name).or_default() += 1;
+        }
+    }
+
+    counts
+        .into_iter()
+        .filter_map(|(name, count)| (count > 1).then_some(name))
+        .collect()
+}
+
+fn build_bundled_prior_duplicate_var_types_by_file(
+    program: &MergedProgram,
+    duplicate_names: &FxHashSet<String>,
+) -> Vec<FxHashMap<String, String>> {
+    let mut prior_types = FxHashMap::default();
+    let mut by_file = Vec::with_capacity(program.files.len());
+
+    for file in &program.files {
+        by_file.push(prior_types.clone());
+        for (name, type_text) in
+            collect_top_level_var_declaration_types(&file.arena, file.source_file)
+        {
+            if duplicate_names.contains(&name) {
+                prior_types.insert(name, type_text);
+            }
+        }
+    }
+
+    by_file
+}
+
+fn collect_top_level_var_declaration_types(
+    arena: &NodeArena,
+    source_file_idx: NodeIndex,
+) -> Vec<(String, String)> {
+    let Some(source) = arena
+        .get(source_file_idx)
+        .and_then(|node| arena.get_source_file(node))
+    else {
+        return Vec::new();
+    };
+
+    let mut declarations = Vec::new();
+    for &stmt_idx in &source.statements.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            continue;
+        }
+        let Some(var_stmt) = arena.get_variable(stmt_node) else {
+            continue;
+        };
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = arena.get(decl_list_idx) else {
+                continue;
+            };
+            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                continue;
+            }
+            let flags = decl_list_node.flags as u32;
+            if flags
+                & (tsz_parser::parser::node_flags::LET
+                    | tsz_parser::parser::node_flags::CONST
+                    | tsz_parser::parser::node_flags::USING)
+                != 0
+            {
+                continue;
+            }
+            let Some(decl_list) = arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                let Some(name) = arena.identifier_text_owned(decl.name) else {
+                    continue;
+                };
+                let type_text = primitive_variable_type_text(arena, decl.type_annotation)
+                    .or_else(|| primitive_variable_type_text(arena, decl.initializer))
+                    .unwrap_or_else(|| "any".to_string());
+                declarations.push((name, type_text));
+            }
+        }
+    }
+
+    declarations
+}
+
+fn primitive_variable_type_text(arena: &NodeArena, node_idx: NodeIndex) -> Option<String> {
+    let node = arena.get(node_idx)?;
+    match node.kind {
+        k if k == SyntaxKind::StringKeyword as u16 => Some("string".to_string()),
+        k if k == SyntaxKind::NumberKeyword as u16 => Some("number".to_string()),
+        k if k == SyntaxKind::BooleanKeyword as u16 => Some("boolean".to_string()),
+        k if k == SyntaxKind::StringLiteral as u16
+            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+        {
+            Some("string".to_string())
+        }
+        k if k == SyntaxKind::NumericLiteral as u16 || k == SyntaxKind::BigIntLiteral as u16 => {
+            Some("number".to_string())
+        }
+        k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+            Some("boolean".to_string())
+        }
+        _ => None,
     }
 }
 

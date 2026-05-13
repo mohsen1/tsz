@@ -1060,18 +1060,14 @@ impl<'a> DeclarationEmitter<'a> {
         let current_name = self.get_identifier_text(decl_name)?;
         let sym_id = binder.get_node_symbol(decl_name)?;
         let symbol = binder.symbols.get(sym_id)?;
-        let current_node = self.arena.get(decl_idx)?;
 
         for prior_decl_idx in symbol.declarations.iter().copied() {
             if prior_decl_idx == decl_idx {
-                return None;
+                break;
             }
             let Some(prior_node) = self.arena.get(prior_decl_idx) else {
                 continue;
             };
-            if prior_node.pos >= current_node.pos {
-                continue;
-            }
             let Some(prior_decl) = self.arena.get_variable_declaration(prior_node) else {
                 continue;
             };
@@ -1103,7 +1099,49 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        None
+        self.bundled_prior_duplicate_var_types
+            .get(&current_name)
+            .cloned()
+    }
+
+    pub(in crate::declaration_emitter) fn has_duplicate_variable_declaration(
+        &self,
+        decl_idx: NodeIndex,
+        decl_name: NodeIndex,
+    ) -> bool {
+        if let Some(current_name) = self.get_identifier_text(decl_name)
+            && self
+                .bundled_duplicate_var_names
+                .contains(current_name.as_str())
+        {
+            return true;
+        }
+
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(current_name) = self.get_identifier_text(decl_name) else {
+            return false;
+        };
+        let Some(sym_id) = binder.get_node_symbol(decl_name) else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|other_decl_idx| {
+            if other_decl_idx == decl_idx {
+                return false;
+            }
+            let Some(other_node) = self.arena.get(other_decl_idx) else {
+                return false;
+            };
+            let Some(other_decl) = self.arena.get_variable_declaration(other_node) else {
+                return false;
+            };
+            self.get_identifier_text(other_decl.name).as_deref() == Some(current_name.as_str())
+        })
     }
 
     pub(in crate::declaration_emitter) fn data_view_new_expression_type_text(

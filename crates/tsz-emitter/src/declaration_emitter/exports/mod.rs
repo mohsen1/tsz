@@ -2097,7 +2097,10 @@ impl<'a> DeclarationEmitter<'a> {
                         }) || self
                             .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
                             .is_some();
-                        if has_jsdoc || is_named_js_export {
+                        let has_duplicate_var = regular_decls.iter().any(|(decl_idx, decl)| {
+                            self.has_duplicate_variable_declaration(*decl_idx, decl.name)
+                        });
+                        if has_jsdoc || is_named_js_export || has_duplicate_var {
                             "var"
                         } else {
                             keyword
