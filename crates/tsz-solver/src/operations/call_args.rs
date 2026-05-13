@@ -430,7 +430,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.interner.as_type_database(),
                     constraint,
                 )
-                && !self.checker.is_assignable_to(*arg_type, constraint)
+                && !self.arg_satisfies_type_parameter_constraint(*arg_type, constraint)
                 && !self.is_function_union_compat(*arg_type, constraint)
             {
                 // Use the type parameter itself (e.g., `T`) in the error message,
