@@ -1358,6 +1358,23 @@ export function fn3(uuid) {}
 }
 
 #[test]
+fn test_js_satisfies_function_type_parsing_handles_quoted_commas_and_parens() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @satisfies {(tag: "x,y", close: ")") => void}
+ */
+export const fn = (tag, close) => {};
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn(tag: \"x,y\", close: \")\"): void;"),
+        "Expected quoted comma/paren literals in @satisfies function params to preserve parameter parsing: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"
