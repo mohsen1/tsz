@@ -3813,7 +3813,7 @@ Object.defineProperty(E.prototype, "x", { set: setter });
 
 #[test]
 fn test_js_named_export_equals_class_expression_shadowing_preserves_root_name() {
-    let output = emit_js_dts(
+    let output = emit_js_dts_with_usage_analysis(
         r#"
 class A {
     member = new Q();
@@ -3837,6 +3837,10 @@ module.exports.Another = Q;
     assert!(
         output.contains("declare namespace Q {"),
         "Expected named CommonJS class export-equals roots to own their namespace aliases: {output}"
+    );
+    assert!(
+        output.contains("declare class A {\n    member: Q;\n}"),
+        "Expected local classes referenced by the exported class expression surface to be retained: {output}"
     );
     assert!(
         output.contains("export { Q_1 as Another };"),
