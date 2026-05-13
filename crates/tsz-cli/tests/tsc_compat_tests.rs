@@ -118,6 +118,42 @@ fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
 }
 
 #[test]
+fn accessor_modifier_below_es2015_reports_ts18045() {
+    let temp = TempDir::new("accessor_modifier_below_es2015").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"class Counter {
+    accessor count = 0;
+}
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es5",
+            "--ignoreDeprecations",
+            "6.0",
+            "--pretty",
+            "false",
+            "test.ts",
+        ],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(code, 0, "ES5 accessor property should fail");
+    assert!(
+        output.contains("error TS18045: Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher."),
+        "expected TS18045 for ES5 accessor property, got:\n{output}"
+    );
+}
+
+#[test]
 fn tsconfig_output_only_flags_accept_jsonc_trailing_commas() {
     let temp = TempDir::new("output_only_flags_jsonc").expect("temp dir");
     write_file(
