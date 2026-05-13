@@ -1788,6 +1788,34 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // When the base constructor type is an intersection (e.g., mixin patterns
+        // like `T & (new (...args) => Mixin)`), constructor signatures come from
+        // different intersection members and naturally have different return types.
+        // tsc doesn't compare return types across intersection members. Invalid
+        // mixin constructor constraints are handled by the explicit check above.
+        let has_intersection_instance =
+            crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                self.ctx.types,
+                base_constructor_type,
+            )
+            .is_some_and(|instance_type| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
+                    .is_some()
+            });
+        let has_prototype_property = crate::query_boundaries::common::has_property_by_str(
+            self.ctx.types,
+            base_constructor_type,
+            "prototype",
+        );
+        if crate::query_boundaries::common::is_intersection_type(
+            self.ctx.types,
+            base_constructor_type,
+        ) || has_intersection_instance
+            || has_prototype_property
+        {
+            return;
+        }
+
         let mut return_types = Vec::with_capacity(matching.len());
         for sig in matching {
             let mut args = provided_types.clone();
@@ -1810,45 +1838,17 @@ impl<'a> CheckerState<'a> {
         let Some((first_return, rest)) = return_types.split_first() else {
             return;
         };
-        let has_incompatible_return = rest.iter().copied().any(|candidate_return| {
-            !self.are_mutually_assignable(*first_return, candidate_return)
+        for &candidate_return in rest {
+            if !self.are_mutually_assignable(*first_return, candidate_return)
                 || !self.are_mutually_assignable(candidate_return, *first_return)
-        });
-
-        // When the base constructor type is an intersection (e.g., mixin patterns
-        // like `T & (new (...args) => Mixin)`), constructor signatures come from
-        // different intersection members and naturally have different return types.
-        // tsc doesn't compare return types across safe intersection artifacts.
-        let has_intersection_instance =
-            crate::query_boundaries::flow_analysis::instance_type_from_constructor(
-                self.ctx.types,
-                base_constructor_type,
-            )
-            .is_some_and(|instance_type| {
-                crate::query_boundaries::common::intersection_members(self.ctx.types, instance_type)
-                    .is_some()
-            });
-        let has_prototype_property = crate::query_boundaries::common::has_property_by_str(
-            self.ctx.types,
-            base_constructor_type,
-            "prototype",
-        );
-        if !has_incompatible_return
-            && (crate::query_boundaries::common::is_intersection_type(
-                self.ctx.types,
-                base_constructor_type,
-            ) || has_intersection_instance
-                || has_prototype_property)
-        {
-            return;
-        }
-
-        if has_incompatible_return {
-            self.error_at_node(
+            {
+                self.error_at_node(
                 expr_idx,
                 crate::diagnostics::diagnostic_messages::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
                 crate::diagnostics::diagnostic_codes::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
             );
+                return;
+            }
         }
     }
 

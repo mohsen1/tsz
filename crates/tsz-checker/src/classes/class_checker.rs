@@ -1501,20 +1501,6 @@ impl<'a> CheckerState<'a> {
                     } else {
                         rustc_hash::FxHashSet::default()
                     };
-                    if let Some(static_type) = base_static_type
-                        && self
-                            .incompatible_constructor_return_types(static_type)
-                            .is_some()
-                    {
-                        self.error_at_node(
-                            class_data.name,
-                            &format!(
-                                "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side '{}'.",
-                                self.format_type(static_type)
-                            ),
-                            diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
-                        );
-                    }
                     self.check_non_public_member_inheritance_conflicts_against_type(
                         class_data,
                         instance_type,
