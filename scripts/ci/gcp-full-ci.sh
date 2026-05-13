@@ -430,11 +430,17 @@ init_typescript_submodule() {
   if [[ "$SYNTHETIC_GIT_CHECKOUT" -eq 0 ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     local gitlink_ref
     gitlink_ref="$(git ls-tree HEAD TypeScript | awk '{print $3}')"
-    if [[ -n "$gitlink_ref" && "$gitlink_ref" != "$expected_ref" ]]; then
+    if [[ -z "$gitlink_ref" ]]; then
+      rm -rf TypeScript
+      git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
+      git -C TypeScript fetch --depth 1 origin "$expected_ref"
+      git -C TypeScript checkout --detach FETCH_HEAD
+    elif [[ "$gitlink_ref" != "$expected_ref" ]]; then
       echo "error: scripts/ci/typescript-submodule-ref is stale: ${expected_ref} != ${gitlink_ref}" >&2
       return 1
+    else
+      git submodule update --init --depth 1 -- TypeScript
     fi
-    git submodule update --init --depth 1 -- TypeScript
   else
     rm -rf TypeScript
     git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
