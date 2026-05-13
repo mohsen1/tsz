@@ -1,12 +1,10 @@
 # Delegate Lib Utility Aliases - 2026-05-13
 
-This run admits the measured `FlatArray` actual-lib type-alias row from the
-repeated declaration-file residue table. The admitted declaration still has to
-match the supported indexed type-literal plus conditional-index utility shape.
-The earlier exploratory branch also tried `IteratorResult`, `Record`, and then
-broader shape-only routing, but hosted conformance regressed iterator-return
-fingerprints and recursive mapped type relationships, so those alias body shapes
-stay on the fallback path.
+This run admits the one actual-lib type-alias row from the repeated
+declaration-file residue table that is safe in conformance: `FlatArray`.
+The earlier exploratory branch also tried `IteratorResult` and `Record`, but
+hosted conformance regressed iterator-return fingerprints and recursive mapped
+type relationships, so those aliases stay on the fallback path.
 
 The implementation is intentionally guarded:
 
@@ -14,8 +12,6 @@ The implementation is intentionally guarded:
 - source must be `symbol_arenas`
 - symbol must be type-only
 - every declaration must match the exact alias name in an actual lib arena
-- the symbol must be the measured `FlatArray` row
-- every alias declaration must have the supported indexed-access body shape
 - alias lowering reuses the existing paired body/type-parameter resolver
 
 ## Reproducer
@@ -49,9 +45,8 @@ emits TypeScript diagnostics. It still writes both JSON artifacts.
 | `checker.with_parent_cache_constructed` | 31 | 30 |
 | `DelegateCrossArenaSymbol` children | 28 | 27 |
 
-The indexed utility alias row drops from count 2 to count 1; `IteratorResult`
-and `Record` remain on fallback after the conformance failure on the broader
-exploratory branch:
+`FlatArray` drops from count 2 to count 1; `IteratorResult` and `Record` remain
+on fallback after the conformance failure on the broader exploratory branch:
 
 | Symbol | Before | After | Target file |
 | --- | ---: | ---: | --- |
@@ -65,10 +60,10 @@ declared alias shape for recursive and iterator-sensitive diagnostics.
 
 ## Next Target
 
-Do not expand this mechanically. The broader exploratory branch regressed
-conformance below the aggregate tolerance. The bigger follow-up should extract
-a dedicated direct lib type-alias body path, then route declaration-file aliases
-through the typed cross-file query cache or prepopulate canonical lib alias
-bodies in `DefinitionStore`. That would give reviewable coverage for all
-actual-lib aliases while keeping unsupported declaration-file aliases on the
-child-checker fallback.
+Do not expand this allowlist mechanically. The broader exploratory branch
+regressed conformance below the aggregate tolerance. The bigger follow-up
+should extract a dedicated direct lib type-alias body path, then route
+declaration-file aliases through the typed cross-file query cache or
+prepopulate canonical lib alias bodies in `DefinitionStore`. That would give
+reviewable coverage for all actual-lib aliases while keeping unsupported
+declaration-file aliases on the child-checker fallback.

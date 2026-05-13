@@ -116,6 +116,10 @@ fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
     matches!(name, "CollatorOptions")
 }
 
+fn is_direct_actual_lib_utility_alias_name(name: &str) -> bool {
+    matches!(name, "FlatArray")
+}
+
 impl<'a> CheckerState<'a> {
     fn symbol_declarations_are_direct_actual_lib_only(
         &self,
@@ -187,7 +191,21 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
-            return None;
+            let name = symbol.escaped_name.clone();
+            if !is_direct_actual_lib_utility_alias_name(&name)
+                || !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name)
+            {
+                return None;
+            }
+            let (direct_type, params) = self.type_reference_symbol_type_with_params(sym_id);
+            if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
+                return None;
+            }
+            self.ctx.symbol_types.insert(sym_id, direct_type);
+            self.ctx
+                .lib_delegation_cache
+                .insert(sym_id, (direct_type, params.clone()));
+            return Some((direct_type, params));
         }
         let name = symbol.escaped_name.clone();
         if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name) {
@@ -711,6 +729,7 @@ mod tests {
     use crate::context::{CheckerContext, CheckerOptions, LibContext};
     use crate::state::CheckerState;
     use crate::test_utils::load_lib_files;
+    use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_common::perf_counters::CrossArenaSymbolMissSource;
@@ -1015,6 +1034,130 @@ mod tests {
             cached_params.len(),
             params.len(),
             "cache hits must preserve generic application metadata",
+        );
+    }
+
+    #[test]
+    fn resolves_repeated_actual_lib_utility_aliases_directly() {
+        let lib_files = load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts", "es2019.array.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let flat_array_sym_id = resolve_name_to_lib_symbol(
+            "FlatArray",
+            state.ctx.binder,
+            state.ctx.global_file_locals_index.as_deref(),
+            state
+                .ctx
+                .all_binders
+                .as_ref()
+                .map(|binders| binders.as_ref().as_slice()),
+            &state.ctx.lib_contexts,
+        )
+        .expect("FlatArray should resolve to a lib symbol");
+        let flat_array_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&flat_array_sym_id)
+            .map(std::convert::AsRef::as_ref);
+
+        let (ty, params) = state
+            .direct_actual_lib_symbol_type(
+                flat_array_sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                flat_array_arena,
+                false,
+            )
+            .expect("FlatArray should lower through the direct alias path");
+
+        assert_ne!(ty, TypeId::UNKNOWN, "FlatArray should not lower to UNKNOWN");
+        assert_ne!(ty, TypeId::ERROR, "FlatArray should not lower to ERROR");
+        assert_eq!(params.len(), 2, "FlatArray type params");
+
+        for name in ["IteratorResult", "Record", "Partial"] {
+            let sym_id = resolve_name_to_lib_symbol(
+                name,
+                state.ctx.binder,
+                state.ctx.global_file_locals_index.as_deref(),
+                state
+                    .ctx
+                    .all_binders
+                    .as_ref()
+                    .map(|binders| binders.as_ref().as_slice()),
+                &state.ctx.lib_contexts,
+            )
+            .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
+            let delegate_arena = state
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map(std::convert::AsRef::as_ref);
+
+            assert!(
+                state
+                    .direct_actual_lib_symbol_type(
+                        sym_id,
+                        CrossArenaSymbolMissSource::SymbolArena,
+                        delegate_arena,
+                        false,
+                    )
+                    .is_none(),
+                "{name} should stay on the fallback path",
+            );
+        }
+
+        let partial_sym_id = resolve_name_to_lib_symbol(
+            "Partial",
+            state.ctx.binder,
+            state.ctx.global_file_locals_index.as_deref(),
+            state
+                .ctx
+                .all_binders
+                .as_ref()
+                .map(|binders| binders.as_ref().as_slice()),
+            &state.ctx.lib_contexts,
+        )
+        .expect("Partial should resolve to a lib symbol");
+        let partial_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&partial_sym_id)
+            .map(std::convert::AsRef::as_ref);
+        assert!(
+            state
+                .direct_actual_lib_symbol_type(
+                    partial_sym_id,
+                    CrossArenaSymbolMissSource::SymbolArena,
+                    partial_arena,
+                    false,
+                )
+                .is_none(),
+            "unproven lib aliases should stay on the fallback path",
         );
     }
 }
