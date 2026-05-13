@@ -103,6 +103,12 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        if let Some(type_text) =
+            self.generic_call_conditional_function_property_tuple_type_text(expr_idx)
+        {
+            return Some(type_text);
+        }
+
         if let Some(type_text) = self.generic_call_object_property_literal_type_text(expr_idx) {
             return Some(type_text);
         }
@@ -116,6 +122,168 @@ impl<'a> DeclarationEmitter<'a> {
         let interner = self.type_interner?;
         tsz_solver::type_queries::is_literal_or_literal_union_type(interner, type_id)
             .then(|| self.print_type_id_for_inferred_declaration(type_id))
+    }
+
+    fn generic_call_conditional_function_property_tuple_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_id = self.get_node_type_or_names(&[expr_idx])?;
+        if type_id == tsz_solver::types::TypeId::ANY || type_id == tsz_solver::types::TypeId::ERROR
+        {
+            return None;
+        }
+        let inferred_type_text = self.print_type_id_for_inferred_declaration(type_id);
+        let mut tuple_elements = Self::plain_tuple_type_text_elements(&inferred_type_text)?;
+
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let arguments = call.arguments.as_ref()?;
+        let object_arg_idx = arguments.nodes.first().copied()?;
+
+        let replacements = if self.function_expression_has_type_parameters(call.expression) {
+            let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+            let callee_node = self.arena.get(callee_idx)?;
+            let func = self.arena.get_function(callee_node)?;
+            self.conditional_function_property_tuple_replacements(self.arena, func, object_arg_idx)
+        } else {
+            let sym_id = self.value_reference_symbol(call.expression)?;
+            let binder = self.binder?;
+            let sym_id = self
+                .resolve_portability_import_alias(sym_id, binder)
+                .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+            self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+                let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
+                self.conditional_function_property_tuple_replacements(
+                    source_arena,
+                    func,
+                    object_arg_idx,
+                )
+            })
+        }?;
+
+        let mut changed = false;
+        for (index, type_text) in replacements {
+            if let Some(element) = tuple_elements.get_mut(index) {
+                if *element != type_text {
+                    *element = type_text;
+                    changed = true;
+                }
+            }
+        }
+
+        changed.then(|| format!("[{}]", tuple_elements.join(", ")))
+    }
+
+    fn conditional_function_property_tuple_replacements(
+        &self,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+        object_arg_idx: NodeIndex,
+    ) -> Option<Vec<(usize, String)>> {
+        let return_type_params = function_return_tuple_type_parameter_names(source_arena, func)?;
+        let param_idx = func.parameters.nodes.first().copied()?;
+        let param_node = source_arena.get(param_idx)?;
+        let param = source_arena.get_parameter(param_node)?;
+        let property_return_type_params =
+            type_literal_function_property_return_type_params(source_arena, param.type_annotation);
+
+        let mut replacements = Vec::new();
+        for (property_name, type_param_name) in property_return_type_params {
+            let Some(tuple_index) = return_type_params
+                .iter()
+                .position(|name| name == &type_param_name)
+            else {
+                continue;
+            };
+            let Some(initializer) =
+                self.object_literal_property_initializer(object_arg_idx, &property_name)
+            else {
+                continue;
+            };
+            let Some(type_text) =
+                self.conditional_function_return_literal_union_type_text(initializer)
+            else {
+                continue;
+            };
+            replacements.push((tuple_index, type_text));
+        }
+
+        (!replacements.is_empty()).then_some(replacements)
+    }
+
+    fn object_literal_property_initializer(
+        &self,
+        object_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<NodeIndex> {
+        let object_idx = self.skip_parenthesized_expression(object_idx)?;
+        let object_node = self.arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            if self.object_literal_member_name_text(name_idx).as_deref() != Some(property_name) {
+                continue;
+            }
+            return self.object_literal_member_initializer(member_node);
+        }
+        None
+    }
+
+    fn conditional_function_return_literal_union_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            return None;
+        }
+        let conditional = self.arena.get_conditional_expr(expr_node)?;
+        let left = self.function_expression_literal_return_type_text(conditional.when_true)?;
+        let right = self.function_expression_literal_return_type_text(conditional.when_false)?;
+        if left == right {
+            Some(left)
+        } else {
+            Some(format!("{left} | {right}"))
+        }
+    }
+
+    fn function_expression_literal_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.arena.get_function(expr_node)?;
+        let return_expr = if self
+            .arena
+            .get(func.body)
+            .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK)
+        {
+            self.function_body_single_return_expression(func.body)?
+        } else {
+            func.body
+        };
+        self.const_literal_initializer_text_deep(return_expr)
+    }
+
+    fn plain_tuple_type_text_elements(type_text: &str) -> Option<Vec<String>> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?;
+        Some(
+            Self::split_top_level_commas(inner)
+                .into_iter()
+                .map(str::trim)
+                .map(str::to_string)
+                .collect(),
+        )
     }
 
     fn generic_call_object_property_literal_type_text(
@@ -253,6 +421,71 @@ fn function_return_type_parameter_name(
     func: &FunctionData,
 ) -> Option<String> {
     type_reference_identifier_name(source_arena, func.type_annotation)
+}
+
+fn function_return_tuple_type_parameter_names(
+    source_arena: &NodeArena,
+    func: &FunctionData,
+) -> Option<Vec<String>> {
+    let return_node = source_arena.get(func.type_annotation)?;
+    if return_node.kind != syntax_kind_ext::TUPLE_TYPE {
+        return None;
+    }
+    let tuple = source_arena.get_tuple_type(return_node)?;
+    tuple
+        .elements
+        .nodes
+        .iter()
+        .copied()
+        .map(|element_idx| type_reference_identifier_name(source_arena, element_idx))
+        .collect()
+}
+
+fn type_literal_function_property_return_type_params(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+) -> Vec<(String, String)> {
+    let Some(type_node) = source_arena.get(type_idx) else {
+        return Vec::new();
+    };
+    if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+        return Vec::new();
+    }
+    let Some(type_literal) = source_arena.get_type_literal(type_node) else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    for &member_idx in &type_literal.members.nodes {
+        let Some(member_node) = source_arena.get(member_idx) else {
+            continue;
+        };
+        if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+            continue;
+        }
+        let Some(signature) = source_arena.get_signature(member_node) else {
+            continue;
+        };
+        let Some(property_name) = identifier_text(source_arena, signature.name) else {
+            continue;
+        };
+        let Some(type_node) = source_arena.get(signature.type_annotation) else {
+            continue;
+        };
+        if type_node.kind != syntax_kind_ext::FUNCTION_TYPE {
+            continue;
+        }
+        let Some(function_type) = source_arena.get_function_type(type_node) else {
+            continue;
+        };
+        let Some(return_type_param) =
+            type_reference_identifier_name(source_arena, function_type.type_annotation)
+        else {
+            continue;
+        };
+        result.push((property_name, return_type_param));
+    }
+    result
 }
 
 fn parameter_type_has_property_type_parameter(

@@ -734,8 +734,12 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             let outer_func = outer_func?;
             let return_expr = self
-                .const_asserted_expression(inner_func.body)
+                .function_body_unique_return_expression(inner_func.body)
+                .filter(|idx| idx.is_some())
                 .unwrap_or(inner_func.body);
+            let return_expr = self
+                .const_asserted_expression(return_expr)
+                .unwrap_or(return_expr);
             let return_node = self.arena.get(return_expr)?;
             if let Some(type_text) = self.returned_call_expression_type_text_from_outer_parameter(
                 outer_func,
@@ -790,6 +794,29 @@ impl<'a> DeclarationEmitter<'a> {
         let call = self.arena.get_call_expr(return_node)?;
         let callee_idx = self.skip_parenthesized_expression(call.expression)?;
         let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(member_type) =
+                self.property_access_declared_type_annotation_text(callee_idx)
+                && let Some(parts) = Self::parse_function_type_text(&member_type)
+            {
+                if parts.return_type.trim() == "unknown" {
+                    return self.outer_parameter_property_function_return_type_text(
+                        outer_func,
+                        callee_idx,
+                        inner_type_param_renames,
+                    );
+                }
+                return Some(Self::rename_type_text_identifiers(
+                    &parts.return_type,
+                    inner_type_param_renames,
+                ));
+            }
+            return self.outer_parameter_property_function_return_type_text(
+                outer_func,
+                callee_idx,
+                inner_type_param_renames,
+            );
+        }
         if callee_node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
@@ -799,6 +826,129 @@ impl<'a> DeclarationEmitter<'a> {
             &parts.return_type,
             inner_type_param_renames,
         ))
+    }
+
+    fn outer_parameter_property_function_return_type_text(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+        callee_idx: NodeIndex,
+        inner_type_param_renames: &[(String, String)],
+    ) -> Option<String> {
+        let access_node = self.arena.get(callee_idx)?;
+        let access = self.arena.get_access_expr(access_node)?;
+        let expression_idx = self.skip_parenthesized_expression(access.expression)?;
+        let property_name =
+            self.property_name_text_from_arena(self.arena, access.name_or_argument)?;
+        let parameter_type = self.function_parameter_type_text(outer_func, expression_idx)?;
+        let (target_name, target_args) = Self::parse_type_reference_text(&parameter_type)?;
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|idx| self.arena.get(idx))
+            .and_then(|node| self.arena.get_source_file(node))?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = self.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            if self.get_identifier_text(interface.name).as_deref() != Some(&target_name) {
+                continue;
+            }
+
+            let type_param_names = interface
+                .type_parameters
+                .as_ref()
+                .map(|type_params| self.collect_type_param_names(type_params))
+                .unwrap_or_default();
+            if type_param_names.len() != target_args.len() {
+                continue;
+            }
+            let substitutions: Vec<(String, String)> = type_param_names
+                .into_iter()
+                .zip(target_args.iter().cloned())
+                .collect();
+
+            for &member_idx in &interface.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(signature) = self.arena.get_signature(member_node) else {
+                    continue;
+                };
+                if self
+                    .property_name_text_from_arena(self.arena, signature.name)
+                    .as_deref()
+                    != Some(&property_name)
+                {
+                    continue;
+                }
+                let member_type = self.emit_type_node_text(signature.type_annotation)?;
+                let parts = Self::parse_function_type_text(&member_type)?;
+                let substituted =
+                    Self::rename_type_text_identifiers(&parts.return_type, &substitutions);
+                return Some(Self::rename_type_text_identifiers(
+                    &substituted,
+                    inner_type_param_renames,
+                ));
+            }
+        }
+
+        None
+    }
+
+    fn parse_type_reference_text(type_text: &str) -> Option<(String, Vec<String>)> {
+        let trimmed = type_text.trim();
+        let Some(lt_idx) = trimmed.find('<') else {
+            return Self::is_simple_type_reference_name(trimmed)
+                .then(|| (trimmed.to_string(), Vec::new()));
+        };
+        let name = trimmed.get(..lt_idx)?.trim();
+        if !Self::is_simple_type_reference_name(name) || !trimmed.ends_with('>') {
+            return None;
+        }
+        let args_text = trimmed.get(lt_idx + 1..trimmed.len() - 1)?;
+        let args = Self::split_top_level_commas(args_text)
+            .into_iter()
+            .map(str::trim)
+            .filter(|arg| !arg.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        Some((name.to_string(), args))
+    }
+
+    fn is_simple_type_reference_name(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if first != '_' && first != '$' && !first.is_ascii_alphabetic() {
+            return false;
+        }
+        chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    }
+
+    fn function_body_unique_return_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return Some(body_idx);
+        }
+        let block = self.arena.get_block(body_node)?;
+        let mut result = None;
+        for stmt_idx in block.statements.nodes.iter().copied() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                continue;
+            }
+            let ret = self.arena.get_return_statement(stmt_node)?;
+            if !ret.expression.is_some() || result.replace(ret.expression).is_some() {
+                return None;
+            }
+        }
+        result
     }
 
     fn jsdoc_returned_function_return_type_text(
