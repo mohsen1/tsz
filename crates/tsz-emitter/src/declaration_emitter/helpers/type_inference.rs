@@ -247,7 +247,19 @@ impl<'a> DeclarationEmitter<'a> {
                         let arg_position =
                             param_to_type_param.iter().position(|&i| i == *tp_idx)?;
                         let arg_idx = arg_idxs[arg_position];
-                        parts.push(self.direct_value_reference_typeof_text(arg_idx)?);
+                        let arg_text = self
+                            .direct_value_reference_typeof_text(arg_idx)
+                            .or_else(|| {
+                                self.call_expression_reused_type_text(arg_idx)
+                                    .filter(|text| {
+                                        text != "any" && text != "unknown" && !text.contains("any")
+                                    })
+                            })
+                            .or_else(|| {
+                                self.nameable_constructor_expression_text(arg_idx)
+                                    .map(|name| format!("typeof {name}"))
+                            })?;
+                        parts.push(arg_text);
                     }
                     ReturnPart::Verbatim(member_idx) => {
                         let member_node = self.arena.get(*member_idx)?;
@@ -268,7 +280,11 @@ impl<'a> DeclarationEmitter<'a> {
             if parts.is_empty() {
                 continue;
             }
-            return Some(parts.join(" & "));
+            let type_text = parts.join(" & ");
+            return Some(
+                self.expand_portable_intersection_type_text(self.arena, &type_text)
+                    .unwrap_or(type_text),
+            );
         }
 
         None
@@ -4165,7 +4181,17 @@ impl<'a> DeclarationEmitter<'a> {
         let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
         self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
             let decl_node = source_arena.get(decl_idx)?;
-            let callable = Self::callable_decl_parts_from_node(source_arena, decl_node)?;
+            let callable =
+                Self::callable_decl_parts_from_node(source_arena, decl_node).or_else(|| {
+                    let func = self.callable_function_from_symbol_decl(source_arena, decl_idx)?;
+                    Some(CallableDeclParts {
+                        modifiers: func.modifiers.as_ref(),
+                        type_parameters: func.type_parameters.as_ref(),
+                        parameters: &func.parameters,
+                        type_annotation: func.type_annotation,
+                        body: func.body,
+                    })
+                })?;
             let source_file = self.arena_source_file(source_arena)?;
             let is_ambient_function =
                 source_file.is_declaration_file || source_arena.is_declare_ref(callable.modifiers);
@@ -4208,6 +4234,28 @@ impl<'a> DeclarationEmitter<'a> {
                 .trim_end_matches(';')
                 .trim_end()
                 .to_string();
+            if callable.body.is_some()
+                && let (Some(type_node), Some(body_node), Some(source_file)) = (
+                    source_arena.get(callable.type_annotation),
+                    source_arena.get(callable.body),
+                    self.arena_source_file(source_arena),
+                )
+                && type_node.pos < body_node.pos
+                && let Some(slice) = source_file
+                    .text
+                    .get(type_node.pos as usize..body_node.pos as usize)
+            {
+                let trimmed = slice
+                    .trim_end()
+                    .trim_end_matches(';')
+                    .trim_end()
+                    .strip_suffix("=>")
+                    .unwrap_or_else(|| slice.trim_end().trim_end_matches(';').trim_end())
+                    .trim_end();
+                if !trimmed.is_empty() {
+                    type_text = trimmed.to_string();
+                }
+            }
 
             let mut type_param_names = Vec::new();
             let mut type_param_substitutions = Vec::new();
@@ -4416,6 +4464,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
             type_text = Self::ensure_single_line_type_literal_member_semicolon(&type_text);
             let formatted = self.format_reused_call_structural_return_type_text(&type_text);
+            let formatted = self
+                .expand_portable_intersection_type_text(source_arena, &formatted)
+                .unwrap_or(formatted);
             Some(
                 self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &formatted)
                     .unwrap_or(formatted),
@@ -8220,7 +8271,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.get_identifier_text(access.expression).as_deref() == Some("Symbol")
     }
 
-    fn format_object_member_type_text(name: &str, type_text: &str, depth: u32) -> String {
+    pub(in crate::declaration_emitter) fn format_object_member_type_text(
+        name: &str,
+        type_text: &str,
+        depth: u32,
+    ) -> String {
         if !type_text.contains('\n') {
             return format!("{name}: {type_text}");
         }
@@ -8362,7 +8417,10 @@ impl<'a> DeclarationEmitter<'a> {
         returned
     }
 
-    fn format_object_member_entry(member_indent: &str, member_text: &str) -> String {
+    pub(in crate::declaration_emitter) fn format_object_member_entry(
+        member_indent: &str,
+        member_text: &str,
+    ) -> String {
         let mut lines = member_text.lines();
         let first = lines.next().unwrap_or(member_text);
         let mut result = String::new();
