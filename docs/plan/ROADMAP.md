@@ -160,7 +160,7 @@ Highest-risk areas:
 
 Track these over time:
 
-1. `CheckerContext` field count (cap 234 after adding an explicit source-file symbol cache scope).
+1. `CheckerContext` field count.
 2. Frontend crates directly depending on parser/binder/checker/solver/emitter internals.
 3. Direct solver imports outside solver/checker boundary modules.
 4. Independent parse-bind-check orchestration paths.
