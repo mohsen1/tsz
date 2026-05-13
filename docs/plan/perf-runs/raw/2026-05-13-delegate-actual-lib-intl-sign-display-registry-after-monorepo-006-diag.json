@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "mode": "timing",
+  "tsz": {
+    "version": "0.1.9",
+    "commit": null,
+    "profile": "release"
+  },
+  "fixture": {
+    "name": null,
+    "repo": null,
+    "ref": null,
+    "actual_commit": null,
+    "path": null,
+    "local_override": false
+  },
+  "command_line": [
+    ".target/release/tsz",
+    "--noEmit",
+    "-p",
+    "/private/tmp/tsz-bench-fixtures/monorepo-006/tsconfig.json",
+    "--extendedDiagnostics",
+    "--pretty",
+    "false",
+    "--diagnostics-json",
+    "/tmp/tsz-perf-goal-next/intl-sign-registry-after-diag.json",
+    "--perf-counters-json",
+    "/tmp/tsz-perf-goal-next/intl-sign-registry-after-pc.json"
+  ],
+  "phases_ms": {
+    "config_discovery": 0.0,
+    "source_discovery": 0.0,
+    "module_resolution": 0.0,
+    "io_read": 277.163167,
+    "load_libs": 2.845708,
+    "parse_bind": 1107.699542,
+    "check": 117608.274416,
+    "emit": 0.00025,
+    "total": 119036.440459
+  },
+  "counts": {
+    "files": 5332,
+    "root_files": 5250,
+    "lib_files": 82,
+    "source_bytes": 0,
+    "diagnostics": 10198
+  },
+  "rss_peak_bytes": 3012378624
+}

@@ -132,6 +132,7 @@ fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
             | "DateTimeFormatOptions"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsSignDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
     )
@@ -146,6 +147,7 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
             | "IteratorObject"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsSignDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
             | "Object"
@@ -1232,6 +1234,7 @@ mod tests {
             "Function",
             "NumberFormatOptions",
             "NumberFormatOptionsCurrencyDisplayRegistry",
+            "NumberFormatOptionsSignDisplayRegistry",
             "NumberFormatOptionsStyleRegistry",
             "NumberFormatOptionsUseGroupingRegistry",
             "Object",
