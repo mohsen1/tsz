@@ -1,6 +1,6 @@
 # Claim: reuse call resolution diagnostic helper
 
-Status: WIP
+Status: Ready
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6223
 Branch: `codex/cleanup-call-resolution-helper-20260513`
@@ -16,5 +16,6 @@ Branch: `codex/cleanup-call-resolution-helper-20260513`
 
 ## Verification Plan
 
-- `cargo fmt --check`
-- `cargo nextest run -p tsz-checker --lib -E 'test(call_resolution_regression_tests::)' --no-fail-fast`
+- `cargo fmt --all -- --check`
+- `git diff --check`
+- `cargo nextest run -p tsz-checker --test call_resolution_regression_tests --no-fail-fast`

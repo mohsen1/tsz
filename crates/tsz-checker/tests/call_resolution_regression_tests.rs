@@ -12,16 +12,16 @@
 //! - Generic call inference with overloads
 
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_with_options_code_messages;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     get_diagnostics_with_options(source, &CheckerOptions::default())
 }
 
 fn get_diagnostics_with_options(source: &str, options: &CheckerOptions) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_with_options(source, options.clone())
+    check_with_options_code_messages(source, options.clone())
         .into_iter()
-        .filter(|d| d.code != 2318) // Filter "Cannot find global type"
-        .map(|d| (d.code, d.message_text))
+        .filter(|(code, _)| *code != 2318) // Filter "Cannot find global type"
         .collect()
 }
 
