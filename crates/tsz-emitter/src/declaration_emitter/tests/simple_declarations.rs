@@ -520,6 +520,28 @@ exports.apply = a;
 }
 
 #[test]
+fn test_js_cjs_export_alias_with_later_values_emits_grouped_value_union() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.apply = undefined;
+exports.apply = undefined;
+function a() {}
+exports.apply = a;
+exports.apply();
+exports.apply = 'ok';
+var OK = exports.apply.toUpperCase();
+exports.apply = 1;
+"#,
+    );
+
+    let expected = "export const apply: typeof a | \"ok\" | 1 | undefined;\nexport { a as apply };\ndeclare function a(): void;\n";
+    assert_eq!(
+        output, expected,
+        "Expected CJS alias/value export to match tsc declaration grouping"
+    );
+}
+
+#[test]
 fn test_private_set_accessor_omits_type_and_uses_value_param_name() {
     let source = r#"
 declare class C {
