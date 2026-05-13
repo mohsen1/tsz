@@ -306,6 +306,10 @@ name = "ts2322_literal_source_display_tests"
 path = "tests/ts2322_literal_source_display_tests.rs"
 
 [[test]]
+name = "union_target_literal_primitive_mismatch_tests"
+path = "tests/union_target_literal_primitive_mismatch_tests.rs"
+
+[[test]]
 name = "ts2322_empty_array_assertion_source_display_tests"
 path = "tests/ts2322_empty_array_assertion_source_display_tests.rs"
 
