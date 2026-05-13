@@ -6429,6 +6429,100 @@ const literalFromType: AType = "A";
     );
 }
 
+#[test]
+fn scoped_destructured_typeof_indexed_access_uses_binding_type() {
+    let source = r#"
+type IsolationLevel = 'read committed' | 'serializable';
+type Tedious = { ISOLATION_LEVEL: Record<string, number> };
+
+class Driver {
+  #tedious: Tedious;
+
+  constructor(tedious: Tedious) {
+    this.#tedious = tedious;
+  }
+
+  getLevel(isolationLevel: IsolationLevel): number {
+    const { ISOLATION_LEVEL } = this.#tedious;
+    const mapper: Record<
+      IsolationLevel,
+      (typeof ISOLATION_LEVEL)[keyof typeof ISOLATION_LEVEL]
+    > = {
+      'read committed': ISOLATION_LEVEL.READ_COMMITTED,
+      serializable: ISOLATION_LEVEL.SERIALIZABLE,
+    };
+
+    return mapper[isolationLevel];
+  }
+}
+"#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected local destructured typeof indexed access to resolve to number; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+        ),
+        "expected mapped Record keys to stay concrete; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_destructured_typeof_indexed_access_uses_binding_type() {
+    let config = r#"
+export type Tedious = { ISOLATION_LEVEL: Record<string, number> };
+"#;
+    let driver = r#"
+import type { Tedious } from './config';
+
+type IsolationLevel = 'read committed' | 'serializable';
+
+class Driver {
+  #tedious: Tedious;
+
+  constructor(tedious: Tedious) {
+    this.#tedious = tedious;
+  }
+
+  getLevel(isolationLevel: IsolationLevel): number {
+    const { ISOLATION_LEVEL } = this.#tedious;
+    const mapper: Record<
+      IsolationLevel,
+      (typeof ISOLATION_LEVEL)[keyof typeof ISOLATION_LEVEL]
+    > = {
+      'read committed': ISOLATION_LEVEL.READ_COMMITTED,
+      serializable: ISOLATION_LEVEL.SERIALIZABLE,
+    };
+
+    return mapper[isolationLevel];
+  }
+}
+"#;
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[("./config.ts", config), ("./driver.ts", driver)],
+        "./driver.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected imported destructured typeof indexed access to resolve to number; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+        ),
+        "expected imported mapped Record keys to stay concrete; got: {diags:#?}"
+    );
+}
+
 // =============================================================================
 // Type alias instantiation with template-literal interpolation (TS2322)
 // =============================================================================
