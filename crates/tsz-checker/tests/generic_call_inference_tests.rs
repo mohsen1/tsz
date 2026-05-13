@@ -1634,6 +1634,38 @@ choose<"a">("a", "b");
 }
 
 #[test]
+fn explicit_boolean_literal_type_arguments_stay_literal() {
+    let source = r#"
+declare function id<T>(value: T): T;
+id<true>(true);
+id<true>(false);
+id<false>(false);
+id<false>(true);
+
+declare let zero: { <T>(): T };
+const zeroTrue: true = zero<true>(true);
+const zeroFalse: false = zero<false>(false);
+
+declare let f: { <T>(): T, g<U>(): U };
+const inferred = f<true>(true);
+const keepTrue: true = inferred;
+const rejectFalse: false = inferred;
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(
+        ts2345.len(),
+        2,
+        "Explicit true/false type arguments should remain boolean literal types. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2322.len() == 1,
+        "Instantiation expression call results should not widen boolean literals. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn noinfer_blocks_candidates_nested_in_object_properties() {
     let source = r#"
 declare function chooseProp<T extends string>(value: T, fallback: { x: NoInfer<T> }): void;
