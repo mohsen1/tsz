@@ -818,9 +818,19 @@ impl<'a> CheckerState<'a> {
                     // TS2786: component return type must be valid JSX element
                     let class_props_from_construct =
                         self.get_class_component_props_from_construct_return(component_type);
+                    let has_readonly_construct_props = self
+                        .jsx_component_type_has_readonly_construct_props(resolved_component_type);
+                    let is_component_type_union = crate::query_boundaries::common::union_members(
+                        self.ctx.types,
+                        component_type,
+                    )
+                    .is_some()
+                        && self.format_type(component_type).contains("ComponentType<");
                     let skip_react_class_return_check = class_props_from_construct
                         .as_ref()
-                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
+                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"))
+                        || has_readonly_construct_props
+                        || is_component_type_union;
                     if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                     }
