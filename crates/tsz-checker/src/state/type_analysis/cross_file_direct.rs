@@ -23,7 +23,7 @@ struct DirectActualLibAliasBodyProof {
 fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
     matches!(
         name,
-        "DecoratorMetadata" | "DecoratorMetadataObject" | "Readonly"
+        "DecoratorMetadata" | "DecoratorMetadataObject" | "PropertyKey" | "Readonly"
     )
 }
 
@@ -1508,7 +1508,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_actual_lib_symbol_type_leaves_property_key_on_fallback() {
+    fn direct_actual_lib_symbol_type_handles_property_key_alias_body_query() {
         let lib_files = load_lib_files(&["es5.d.ts"]);
         let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
         let root = parser.parse_source_file();
@@ -1560,26 +1560,20 @@ mod tests {
                 delegate_arena.expect("PropertyKey should have a delegate arena"),
             )
             .expect("PropertyKey should have a proven actual-lib alias body");
-        assert_eq!(
-            proof.outcome,
-            DirectActualLibAliasBodyOutcome::NameNotAdmitted
-        );
-        assert!(
-            proof.type_params.is_empty(),
-            "PropertyKey is non-generic but remains unadmitted",
-        );
+        assert_eq!(proof.outcome, DirectActualLibAliasBodyOutcome::Success);
+        assert!(proof.type_params.is_empty(), "PropertyKey is non-generic",);
 
-        assert!(
-            state
-                .direct_actual_lib_symbol_type(
-                    sym_id,
-                    CrossArenaSymbolMissSource::SymbolArena,
-                    delegate_arena,
-                    false,
-                )
-                .is_none(),
-            "PropertyKey stays on fallback because it is used in assignability-sensitive lib signatures",
-        );
+        let (ty, params) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                delegate_arena,
+                false,
+            )
+            .expect("PropertyKey should lower through the direct alias body path");
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+        assert!(params.is_empty(), "PropertyKey should remain non-generic");
     }
 
     #[test]
