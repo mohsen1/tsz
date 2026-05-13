@@ -1,7 +1,6 @@
 //! Cross-file symbol resolution: resolving symbols across multiple files,
 //! delegating type resolution to child checkers, tracking cross-file targets,
 //! and cross-file interface declaration merging.
-
 use crate::state::CheckerState;
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -1996,7 +1995,6 @@ impl<'a> CheckerState<'a> {
         derived_type
     }
 }
-
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
 mod cross_file_query_kind_tests;
