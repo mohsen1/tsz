@@ -562,6 +562,10 @@ name = "ts2344_accessor_constraint"
 path = "tests/ts2344_accessor_constraint.rs"
 
 [[test]]
+name = "ts2340_super_accessor_tests"
+path = "tests/ts2340_super_accessor_tests.rs"
+
+[[test]]
 name = "ts2344_infer_conditional_constraint"
 path = "tests/ts2344_infer_conditional_constraint.rs"
 

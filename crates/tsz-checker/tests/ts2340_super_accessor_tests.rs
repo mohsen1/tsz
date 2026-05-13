@@ -24,11 +24,9 @@ fn diags(source: &str) -> Vec<(u32, String)> {
 }
 
 fn has_ts2340(diags: &[(u32, String)]) -> bool {
-    diags.iter().any(|(c, m)| {
-        *c == 2340
-            && m.contains("methods")
-            && m.contains("'super'")
-    })
+    diags
+        .iter()
+        .any(|(c, m)| *c == 2340 && m.contains("methods") && m.contains("'super'"))
 }
 
 #[test]
