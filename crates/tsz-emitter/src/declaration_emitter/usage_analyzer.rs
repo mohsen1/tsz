@@ -1,5 +1,3 @@
-//! Usage Analyzer for Import/Export Elision
-//!
 //! Analyzes exported declarations to determine which imports are actually used
 //! in the public API surface. This prevents "Module not found" errors by eliding
 //! unused imports from .d.ts files, matching TypeScript's behavior.
@@ -27,6 +25,7 @@ use tsz_solver::visitor;
 use crate::transforms::emit_utils::string_literal_text;
 use crate::type_cache_view::TypeCacheView;
 
+mod module_surface;
 mod type_walk;
 mod value_references;
 
