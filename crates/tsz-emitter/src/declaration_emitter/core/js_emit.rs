@@ -384,11 +384,10 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_if_possible(
-        &mut self,
+    pub(in crate::declaration_emitter) fn is_js_object_literal_namespace_candidate(
+        &self,
         decl_name: NodeIndex,
         initializer: NodeIndex,
-        is_exported: bool,
     ) -> bool {
         if !self.source_is_js_file || !initializer.is_some() {
             return false;
@@ -447,6 +446,72 @@ impl<'a> DeclarationEmitter<'a> {
                 _ => return false,
             }
         }
+
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn statement_emits_js_object_literal_namespace(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                continue;
+            }
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            if decl_list.declarations.nodes.len() != 1 {
+                continue;
+            }
+            let Some(&decl_idx) = decl_list.declarations.nodes.first() else {
+                continue;
+            };
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_if_possible(
+        &mut self,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+        is_exported: bool,
+    ) -> bool {
+        if !self.is_js_object_literal_namespace_candidate(decl_name, initializer) {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
 
         self.write_indent();
         if is_exported {

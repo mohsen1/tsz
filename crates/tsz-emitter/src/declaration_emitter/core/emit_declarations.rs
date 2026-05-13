@@ -737,6 +737,8 @@ impl<'a> DeclarationEmitter<'a> {
             .current_statement_jsdoc_chain
             .iter()
             .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
+        let suppress_jsdoc_type_alias_comments =
+            has_jsdoc_type_alias && self.statement_emits_js_object_literal_namespace(stmt_idx);
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
@@ -745,7 +747,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.writer.truncate(before_jsdoc_len);
             let mut filtered =
                 Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain);
-            if has_jsdoc_type_alias {
+            if suppress_jsdoc_type_alias_comments {
                 filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
             }
             self.emit_jsdoc_comment_chain(&filtered);

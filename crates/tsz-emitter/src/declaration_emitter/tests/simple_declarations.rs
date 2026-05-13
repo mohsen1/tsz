@@ -1297,6 +1297,44 @@ const send = handlers => Promise.resolve(handlers);
 }
 
 #[test]
+fn test_js_multiline_typedef_before_variable_comment_is_preserved() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+let id = 0;
+
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with(
+            "/**\n * @typedef {{\n * [id: string]: [Function, Function];\n * }} ResolveRejectMap\n */\ndeclare let id: number;"
+        ),
+        "Expected source typedef comment to stay attached to the variable declaration: {output}"
+    );
+    assert!(
+        output.contains("declare function send(handlers: ResolveRejectMap): Promise<any>;"),
+        "Expected function variable to use the typedef alias: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected typedef alias to still be emitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_multiline_typedef_before_export_equals_function_variable_is_emitted() {
     let source = r#"
 /**
