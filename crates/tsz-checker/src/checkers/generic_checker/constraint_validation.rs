@@ -143,7 +143,16 @@ impl<'a> CheckerState<'a> {
                         // constraint. If the concrete shape is assignable, defer;
                         // otherwise emit TS2344 with the original type_arg display
                         // (matches tsc's "Type 'X[]' does not satisfy 'string'"). (#3063)
+                        if self.type_alias_application_filters_to_constraint(
+                            type_arg,
+                            constraint_resolved,
+                        ) {
+                            continue;
+                        }
                         let concrete_arg = self.scoped_type_param_substituted_form(type_arg);
+                        if self.type_arg_evaluates_to_infer_result_conditional(concrete_arg) {
+                            continue;
+                        }
                         let concrete_arg = self.resolve_lazy_type(concrete_arg);
                         let concrete_arg = self.evaluate_type_for_assignability(concrete_arg);
                         if self.is_assignable_to(concrete_arg, constraint_resolved) {
@@ -1753,6 +1762,59 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
         let evaluated = self.evaluate_type_for_assignability(instantiated);
         Some(self.resolve_lazy_type(evaluated))
+    }
+
+    fn type_alias_application_filters_to_constraint(
+        &mut self,
+        mut type_arg: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        for _ in 0..8 {
+            if let Some((check, extends_type, true_type, false_type)) =
+                query::full_conditional_type_components(self.ctx.types.as_type_database(), type_arg)
+            {
+                if false_type != TypeId::NEVER || true_type != check {
+                    return false;
+                }
+                let extends_resolved = self.resolve_lazy_type(extends_type);
+                let extends_evaluated = self.evaluate_type_for_assignability(extends_resolved);
+                let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
+                return self.is_assignable_to(extends_evaluated, constraint_evaluated)
+                    || self.is_assignable_to(extends_resolved, constraint);
+            }
+
+            let Some(app) =
+                crate::query_boundaries::common::type_application(self.ctx.types, type_arg)
+            else {
+                return false;
+            };
+            let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+            else {
+                return false;
+            };
+            let Some(def) = self.ctx.definition_store.get(def_id) else {
+                return false;
+            };
+            if def.kind != tsz_solver::def::DefKind::TypeAlias {
+                return false;
+            }
+            let Some(body) = def.body else {
+                return false;
+            };
+            if def.type_params.len() != app.args.len() {
+                return false;
+            }
+            let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &def.type_params,
+                &app.args,
+            );
+            type_arg =
+                crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+            type_arg = self.resolve_lazy_type(type_arg);
+        }
+        false
     }
 
     fn concrete_indexed_access_property_union(&mut self, type_id: TypeId) -> Option<TypeId> {
