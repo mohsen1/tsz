@@ -120,11 +120,14 @@ impl<'a> CheckerState<'a> {
     fn finalize_call_return_like_success(
         &mut self,
         callee_expr: NodeIndex,
+        callee_type: TypeId,
         arg_types: &[TypeId],
         return_type: TypeId,
         is_optional_chain: bool,
     ) -> TypeId {
         let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
+        let return_type =
+            self.apply_direct_callable_this_substitution(return_type, callee_expr, callee_type);
         let return_type = self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
         let return_type = if !self.ctx.compiler_options.sound_mode {
             common::widen_freshness(self.ctx.types, return_type)
@@ -160,6 +163,28 @@ impl<'a> CheckerState<'a> {
         } else {
             return_type
         }
+    }
+
+    fn apply_direct_callable_this_substitution(
+        &mut self,
+        return_type: TypeId,
+        callee_expr: NodeIndex,
+        callee_type: TypeId,
+    ) -> TypeId {
+        if return_type.is_intrinsic()
+            || matches!(callee_type, TypeId::ERROR | TypeId::ANY)
+            || !common::contains_this_type(self.ctx.types, return_type)
+        {
+            return return_type;
+        }
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return return_type;
+        };
+        if callee_node.kind != SyntaxKind::Identifier as u16 {
+            return return_type;
+        }
+
+        common::substitute_this_type_at_return_position(self.ctx.types, return_type, callee_type)
     }
 
     fn polymorphic_this_indexed_conditional_target(
@@ -835,6 +860,7 @@ impl<'a> CheckerState<'a> {
 
                 self.finalize_call_return_like_success(
                     callee_expr,
+                    callee_type,
                     arg_types,
                     return_type,
                     is_optional_chain,
@@ -976,6 +1002,7 @@ impl<'a> CheckerState<'a> {
                 {
                     self.finalize_call_return_like_success(
                         callee_expr,
+                        callee_type,
                         arg_types,
                         return_type,
                         is_optional_chain,

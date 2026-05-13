@@ -189,6 +189,27 @@ fn assert_no_missing_property_diagnostics(diagnostics: &[Diagnostic]) {
 }
 
 #[test]
+fn callable_interface_call_signature_returning_this_preserves_members() {
+    let source = r#"
+interface Chainable {
+  (): this;
+  value: number;
+}
+
+declare const chain: Chainable;
+const c = chain();
+const _c: Chainable = c;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "Callable interface `this` return should preserve interface members. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn iterator_result_with_undefined_return_rejects_required_value_target() {
     let diagnostics = with_lib_contexts(
         r#"
