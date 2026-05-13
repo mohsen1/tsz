@@ -33,6 +33,10 @@ Close three high-signal missed-review clusters from the last-500-PR audit:
   - scope suppression to diagnostics anchored on those call-site lines so unrelated `TS2322` messages with matching text are preserved.
   - keep duplicate-safe reinjection behavior through the existing `push_unique_diagnostic` path.
 
+- regression coverage:
+  - added a test that ensures rewrite is a no-op when marker call sites are missing.
+  - added a test that ensures unrelated `Type 'number' is not assignable to type 'string'.` diagnostics survive even when recursive rewrite markers are present.
+
 - audit manifest refresh:
   - current merge resolution keeps `origin/main`'s latest shared audit snapshot files to avoid reverting newer audit retirements.
 
