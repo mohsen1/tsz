@@ -153,16 +153,20 @@ o2.p4;
         .map(|diag| diag.message_text.as_str())
         .collect::<Vec<_>>();
     assert!(
-        messages
-            .iter()
-            .any(|msg| msg.contains("merge<{ p1: number; }, { p2: number; }>")),
-        "o1 receiver should display widened object-literal property types through merge, got: {messages:#?}"
+        messages.iter().any(|msg| {
+            msg.contains("p1: number") && msg.contains("p2: number") && !msg.contains("p3: number")
+        }),
+        "o1 receiver should display widened object-literal property types, got: {messages:#?}"
     );
     assert!(
-        messages.iter().any(|msg| msg.contains(
-            "merge<merge<{ p1: number; }, { p2: number; }>, { p2: number; p3: number; }>"
-        )),
-        "o2 receiver should display widened object-literal property types through merge, got: {messages:#?}"
+        messages.iter().any(|msg| {
+            msg.contains("p1: number") && msg.contains("p2: number") && msg.contains("p3: number")
+        }),
+        "o2 receiver should display widened object-literal property types through Omit, got: {messages:#?}"
+    );
+    assert!(
+        !messages.iter().any(|msg| msg.contains("merge<")),
+        "conditional merge receivers should not repaint resolved branches as merge aliases, got: {messages:#?}"
     );
     assert!(
         !messages

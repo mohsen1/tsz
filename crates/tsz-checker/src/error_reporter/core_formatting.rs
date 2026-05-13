@@ -414,6 +414,21 @@ impl<'a> CheckerState<'a> {
         if let Some(application_display) = application_display {
             let normalized =
                 self.normalize_property_receiver_application_display_type(application_display);
+            if self
+                .property_receiver_application_base_name(normalized)
+                .is_some_and(|name| name == "merge")
+            {
+                let mut formatter = self
+                    .ctx
+                    .create_diagnostic_type_formatter()
+                    .with_long_property_receiver_display()
+                    .with_display_properties()
+                    .with_skip_application_alias_names()
+                    .with_long_property_receiver_object_elision_end_depth(0);
+                return Self::truncate_property_receiver_display(
+                    formatter.format(normalized).into_owned(),
+                );
+            }
             if normalized != application_display {
                 return self.format_type_diagnostic_widened_for_assignability_display(normalized);
             }
