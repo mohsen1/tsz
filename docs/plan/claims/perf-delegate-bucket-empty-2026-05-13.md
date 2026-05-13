@@ -2,9 +2,10 @@
 
 **Owner:** Codex session
 **Branch:** `codex/perf-delegate-bucket-empty-20260513`
-**Draft PR:** to be opened with this claim
+**Draft PR:** #6191
 **Sequences after:** #6144 (TypeEnvironmentCore arena-direct type-param extraction)
 **Input decision record:** [`perf-runs/2026-05-13-typeenv-arena-direct-attribution.md`](../perf-runs/2026-05-13-typeenv-arena-direct-attribution.md)
+**Follow-up decision record:** [`perf-runs/2026-05-13-delegate-bucket-empty-attribution.md`](../perf-runs/2026-05-13-delegate-bucket-empty-attribution.md)
 
 ## Goal
 
@@ -30,6 +31,18 @@ produce reusable `delegate.cache_hits_cross_file` hits.
      lowering, or no writer.
 3. Implement the smallest safe fix supported by that classification.
 
+## Implemented slice
+
+The first fix keeps the existing program scope in the source-file symbol-arena
+cache key but removes requester-file scoping for the already-proven stable
+subset: single-declaration class/interface symbols, no module augmentations, and
+empty type-parameter payloads.
+
+On `monorepo-006`, this converts 96 `bucket_empty` misses into cross-file cache
+hits and drops `DelegateCrossArenaSymbol` constructions from 924 to 828. The
+smaller fixtures have no repeat requester pattern for this stable subset and
+remain unchanged.
+
 ## Non-goals
 
 - No changes to the #6144 TypeEnvironmentCore path.
@@ -40,10 +53,9 @@ produce reusable `delegate.cache_hits_cross_file` hits.
 
 ## Exit criteria
 
-1. A follow-up decision record under `docs/plan/perf-runs/` explains the
-   remaining `DelegateCrossArenaSymbol` misses.
-2. The targeted implementation reduces `DelegateCrossArenaSymbol` constructions
-   on `monorepo-001..006`, or records why the measured residue must move to a
-   different Tier 2 slice.
-3. Targeted tests cover any new cache-key or direct-lowering behavior.
+1. Follow-up decision record under `docs/plan/perf-runs/` explains the measured
+   `DelegateCrossArenaSymbol` delta.
+2. Targeted implementation reduces `DelegateCrossArenaSymbol` constructions on
+   `monorepo-006` from 924 to 828.
+3. Targeted tests cover the stable program-scoped cache key.
 4. CI is green before merge.
