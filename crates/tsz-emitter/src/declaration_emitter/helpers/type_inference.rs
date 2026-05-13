@@ -70,7 +70,7 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(text);
         }
 
-        self.call_expression_returned_local_class_constructor_text(expr_idx, true)
+        self.call_expression_returned_local_class_constructor_text(expr_idx, false)
     }
 
     /// Recover the source-side return type for a heritage call like
@@ -454,6 +454,10 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let class_node = self.arena.get(class_idx)?;
         let class = self.arena.get_class(class_node)?;
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
+        let arrow_form = arrow_form || is_abstract;
 
         let mut params_text = String::new();
         if let Some(ctor_idx) = class.members.nodes.iter().copied().find(|&member_idx| {
@@ -492,12 +496,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let members = member_scratch.writer.take_output();
         let members = Self::strip_abstract_member_modifiers(members.trim_end());
+        let members = Self::expand_structural_auto_accessor_members(&members);
         let members = members.as_str();
 
         let constructor_type = if arrow_form {
-            let is_abstract = self
-                .arena
-                .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
             let prefix = if is_abstract { "abstract new " } else { "new " };
             if members.is_empty() {
                 format!("{prefix}({params_text}) => {{}}")
@@ -535,6 +537,33 @@ impl<'a> DeclarationEmitter<'a> {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn expand_structural_auto_accessor_members(members: &str) -> String {
+        let mut expanded = Vec::new();
+        for line in members.lines() {
+            let trimmed = line.trim_start();
+            let indent = &line[..line.len() - trimmed.len()];
+            if let Some(rest) = trimmed.strip_prefix("accessor ")
+                && let Some((name, type_text)) = rest
+                    .strip_suffix(';')
+                    .and_then(|rest| rest.split_once(": "))
+            {
+                expanded.push(format!(
+                    "{indent}get {}(): {};",
+                    name.trim(),
+                    type_text.trim()
+                ));
+                expanded.push(format!(
+                    "{indent}set {}(arg: {});",
+                    name.trim(),
+                    type_text.trim()
+                ));
+                continue;
+            }
+            expanded.push(line.to_string());
+        }
+        expanded.join("\n")
     }
 
     pub(in crate::declaration_emitter) fn type_annotation_text_from_arena_node(
@@ -7072,6 +7101,7 @@ impl<'a> DeclarationEmitter<'a> {
         let (text, substituted_parameter_type_query) =
             self.substitute_function_parameter_type_queries(func, source_type_text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
+        let text = Self::expand_structural_auto_accessor_members(&text);
         let Some(ref type_params) = func.type_parameters else {
             return (text, substituted_parameter_type_query);
         };
@@ -7099,7 +7129,8 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             self.print_type_id(return_type_id)
         };
-        self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text)
+        let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
+        Self::expand_structural_auto_accessor_members(&text)
     }
 
     pub(in crate::declaration_emitter) fn restore_mapped_return_type_param_constraints(
