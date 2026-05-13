@@ -51,6 +51,10 @@ member annotations need the normal hybrid type-lowering path. Keep the counter
 field, but do not treat the `24,760` hit count as the current guarded-branch
 baseline until monorepo-006 is remeasured.
 
+Guarded rerun is now recorded at:
+`2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md`.
+On that rerun, `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits = 0`.
+
 ## Decision
 
 1. Keep this scalar counter in the checker section as the primary guardrail for
