@@ -21,9 +21,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
 
-// =============================================================================
 // Assignability Checking Methods
-// =============================================================================
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
@@ -2432,31 +2430,6 @@ impl<'a> CheckerState<'a> {
         }
 
         result
-    }
-
-    fn normalize_awaited_application_args_for_variance(&mut self, ty: TypeId) -> TypeId {
-        let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, ty)
-        else {
-            return ty;
-        };
-
-        let mut changed = false;
-        let normalized_args: Vec<_> = args
-            .iter()
-            .copied()
-            .map(|arg| {
-                let normalized = self.evaluate_awaited_application_for_assignability(arg);
-                changed |= normalized != arg;
-                normalized
-            })
-            .collect();
-
-        if changed {
-            self.ctx.types.factory().application(base, normalized_args)
-        } else {
-            ty
-        }
     }
 
     pub(crate) fn type_predicate_type_assignable_to_parameter(
