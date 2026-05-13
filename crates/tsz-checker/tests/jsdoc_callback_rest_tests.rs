@@ -2,6 +2,10 @@
 
 use crate::test_utils::check_js_source_diagnostics;
 
+fn diagnostic_codes(diagnostics: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
 /// @callback with @param {...string} should create a rest parameter accepting
 /// variable string arguments. No TS2554 should be emitted for extra arguments.
 #[test]
@@ -23,7 +27,7 @@ var res = x('a', 'b')
         ts2554,
         0,
         "Expected no TS2554 for rest parameter call, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -47,7 +51,7 @@ h(1, 'a', true)
         ts2554,
         0,
         "Expected no TS2554 for rest any parameter call, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -80,7 +84,7 @@ const app = {
         ts2739,
         0,
         "Expected no TS2739: nested @property should create nested object, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -101,6 +105,6 @@ foo(false, '', 1, 2, 3);
         ts2554,
         0,
         "Expected no TS2554 for Closure function type rest param, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
