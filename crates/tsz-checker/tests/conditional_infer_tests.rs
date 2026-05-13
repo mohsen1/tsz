@@ -213,6 +213,41 @@ function withDeferredAny<T>(x: T): DeferredAny<T> {
 }
 
 #[test]
+fn recursive_promise_chain_keeps_only_ts1062_without_self_assignment_ts2322() {
+    let source = r#"
+type PromiseChain<T> = Promise<T | PromiseChain<T>>;
+
+async function unwrapChain<T>(chain: PromiseChain<T>): Promise<T> {
+  const result = await chain;
+  if (result instanceof Promise) {
+    return unwrapChain(result as PromiseChain<T>);
+  }
+  return result as T;
+}
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    let ts1062_count = diagnostics.iter().filter(|diag| diag.code == 1062).count();
+    let false_self_ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == 2322
+                && diag
+                    .message_text
+                    .contains("Type 'T' is not assignable to type 'T'")
+        })
+        .collect();
+    assert_eq!(
+        ts1062_count, 1,
+        "expected exactly one TS1062 for recursive Promise chain; diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        false_self_ts2322.is_empty(),
+        "recursive Promise chain should not emit self-assignment TS2322; diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn extract_like_conditional_target_still_rejects_unconstrained_type_parameter() {
     let source = r#"
 type OnlyObjects<T> = T extends object ? T : never;

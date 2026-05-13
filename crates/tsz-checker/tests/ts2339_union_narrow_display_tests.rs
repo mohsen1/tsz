@@ -44,6 +44,31 @@ fn diagnostic_messages(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn constrained_interface_type_parameter_property_access_no_ts2339() {
+    let diagnostics = diagnostic_messages(
+        r#"
+interface TreeNode2<T> {
+  value: T;
+  children: TreeNode2<T>[];
+}
+
+function traverse<T extends TreeNode2<any>>(node: T): T['value'][] {
+  const result: T['value'][] = [node.value];
+  return result;
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected constrained interface property access to avoid TS2339, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn instanceof_narrowed_union_receiver_displays_picked_member() {
     let src = r#"
 class A { a: string = ""; }

@@ -8675,7 +8675,11 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(existing_idx) = lines.iter().position(|line| {
                 Self::object_literal_property_line_matches(line, &name_text, &replacement)
             }) {
+                let existing_end_idx = Self::object_literal_member_line_end(&lines, existing_idx);
                 lines[existing_idx] = replacement;
+                if existing_end_idx > existing_idx {
+                    lines.drain(existing_idx + 1..=existing_end_idx);
+                }
             } else if lines.iter().any(|existing| {
                 Self::object_literal_method_line_matches_property_function(
                     existing,
@@ -8710,7 +8714,12 @@ impl<'a> DeclarationEmitter<'a> {
                 if exact_exists {
                     lines.remove(existing_idx);
                 } else {
+                    let existing_end_idx =
+                        Self::object_literal_member_line_end(&lines, existing_idx);
                     lines[existing_idx] = line;
+                    if existing_end_idx > existing_idx {
+                        lines.drain(existing_idx + 1..=existing_end_idx);
+                    }
                 }
             } else if lines.iter().any(|existing| {
                 Self::object_literal_method_line_matches_property_function(
@@ -9224,6 +9233,55 @@ impl<'a> DeclarationEmitter<'a> {
         parts
     }
 
+    fn object_literal_member_line_end(lines: &[String], start_idx: usize) -> usize {
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut angle_depth = 0usize;
+        let mut quote: Option<u8> = None;
+        let mut escaped = false;
+
+        for (idx, line) in lines.iter().enumerate().skip(start_idx) {
+            for byte in line.bytes() {
+                if let Some(active_quote) = quote {
+                    if escaped {
+                        escaped = false;
+                    } else if byte == b'\\' {
+                        escaped = true;
+                    } else if byte == active_quote {
+                        quote = None;
+                    }
+                    continue;
+                }
+
+                match byte {
+                    b'\'' | b'"' | b'`' => quote = Some(byte),
+                    b'(' => paren_depth += 1,
+                    b')' => paren_depth = paren_depth.saturating_sub(1),
+                    b'[' => bracket_depth += 1,
+                    b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                    b'{' => brace_depth += 1,
+                    b'}' => brace_depth = brace_depth.saturating_sub(1),
+                    b'<' => angle_depth += 1,
+                    b'>' if angle_depth > 0 => angle_depth -= 1,
+                    _ => {}
+                }
+            }
+
+            if quote.is_none()
+                && paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0
+                && angle_depth == 0
+                && line.trim_end().ends_with(';')
+            {
+                return idx;
+            }
+        }
+
+        start_idx
+    }
+
     fn object_literal_method_line_matches_name(existing: &str, name_text: &str) -> bool {
         let without_readonly = existing
             .strip_prefix("readonly ")
@@ -9349,6 +9407,9 @@ impl<'a> DeclarationEmitter<'a> {
         if trimmed == replacement.trim() {
             return true;
         }
+        if Self::object_literal_method_line_matches_name(trimmed, name_text) {
+            return true;
+        }
 
         for prefix in Self::object_literal_property_name_prefixes(name_text) {
             if trimmed.starts_with(&prefix) || trimmed.starts_with(&format!("readonly {prefix}")) {
@@ -9457,6 +9518,23 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .get(name_idx)
             .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        {
+            return true;
+        }
+        if let Some(method) = self.arena.get_method_decl(member_node)
+            && (method.type_annotation.is_some()
+                || method.parameters.nodes.iter().copied().any(|param_idx| {
+                    self.arena
+                        .get(param_idx)
+                        .and_then(|param_node| self.arena.get_parameter(param_node))
+                        .is_some_and(|param| {
+                            param.type_annotation.is_some()
+                                && self.arena.get(param.name).is_some_and(|name_node| {
+                                    name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                })
+                        })
+                }))
         {
             return true;
         }

@@ -340,7 +340,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let method_name = method.name;
         if method.type_annotation.is_some() {
-            self.emit_type(method.type_annotation);
+            if let Some(type_text) = self.preferred_annotation_name_text(method.type_annotation) {
+                self.write(&type_text);
+            } else {
+                self.emit_type(method.type_annotation);
+            }
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             let method_type_id = cache
                 .node_types

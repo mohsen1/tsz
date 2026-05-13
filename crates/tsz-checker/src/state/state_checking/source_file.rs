@@ -606,9 +606,14 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        let has_recursive_promise_await_diagnostic = self.ctx.diagnostics.iter().any(|diag| {
+            diag.code == tsz_common::diagnostics::diagnostic_codes::TYPE_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_THE_FULFILLMENT_CALLBACK_OF_ITS_OWN
+        });
         self.ctx.diagnostics.retain(|diag| {
             diag.code != tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                || !is_nested_same_wrapper_assignability_message(&diag.message_text)
+                || (!is_nested_same_wrapper_assignability_message(&diag.message_text)
+                    && (!has_recursive_promise_await_diagnostic
+                        || !is_same_display_assignability_message(&diag.message_text)))
         });
 
         self.rewrite_infer_generic_return_fingerprints(&sf.text);
@@ -1907,4 +1912,24 @@ fn is_nested_same_wrapper_assignability_message(message: &str) -> bool {
     // but Box<Box<number>> vs Box<Box<string>> → keep (target arg starts with Box<)
     let target_args = target.split_once('<').map(|(_, rest)| rest).unwrap_or("");
     !target_args.trim_start().starts_with(&prefix)
+}
+
+fn is_same_display_assignability_message(message: &str) -> bool {
+    let Some(source_rest) = message.strip_prefix("Type '") else {
+        return false;
+    };
+    let Some(source_end) = source_rest.find('\'') else {
+        return false;
+    };
+    let source = &source_rest[..source_end];
+    let Some(target_start) = message.find("' is not assignable to type '") else {
+        return false;
+    };
+    let target_rest = &message[target_start + "' is not assignable to type '".len()..];
+    let Some(target_end) = target_rest.find('\'') else {
+        return false;
+    };
+    let target = &target_rest[..target_end];
+
+    source == target
 }
