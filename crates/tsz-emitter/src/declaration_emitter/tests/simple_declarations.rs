@@ -5668,12 +5668,12 @@ export default Cls;
     );
     let trimmed = output.trim();
     assert!(
-        trimmed.starts_with("export type Cls_1 = string | number;\nexport default Cls;"),
-        "Expected default typedef to use a collision-safe alias before the hoisted default export: {trimmed}"
+        trimmed.starts_with("export type Cls = string | number;\nexport default Cls;"),
+        "Expected default typedef to reuse the default-exported class name before the hoisted default export: {trimmed}"
     );
     assert!(
-        !trimmed.contains("export type Cls = string | number;"),
-        "Default typedef alias should not collide with the class declaration name: {trimmed}"
+        !trimmed.contains("export type Cls_1 = string | number;"),
+        "Default typedef alias should not synthesize a unique name for a default-exported class: {trimmed}"
     );
     assert!(
         trimmed.contains("declare class Cls"),
