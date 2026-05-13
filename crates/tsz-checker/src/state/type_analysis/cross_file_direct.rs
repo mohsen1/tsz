@@ -1449,4 +1449,67 @@ mod tests {
             "generic utility aliases should stay on the existing fallback path",
         );
     }
+
+    #[test]
+    fn direct_actual_lib_alias_proof_matches_record_fallback_body() {
+        let lib_files = load_lib_files(&["es5.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("Record")
+            .expect("Record should resolve to a lib symbol");
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+            .expect("Record should have a delegate arena");
+        let symbol = state
+            .get_cross_file_symbol(sym_id)
+            .expect("Record symbol should be available")
+            .clone();
+
+        let proof = state
+            .direct_actual_lib_type_alias_body(sym_id, &symbol, "Record", delegate_arena)
+            .expect("Record should have a proven actual-lib alias body");
+        assert_eq!(proof.outcome, DirectActualLibAliasBodyOutcome::GenericAlias);
+
+        let (fallback_body, fallback_params) = state.compute_type_of_symbol(sym_id);
+        assert_eq!(
+            fallback_body, proof.body,
+            "generic alias proof must match the existing child-checker fallback body",
+        );
+        assert_eq!(
+            fallback_params.len(),
+            proof.type_params.len(),
+            "generic alias proof must preserve the same type-parameter arity as fallback",
+        );
+    }
 }
