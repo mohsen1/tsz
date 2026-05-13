@@ -2106,16 +2106,15 @@ impl<'a> DeclarationEmitter<'a> {
             if pat.elements.nodes.is_empty() {
                 return None;
             }
-            let mut out = String::from("{ ");
-            for (i, &elem_idx) in pat.elements.nodes.iter().enumerate() {
-                if i > 0 {
-                    out.push(' ');
-                }
+            let mut members = Vec::new();
+            let mut use_multiline = false;
+            for &elem_idx in &pat.elements.nodes {
                 if elem_idx.is_none() {
                     return None;
                 }
                 let elem_node = self.arena.get(elem_idx)?;
                 let elem = self.arena.get_binding_element(elem_node)?;
+                let mut member = String::new();
                 if elem.dot_dot_dot_token {
                     // Rest in object pattern is `...<name>: any` in tsc; preserve
                     // the source binding name so the synthesized shape matches
@@ -2126,7 +2125,7 @@ impl<'a> DeclarationEmitter<'a> {
                         .and_then(|n| self.arena.get_identifier(n))
                         .map(|id| id.escaped_text.as_str())
                         .unwrap_or("rest");
-                    out.push_str(&format!("...{rest_name}: any;"));
+                    members.push(format!("...{rest_name}: any;"));
                     continue;
                 }
                 // Property name: prefer the explicit `property_name` (`{ a: b }`),
@@ -2136,18 +2135,13 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     elem.name
                 };
-                let name_node = self.arena.get(prop_name_idx)?;
-                if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
-                    // Computed property names, string/numeric literal keys, etc.
-                    // are not supported by this synthesizer.
-                    return None;
-                }
-                let ident = self.arena.get_identifier(name_node)?;
-                out.push_str(&ident.escaped_text);
+                let prop_name = self.binding_property_name_text(prop_name_idx)?;
+                use_multiline |= prop_name.contains('"');
+                member.push_str(&prop_name);
                 if elem.initializer.is_some() {
-                    out.push_str("?: ");
+                    member.push_str("?: ");
                 } else {
-                    out.push_str(": ");
+                    member.push_str(": ");
                 }
                 let value_type = self
                     .synthesize_destructured_param_type(elem.name)
@@ -2158,13 +2152,106 @@ impl<'a> DeclarationEmitter<'a> {
                             .flatten()
                     })
                     .unwrap_or_else(|| String::from("any"));
-                out.push_str(&value_type);
-                out.push(';');
+                member.push_str(&value_type);
+                member.push(';');
+                members.push(member);
             }
-            out.push_str(" }");
-            Some(out)
+            if use_multiline && members.len() > 1 {
+                let member_indent = "    ".repeat((self.indent_level + 1) as usize);
+                let closing_indent = "    ".repeat(self.indent_level as usize);
+                let lines = members
+                    .into_iter()
+                    .map(|member| format!("{member_indent}{member}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Some(format!("{{\n{lines}\n{closing_indent}}}"))
+            } else {
+                Some(format!("{{ {} }}", members.join(" ")))
+            }
         } else {
             None
+        }
+    }
+
+    fn binding_property_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.to_string()),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.arena
+                    .get_literal(name_node)
+                    .map(|literal| Self::format_property_name_literal_text(&literal.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .arena
+                .get_literal(name_node)
+                .map(|literal| Self::normalize_numeric_literal(literal.text.as_ref())),
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => self
+                .resolved_computed_property_name_text(name_idx)
+                .or_else(|| self.computed_property_const_initializer_name_text(name_idx)),
+            _ => None,
+        }
+    }
+
+    fn computed_property_const_initializer_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        let computed = self.arena.get_computed_property(name_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let binder = self.binder?;
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.all_declarations() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if !self.arena.is_const_variable_declaration(decl_idx) {
+                continue;
+            }
+            if let Some(name_text) =
+                self.literal_property_name_text_from_initializer(decl.initializer)
+            {
+                return Some(name_text);
+            }
+        }
+        None
+    }
+
+    fn literal_property_name_text_from_initializer(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        match init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.arena
+                    .get_literal(init_node)
+                    .map(|literal| Self::format_property_name_literal_text(&literal.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .arena
+                .get_literal(init_node)
+                .map(|literal| Self::normalize_numeric_literal(literal.text.as_ref())),
+            _ => None,
         }
     }
 
