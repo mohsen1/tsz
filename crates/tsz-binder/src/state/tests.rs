@@ -3171,6 +3171,171 @@ declare module "mylib" {
 }
 
 // =============================================================================
+// MODULE AUGMENTATION SYMBOL ISOLATION TESTS
+// =============================================================================
+
+#[test]
+fn augmentation_interface_does_not_merge_into_file_scope_interface() {
+    let (binder, parser) = parse_and_bind(
+        r#"
+interface Merged {
+    a: number;
+}
+interface Merged {
+    b: string;
+}
+declare module "./test" {
+    interface Merged {
+        augmented: boolean;
+    }
+}
+export {};
+"#,
+    );
+
+    let merged_id = binder
+        .file_locals
+        .get("Merged")
+        .expect("Merged should be in file_locals");
+    let merged_sym = binder.symbols.get(merged_id).expect("symbol exists");
+    assert_eq!(
+        merged_sym.declarations.len(),
+        2,
+        "file-scope Merged must have only its 2 local declarations, not the augmentation's"
+    );
+
+    let aug_id = *binder
+        .module_augmentation_symbols
+        .get(&("./test".to_string(), "Merged".to_string()))
+        .expect("augmentation-only symbol should exist in module_augmentation_symbols");
+    assert_ne!(
+        aug_id, merged_id,
+        "augmentation symbol must be different from file-scope symbol"
+    );
+    let aug_sym = binder
+        .symbols
+        .get(aug_id)
+        .expect("augmentation symbol exists");
+    assert_eq!(
+        aug_sym.declarations.len(),
+        1,
+        "augmentation symbol should have exactly 1 declaration"
+    );
+
+    // The augmentation should be tracked in module_augmentations.
+    let augs = binder
+        .module_augmentations
+        .get("./test")
+        .expect("augmentation should be tracked");
+    assert!(
+        augs.iter().any(|a| a.name == "Merged"),
+        "Merged augmentation should be in module_augmentations"
+    );
+    drop(parser);
+}
+
+#[test]
+fn augmentation_interface_renamed_iteration_var_does_not_merge() {
+    let (binder, parser) = parse_and_bind(
+        r#"
+interface Shape {
+    x: number;
+}
+declare module "./shapes" {
+    interface Shape {
+        extra: string;
+    }
+}
+export {};
+"#,
+    );
+
+    let shape_id = binder
+        .file_locals
+        .get("Shape")
+        .expect("Shape should be in file_locals");
+    let shape_sym = binder.symbols.get(shape_id).expect("symbol exists");
+    assert_eq!(
+        shape_sym.declarations.len(),
+        1,
+        "file-scope Shape must have only 1 declaration"
+    );
+
+    let aug_id = *binder
+        .module_augmentation_symbols
+        .get(&("./shapes".to_string(), "Shape".to_string()))
+        .expect("augmentation-only Shape symbol must exist");
+    assert_ne!(aug_id, shape_id, "augmentation symbol must be separate");
+    drop(parser);
+}
+
+#[test]
+fn augmentation_declarations_across_two_blocks_same_target_merge_with_each_other() {
+    let (binder, parser) = parse_and_bind(
+        r#"
+declare module "./m" {
+    interface Shared {
+        a: number;
+    }
+}
+declare module "./m" {
+    interface Shared {
+        b: string;
+    }
+}
+export {};
+"#,
+    );
+
+    let aug_key = ("./m".to_string(), "Shared".to_string());
+    let aug_sym_id = binder
+        .module_augmentation_symbols
+        .get(&aug_key)
+        .expect("augmentation symbol must exist");
+    let aug_sym = binder
+        .symbols
+        .get(*aug_sym_id)
+        .expect("augmentation symbol exists");
+    assert_eq!(
+        aug_sym.declarations.len(),
+        2,
+        "both augmentation blocks' Shared declarations must merge into one augmentation symbol"
+    );
+    drop(parser);
+}
+
+#[test]
+fn augmentation_type_alias_does_not_merge_into_file_scope_alias() {
+    let (binder, parser) = parse_and_bind(
+        r#"
+type MyType = number;
+declare module "./util" {
+    type MyType = string;
+}
+export {};
+"#,
+    );
+
+    let local_id = binder
+        .file_locals
+        .get("MyType")
+        .expect("MyType should be in file_locals");
+    let local_sym = binder.symbols.get(local_id).expect("symbol exists");
+    assert_eq!(
+        local_sym.declarations.len(),
+        1,
+        "file-scope MyType must have only 1 declaration"
+    );
+
+    let aug_id = *binder
+        .module_augmentation_symbols
+        .get(&("./util".to_string(), "MyType".to_string()))
+        .expect("augmentation-only MyType symbol must exist");
+    assert_ne!(aug_id, local_id, "augmentation symbol must be separate");
+    drop(parser);
+}
+
+// =============================================================================
 // 20. EXPANDO PROPERTIES
 // =============================================================================
 

@@ -437,6 +437,11 @@ pub struct BinderState {
     /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
 
+    /// Per-file registry mapping `(module_spec, decl_name)` to augmentation-only `SymbolId`s.
+    /// Keeps augmentation declarations isolated from same-named file-scope symbols.
+    #[serde(skip, default)]
+    pub(crate) module_augmentation_symbols: FxHashMap<(String, String), SymbolId>,
+
     /// Lib binders for automatic lib symbol resolution.
     /// When `get_symbol()` doesn't find a symbol locally, it checks these lib binders.
     pub lib_binders: Arc<Vec<Arc<Self>>>,

@@ -250,6 +250,10 @@ name = "readonly_tuple_source_display_tests"
 path = "tests/readonly_tuple_source_display_tests.rs"
 
 [[test]]
+name = "module_augmentation_isolation_tests"
+path = "tests/module_augmentation_isolation_tests.rs"
+
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 

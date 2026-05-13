@@ -504,6 +504,7 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules: Arc::new(FxHashMap::default()),
+            module_augmentation_symbols: FxHashMap::default(),
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
@@ -572,6 +573,7 @@ impl BinderState {
         Arc::make_mut(&mut self.module_augmentations).clear();
         self.in_module_augmentation = false;
         self.current_augmented_module = None;
+        self.module_augmentation_symbols.clear();
         Arc::make_mut(&mut self.lib_binders).clear();
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
         Arc::make_mut(&mut self.lib_symbol_reverse_remap).clear();
@@ -746,6 +748,7 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules: Arc::new(FxHashMap::default()),
+            module_augmentation_symbols: FxHashMap::default(),
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
@@ -869,6 +872,7 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules,
+            module_augmentation_symbols: FxHashMap::default(),
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
