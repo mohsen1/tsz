@@ -983,6 +983,16 @@ impl<'a> DeclarationEmitter<'a> {
         initializer: NodeIndex,
         is_exported: bool,
     ) {
+        if is_exported {
+            let object_initializer = self
+                .get_identifier_text(initializer)
+                .and_then(|local_name| self.js_top_level_variable_initializer(&local_name))
+                .unwrap_or(initializer);
+            if self.emit_js_object_literal_namespace(name_idx, object_initializer, true, false) {
+                return;
+            }
+        }
+
         if self.emit_js_synthetic_class_expression_declaration(name_idx, initializer, is_exported) {
             return;
         }
@@ -2547,6 +2557,11 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => Some("boolean".to_string()),
             k if k == SyntaxKind::NullKeyword as u16 => Some("null".to_string()),
             k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined".to_string()),
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && self.js_empty_object_literal_initializer(initializer) =>
+            {
+                Some("{}".to_string())
+            }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.infer_fallback_type_text(initializer)
             }

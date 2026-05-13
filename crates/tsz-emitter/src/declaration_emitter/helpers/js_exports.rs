@@ -2334,6 +2334,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => true,
             k if k == SyntaxKind::NullKeyword as u16 => true,
             k if k == SyntaxKind::UndefinedKeyword as u16 => true,
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.js_empty_object_literal_initializer(initializer)
+            }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
             k if k == syntax_kind_ext::NEW_EXPRESSION => true,
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
@@ -2341,6 +2344,18 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => false,
         }
+    }
+
+    pub(crate) fn js_empty_object_literal_initializer(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        self.arena
+            .get_literal_expr(init_node)
+            .is_some_and(|object| object.elements.nodes.is_empty())
     }
 
     pub(in crate::declaration_emitter) fn groupable_js_reexport_info(
