@@ -1754,6 +1754,30 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
 }
 
 #[test]
+fn fix_generic_rest_identity_preserves_parameters_tuple_labels() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare function f<T extends any[]>(...x: T): T;
+declare function g(elem: object, index: number): object;
+declare function getArgsForInjection<T extends (...args: any[]) => any>(x: T): Parameters<T>;
+
+export const argumentsOfGAsFirstArgument = f(getArgsForInjection(g));
+export const argumentsOfG = f(...getArgsForInjection(g));
+"#,
+    );
+
+    for expected in [
+        "export declare const argumentsOfGAsFirstArgument: [[elem: object, index: number]];",
+        "export declare const argumentsOfG: [elem: object, index: number];",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected labeled Parameters tuple `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"

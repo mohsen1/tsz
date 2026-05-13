@@ -19,6 +19,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
                     .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
+                    .or_else(|| self.generic_rest_identity_parameters_tuple_type_text(expr_idx))
+                    .or_else(|| self.call_expression_parameters_return_tuple_type_text(expr_idx))
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
@@ -28,6 +30,223 @@ impl<'a> DeclarationEmitter<'a> {
                 self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &type_text)
                     .unwrap_or(type_text)
             })
+    }
+
+    fn generic_rest_identity_parameters_tuple_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        self.generic_rest_identity_return_type_param_name(call.expression)?;
+
+        let args = call.arguments.as_ref()?;
+        let [arg_idx] = args.nodes.as_slice() else {
+            return None;
+        };
+
+        let arg_node = self.arena.get(*arg_idx)?;
+        if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+            let spread = self.arena.get_spread(arg_node)?;
+            return self.call_expression_parameters_return_tuple_type_text(spread.expression);
+        }
+
+        let tuple_text = self.call_expression_parameters_return_tuple_type_text(*arg_idx)?;
+        Some(format!("[{tuple_text}]"))
+    }
+
+    fn generic_rest_identity_return_type_param_name(
+        &self,
+        callee_idx: NodeIndex,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(callee_idx)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            let [param_idx] = callable.parameters.nodes.as_slice() else {
+                continue;
+            };
+            let Some(param_node) = self.arena.get(*param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !param.dot_dot_dot_token || callable.type_annotation.is_none() {
+                continue;
+            }
+            let Some(return_type_text) = self
+                .emit_type_node_text_from_arena(self.arena, callable.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, callable.type_annotation))
+            else {
+                continue;
+            };
+            let Some(rest_type_text) = self
+                .emit_type_node_text_from_arena(self.arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+            else {
+                continue;
+            };
+            let rest_type_text = rest_type_text.trim();
+            if rest_type_text.is_empty() || return_type_text.trim() != rest_type_text {
+                continue;
+            }
+            if callable.type_parameters.is_some_and(|type_params| {
+                type_params.nodes.iter().copied().any(|type_param_idx| {
+                    self.arena
+                        .get(type_param_idx)
+                        .and_then(|node| self.arena.get_type_parameter(node))
+                        .and_then(|type_param| self.get_identifier_text(type_param.name))
+                        .as_deref()
+                        == Some(rest_type_text)
+                })
+            }) {
+                return Some(rest_type_text.to_string());
+            }
+        }
+
+        None
+    }
+
+    fn call_expression_parameters_return_tuple_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let args = call.arguments.as_ref()?;
+        let [arg_idx] = args.nodes.as_slice() else {
+            return None;
+        };
+        let return_type_param = self.parameters_return_type_param_name(call.expression)?;
+        let parameter_type_text = self.callable_parameter_type_text(call.expression)?;
+        if parameter_type_text.trim() != return_type_param {
+            return None;
+        }
+        self.callable_parameter_tuple_type_text_for_value(*arg_idx)
+    }
+
+    fn parameters_return_type_param_name(&self, callee_idx: NodeIndex) -> Option<String> {
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(callee_idx)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            let return_type_text = self
+                .emit_type_node_text_from_arena(self.arena, callable.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, callable.type_annotation))?;
+            let return_type_text = return_type_text.trim();
+            let Some(inner) = return_type_text
+                .strip_prefix("Parameters<")
+                .and_then(|text| text.strip_suffix('>'))
+                .map(str::trim)
+            else {
+                continue;
+            };
+            if Self::simple_type_reference_name(inner).is_none() {
+                continue;
+            }
+            return Some(inner.to_string());
+        }
+
+        None
+    }
+
+    fn callable_parameter_type_text(&self, callee_idx: NodeIndex) -> Option<String> {
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(callee_idx)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            let [param_idx] = callable.parameters.nodes.as_slice() else {
+                continue;
+            };
+            let Some(param_node) = self.arena.get(*param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if let Some(type_text) = self
+                .emit_type_node_text_from_arena(self.arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+            {
+                return Some(type_text);
+            }
+        }
+
+        None
+    }
+
+    fn callable_parameter_tuple_type_text_for_value(&self, expr_idx: NodeIndex) -> Option<String> {
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(expr_idx)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            let mut elements = Vec::new();
+            for &param_idx in &callable.parameters.nodes {
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
+                let name = self.get_identifier_text(param.name)?;
+                let type_text = self
+                    .emit_type_node_text_from_arena(self.arena, param.type_annotation)
+                    .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+                    .unwrap_or_else(|| "any".to_string());
+                let optional = if param.question_token { "?" } else { "" };
+                if param.dot_dot_dot_token {
+                    elements.push(format!("...{name}{optional}: {}", type_text.trim()));
+                } else {
+                    elements.push(format!("{name}{optional}: {}", type_text.trim()));
+                }
+            }
+            return Some(format!("[{}]", elements.join(", ")));
+        }
+
+        None
     }
 
     fn call_expression_local_overload_return_type_text(
