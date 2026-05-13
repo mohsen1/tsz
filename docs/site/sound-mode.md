@@ -15,27 +15,6 @@ It is not the main workstream right now. The project is focused first on matchin
   <strong>Not active product work</strong> - Sound Mode exists today only as an experimental prototype behind explicit entrypoints. Its behavior is narrow, its public configuration is not settled, and it may change substantially.
 </div>
 
-## Current Reality
-
-Today, Sound Mode is deliberately small.
-
-| Area | Current state |
-| --- | --- |
-| Work priority | Not actively being developed until `tsz` is fully compatible with `tsc` and performance tuning is done. |
-| Entrypoint | Hidden CLI flag `--sound`, plus the playground / WASM `soundMode` input. |
-| Config | No supported tsconfig surface. `compilerOptions.sound` is rejected by the normal `tsc`-compatible config path today. |
-| Scope | Project-wide checker boolean today. The design target is user-authored TypeScript implementation code first. |
-| Checks | A few narrow areas, including method bivariance tightening, partial `any` propagation, and sticky freshness behavior. |
-| Diagnostics | Standard TypeScript diagnostics such as `TS2322` / `TS2345`, not the intended public TSZ sound diagnostic surface. |
-
-You can still try the prototype explicitly:
-
-```bash
-tsz check --sound src/
-```
-
-That command is useful for exploration, but it should not be read as the final shape of the feature.
-
 ## What It Is Not
 
 Sound Mode is not:
