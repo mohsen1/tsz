@@ -1,8 +1,8 @@
 //! Lazy type resolution and type environment population.
 
 use crate::query_boundaries::common::{
-    collect_type_queries, contains_lazy_or_recursive, enum_def_id, get_type_query_symbol_ref,
-    lazy_def_id,
+    collect_type_queries, contains_lazy_or_recursive, enum_def_id, fill_application_defaults,
+    get_type_query_symbol_ref, lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
@@ -807,7 +807,7 @@ impl<'a> CheckerState<'a> {
                     && !type_params.is_empty()
                     && type_params.iter().all(|p| p.default.is_some())
                     && let Some(default_args) =
-                        tsz_solver::fill_application_defaults(self.ctx.types, &[], &type_params)
+                        fill_application_defaults(self.ctx.types, &[], &type_params)
                 {
                     let app = self.ctx.types.application(type_id, default_args);
                     let evaluated = self.evaluate_application_type(app);

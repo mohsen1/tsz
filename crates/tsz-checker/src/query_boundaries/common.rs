@@ -1,6 +1,6 @@
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
-    TypePredicate,
+    TypeParamInfo, TypePredicate,
 };
 
 // Re-export solver value types used by checker call computation.
@@ -51,6 +51,14 @@ pub(crate) fn instantiate_type(
     substitution: &tsz_solver::TypeSubstitution,
 ) -> TypeId {
     tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
+}
+
+pub(crate) fn fill_application_defaults(
+    db: &dyn TypeDatabase,
+    args: &[TypeId],
+    type_params: &[TypeParamInfo],
+) -> Option<Vec<TypeId>> {
+    tsz_solver::fill_application_defaults(db, args, type_params)
 }
 
 /// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the
