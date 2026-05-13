@@ -3,6 +3,7 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::{Symbol, SymbolId};
 use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
@@ -626,7 +627,33 @@ impl<'a> CheckerState<'a> {
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
             if var_decl.type_annotation.is_some() {
                 let annotated = self.get_type_from_type_node(var_decl.type_annotation);
-                return self.resolve_ref_type(annotated);
+                let mut resolved = self.resolve_ref_type(annotated);
+                // During early cross-file value delegation, a type-reference
+                // annotation can degrade to unknown even though its symbol body
+                // is resolvable. Recover through the symbol before falling back
+                // to the initializer, which may erase explicit generic args.
+                if resolved.is_unknown_or_error()
+                    && let Some(annotation_node) = self.ctx.arena.get(var_decl.type_annotation)
+                    && annotation_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(annotation_node)
+                    && type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_none_or(|args| args.nodes.is_empty())
+                    && let TypeSymbolResolution::Type(sym_id) =
+                        self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                {
+                    let symbol_type = self.type_reference_symbol_type(sym_id);
+                    if !symbol_type.is_unknown_or_error() {
+                        resolved = symbol_type;
+                    } else {
+                        let direct_symbol_type = self.get_type_of_symbol(sym_id);
+                        if !direct_symbol_type.is_unknown_or_error() {
+                            resolved = direct_symbol_type;
+                        }
+                    }
+                }
+                return resolved;
             }
             if self.ctx.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
@@ -792,10 +819,16 @@ impl<'a> CheckerState<'a> {
         checker.ctx.symbol_types.remove(&sym_id);
         checker.ctx.symbol_instance_types.remove(&sym_id);
         for &owned_sym_id in delegate_binder.node_symbols.values() {
+            checker
+                .ctx
+                .register_symbol_file_target(owned_sym_id, target_file_idx);
             checker.ctx.symbol_types.remove(&owned_sym_id);
             checker.ctx.symbol_instance_types.remove(&owned_sym_id);
         }
         for (_, &owned_sym_id) in delegate_binder.file_locals.iter() {
+            checker
+                .ctx
+                .register_symbol_file_target(owned_sym_id, target_file_idx);
             checker.ctx.symbol_types.remove(&owned_sym_id);
             checker.ctx.symbol_instance_types.remove(&owned_sym_id);
         }

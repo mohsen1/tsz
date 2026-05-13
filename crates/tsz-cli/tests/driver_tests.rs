@@ -725,6 +725,94 @@ value instanceof fakeConstructor;
     );
 }
 
+#[test]
+fn project_imported_freeze_companion_keeps_explicit_readonly_factory_type() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2017",
+            "module": "esnext",
+            "strict": true,
+            "lib": ["es2022"],
+            "types": [],
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("object-utils.ts"),
+        r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value
+}
+"#,
+    );
+    write_file(
+        &base.join("identifier-node.ts"),
+        r#"
+import { freeze } from "./object-utils.js"
+
+export interface IdentifierNode {
+  readonly kind: "IdentifierNode"
+  readonly name: string
+}
+
+type IdentifierNodeFactory = Readonly<{
+  create(name: string): Readonly<IdentifierNode>
+}>
+
+export const IdentifierNode: IdentifierNodeFactory =
+  freeze<IdentifierNodeFactory>({
+    create(name) {
+      return freeze({
+        kind: "IdentifierNode",
+        name,
+      })
+    },
+  })
+"#,
+    );
+    write_file(
+        &base.join("column-node.ts"),
+        r#"
+import { freeze } from "./object-utils.js"
+import { IdentifierNode } from "./identifier-node.js"
+
+export interface ColumnNode {
+  readonly kind: "ColumnNode"
+  readonly column: IdentifierNode
+}
+
+type ColumnNodeFactory = Readonly<{
+  create(column: string): Readonly<ColumnNode>
+}>
+
+export const ColumnNode: ColumnNodeFactory = freeze<ColumnNodeFactory>({
+  create(column) {
+    return freeze({
+      kind: "ColumnNode",
+      column: IdentifierNode.create(column),
+    })
+  },
+})
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected imported Readonly factory companion to keep create(), got: {:?}",
+        result.diagnostics
+    );
+}
+
 fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();

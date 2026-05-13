@@ -112,6 +112,88 @@ const value: string = x.value
     );
 }
 #[test]
+fn imported_companion_const_keeps_private_readonly_alias_annotation() {
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[
+            (
+                "object-utils.ts",
+                r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value
+}
+"#,
+            ),
+            (
+                "identifier-node.ts",
+                r#"
+import { freeze } from "./object-utils.js"
+
+export interface IdentifierNode {
+  readonly kind: "IdentifierNode"
+  readonly name: string
+}
+
+type IdentifierNodeFactory = Readonly<{
+  create(name: string): Readonly<IdentifierNode>
+}>
+
+export const IdentifierNode: IdentifierNodeFactory =
+  freeze<IdentifierNodeFactory>({
+    create(name) {
+      return freeze({
+        kind: "IdentifierNode",
+        name,
+      })
+    },
+  })
+"#,
+            ),
+            (
+                "column-node.ts",
+                r#"
+import { freeze } from "./object-utils.js"
+import { IdentifierNode } from "./identifier-node.js"
+
+export interface ColumnNode {
+  readonly kind: "ColumnNode"
+  readonly column: IdentifierNode
+}
+
+type ColumnNodeFactory = Readonly<{
+  create(column: string): Readonly<ColumnNode>
+}>
+
+export const ColumnNode: ColumnNodeFactory = freeze<ColumnNodeFactory>({
+  create(column) {
+    return freeze({
+      kind: "ColumnNode",
+      column: IdentifierNode.create(column),
+    })
+  },
+})
+"#,
+            ),
+        ],
+        "column-node.ts",
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]),
+    )
+    .into_iter()
+    .filter(|diagnostic| diagnostic.code != 2318)
+    .map(|diagnostic| (diagnostic.code, diagnostic.message_text))
+    .collect::<Vec<_>>();
+
+    assert!(
+        diagnostics.is_empty(),
+        "imported companion const should preserve a private Readonly factory alias annotation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn conflicted_reexport_keeps_local_namespace_surface() {
     let diagnostics = check(
         &[
