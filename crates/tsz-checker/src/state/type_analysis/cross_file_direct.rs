@@ -110,7 +110,13 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
+        if symbol.has_any_flags(symbol_flags::VALUE) {
+            return None;
+        }
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        if symbol.declarations.len() != 1 {
             return None;
         }
         if !self.symbol_declarations_are_builtin_lib_only(sym_id, symbol) {
