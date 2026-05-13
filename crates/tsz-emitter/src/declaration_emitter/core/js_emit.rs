@@ -3192,6 +3192,10 @@ impl<'a> DeclarationEmitter<'a> {
                     _ => None,
                 }
             }
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                let computed = self.arena.get_computed_property(node)?;
+                self.destructuring_property_lookup_text(computed.expression)
+            }
             _ => None,
         }
     }
