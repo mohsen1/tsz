@@ -531,6 +531,11 @@ pub struct DefinitionStore {
     /// `resolved_symbol_types` map.
     resolved_cross_file_queries: DefDashMap<CrossFileQueryCacheKey, CrossFileQueryCacheValue>,
 
+    /// Program-local scope mixed into source-file symbol-type query keys.
+    /// Batch drivers stamp this from `ProgramContext` so reused shared stores
+    /// cannot read stale entries from an earlier virtual program.
+    source_file_symbol_type_cache_scope: AtomicU64,
+
     /// Per-file mutual exclusion locks for cross-file type delegation.
     /// Prevents concurrent delegation to the same target file.
     file_delegation_locks: DefDashMap<usize, Arc<Mutex<()>>>,
@@ -717,6 +722,7 @@ impl DefinitionStore {
             ),
             name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             resolved_cross_file_queries: DefDashMap::default(),
+            source_file_symbol_type_cache_scope: AtomicU64::new(1),
             file_delegation_locks: DefDashMap::default(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
             circular_def_ids: DefDashSet::default(),
@@ -939,6 +945,17 @@ impl DefinitionStore {
         self.file_delegation_locks
             .get(&file_idx)
             .map(|r| Arc::clone(r.value()))
+    }
+
+    pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
+        self.source_file_symbol_type_cache_scope
+            .load(Ordering::Relaxed)
+            .max(1)
+    }
+
+    pub fn set_source_file_symbol_type_cache_scope(&self, scope: u64) {
+        self.source_file_symbol_type_cache_scope
+            .store(scope.max(1), Ordering::Relaxed);
     }
 
     /// Look up a previously resolved cross-file query result.
