@@ -3325,3 +3325,55 @@ const wrap = (x: number) => ({ wrap: x });
         ts7023.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2322_no_false_positive_merged_type_alias_and_const_return() {
+    // Two name variants guard against name-hardcoding regressions (§25).
+    for source in [
+        r#"
+type Foo = { type: "foo" };
+const Foo = {
+  make: (): Foo => {
+    return { type: "foo" };
+  }
+};
+"#,
+        r#"
+type MyAlias = { kind: "ok" };
+const MyAlias = {
+  build: (): MyAlias => {
+    return { kind: "ok" };
+  }
+};
+"#,
+    ] {
+        let diags = check_source_diagnostics(source);
+        let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+        assert!(
+            ts2322.is_empty(),
+            "Expected no TS2322 for merged type-alias+const return, got: {:?}",
+            ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn ts2322_real_error_still_reported_for_merged_type_alias_and_const_wrong_return() {
+    let diags = check_source_diagnostics(
+        r#"
+type Status = { code: "ok" };
+const Status = {
+  make: (): Status => {
+    return { code: "wrong" };
+  }
+};
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected 1 TS2322 for wrong literal in merged type-alias+const return, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
