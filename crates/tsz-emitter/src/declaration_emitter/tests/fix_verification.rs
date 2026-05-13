@@ -1679,6 +1679,69 @@ export const updateIfChanged = <T>(t: T) => {
 }
 
 #[test]
+fn fix_local_overloaded_call_uses_matching_literal_signature_return() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Base {
+    x: string;
+    y: number;
+}
+interface HelloOrWorld extends Base {
+    p1: boolean;
+}
+interface JustHello extends Base {
+    p2: boolean;
+}
+interface JustWorld extends Base {
+    p3: boolean;
+}
+
+let hello: "hello";
+let world: "world";
+let helloOrWorld: "hello" | "world";
+
+function f(p: "hello"): JustHello;
+function f(p: "hello" | "world"): HelloOrWorld;
+function f(p: "world"): JustWorld;
+function f(p: string): Base;
+function f(...args: any[]): any {
+    return undefined;
+}
+
+let fResult1 = f(hello);
+let fResult2 = f(world);
+let fResult3 = f(helloOrWorld);
+
+function g(p: string): Base;
+function g(p: "hello"): JustHello;
+function g(p: "hello" | "world"): HelloOrWorld;
+function g(p: "world"): JustWorld;
+function g(...args: any[]): any {
+    return undefined;
+}
+
+let gResult1 = g(hello);
+let gResult2 = g(world);
+let gResult3 = g(helloOrWorld);
+"#,
+    );
+
+    for expected in [
+        "declare let fResult1: JustHello;",
+        "declare let fResult2: JustWorld;",
+        "declare let fResult3: HelloOrWorld;",
+        "declare let gResult1: JustHello;",
+        "declare let gResult2: JustWorld;",
+        "declare let gResult3: Base;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected overload call return `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"
