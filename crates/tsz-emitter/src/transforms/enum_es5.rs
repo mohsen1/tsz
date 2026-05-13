@@ -237,10 +237,11 @@ impl<'a> EnumES5Transformer<'a> {
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
     }
 
-    /// Extract a leading block/JSDoc comment that appears immediately before `pos`.
+    /// Extract a leading line or block/JSDoc comment that appears immediately before `pos`.
     ///
-    /// Scans backward from `pos` skipping whitespace/newlines.  If we land on `*/`
-    /// we scan further back for the matching `/*` and return the comment text.
+    /// Scans backward from `pos` skipping whitespace/newlines. If the previous
+    /// non-empty line is a `//` comment, return it. If we land on `*/`, scan
+    /// further back for the matching `/*` and return the block comment text.
     fn extract_leading_comment_at(&self, pos: u32) -> Option<String> {
         let source_text = self.source_text?;
         let bytes = source_text.as_bytes();
@@ -252,6 +253,13 @@ impl<'a> EnumES5Transformer<'a> {
         // Skip trailing whitespace/newlines before the token
         while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\r' | b'\n') {
             i -= 1;
+        }
+        if i > 0 {
+            let line_start = source_text[..i].rfind('\n').map_or(0, |p| p + 1);
+            let line = source_text[line_start..i].trim();
+            if line.starts_with("//") {
+                return Some(line.to_string());
+            }
         }
         // Check if we landed on `*/` (end of a block comment)
         if i >= 2 && bytes[i - 1] == b'/' && bytes[i - 2] == b'*' {
@@ -276,6 +284,25 @@ impl<'a> EnumES5Transformer<'a> {
             }
         }
         None
+    }
+
+    fn recovered_computed_enum_initializer(&self, initializer_idx: NodeIndex) -> Option<IRNode> {
+        let (Some(source_text), Some(init_node)) =
+            (self.source_text, self.arena.get(initializer_idx))
+        else {
+            return None;
+        };
+        let start = (init_node.pos as usize).min(source_text.len());
+        let end = (init_node.end as usize).min(source_text.len());
+        let raw = source_text.get(start..end)?;
+        let first_line = raw.lines().next()?.trim();
+        if first_line.is_empty() || first_line == raw.trim() {
+            return None;
+        }
+        if !first_line.ends_with("++") && !first_line.ends_with("--") {
+            return None;
+        }
+        Some(IRNode::Raw(first_line.to_string().into()))
     }
 
     /// Extract trailing inline comment from right after the member name end.
@@ -349,7 +376,8 @@ impl<'a> EnumES5Transformer<'a> {
             let stmt = if let Some(key_expr) = computed_key {
                 // Computed property: E[E[expr] = value] = expr;
                 let value = if has_initializer {
-                    self.transform_expression(member_data.initializer)
+                    self.recovered_computed_enum_initializer(member_data.initializer)
+                        .unwrap_or_else(|| self.transform_expression(member_data.initializer))
                 } else {
                     let next_val = self.last_value.map_or(0, |v| v + 1);
                     self.last_value = Some(next_val);
@@ -562,6 +590,8 @@ impl<'a> EnumES5Transformer<'a> {
                 // Strip the `/*` / `/**` prefix and `*/` suffix for the Comment node text
                 let inner = if is_block {
                     text[2..text.len().saturating_sub(2)].to_string()
+                } else if let Some(line) = text.strip_prefix("//") {
+                    line.trim_start().to_string()
                 } else {
                     text
                 };

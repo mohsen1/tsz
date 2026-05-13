@@ -1079,10 +1079,23 @@ impl<'a> Printer<'a> {
         // Each entry: (Option<temp_name>, expr_idx, member_idx) — None means side-effect only
         let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
         if needs_computed_prop_hoisting {
-            for &member_idx in &class.members.nodes {
+            for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
+                if member_i > 0
+                    && class
+                        .members
+                        .nodes
+                        .get(member_i - 1)
+                        .is_some_and(|&prev_idx| {
+                            self.class_member_continues_previous_field_initializer(
+                                prev_idx, member_idx,
+                            )
+                        })
+                {
+                    continue;
+                }
                 // Only property declarations participate in computed property hoisting
                 if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
                     continue;
@@ -1536,6 +1549,15 @@ impl<'a> Printer<'a> {
                     && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                     && let Some(prop) = self.arena.get_property_decl(member_node)
                 {
+                    if member_i > 0
+                        && members.get(member_i - 1).is_some_and(|&prev_idx| {
+                            self.class_member_continues_previous_field_initializer(
+                                prev_idx, member_idx,
+                            )
+                        })
+                    {
+                        continue;
+                    }
                     // With useDefineForClassFields, fields without initializers
                     // are still materialized at runtime as
                     // `Object.defineProperty(this, "name", { value: void 0 })`.
@@ -1613,6 +1635,10 @@ impl<'a> Printer<'a> {
                     // `end` field which can overshoot into the next member's trivia)
                     // so the range doesn't invert.
                     let leading_comments = if !self.ctx.options.remove_comments {
+                        let member_start = self
+                            .arena
+                            .get(prop.name)
+                            .map_or(member_node.pos, |name_node| name_node.pos);
                         let prev_end = if member_i > 0 {
                             members
                                 .get(member_i - 1)
@@ -1621,9 +1647,9 @@ impl<'a> Printer<'a> {
                                     self.find_token_end_before_trivia(prev.pos, prev.end)
                                 })
                         } else {
-                            member_node.pos.saturating_sub(64)
+                            node.pos
                         };
-                        self.collect_leading_comments_in_range(prev_end, member_node.pos)
+                        self.collect_leading_comments_in_range(prev_end, member_start)
                     } else {
                         Vec::new()
                     };
@@ -1768,6 +1794,18 @@ impl<'a> Printer<'a> {
             // Non-private field inits after WeakMap.set calls
             for (name, init_idx, init_end, leading, trailing) in &field_inits {
                 // Emit leading comments from the original property declaration
+                let recovered_leading;
+                let leading = if leading.is_empty()
+                    && self
+                        .recovered_class_field_initializer_element_access_tail(*init_end)
+                        .is_some()
+                {
+                    recovered_leading =
+                        self.recovered_class_field_initializer_leading_comments(*init_idx);
+                    recovered_leading.as_slice()
+                } else {
+                    leading.as_slice()
+                };
                 for comment in leading {
                     self.write_comment(comment);
                     self.write_line();
@@ -1802,6 +1840,11 @@ impl<'a> Printer<'a> {
                         self.with_scoped_static_initializer_context_cleared(|this| {
                             this.emit_expression(*init_idx);
                         });
+                        if let Some(tail) =
+                            self.recovered_class_field_initializer_element_access_tail(*init_end)
+                        {
+                            self.write(&tail);
+                        }
                     }
                     self.write_line();
                     self.decrease_indent();
@@ -1828,6 +1871,11 @@ impl<'a> Printer<'a> {
                         self.with_scoped_static_initializer_context_cleared(|this| {
                             this.emit_expression(*init_idx);
                         });
+                        if let Some(tail) =
+                            self.recovered_class_field_initializer_element_access_tail(*init_end)
+                        {
+                            self.write(&tail);
+                        }
                     }
                     self.write(";");
                     if !trailing.is_empty() {
@@ -2643,6 +2691,13 @@ impl<'a> Printer<'a> {
                     self.emit_expression(*expr_idx);
                     self.write(";");
                 }
+            }
+        }
+
+        if class_expr_temp.is_none() {
+            for stmt in self.recovered_continuation_method_body_statements(node) {
+                self.write_line();
+                self.write(&stmt);
             }
         }
 
@@ -3758,6 +3813,160 @@ impl<'a> Printer<'a> {
         segment[search_from..].contains(&b'=')
     }
 
+    fn recovered_class_field_initializer_element_access_tail(
+        &self,
+        init_end: u32,
+    ) -> Option<String> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut pos = std::cmp::min(init_end as usize, bytes.len());
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if bytes.get(pos) != Some(&b'[') {
+            return None;
+        }
+
+        let bracket_start = pos;
+        pos += 1;
+        let mut depth = 1usize;
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b'[' => depth += 1,
+                b']' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                b';' | b'{' | b'}' if depth == 1 => return None,
+                _ => {}
+            }
+            pos += 1;
+        }
+        if depth != 0 || pos >= bytes.len() {
+            return None;
+        }
+        let bracket_end = pos;
+        pos += 1;
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        match bytes.get(pos).copied() {
+            Some(b':') => text
+                .get(bracket_start..=bracket_end)
+                .map(std::string::ToString::to_string),
+            Some(b'=') => {
+                let mut end = pos + 1;
+                while end < bytes.len() && bytes[end] != b'\n' && bytes[end] != b'\r' {
+                    if bytes[end] == b';' || bytes[end] == b'}' {
+                        break;
+                    }
+                    end += 1;
+                }
+                text.get(bracket_start..end)
+                    .map(str::trim_end)
+                    .map(std::string::ToString::to_string)
+            }
+            Some(b'(') => {
+                let mut end = pos + 1;
+                let mut paren_depth = 1usize;
+                while end < bytes.len() {
+                    match bytes[end] {
+                        b'(' => paren_depth += 1,
+                        b')' => {
+                            paren_depth = paren_depth.saturating_sub(1);
+                            if paren_depth == 0 {
+                                end += 1;
+                                break;
+                            }
+                        }
+                        b';' | b'{' | b'}' if paren_depth == 1 => return None,
+                        _ => {}
+                    }
+                    end += 1;
+                }
+                if paren_depth != 0 {
+                    return None;
+                }
+                text.get(bracket_start..end)
+                    .map(std::string::ToString::to_string)
+            }
+            _ => None,
+        }
+    }
+
+    fn class_member_continues_previous_field_initializer(
+        &self,
+        prev_member_idx: NodeIndex,
+        member_idx: NodeIndex,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(prev_node) = self.arena.get(prev_member_idx) else {
+            return false;
+        };
+        let Some(prev_prop) = self.arena.get_property_decl(prev_node) else {
+            return false;
+        };
+        let Some(prev_init_node) = self.arena.get(prev_prop.initializer) else {
+            return false;
+        };
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let current_name = self
+            .arena
+            .get_property_decl(member_node)
+            .map(|prop| prop.name)
+            .or_else(|| {
+                self.arena
+                    .get_method_decl(member_node)
+                    .map(|method| method.name)
+            });
+        let Some(current_name_node) = current_name.and_then(|idx| self.arena.get(idx)) else {
+            return false;
+        };
+        if current_name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let start = std::cmp::min(prev_init_node.end as usize, text.len());
+        let end = std::cmp::min(current_name_node.pos as usize, text.len());
+        if start > end {
+            return false;
+        }
+        let between = &text.as_bytes()[start..end];
+        !between.contains(&b';') && between.iter().all(u8::is_ascii_whitespace)
+    }
+
+    fn recovered_class_field_initializer_leading_comments(
+        &self,
+        init_idx: NodeIndex,
+    ) -> Vec<String> {
+        let (Some(text), Some(init_node)) = (self.source_text, self.arena.get(init_idx)) else {
+            return Vec::new();
+        };
+        let init_start = (init_node.pos as usize).min(text.len());
+        let Some(before_init) = text.get(..init_start) else {
+            return Vec::new();
+        };
+        let Some(line_start) = before_init.rfind('\n').map(|pos| pos + 1) else {
+            return Vec::new();
+        };
+        let Some(before_line) = text.get(..line_start.saturating_sub(1)) else {
+            return Vec::new();
+        };
+        let prev_line_start = before_line.rfind('\n').map_or(0, |pos| pos + 1);
+        let prev_line = &before_line[prev_line_start..];
+        let trimmed = prev_line.trim();
+        if trimmed.starts_with("//") {
+            vec![trimmed.to_string()]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn node_text_contains_identifier(&self, idx: NodeIndex, name: &str) -> bool {
         if name.is_empty() {
             return false;
@@ -3837,6 +4046,45 @@ impl<'a> Printer<'a> {
                 && let Some(stmt) = self.recovered_public_class_block(trimmed)
             {
                 recovered.push(stmt);
+            }
+            for ch in line.chars() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+        recovered
+    }
+
+    fn recovered_continuation_method_body_statements(&self, node: &Node) -> Vec<String> {
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let start = node.pos as usize;
+        let end = (node.end as usize).min(text.len());
+        let Some(source) = text.get(start..end) else {
+            return Vec::new();
+        };
+
+        let mut depth = 0_i32;
+        let mut previous_was_unterminated_computed_field = false;
+        let mut recovered = Vec::new();
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if depth == 1 {
+                if previous_was_unterminated_computed_field
+                    && trimmed.starts_with('[')
+                    && trimmed.contains(")")
+                    && trimmed.ends_with("{ }")
+                {
+                    recovered.push("{ }".to_string());
+                }
+                previous_was_unterminated_computed_field = trimmed.starts_with('[')
+                    && trimmed.contains('=')
+                    && !trimmed.ends_with(';')
+                    && !trimmed.ends_with(',');
             }
             for ch in line.chars() {
                 match ch {
