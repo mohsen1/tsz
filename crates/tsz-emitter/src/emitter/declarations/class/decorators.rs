@@ -78,7 +78,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    fn emit_legacy_decorator_expression(&mut self, expr_idx: NodeIndex) {
+    fn emit_legacy_decorator_expression_without_trailing_comments(&mut self, expr_idx: NodeIndex) {
         let Some(expr_node) = self.arena.get(expr_idx) else {
             return;
         };
@@ -118,6 +118,63 @@ impl<'a> Printer<'a> {
         }
 
         self.emit(expr_idx);
+    }
+
+    fn emit_legacy_decorator_trailing_comments(&mut self, expr_idx: NodeIndex) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        let actual_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
+        let bytes = text.as_bytes();
+        let mut line_end = actual_end as usize;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
+            line_end += 1;
+        }
+
+        let comments: Vec<(String, u32)> = self
+            .all_comments
+            .iter()
+            .filter_map(|comment| {
+                if comment.pos < actual_end || comment.end as usize > line_end {
+                    return None;
+                }
+                let gap_start = actual_end as usize;
+                let gap_end = comment.pos as usize;
+                let has_code_between = gap_start < gap_end
+                    && text[gap_start..gap_end]
+                        .chars()
+                        .any(|ch| !ch.is_whitespace());
+                if has_code_between {
+                    return None;
+                }
+                crate::safe_slice::slice(text, comment.pos as usize, comment.end as usize)
+                    .ok()
+                    .map(|comment_text| (comment_text.to_string(), comment.pos))
+            })
+            .collect();
+
+        let mut wrote_line_comment = false;
+        for (comment_text, comment_pos) in comments {
+            self.write_space();
+            self.write_comment_with_reindent(&comment_text, Some(comment_pos));
+            if comment_text.starts_with("//") {
+                wrote_line_comment = true;
+            }
+        }
+
+        wrote_line_comment
+    }
+
+    fn emit_legacy_decorator_expression(&mut self, expr_idx: NodeIndex) -> bool {
+        self.emit_legacy_decorator_expression_without_trailing_comments(expr_idx);
+        self.emit_legacy_decorator_trailing_comments(expr_idx)
     }
 
     pub(in crate::emitter) fn emit_class_expression_with_captured_computed_names(
@@ -864,8 +921,11 @@ impl<'a> Printer<'a> {
             if let Some(dec_node) = self.arena.get(dec_idx)
                 && let Some(dec) = self.arena.get_decorator(dec_node)
             {
-                self.emit_legacy_decorator_expression(dec.expression);
+                let line_comment = self.emit_legacy_decorator_expression(dec.expression);
                 if i + 1 != emitted_decorators.len() || has_more_after_decs {
+                    if line_comment {
+                        self.write_line();
+                    }
                     self.write(",");
                 }
                 self.write_line();
@@ -881,11 +941,15 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&param_idx.to_string());
                     self.write(", ");
-                    self.emit_legacy_decorator_expression(dec.expression);
+                    self.emit_legacy_decorator_expression_without_trailing_comments(dec.expression);
                     self.write(")");
+                    let line_comment = self.emit_legacy_decorator_trailing_comments(dec.expression);
                     let is_last_dec = di + 1 >= param_decs.len();
                     let is_last_param = pi + 1 >= ctor_param_decorators.len();
                     if !(is_last_dec && is_last_param) || has_metadata {
+                        if line_comment {
+                            self.write_line();
+                        }
                         self.write(",");
                     }
                     self.write_line();
@@ -1077,8 +1141,11 @@ impl<'a> Printer<'a> {
                 if let Some(dec_node) = self.arena.get(dec_idx)
                     && let Some(dec) = self.arena.get_decorator(dec_node)
                 {
-                    self.emit_legacy_decorator_expression(dec.expression);
+                    let line_comment = self.emit_legacy_decorator_expression(dec.expression);
                     if i + 1 != emitted_decorators.len() || has_more {
+                        if line_comment {
+                            self.write_line();
+                        }
                         self.write(",");
                     }
                     self.write_line();
@@ -1095,11 +1162,18 @@ impl<'a> Printer<'a> {
                         self.write("(");
                         self.write(&param_idx.to_string());
                         self.write(", ");
-                        self.emit_legacy_decorator_expression(dec.expression);
+                        self.emit_legacy_decorator_expression_without_trailing_comments(
+                            dec.expression,
+                        );
                         self.write(")");
+                        let line_comment =
+                            self.emit_legacy_decorator_trailing_comments(dec.expression);
                         let is_last_dec = di + 1 >= param_decs.len();
                         let is_last_param = pi + 1 >= param_decorators.len();
                         if !(is_last_dec && is_last_param) || will_emit_metadata {
+                            if line_comment {
+                                self.write_line();
+                            }
                             self.write(",");
                         }
                         self.write_line();

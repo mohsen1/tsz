@@ -236,6 +236,20 @@ impl<'a> Printer<'a> {
             self.write("accessor ");
         }
 
+        if suppress_modifiers
+            && self.ctx.options.legacy_decorators
+            && let Some(ref modifiers) = class.modifiers
+        {
+            for &mod_idx in &modifiers.nodes {
+                let Some(mod_node) = self.arena.get(mod_idx) else {
+                    continue;
+                };
+                if mod_node.kind == syntax_kind_ext::DECORATOR {
+                    self.skip_comments_for_erased_node(mod_node);
+                }
+            }
+        }
+
         // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
@@ -256,6 +270,11 @@ impl<'a> Printer<'a> {
                         || (self.ctx.options.legacy_decorators
                             && mod_node.kind == syntax_kind_ext::DECORATOR)
                     {
+                        if self.ctx.options.legacy_decorators
+                            && mod_node.kind == syntax_kind_ext::DECORATOR
+                        {
+                            self.skip_comments_for_erased_node(mod_node);
+                        }
                         continue;
                     }
                     if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
