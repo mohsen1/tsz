@@ -1522,6 +1522,10 @@ impl<'a> DeclarationEmitter<'a> {
                     let before_type = self.writer.len();
                     if let Some(rescued) = self.rescued_asserts_parameter_type_text(param_idx) {
                         self.write(&rescued);
+                    } else if let Some(type_text) =
+                        self.preferred_annotation_name_text(param.type_annotation)
+                    {
+                        self.write(&type_text);
                     } else if self.normalize_string_literal_type_quotes
                         && let Some(type_text) =
                             self.emit_type_node_text_normalized(param.type_annotation)
@@ -2023,12 +2027,7 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 elem.name
             };
-            let name_node = self.arena.get(prop_name_idx)?;
-            if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            let ident = self.arena.get_identifier(name_node)?;
-            let mut member_text = ident.escaped_text.to_string();
+            let mut member_text = self.binding_pattern_member_name_text(prop_name_idx)?;
             if elem.initializer.is_some() {
                 member_text.push_str("?: ");
             } else {
@@ -2065,6 +2064,26 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|member| format!("{member_indent}{member}"))
             .collect();
         Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
+    }
+
+    fn binding_pattern_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return self
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.to_string());
+        }
+
+        let property_name = self.destructuring_property_lookup_text(name_idx)?;
+        if Self::is_simple_identifier_text(&property_name) || property_name.parse::<f64>().is_ok() {
+            Some(property_name)
+        } else {
+            Some(format!(
+                "\"{}\"",
+                property_name.replace('\\', "\\\\").replace('"', "\\\"")
+            ))
+        }
     }
 
     fn type_text_from_initializer(&self, initializer: NodeIndex) -> Option<String> {

@@ -135,6 +135,24 @@ type PC = PredicateCheck<(x: unknown) => x is string>;
 }
 
 #[test]
+fn type_predicate_cannot_reference_rest_parameter() {
+    let codes = check_source_codes(
+        r#"
+function isAllStrings(...values: unknown[]): values is string[] {
+    return values.every(value => typeof value === "string");
+}
+
+function assertAllStrings(...values: unknown[]): asserts values is string[] {}
+"#,
+    );
+    let ts1229_count = codes.iter().filter(|&&code| code == 1229).count();
+    assert_eq!(
+        ts1229_count, 2,
+        "expected TS1229 for type and assertion predicates that reference rest parameters, got {codes:?}"
+    );
+}
+
+#[test]
 fn assertion_element_access_emits_ts2776() {
     let codes = check_source_codes(
         r#"
