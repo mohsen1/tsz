@@ -883,7 +883,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             // `string & keyof T` and constraint is `keyof T`, the intersection
             // is a subset of the constraint. This handles for-in loops where the
             // key type is refined to `string & keyof T`.
-            || self.intersection_contains_mapped_constraint(mapped.constraint);
+            || self.intersection_contains_mapped_constraint(mapped.constraint)
+            || self
+                .evaluator
+                .constraints_semantically_match(self.index_type, mapped.constraint);
 
         if can_substitute {
             // `{ [K in Keys]: F<K> }[Keys]` is a union over each key, not `F<Keys>`.
@@ -1488,11 +1491,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        // Check if the type parameter's constraint matches the mapped constraint.
-        // The constraint may be stored in an unevaluated form (e.g., IndexAccess)
-        // that evaluates to the same type as the mapped constraint.
-        let constraint_matches =
-            self.constraints_semantically_match(index_constraint, mapped.constraint);
+        // Check if the constraint matches the mapped constraint semantically.
+        // The constraint may be in unevaluated form, so also check the index
+        // type itself — it may evaluate to the mapped constraint even when its
+        // own constraint (e.g., `keyof T`) stays deferred and fails the first check.
+        let constraint_matches = self
+            .constraints_semantically_match(index_constraint, mapped.constraint)
+            || self.constraints_semantically_match(index_type, mapped.constraint);
 
         if !constraint_matches {
             return None;
