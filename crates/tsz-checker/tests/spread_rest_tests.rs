@@ -2,6 +2,10 @@
 
 use tsz_checker::test_utils::check_source_diagnostics;
 
+fn diagnostic_codes(diagnostics: &[tsz_checker::diagnostics::Diagnostic]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
 #[test]
 fn test_array_spread_with_tuple() {
     let source = r#"
@@ -1577,7 +1581,7 @@ var x: any;
         ts2698,
         0,
         "TS2698 should not be emitted for rest in destructuring assignment, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -1594,7 +1598,7 @@ for ([{ ...y }] of [[{ abc: 1 }]]) ;
         ts2698,
         0,
         "TS2698 should not be emitted for rest in for-of destructuring, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
