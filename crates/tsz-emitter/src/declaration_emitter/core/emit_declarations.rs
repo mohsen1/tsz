@@ -1165,13 +1165,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // `undefined` — the solver approximates it as `undefined` from the
                 // runtime value, which we widen to `void` here. Matches
                 // declFileTypeAnnotationBuiltInType.
-                let solver_undefined_or_any = effective_return_type_id
-                    == tsz_solver::types::TypeId::ANY
-                    || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED;
-                if solver_undefined_or_any
-                    && func_body.is_some()
-                    && self.body_returns_void(func_body)
-                {
+                let solver_void_like = effective_return_type_id == tsz_solver::types::TypeId::ANY
+                    || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED
+                    || effective_return_type_id == tsz_solver::types::TypeId::NEVER;
+                if solver_void_like && func_body.is_some() && self.body_returns_void(func_body) {
                     self.write(": void");
                 } else if let Some(type_text) = func_body
                     .is_some()

@@ -93,6 +93,30 @@ export namespace Outer {
 }
 
 #[test]
+fn test_throw_only_unannotated_returns_void() {
+    let source = r#"
+export function f() {
+    throw new Error();
+}
+export class C {
+    m() {
+        throw new Error();
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export declare function f(): void;"),
+        "Expected throw-only function to emit void: {output}"
+    );
+    assert!(
+        output.contains("m(): void;"),
+        "Expected throw-only method to emit void: {output}"
+    );
+}
+
+#[test]
 fn test_defaulted_boolean_param_false_narrowing_return_type() {
     let source = r#"
 function removeUndefinedButNotFalse(x = true) {

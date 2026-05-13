@@ -252,7 +252,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
             {
-                if return_type_id == tsz_solver::types::TypeId::ANY
+                if (return_type_id == tsz_solver::types::TypeId::ANY
+                    || return_type_id == tsz_solver::types::TypeId::NEVER)
                     && method_body.is_some()
                     && self.body_returns_void(method_body)
                 {
@@ -1959,6 +1960,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 true
             }
+            k if k == syntax_kind_ext::THROW_STATEMENT => true,
             k if k == syntax_kind_ext::BLOCK => {
                 if let Some(block) = self.arena.get_block(stmt_node) {
                     self.block_returns_void(&block.statements)
