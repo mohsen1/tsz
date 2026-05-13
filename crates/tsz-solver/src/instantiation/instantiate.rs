@@ -1340,6 +1340,13 @@ impl<'a> TypeInstantiator<'a> {
                             self.interner.type_list(list_id).to_vec();
                         let mut results = Vec::with_capacity(members.len());
                         for &member in &members {
+                            if crate::visitors::visitor_predicates::is_primitive_type(
+                                self.interner,
+                                member,
+                            ) {
+                                results.push(member);
+                                continue;
+                            }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(tp_info.name, member);
                             let new_constraint =
