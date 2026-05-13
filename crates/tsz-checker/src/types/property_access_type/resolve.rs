@@ -2823,6 +2823,23 @@ impl<'a> CheckerState<'a> {
         if !member_has_value_semantics {
             return None;
         }
+        if resolved_flags & symbol_flags::CONST_ENUM != 0
+            && resolved_flags & symbol_flags::VALUE_MODULE != 0
+            && !self
+                .ctx
+                .binder
+                .get_symbol(member_sym_id)
+                .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER))
+        {
+            let display_type = self
+                .ctx
+                .enum_namespace_types
+                .get(&resolved_sym_id)
+                .copied()
+                .unwrap_or(TypeId::ANY);
+            self.error_property_not_exist_at(property_name, display_type, name_or_argument);
+            return Some(TypeId::ERROR);
+        }
 
         // For merged symbols (e.g., namespace + interface), verify that the VALUE
         // part is actually exported. If only the TYPE part is exported, the value

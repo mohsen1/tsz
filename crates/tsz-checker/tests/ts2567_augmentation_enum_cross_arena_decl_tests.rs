@@ -14,7 +14,7 @@
 //! augmentation declared against a local class in a single file still emits
 //! TS2567 correctly.
 
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::test_utils::{check_source_codes, check_source_diagnostics};
 
 #[test]
 fn augmentation_enum_merged_with_class_still_emits_ts2567() {
@@ -32,5 +32,40 @@ declare module "./test" {
     assert!(
         codes.contains(&2567),
         "augmentation-enum merging with an existing class must emit TS2567; got: {codes:?}"
+    );
+}
+
+#[test]
+fn const_enum_namespace_rejected_merge_hides_namespace_member() {
+    let source = r#"
+const enum Direction {
+  Up,
+  Down,
+}
+
+namespace Direction {
+  export function toString(d: Direction): string {
+    return d === Direction.Up ? "up" : "down";
+  }
+}
+
+const dirStr: string = Direction.toString(Direction.Up);
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2567 = diagnostics.iter().filter(|diag| diag.code == 2567).count();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2339)
+        .collect();
+
+    assert_eq!(
+        ts2567, 2,
+        "const enum/namespace rejected merge should emit both TS2567 diagnostics; got: {diagnostics:?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|diag| diag.message_text.contains("toString")),
+        "namespace member access after rejected const enum merge should emit TS2339; got: {diagnostics:?}"
     );
 }
