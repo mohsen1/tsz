@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `codex/constrained-interface-property-6626-20260513`
-- **PR**: TBD
+- **PR**: #6637
 - **Status**: ready
 - **Workstream**: conformance / checker property access
 
