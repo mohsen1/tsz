@@ -1,6 +1,6 @@
 # Claim: spread/rest diagnostic assertion cleanup
 
-Status: WIP
+Status: Ready for review
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6423
 Branch: codex/cleanup-spread-rest-diagnostic-assertions-20260513
@@ -22,3 +22,10 @@ predicate scans behind local helpers while preserving the existing assertions.
 
 Full PR CI must remain green before merge, including lint, unit, dist, wasm,
 emit, conformance, and fourslash.
+
+## Local Verification
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --test spread_rest_tests --no-fail-fast`
+  (83 tests passed)
+- `cargo clippy --profile ci-lint -p tsz-checker --all-targets -- -D warnings`
