@@ -11,6 +11,21 @@ pub(in crate::emitter) enum ES5RestProp {
     Dynamic(String),
 }
 
+/// Work deferred from an array-binding element's "head" emit phase to a later
+/// pass over its siblings — see [`Printer::emit_es5_array_binding_element_head`].
+pub(in crate::emitter) enum DeferredArrayElement {
+    /// A nested binding pattern; emit `_temp.x` / `_temp[i]` decompositions
+    /// once all sibling reads have been written.
+    NestedDecomposition { pattern: NodeIndex, temp: String },
+    /// A simple binding with a default expression; emit the
+    /// `name = _temp === void 0 ? init : _temp` assignment after sibling reads.
+    SimpleWithDefault {
+        name: NodeIndex,
+        temp: String,
+        initializer: NodeIndex,
+    },
+}
+
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn get_binding_element_property_key(
         &self,
@@ -221,6 +236,232 @@ impl<'a> Printer<'a> {
             self.emit_expression(elem.initializer);
             self.write(" : ");
             self.write(&value_name);
+        }
+    }
+
+    /// Emit the "head" of a single array binding element — the reads of
+    /// `source[index]` (and any default-value substitution) — and return any
+    /// work that should be deferred until after sibling elements have done
+    /// their own reads.
+    ///
+    /// Paired with [`emit_es5_array_deferred_element`]; together they
+    /// implement tsc's two-phase emit for arrays containing nested patterns,
+    /// so that all element reads land in source order before any decomposition
+    /// or defaulted-binding assignment.
+    pub(in crate::emitter) fn emit_es5_array_binding_element_head(
+        &mut self,
+        elem_idx: NodeIndex,
+        temp_name: &str,
+        index: usize,
+    ) -> Option<DeferredArrayElement> {
+        let elem_node = self.arena.get(elem_idx)?;
+        let elem = self.arena.get_binding_element(elem_node)?;
+
+        if elem.dot_dot_dot_token {
+            self.emit_es5_array_rest_element(elem.name, temp_name, index);
+            return None;
+        }
+
+        if self.is_binding_pattern(elem.name) {
+            let value_name = self.get_temp_var_name();
+            self.write(", ");
+            self.write(&value_name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+
+            let pattern_temp = if elem.initializer.is_some() {
+                let defaulted_name = self.get_temp_var_name();
+                self.write(", ");
+                self.write(&defaulted_name);
+                self.write(" = ");
+                self.write(&value_name);
+                self.write(" === void 0 ? ");
+                self.emit_expression(elem.initializer);
+                self.write(" : ");
+                self.write(&value_name);
+                defaulted_name
+            } else {
+                value_name
+            };
+
+            return Some(DeferredArrayElement::NestedDecomposition {
+                pattern: elem.name,
+                temp: pattern_temp,
+            });
+        }
+
+        if !self.has_identifier_text(elem.name) {
+            return None;
+        }
+
+        if elem.initializer.is_none() {
+            self.write(", ");
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+            None
+        } else {
+            // Read into a temp now; emit the defaulted assignment in the
+            // deferred pass so it runs after sibling reads (and after any
+            // earlier element's nested decomposition has bound its names).
+            let value_name = self.get_temp_var_name();
+            self.write(", ");
+            self.write(&value_name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+            Some(DeferredArrayElement::SimpleWithDefault {
+                name: elem.name,
+                temp: value_name,
+                initializer: elem.initializer,
+            })
+        }
+    }
+
+    /// Direct-variant counterpart of
+    /// [`Self::emit_es5_array_binding_element_head`] for the case where the
+    /// source is a bare identifier rather than a freshly-introduced temp. The
+    /// caller threads `first` so the very first emission has no leading `", "`.
+    pub(in crate::emitter) fn emit_es5_array_binding_element_head_direct(
+        &mut self,
+        elem_idx: NodeIndex,
+        temp_name: &str,
+        index: usize,
+        first: &mut bool,
+    ) -> Option<DeferredArrayElement> {
+        let elem_node = self.arena.get(elem_idx)?;
+        let elem = self.arena.get_binding_element(elem_node)?;
+
+        if elem.dot_dot_dot_token {
+            // Rest element keeps its existing inline emit and never defers.
+            if !self.has_identifier_text(elem.name) && !self.is_binding_pattern(elem.name) {
+                return None;
+            }
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            if self.is_binding_pattern(elem.name) {
+                let value_name = self.get_temp_var_name();
+                self.write(&value_name);
+                self.write(" = ");
+                self.write(temp_name);
+                self.write(".slice(");
+                self.write_usize(index);
+                self.write(")");
+                self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+            } else {
+                self.write_identifier_text(elem.name);
+                self.write(" = ");
+                self.write(temp_name);
+                self.write(".slice(");
+                self.write_usize(index);
+                self.write(")");
+            }
+            return None;
+        }
+
+        if self.is_binding_pattern(elem.name) {
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&value_name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+
+            let pattern_temp = if elem.initializer.is_some() {
+                let defaulted_name = self.get_temp_var_name();
+                self.write(", ");
+                self.write(&defaulted_name);
+                self.write(" = ");
+                self.write(&value_name);
+                self.write(" === void 0 ? ");
+                self.emit_expression(elem.initializer);
+                self.write(" : ");
+                self.write(&value_name);
+                defaulted_name
+            } else {
+                value_name
+            };
+
+            return Some(DeferredArrayElement::NestedDecomposition {
+                pattern: elem.name,
+                temp: pattern_temp,
+            });
+        }
+
+        if !self.has_identifier_text(elem.name) {
+            return None;
+        }
+
+        if elem.initializer.is_none() {
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+            None
+        } else {
+            let value_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+            self.write(&value_name);
+            self.write(" = ");
+            self.write(temp_name);
+            self.write("[");
+            self.write_usize(index);
+            self.write("]");
+            Some(DeferredArrayElement::SimpleWithDefault {
+                name: elem.name,
+                temp: value_name,
+                initializer: elem.initializer,
+            })
+        }
+    }
+
+    /// Emit the "tail" half deferred from [`emit_es5_array_binding_element_head`].
+    pub(in crate::emitter) fn emit_es5_array_deferred_element(
+        &mut self,
+        deferred: DeferredArrayElement,
+    ) {
+        match deferred {
+            DeferredArrayElement::NestedDecomposition { pattern, temp } => {
+                self.emit_es5_destructuring_pattern_idx(pattern, &temp);
+            }
+            DeferredArrayElement::SimpleWithDefault {
+                name,
+                temp,
+                initializer,
+            } => {
+                self.write(", ");
+                self.write_identifier_text(name);
+                self.write(" = ");
+                self.write(&temp);
+                self.write(" === void 0 ? ");
+                self.emit_expression(initializer);
+                self.write(" : ");
+                self.write(&temp);
+            }
         }
     }
 
@@ -488,10 +729,58 @@ impl<'a> Printer<'a> {
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
             && let Some(pattern) = self.arena.get_binding_pattern(pattern_node)
         {
-            for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-                self.emit_es5_array_binding_element(elem_idx, temp_name, i);
+            // When the array pattern contains a nested binding pattern, tsc
+            // emits all element reads (and any default-substitution temps)
+            // first, then performs each element's decomposition/defaulted
+            // assignment in source order. This is required when a later
+            // element's default references a name bound by an earlier element
+            // (e.g. `let [{ ...a }, b = a] = arr`).
+            if self.array_pattern_has_nested(pattern) {
+                let mut pending: Vec<DeferredArrayElement> = Vec::new();
+                for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                    if let Some(deferred) =
+                        self.emit_es5_array_binding_element_head(elem_idx, temp_name, i)
+                    {
+                        pending.push(deferred);
+                    }
+                }
+                for deferred in pending {
+                    self.emit_es5_array_deferred_element(deferred);
+                }
+            } else {
+                for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                    self.emit_es5_array_binding_element(elem_idx, temp_name, i);
+                }
             }
         }
+    }
+
+    /// Returns true when any direct child of `pattern` is a nested array or
+    /// object binding pattern. Used to gate the two-pass array emit so the
+    /// simpler shapes (`let [a, b, ...rest] = arr`) keep the existing
+    /// single-pass emit.
+    fn array_pattern_has_nested(
+        &self,
+        pattern: &tsz_parser::parser::node::BindingPatternData,
+    ) -> bool {
+        for &elem_idx in &pattern.elements.nodes {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                continue;
+            }
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.dot_dot_dot_token {
+                continue;
+            }
+            if self.is_binding_pattern(elem.name) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Like `emit_es5_destructuring_pattern` but handles the `first` flag for the first
@@ -533,8 +822,25 @@ impl<'a> Printer<'a> {
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
             && let Some(pattern) = self.arena.get_binding_pattern(pattern_node)
         {
-            for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-                self.emit_es5_array_binding_element_direct(elem_idx, ident_name, i, first);
+            // Same two-pass ordering as `emit_es5_destructuring_pattern` when
+            // any element is a nested binding pattern. See that function's
+            // comment for the rationale.
+            if self.array_pattern_has_nested(pattern) {
+                let mut pending: Vec<DeferredArrayElement> = Vec::new();
+                for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                    if let Some(deferred) = self
+                        .emit_es5_array_binding_element_head_direct(elem_idx, ident_name, i, first)
+                    {
+                        pending.push(deferred);
+                    }
+                }
+                for deferred in pending {
+                    self.emit_es5_array_deferred_element(deferred);
+                }
+            } else {
+                for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                    self.emit_es5_array_binding_element_direct(elem_idx, ident_name, i, first);
+                }
             }
         }
     }
