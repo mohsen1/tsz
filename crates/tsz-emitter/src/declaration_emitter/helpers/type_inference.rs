@@ -1771,7 +1771,18 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::NullKeyword as u16
                 || k == SyntaxKind::UndefinedKeyword as u16 =>
             {
-                Some("any".to_string())
+                Some(
+                    if self.strict_null_checks {
+                        if node.kind == SyntaxKind::NullKeyword as u16 {
+                            "null"
+                        } else {
+                            "undefined"
+                        }
+                    } else {
+                        "any"
+                    }
+                    .to_string(),
+                )
             }
             k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
                 let unary = self.arena.get_unary_expr_ex(node)?;
@@ -5276,6 +5287,7 @@ impl<'a> DeclarationEmitter<'a> {
                     scratch.current_arena = self.current_arena.clone();
                     scratch.arena_to_path = self.arena_to_path.clone();
                     scratch.indent_level = self.indent_level;
+                    scratch.strict_null_checks = self.strict_null_checks;
                     let generic_source_func = func
                         .type_parameters
                         .as_ref()
@@ -5283,8 +5295,8 @@ impl<'a> DeclarationEmitter<'a> {
                     let mut type_text = scratch.source_function_return_type_text(func)?;
                     let source_return_text = scratch
                         .function_body_returned_parameter_call_return_type_text(source_arena, func);
-                    if generic_source_func {
-                        type_text = source_return_text?;
+                    if generic_source_func && let Some(source_return_text) = source_return_text {
+                        type_text = source_return_text;
                     } else if type_text.contains("unknown")
                         && let Some(source_return_text) = source_return_text
                     {
@@ -5294,11 +5306,16 @@ impl<'a> DeclarationEmitter<'a> {
                         scratch.substitute_call_result_parameter_type_queries(func, &type_text);
                     let (type_text, _) =
                         scratch.function_return_type_text_for_declaration_scope(func, &type_text);
-                    scratch.substitute_source_call_type_parameters(
+                    let type_text = scratch.substitute_source_call_type_parameters(
                         source_arena,
                         func,
                         call,
                         type_text,
+                    )?;
+                    Some(
+                        scratch
+                            .expand_inexact_optional_alias_reference_text(source_arena, &type_text)
+                            .unwrap_or(type_text),
                     )
                 }
             {
@@ -6768,6 +6785,105 @@ impl<'a> DeclarationEmitter<'a> {
         )
     }
 
+    fn expand_inexact_optional_alias_reference_text(
+        &self,
+        source_arena: &NodeArena,
+        type_text: &str,
+    ) -> Option<String> {
+        let marker = " & {}";
+        let marker_start = type_text.find(marker)?;
+        let prefix = type_text.get(..marker_start)?.trim_end();
+        let alias_end = prefix.len();
+        let alias_start = prefix[..alias_end]
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| {
+                (!Self::is_type_reference_identifier_continue(ch)).then_some(idx + ch.len_utf8())
+            })
+            .unwrap_or(0);
+        let alias_name = prefix.get(alias_start..alias_end)?.trim();
+        if !Self::is_simple_identifier_text(alias_name) {
+            return None;
+        }
+        let source_object =
+            self.inexact_optional_alias_source_object_text(source_arena, alias_name)?;
+        let expanded = Self::inexact_optional_object_intersection_text(&source_object)?;
+        let mut output = String::with_capacity(type_text.len() - alias_name.len() + expanded.len());
+        output.push_str(type_text.get(..alias_start)?);
+        output.push_str(&expanded);
+        output.push_str(type_text.get(marker_start + marker.len()..)?);
+        Some(output)
+    }
+
+    fn inexact_optional_alias_source_object_text(
+        &self,
+        source_arena: &NodeArena,
+        alias_name: &str,
+    ) -> Option<String> {
+        let alias_text = self.source_type_alias_type_text(source_arena, alias_name)?;
+        let (mapped_alias_name, mapped_arg) = Self::single_type_reference_application(&alias_text)?;
+        if !Self::is_simple_identifier_text(mapped_arg) {
+            return None;
+        }
+        let mapped_alias_text =
+            self.source_type_alias_type_text(source_arena, mapped_alias_name)?;
+        if !mapped_alias_text.contains("undefined extends")
+            || !mapped_alias_text.contains("? K : never")
+            || !mapped_alias_text.contains("? never : K")
+        {
+            return None;
+        }
+        let source_object = self.source_type_alias_type_text(source_arena, mapped_arg)?;
+        Self::leading_balanced_brace_text(&source_object).or(Some(source_object))
+    }
+
+    fn source_type_alias_type_text(
+        &self,
+        source_arena: &NodeArena,
+        alias_name: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            let Some(alias) = source_arena.get_type_alias(stmt_node) else {
+                continue;
+            };
+            if self
+                .identifier_text_from_arena(source_arena, alias.name)
+                .as_deref()
+                != Some(alias_name)
+            {
+                continue;
+            }
+            return self
+                .source_slice_from_arena(source_arena, alias.type_node)
+                .or_else(|| self.emit_type_node_text_from_arena(source_arena, alias.type_node))
+                .map(|text| text.trim().trim_end_matches(';').trim().to_string());
+        }
+        None
+    }
+
+    fn leading_balanced_brace_text(text: &str) -> Option<String> {
+        let trimmed = text.trim_start();
+        if !trimmed.starts_with('{') {
+            return None;
+        }
+        let mut depth = 0usize;
+        for (idx, ch) in trimmed.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        return trimmed.get(..idx + ch.len_utf8()).map(str::to_string);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     fn expand_single_object_type_alias_application_from_source_text(
         &self,
         source_arena: &NodeArena,
@@ -7232,6 +7348,7 @@ impl<'a> DeclarationEmitter<'a> {
         scratch.current_arena = self.current_arena.clone();
         scratch.arena_to_path = self.arena_to_path.clone();
         scratch.indent_level = self.indent_level;
+        scratch.strict_null_checks = self.strict_null_checks;
         scratch.normalize_string_literal_type_quotes = true;
 
         if let Some(ref type_params) = func.type_parameters

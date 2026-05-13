@@ -123,6 +123,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut type_param_names = Vec::new();
         let mut type_param_constraints = Vec::new();
+        let mut type_param_defaults = Vec::new();
         for &param_idx in &type_params.nodes {
             let Some(param_node) = source_arena.get(param_idx) else {
                 continue;
@@ -140,11 +141,18 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 type_param_constraints.push((name_text.clone(), constraint));
             }
+            if param.default.is_some()
+                && let Some(default_text) = self
+                    .emit_type_node_text_from_arena(source_arena, param.default)
+                    .or_else(|| self.source_slice_from_arena(source_arena, param.default))
+            {
+                type_param_defaults.push((name_text.clone(), default_text));
+            }
             type_param_names.push(name_text);
         }
 
         let explicit_type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
-        let substitutions = if explicit_type_args.is_empty() {
+        let mut substitutions = if explicit_type_args.is_empty() {
             self.infer_call_type_param_substitutions_from_arguments(
                 source_arena,
                 &func.parameters,
@@ -159,6 +167,17 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(|(name_text, arg_text)| (name_text.clone(), arg_text.clone()))
                 .collect()
         };
+        for (name_text, default_text) in type_param_defaults {
+            if substitutions
+                .iter()
+                .any(|(substituted, _)| substituted == &name_text)
+                || !Self::contains_whole_word_in_text(&type_text, &name_text)
+            {
+                continue;
+            }
+            let default_text = Self::replace_whole_words_in_text(&default_text, &substitutions);
+            substitutions.push((name_text, default_text));
+        }
         if substitutions.is_empty()
             && type_param_names
                 .iter()
