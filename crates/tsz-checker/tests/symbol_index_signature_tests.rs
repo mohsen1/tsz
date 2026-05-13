@@ -96,6 +96,33 @@ const key2: Keys = Symbol.iterator;
 }
 
 #[test]
+fn annotated_symbol_index_signature_variable_allows_symbol_key_read() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Symbol: { (description?: string): symbol };
+
+interface SymbolIndex {
+    [key: symbol]: boolean;
+}
+
+const sym = Symbol("key");
+const symi: SymbolIndex = { [sym]: true };
+
+const _symi: boolean = symi[sym];
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "symbol index signature reads should return the signature value type, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
+        "symbol key reads should not report TS7053 when a symbol index signature is present, got {codes:?}",
+    );
+}
+
+#[test]
 fn jsdoc_symbol_index_signature_reports_computed_property_value_mismatch() {
     let codes = diagnostic_codes_for_js(
         r#"
