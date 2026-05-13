@@ -1133,6 +1133,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if instantiated == original_type_id || evaluated == TypeId::ERROR {
             return;
         }
+        // Only install this forward alias when the intermediate application
+        // appears to have been introduced after the outer application.
+        // If the instantiated application predates the outer one, it can be a
+        // user-authored type occurrence and globally aliasing it risks repainting
+        // unrelated diagnostics.
+        let instantiated_is_new_intermediate = match (
+            self.interner.lookup_alloc_order(instantiated),
+            self.interner.lookup_alloc_order(original_type_id),
+        ) {
+            (Some(instantiated_order), Some(original_order)) => instantiated_order > original_order,
+            _ => instantiated.0 > original_type_id.0,
+        };
+        if !instantiated_is_new_intermediate {
+            return;
+        }
         if original_args.iter().any(|&arg| {
             crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
         }) {
