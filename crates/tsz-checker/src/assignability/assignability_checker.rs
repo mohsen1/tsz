@@ -1723,21 +1723,17 @@ impl<'a> CheckerState<'a> {
 
         thread_local! {
             static ASSIGNABILITY_EVAL_VISITING: std::cell::RefCell<FxHashSet<TypeId>> =
-                std::cell::RefCell::new(FxHashSet::default());
+                Default::default();
         }
 
-        let entered = ASSIGNABILITY_EVAL_VISITING.with(|visiting| {
-            let mut visiting = visiting.borrow_mut();
-            visiting.insert(type_id)
-        });
+        let entered =
+            ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().insert(type_id));
         if !entered {
             return type_id;
         }
 
         let result = self.evaluate_type_for_assignability_inner(type_id);
-        ASSIGNABILITY_EVAL_VISITING.with(|visiting| {
-            visiting.borrow_mut().remove(&type_id);
-        });
+        ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().remove(&type_id));
         result
     }
 
