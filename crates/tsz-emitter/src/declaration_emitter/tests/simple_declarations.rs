@@ -3549,6 +3549,35 @@ module.exports.Sub = class {
 }
 
 #[test]
+fn test_js_commonjs_constructor_function_prototype_object_emits_single_class() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @constructor */
+module.exports.MyClass = function() {
+    this.x = 1;
+};
+module.exports.MyClass.prototype = {
+    a: function() {
+    }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export class MyClass {\n    a: () => void;\n}"),
+        "Expected CommonJS constructor functions with prototype object literals to emit as a single class surface: {output}"
+    );
+    assert!(
+        !output.contains("export function MyClass"),
+        "Did not expect the constructor function assignment to emit beside the class: {output}"
+    );
+    assert!(
+        !output.contains("constructor();") && !output.contains("x: number;"),
+        "Did not expect constructor-body properties to leak when tsc uses the prototype object surface: {output}"
+    );
+}
+
+#[test]
 fn test_js_array_subclass_emits_array_any_and_constructors() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
