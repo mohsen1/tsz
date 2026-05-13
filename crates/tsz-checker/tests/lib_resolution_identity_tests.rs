@@ -19,7 +19,11 @@ use tsz_binder::state::LibContext as BinderLibContext;
 use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
-use tsz_checker::test_utils::HasDiagnosticCode;
+use tsz_checker::test_utils::{
+    diagnostic_count, diagnostics_with_any_code, diagnostics_with_code,
+    diagnostics_with_code_any_message, diagnostics_with_code_message, diagnostics_without_codes,
+    has_any_diagnostic_code, has_diagnostic_code, has_diagnostic_code_message,
+};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
@@ -66,91 +70,6 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
 
 fn lib_files_available() -> bool {
     !load_lib_files_for_test().is_empty()
-}
-
-fn diagnostic_count<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> usize {
-    diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.diagnostic_code() == code)
-        .count()
-}
-
-fn diagnostics_with_code<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> Vec<&T> {
-    diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.diagnostic_code() == code)
-        .collect()
-}
-
-fn diagnostics_with_any_code<'a, T: HasDiagnosticCode>(
-    diagnostics: &'a [T],
-    codes: &[u32],
-) -> Vec<&'a T> {
-    diagnostics
-        .iter()
-        .filter(|diagnostic| codes.contains(&diagnostic.diagnostic_code()))
-        .collect()
-}
-
-fn diagnostics_without_codes<'a, T: HasDiagnosticCode>(
-    diagnostics: &'a [T],
-    excluded_codes: &[u32],
-) -> Vec<&'a T> {
-    diagnostics
-        .iter()
-        .filter(|diagnostic| !excluded_codes.contains(&diagnostic.diagnostic_code()))
-        .collect()
-}
-
-fn has_diagnostic_code<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> bool {
-    diagnostics
-        .iter()
-        .any(|diagnostic| diagnostic.diagnostic_code() == code)
-}
-
-fn has_any_diagnostic_code<T: HasDiagnosticCode>(diagnostics: &[T], codes: &[u32]) -> bool {
-    diagnostics
-        .iter()
-        .any(|diagnostic| codes.contains(&diagnostic.diagnostic_code()))
-}
-
-fn has_diagnostic_code_message(
-    diagnostics: &[(u32, String)],
-    code: u32,
-    message_fragment: &str,
-) -> bool {
-    diagnostics.iter().any(|(diagnostic_code, message)| {
-        *diagnostic_code == code && message.contains(message_fragment)
-    })
-}
-
-fn diagnostics_with_code_message<'a>(
-    diagnostics: &'a [(u32, String)],
-    code: u32,
-    message_fragment: &str,
-) -> Vec<&'a (u32, String)> {
-    diagnostics
-        .iter()
-        .filter(|(diagnostic_code, message)| {
-            *diagnostic_code == code && message.contains(message_fragment)
-        })
-        .collect()
-}
-
-fn diagnostics_with_code_any_message<'a>(
-    diagnostics: &'a [(u32, String)],
-    code: u32,
-    message_fragments: &[&str],
-) -> Vec<&'a (u32, String)> {
-    diagnostics
-        .iter()
-        .filter(|(diagnostic_code, message)| {
-            *diagnostic_code == code
-                && message_fragments
-                    .iter()
-                    .any(|fragment| message.contains(fragment))
-        })
-        .collect()
 }
 
 fn compile_with_lib(source: &str) -> Vec<(u32, String)> {

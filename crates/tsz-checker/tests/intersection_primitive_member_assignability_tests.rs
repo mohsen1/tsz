@@ -14,7 +14,6 @@
 //! interface is registered (as in the conformance environment), and they
 //! pin down the expected TS2322 emissions.
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::state::LibContext as BinderLibContext;
 use tsz_binder::{BinderState, lib_loader::LibFile};
@@ -25,37 +24,8 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-fn load_lib_file(name: &str) -> Option<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut candidates = Vec::new();
-    if let Ok(lib_dir) = std::env::var("TSZ_TYPESCRIPT_LIB_DIR") {
-        candidates.push(Path::new(&lib_dir).join(name));
-    }
-    candidates.extend([
-        manifest_dir.join(format!("../../TypeScript/lib/{name}")),
-        manifest_dir.join(format!(
-            "scripts/conformance/node_modules/typescript/lib/{name}"
-        )),
-        manifest_dir.join(format!(
-            "../scripts/conformance/node_modules/typescript/lib/{name}"
-        )),
-        manifest_dir.join(format!(
-            "../../scripts/conformance/node_modules/typescript/lib/{name}"
-        )),
-    ]);
-    for candidate in &candidates {
-        if candidate.exists()
-            && let Ok(content) = std::fs::read_to_string(candidate)
-        {
-            let file_name = candidate.file_name().unwrap().to_string_lossy().to_string();
-            return Some(Arc::new(LibFile::from_source(file_name, content)));
-        }
-    }
-    None
-}
-
 fn load_es5_lib_files() -> Vec<Arc<LibFile>> {
-    [
+    tsz_checker::test_utils::load_compiled_lib_files(&[
         "lib.es5.d.ts",
         // Match the conformance es2015 lib chain so `String` is augmented with
         // its iterable members and `Iterable<T>`/`IteratorResult<T>` are visible.
@@ -68,10 +38,7 @@ fn load_es5_lib_files() -> Vec<Arc<LibFile>> {
         "lib.es2015.reflect.d.ts",
         "lib.es2015.symbol.d.ts",
         "lib.es2015.symbol.wellknown.d.ts",
-    ]
-    .into_iter()
-    .filter_map(load_lib_file)
-    .collect()
+    ])
 }
 
 /// Run the checker with lib.es5.d.ts loaded and the given `strict` setting.
