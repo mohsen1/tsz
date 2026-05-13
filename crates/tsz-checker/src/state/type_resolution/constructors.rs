@@ -378,7 +378,7 @@ impl<'a> CheckerState<'a> {
                     params: shape.params.clone(),
                     this_type: None,
                     return_type: shape.return_type,
-                    type_predicate: None,
+                    type_predicate: shape.type_predicate,
                     is_method: shape.is_method,
                 };
                 let instantiated_call = if type_args.len() < shape.type_params.len() {
@@ -1143,6 +1143,16 @@ impl<'a> CheckerState<'a> {
                     return Some(instance_type);
                 }
             }
+        }
+
+        if self.heritage_call_has_invalid_mixin_constructor_constraint(expr_idx) {
+            if should_cache {
+                self.ctx
+                    .base_instance_expr_cache
+                    .borrow_mut()
+                    .insert(expr_idx, None);
+            }
+            return None;
         }
 
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;

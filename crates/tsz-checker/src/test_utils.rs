@@ -427,6 +427,19 @@ pub fn check_source_with_libs(
     checker.ctx.diagnostics.clone()
 }
 
+/// `(code, message_text)` projection of [`check_source_with_libs`].
+pub fn check_source_with_libs_code_messages(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> Vec<(u32, String)> {
+    check_source_with_libs(source, file_name, options, lib_files)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 /// Parse, bind, and type-check a multi-file project, returning the entry
 /// file's diagnostics.
 ///
@@ -845,6 +858,22 @@ class C {}
         assert!(
             !codes.contains(&2318),
             "Promise must resolve via loaded libs, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn check_source_with_libs_code_messages_projects_diagnostics() {
+        let pairs = check_source_with_libs_code_messages(
+            "const x: string = 1;",
+            "test.ts",
+            CheckerOptions::default(),
+            &[],
+        );
+        assert!(
+            pairs
+                .iter()
+                .any(|(code, message)| *code == 2322 && message.contains("number")),
+            "expected TS2322 code/message projection, got: {pairs:?}"
         );
     }
 

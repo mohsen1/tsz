@@ -1456,7 +1456,20 @@ impl<'a> CheckerState<'a> {
                         type_arg,
                         instantiated_constraint,
                     );
+                let constructor_accessibility_failure =
+                    self.constructor_accessibility_blocks_type_arg_constraint(
+                        type_arg,
+                        instantiated_constraint,
+                    ) || type_args_list.nodes.get(i).is_some_and(|&arg_idx| {
+                        self.type_query_constructor_access_level(arg_idx).is_some()
+                            && crate::query_boundaries::common::construct_signatures_for_type(
+                                self.ctx.types,
+                                instantiated_constraint,
+                            )
+                            .is_some_and(|sigs| !sigs.is_empty())
+                    });
                 let mut is_satisfied = !callable_arity_failure
+                    && !constructor_accessibility_failure
                     && (primitive_satisfies_weak
                         || if constraint_is_all_optional
                             && !query::is_primitive_type(
@@ -1539,6 +1552,9 @@ impl<'a> CheckerState<'a> {
                         || self
                             .base_union_members_satisfy_constraint(base, instantiated_constraint)
                         || self.satisfies_array_like_constraint(base, instantiated_constraint);
+                }
+                if constructor_accessibility_failure {
+                    is_satisfied = false;
                 }
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
                     if self.type_argument_is_narrowed_by_conditional_true_branch(

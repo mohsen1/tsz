@@ -763,15 +763,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Without combination priority, common supertype picks only the first type.
         let idx_priority = crate::types::InferencePriority::MappedType;
 
-        // Under `exactOptionalPropertyTypes`, the `?` modifier does NOT implicitly
-        // add `undefined` to a property's stored type. Any `undefined` present must
-        // have been written explicitly (e.g. `b?: number | undefined`) and should
-        // be preserved during index-signature inference. Without EOPT, optional
-        // properties carry an implicit `| undefined` that tsc strips when inferring
-        // T from `{ [k: string]: T }`.
-        let strip_optional_undefined =
-            !crate::caches::db::QueryDatabase::exact_optional_property_types(self.interner);
-
         for (i, prop) in source_props.iter().enumerate() {
             // Skip symbol-keyed properties (stored with "__unique_" prefix).
             // Symbol-keyed properties are NOT accessible via string or numeric index
@@ -783,17 +774,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
-            // For optional properties, strip `undefined` from the type before contributing
-            // to index signature inference. When inferring T from `{ a: string, b?: number }`
-            // against `{ [x: string]: T }`, tsc infers T = string | number (not
-            // string | number | undefined). With `exactOptionalPropertyTypes` enabled,
-            // `b?: number | undefined` preserves the explicit `| undefined` and infers
-            // T = string | number | undefined.
-            let prop_type = if prop.optional && strip_optional_undefined {
-                crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
-            } else {
-                prop.type_id
-            };
+            // Optionality represents that the property may be missing; the stored
+            // property type represents the value when present. Use it directly so
+            // `{ a?: number }` contributes `number`, while an explicitly annotated
+            // `{ b?: number | undefined }` preserves its `undefined` member.
+            let prop_type = prop.type_id;
             let property_index = i as u32;
 
             if let Some(number_idx) = number_index

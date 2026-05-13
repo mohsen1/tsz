@@ -1316,7 +1316,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn property_access_declared_type_annotation_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn property_access_declared_type_annotation_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let binder = self.binder?;
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -5791,6 +5794,50 @@ impl<'a> DeclarationEmitter<'a> {
         let base_text = self.rewrite_exported_import_equals_type_text(base_text);
         let type_args = self.type_argument_list_source_text(new_expr.type_arguments.as_ref());
         if type_args.is_empty() {
+            if let Some(type_id) = self.get_node_type_or_names(&[expr_idx]) {
+                let inferred = self.print_type_id_for_inferred_declaration(type_id);
+                if inferred.starts_with(&format!("{base_text}<")) {
+                    return Some(inferred);
+                }
+            }
+            if let Some(ident) = self.get_identifier_text(new_expr.expression)
+                && let Some(sym_id) = self.resolve_identifier_symbol(new_expr.expression, &ident)
+                && let Some(symbol) = self.binder.and_then(|binder| binder.symbols.get(sym_id))
+                && symbol.flags & symbol_flags::CLASS != 0
+            {
+                for &decl_idx in &symbol.declarations {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(class_data) = self.arena.get_class(decl_node) else {
+                        continue;
+                    };
+                    let Some(type_parameters) = class_data.type_parameters.as_ref() else {
+                        continue;
+                    };
+                    if type_parameters.nodes.is_empty() {
+                        continue;
+                    }
+                    let args = type_parameters
+                        .nodes
+                        .iter()
+                        .map(|&param_idx| {
+                            self.arena
+                                .get(param_idx)
+                                .and_then(|param_node| self.arena.get_type_parameter(param_node))
+                                .and_then(|param| {
+                                    let default_node = self.arena.get(param.default)?;
+                                    self.get_source_slice_no_semi(
+                                        default_node.pos,
+                                        default_node.end,
+                                    )
+                                })
+                                .unwrap_or_else(|| "unknown".to_string())
+                        })
+                        .collect::<Vec<_>>();
+                    return Some(format!("{base_text}<{}>", args.join(", ")));
+                }
+            }
             Some(base_text)
         } else {
             Some(format!("{base_text}<{}>", type_args.join(", ")))

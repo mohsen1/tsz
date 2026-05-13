@@ -220,10 +220,13 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let sym_id = self.resolve_jsx_tag_symbol_for_diagnostics(tag_name_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut active_decls = rustc_hash::FxHashSet::default();
         for decl_idx in symbol.all_declarations() {
-            if let Some(text) =
-                self.get_jsx_component_prop_annotation_text_from_declaration(decl_idx, prop_name)
-            {
+            if let Some(text) = self.get_jsx_component_prop_annotation_text_from_declaration(
+                decl_idx,
+                prop_name,
+                &mut active_decls,
+            ) {
                 return Some(text);
             }
         }
@@ -238,10 +241,13 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         let sym_id = self.resolve_jsx_tag_symbol_for_diagnostics(tag_name_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut active_decls = rustc_hash::FxHashSet::default();
         for decl_idx in symbol.all_declarations() {
-            if let Some(prop_decl) =
-                self.get_jsx_component_prop_declaration_from_declaration(decl_idx, prop_name)
-            {
+            if let Some(prop_decl) = self.get_jsx_component_prop_declaration_from_declaration(
+                decl_idx,
+                prop_name,
+                &mut active_decls,
+            ) {
                 return Some(prop_decl);
             }
         }
@@ -430,6 +436,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         decl_idx: NodeIndex,
         prop_name: &str,
+        active_decls: &mut rustc_hash::FxHashSet<NodeIndex>,
     ) -> Option<String> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
@@ -441,7 +448,11 @@ impl<'a> CheckerState<'a> {
             decl_node = self.ctx.arena.get(decl_idx)?;
         }
 
-        match decl_node.kind {
+        if !active_decls.insert(decl_idx) {
+            return None;
+        }
+
+        let result = match decl_node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
                 || k == syntax_kind_ext::ARROW_FUNCTION =>
@@ -450,26 +461,31 @@ impl<'a> CheckerState<'a> {
                 let first_param_idx = *func.parameters.nodes.first()?;
                 let first_param_node = self.ctx.arena.get(first_param_idx)?;
                 let param = self.ctx.arena.get_parameter(first_param_node)?;
-                if param.type_annotation.is_none() {
-                    return None;
+                if param.type_annotation.is_some() {
+                    self.get_object_prop_annotation_text_from_type_node(
+                        param.type_annotation,
+                        prop_name,
+                        active_decls,
+                    )
+                } else {
+                    None
                 }
-                self.get_object_prop_annotation_text_from_type_node(
-                    param.type_annotation,
-                    prop_name,
-                )
             }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
                 if decl.type_annotation.is_some() {
-                    return self.get_object_prop_annotation_text_from_type_node(
+                    self.get_object_prop_annotation_text_from_type_node(
                         decl.type_annotation,
                         prop_name,
-                    );
+                        active_decls,
+                    )
+                } else {
+                    self.get_object_prop_annotation_text_from_function_initializer(
+                        decl.initializer,
+                        prop_name,
+                        active_decls,
+                    )
                 }
-                self.get_object_prop_annotation_text_from_function_initializer(
-                    decl.initializer,
-                    prop_name,
-                )
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                 let iface = self.ctx.arena.get_interface(decl_node)?;
@@ -477,7 +493,11 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 let alias = self.ctx.arena.get_type_alias(decl_node)?;
-                self.get_object_prop_annotation_text_from_type_node(alias.type_node, prop_name)
+                self.get_object_prop_annotation_text_from_type_node(
+                    alias.type_node,
+                    prop_name,
+                    active_decls,
+                )
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::CLASS_EXPRESSION =>
@@ -487,22 +507,27 @@ impl<'a> CheckerState<'a> {
                 let first_param_idx = *type_params.nodes.first()?;
                 let first_param_node = self.ctx.arena.get(first_param_idx)?;
                 let first_param = self.ctx.arena.get_type_parameter(first_param_node)?;
-                if first_param.constraint == NodeIndex(0) {
-                    return None;
+                if first_param.constraint != NodeIndex(0) {
+                    self.get_object_prop_annotation_text_from_type_node(
+                        first_param.constraint,
+                        prop_name,
+                        active_decls,
+                    )
+                } else {
+                    None
                 }
-                self.get_object_prop_annotation_text_from_type_node(
-                    first_param.constraint,
-                    prop_name,
-                )
             }
             _ => None,
-        }
+        };
+        active_decls.remove(&decl_idx);
+        result
     }
 
     fn get_jsx_component_prop_declaration_from_declaration(
         &mut self,
         decl_idx: NodeIndex,
         prop_name: &str,
+        active_decls: &mut rustc_hash::FxHashSet<NodeIndex>,
     ) -> Option<NodeIndex> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
@@ -514,7 +539,11 @@ impl<'a> CheckerState<'a> {
             decl_node = self.ctx.arena.get(decl_idx)?;
         }
 
-        match decl_node.kind {
+        if !active_decls.insert(decl_idx) {
+            return None;
+        }
+
+        let result = match decl_node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
                 || k == syntax_kind_ext::ARROW_FUNCTION =>
@@ -523,23 +552,31 @@ impl<'a> CheckerState<'a> {
                 let first_param_idx = *func.parameters.nodes.first()?;
                 let first_param_node = self.ctx.arena.get(first_param_idx)?;
                 let param = self.ctx.arena.get_parameter(first_param_node)?;
-                if param.type_annotation.is_none() {
-                    return None;
+                if param.type_annotation.is_some() {
+                    self.get_object_prop_declaration_from_type_node(
+                        param.type_annotation,
+                        prop_name,
+                        active_decls,
+                    )
+                } else {
+                    None
                 }
-                self.get_object_prop_declaration_from_type_node(param.type_annotation, prop_name)
             }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
                 if decl.type_annotation.is_some() {
-                    return self.get_object_prop_declaration_from_type_node(
+                    self.get_object_prop_declaration_from_type_node(
                         decl.type_annotation,
                         prop_name,
-                    );
+                        active_decls,
+                    )
+                } else {
+                    self.get_object_prop_declaration_from_function_initializer(
+                        decl.initializer,
+                        prop_name,
+                        active_decls,
+                    )
                 }
-                self.get_object_prop_declaration_from_function_initializer(
-                    decl.initializer,
-                    prop_name,
-                )
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                 let iface = self.ctx.arena.get_interface(decl_node)?;
@@ -547,7 +584,11 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 let alias = self.ctx.arena.get_type_alias(decl_node)?;
-                self.get_object_prop_declaration_from_type_node(alias.type_node, prop_name)
+                self.get_object_prop_declaration_from_type_node(
+                    alias.type_node,
+                    prop_name,
+                    active_decls,
+                )
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::CLASS_EXPRESSION =>
@@ -557,19 +598,27 @@ impl<'a> CheckerState<'a> {
                 let first_param_idx = *type_params.nodes.first()?;
                 let first_param_node = self.ctx.arena.get(first_param_idx)?;
                 let first_param = self.ctx.arena.get_type_parameter(first_param_node)?;
-                if first_param.constraint == NodeIndex(0) {
-                    return None;
+                if first_param.constraint != NodeIndex(0) {
+                    self.get_object_prop_declaration_from_type_node(
+                        first_param.constraint,
+                        prop_name,
+                        active_decls,
+                    )
+                } else {
+                    None
                 }
-                self.get_object_prop_declaration_from_type_node(first_param.constraint, prop_name)
             }
             _ => None,
-        }
+        };
+        active_decls.remove(&decl_idx);
+        result
     }
 
     fn get_object_prop_annotation_text_from_type_node(
         &mut self,
         type_node_idx: NodeIndex,
         prop_name: &str,
+        active_decls: &mut rustc_hash::FxHashSet<NodeIndex>,
     ) -> Option<String> {
         let type_node = self.ctx.arena.get(type_node_idx)?;
         match type_node.kind {
@@ -584,7 +633,9 @@ impl<'a> CheckerState<'a> {
                 for decl_idx in symbol.all_declarations() {
                     if let Some(text) = self
                         .get_jsx_component_prop_annotation_text_from_declaration(
-                            decl_idx, prop_name,
+                            decl_idx,
+                            prop_name,
+                            active_decls,
                         )
                     {
                         return Some(text);
@@ -604,6 +655,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_node_idx: NodeIndex,
         prop_name: &str,
+        active_decls: &mut rustc_hash::FxHashSet<NodeIndex>,
     ) -> Option<NodeIndex> {
         let type_node = self.ctx.arena.get(type_node_idx)?;
         match type_node.kind {
@@ -617,7 +669,11 @@ impl<'a> CheckerState<'a> {
                 let symbol = self.ctx.binder.get_symbol(target_sym_id)?;
                 for decl_idx in symbol.all_declarations() {
                     if let Some(prop_decl) = self
-                        .get_jsx_component_prop_declaration_from_declaration(decl_idx, prop_name)
+                        .get_jsx_component_prop_declaration_from_declaration(
+                            decl_idx,
+                            prop_name,
+                            active_decls,
+                        )
                     {
                         return Some(prop_decl);
                     }
@@ -636,6 +692,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         initializer_idx: NodeIndex,
         prop_name: &str,
+        active_decls: &mut rustc_hash::FxHashSet<NodeIndex>,
     ) -> Option<String> {
         let initializer_node = self.ctx.arena.get(initializer_idx)?;
         if initializer_node.kind != syntax_kind_ext::ARROW_FUNCTION
@@ -650,13 +707,18 @@ impl<'a> CheckerState<'a> {
         if param.type_annotation.is_none() {
             return None;
         }
-        self.get_object_prop_annotation_text_from_type_node(param.type_annotation, prop_name)
+        self.get_object_prop_annotation_text_from_type_node(
+            param.type_annotation,
+            prop_name,
+            active_decls,
+        )
     }
 
     fn get_object_prop_declaration_from_function_initializer(
         &mut self,
         initializer_idx: NodeIndex,
         prop_name: &str,
+        active_decls: &mut rustc_hash::FxHashSet<NodeIndex>,
     ) -> Option<NodeIndex> {
         let initializer_node = self.ctx.arena.get(initializer_idx)?;
         if initializer_node.kind != syntax_kind_ext::ARROW_FUNCTION
@@ -671,7 +733,11 @@ impl<'a> CheckerState<'a> {
         if param.type_annotation.is_none() {
             return None;
         }
-        self.get_object_prop_declaration_from_type_node(param.type_annotation, prop_name)
+        self.get_object_prop_declaration_from_type_node(
+            param.type_annotation,
+            prop_name,
+            active_decls,
+        )
     }
 
     fn get_object_prop_annotation_text_from_members(

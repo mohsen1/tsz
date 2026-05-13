@@ -283,6 +283,43 @@ function foo(arg: Circular<tup>): tup {
     );
 }
 
+/// A recursive mapped type whose template contains the alias itself in a union
+/// with a ground type should NOT emit TS2589.  tsc handles this coinductively.
+///
+/// Regression for: <https://github.com/mohsen1/tsz/issues/6169>
+#[test]
+fn recursive_mapped_type_with_union_ground_type_no_ts2589() {
+    let source = r#"
+type RecursiveRecord<K extends string, V> = {
+    [P in K]: V | RecursiveRecord<K, V>;
+};
+const rec: RecursiveRecord<string, number> = {
+    a: 1,
+    b: { c: 2, d: { e: 3 } },
+};
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2589),
+        "RecursiveRecord<K,V> should NOT emit TS2589; got: {diags:?}"
+    );
+}
+
+/// A mapped type whose template IS purely the self-reference (no ground union)
+/// should also not emit TS2589 — tsc uses coinductive handling for it too.
+#[test]
+fn purely_self_referential_mapped_type_no_ts2589() {
+    let source = r#"
+type Circular<T> = { [P in keyof T]: Circular<T> };
+const x: Circular<{ a: string }> = { a: { a: { a: {} as any } } };
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2589),
+        "A direct-body mapped type alias should NOT emit TS2589; got: {diags:?}"
+    );
+}
+
 /// Regression test for react16.d.ts infinite loop.
 ///
 /// Deeply-nested generic types with cross-referencing interfaces and type

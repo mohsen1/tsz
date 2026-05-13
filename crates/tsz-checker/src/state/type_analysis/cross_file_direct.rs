@@ -2,7 +2,9 @@
 
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
-use tsz_common::perf_counters::DirectCrossFileInterfaceLoweringOutcome;
+use tsz_common::perf_counters::{
+    CrossArenaSymbolMissSource, DirectCrossFileInterfaceLoweringOutcome,
+};
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -68,7 +70,85 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .is_some_and(|source_file| !source_file.is_declaration_file)
 }
 
+fn is_direct_actual_lib_interface_name(name: &str) -> bool {
+    matches!(
+        name,
+        "BigIntToLocaleStringOptions"
+            | "CollatorOptions"
+            | "DateTimeFormatOptions"
+            | "Locale"
+            | "NumberFormatOptions"
+            | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsStyleRegistry"
+            | "NumberFormatOptionsUseGroupingRegistry"
+    )
+}
+
 impl<'a> CheckerState<'a> {
+    fn symbol_declarations_are_builtin_lib_only(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        !symbol.declarations.is_empty()
+            && symbol.declarations.iter().all(|&decl_idx| {
+                self.ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .is_some_and(|arenas| {
+                        !arenas.is_empty()
+                            && arenas
+                                .iter()
+                                .all(|arena| is_builtin_lib_declaration_arena(arena.as_ref()))
+                    })
+            })
+    }
+
+    pub(super) fn direct_actual_lib_symbol_type(
+        &mut self,
+        sym_id: SymbolId,
+        delegate_arena_source: CrossArenaSymbolMissSource,
+        delegate_arena: Option<&NodeArena>,
+        needs_cross_file_delegation: bool,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if needs_cross_file_delegation
+            || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
+            || !delegate_arena.is_some_and(is_builtin_lib_declaration_arena)
+            || !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+        {
+            return None;
+        }
+
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::TYPE) {
+            return None;
+        }
+        if symbol.has_any_flags(symbol_flags::VALUE) {
+            return None;
+        }
+        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        if symbol.declarations.len() != 1 {
+            return None;
+        }
+        if !self.symbol_declarations_are_builtin_lib_only(sym_id, symbol) {
+            return None;
+        }
+        let name = symbol.escaped_name.clone();
+        if !is_direct_actual_lib_interface_name(&name) {
+            return None;
+        }
+        let direct_type = self.resolve_lib_type_by_name(&name);
+        let params = Vec::new();
+        let direct_type = direct_type?;
+        if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
+            return None;
+        }
+        Some((direct_type, params))
+    }
+
     fn cross_file_interface_declarations<'b>(
         &self,
         sym_id: SymbolId,
