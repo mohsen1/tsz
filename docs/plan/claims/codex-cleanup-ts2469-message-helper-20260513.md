@@ -1,6 +1,6 @@
 # Claim: reuse TS2469 diagnostic message helper
 
-Status: WIP
+Status: ready for review
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6204
 Branch: `codex/cleanup-ts2469-message-helper-20260513`
@@ -15,6 +15,11 @@ Branch: `codex/cleanup-ts2469-message-helper-20260513`
   cleanup.
 
 ## Verification Plan
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(ts2469_symbol_operator_tests::)' --no-fail-fast`
+
+## Verification
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(ts2469_symbol_operator_tests::)' --no-fail-fast`
