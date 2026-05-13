@@ -2183,6 +2183,9 @@ impl<'a> CheckerState<'a> {
         let raw_target = target;
         source = self.normalize_awaited_application_args_for_variance(source);
         target = self.normalize_awaited_application_args_for_variance(target);
+        source = self.normalize_index_access_for_assignability(source, 0);
+        target = self.normalize_index_access_for_assignability(target, 0);
+
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
         {
@@ -2428,6 +2431,42 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn normalize_index_access_for_assignability(&mut self, ty: TypeId, depth: u8) -> TypeId {
+        if depth > 8 {
+            return ty;
+        }
+
+        let reduced = self.reduce_literal_index_access_property_types(ty);
+        if reduced != ty {
+            return self.normalize_index_access_for_assignability(reduced, depth + 1);
+        }
+
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty) {
+            let evaluated = self.evaluate_type_for_assignability(ty);
+            if evaluated != ty && evaluated != TypeId::ERROR {
+                return self.normalize_index_access_for_assignability(evaluated, depth + 1);
+            }
+        }
+
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
+            let mut changed = false;
+            let normalized_members: Vec<_> = members
+                .into_iter()
+                .map(|member| {
+                    let normalized =
+                        self.normalize_index_access_for_assignability(member, depth + 1);
+                    changed |= normalized != member;
+                    normalized
+                })
+                .collect();
+            if changed {
+                return self.ctx.types.factory().union(normalized_members);
+            }
+        }
+
+        ty
     }
 
     pub(crate) fn type_predicate_type_assignable_to_parameter(
