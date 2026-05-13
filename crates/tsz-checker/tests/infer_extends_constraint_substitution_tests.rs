@@ -58,8 +58,7 @@ const ds1: DS1 = 'helo';
     let diags = check_strict(source);
     assert!(
         diags.is_empty(),
-        "expected DropString<'hello', 'l'> to evaluate to 'helo', got diagnostics: {:?}",
-        diags
+        "expected DropString<'hello', 'l'> to evaluate to 'helo', got diagnostics: {diags:?}"
     );
 }
 
