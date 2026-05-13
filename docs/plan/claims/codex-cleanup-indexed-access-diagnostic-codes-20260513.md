@@ -2,7 +2,7 @@
 
 Issue: https://github.com/mohsen1/tsz/issues/6295
 Branch: `codex/cleanup-indexed-access-diagnostic-codes-20260513`
-Status: WIP
+Status: Ready for review
 
 ## Scope
 
@@ -21,9 +21,7 @@ compiler behavior, or implementation direction.
 
 ## Verification
 
-Planned:
-
 - `cargo fmt --check`
-- focused `cargo nextest` for the affected checker test modules
+- `cargo nextest run -p tsz-checker --lib -E 'test(nuia_any_index_emits_ts2322_tests::) or test(nuia_write_index_signature_emits_ts2322_tests::) or test(jsdoc_cast_and_define_property_widening_tests::)' --no-fail-fast` (20 tests passed)
 - `cargo clippy --profile ci-lint -p tsz-checker --all-targets -- -D warnings`
 - Full PR CI after marking ready.
