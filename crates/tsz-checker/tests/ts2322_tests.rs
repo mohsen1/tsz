@@ -419,6 +419,30 @@ var iu: typeof undefined = i;
 }
 
 #[test]
+fn typeof_mutable_object_property_widens_literal_value() {
+    let source = r#"
+const obj = { a: 1, b: "x" };
+type ObjAType = typeof obj.a;
+const _oa: ObjAType = 42;
+
+const objConst = { a: 1 } as const;
+type ObjConstAType = typeof objConst.a;
+const _oc: ObjConstAType = 2;
+"#;
+
+    let diagnostics = with_lib_contexts(source, "test.ts", CheckerOptions::default());
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2322).count(),
+        1,
+        "expected only the as-const property assignment to fail, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics[0].1.contains("not assignable to type '1'"),
+        "expected as-const property to remain literal, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_type_parameter_union_display_preserves_declaration_order() {
     let diagnostics = get_all_diagnostics(
         r#"
