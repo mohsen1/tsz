@@ -541,6 +541,9 @@ mod never_returning_narrowing_tests;
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;
 #[cfg(test)]
+#[path = "tests/object_shorthand_literal_preservation_tests.rs"]
+mod object_shorthand_literal_preservation_tests;
+#[cfg(test)]
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;
 #[cfg(test)]

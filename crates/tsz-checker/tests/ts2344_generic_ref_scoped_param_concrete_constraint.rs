@@ -248,3 +248,24 @@ type Bar<T extends Set<unknown[]>> = T;
         "Did not expect TS2344 for Set<A> in the true branch of a matching conditional. Got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn generic_alias_filtering_to_string_satisfies_string_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface MyIteratorResult<T, TReturn> { value: T | TReturn; done: boolean }
+
+type Box<T extends string> = T;
+type Select<U, M> = U extends M ? U : never;
+type NextPath<OP> = Select<OP, string>;
+type ExecPath<A> = NextPath<MyIteratorResult<string, A>>;
+
+type Use<A> = Box<ExecPath<A>>;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2344),
+        "Conditional filters like Select<..., string> should satisfy string constraints. Got: {diagnostics:?}"
+    );
+}
