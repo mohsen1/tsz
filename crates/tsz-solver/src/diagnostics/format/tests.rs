@@ -1221,6 +1221,64 @@ fn format_array_like_object_with_index_expands_to_locale_string_overload_display
     );
 }
 
+#[test]
+fn format_array_like_object_without_symbol_tail_preserves_array_display_shape() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let method = db.function(FunctionShape::new(vec![], TypeId::STRING));
+    let includes = db.function(FunctionShape::new(
+        vec![ParamInfo {
+            name: Some(db.intern_string("searchElement")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        TypeId::BOOLEAN,
+    ));
+
+    let mut properties = vec![
+        PropertyInfo::new(db.intern_string("toString"), method),
+        PropertyInfo::new(db.intern_string("toLocaleString"), method),
+        PropertyInfo::new(db.intern_string("includes"), includes),
+    ];
+    properties.extend(
+        (1..=27).map(|idx| PropertyInfo::new(db.intern_string(&format!("p{idx}")), TypeId::NUMBER)),
+    );
+    properties.push(PropertyInfo::new(db.intern_string("reduceRight"), method));
+
+    let shape = crate::types::ObjectShape {
+        properties,
+        string_index: None,
+        number_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+
+    assert!(
+        result.contains("toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }"),
+        "Expected Array toLocaleString overload display, got: {result}"
+    );
+    assert!(
+        result.contains("... 30 more ..."),
+        "Expected tsc-style omitted count for array-like display, got: {result}"
+    );
+    assert!(
+        result.contains("readonly [Symbol.unscopables]: { ...; }"),
+        "Expected synthetic array symbol tail for truncated mapped-array display, got: {result}"
+    );
+    assert!(
+        !result.contains("reduceRight:"),
+        "Expected later string members to remain omitted behind the symbol tail, got: {result}"
+    );
+}
+
 // =================================================================
 // Function type formatting
 // =================================================================

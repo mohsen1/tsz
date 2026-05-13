@@ -554,6 +554,25 @@ impl<'a> TypeFormatter<'a> {
                 parts.push(self.format_property(prop));
             }
         }
+        if use_array_to_locale_display
+            && !parts
+                .iter()
+                .any(|part| part.starts_with("[Symbol.") || part.starts_with("readonly [Symbol."))
+            && parts.len() >= 22
+        {
+            let original_len = parts.len();
+            let insert_at = parts.len() - 1;
+            parts.insert(
+                insert_at,
+                "readonly [Symbol.unscopables]: { ...; }".to_string(),
+            );
+            if original_len >= 22 {
+                parts.insert(
+                    insert_at,
+                    "[Symbol.iterator]: () => ArrayIterator<any>".to_string(),
+                );
+            }
+        }
 
         self.format_object_parts(parts)
     }
@@ -572,10 +591,6 @@ impl<'a> TypeFormatter<'a> {
                 .properties
                 .iter()
                 .any(|prop| self.atom(prop.name).as_ref() == "includes")
-            && shape
-                .properties
-                .iter()
-                .any(|prop| self.atom(prop.name).as_ref() == "[Symbol.unscopables]")
     }
 
     fn format_index_signature_value(&mut self, value_type: TypeId) -> String {

@@ -127,6 +127,51 @@ let c: "no_match" = r;  // should error: R is "hello"
     );
 }
 
+#[test]
+fn test_array_element_infer_extends_object_accepts_object_element() {
+    let source = r#"
+type ExtractElement<T> = T extends (infer U extends object)[] ? U : never;
+type Elem = ExtractElement<Array<{ name: string }>>;
+
+const elem: Elem = { name: "test" };
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected Array<object> constrained infer to preserve the object element type. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_array_element_infer_extends_object_rejects_primitive_element() {
+    let source = r#"
+type ExtractElement<T> = T extends (infer U extends object)[] ? U : never;
+type Elem = ExtractElement<string[]>;
+
+const elem: Elem = "test";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        has_error(&diags, 2322),
+        "Expected string[] constrained infer to evaluate to never. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_array_element_infer_extends_object_rejects_non_array_application() {
+    let source = r#"
+type ExtractElement<T> = T extends (infer U extends object)[] ? U : never;
+type Elem = ExtractElement<Promise<{ name: string }>>;
+
+const elem: Elem = { name: "test" };
+"#;
+    let diags = check_strict_with_libs(source);
+    assert!(
+        has_error(&diags, 2322),
+        "Expected Promise<object> constrained array infer to evaluate to never. Got: {diags:?}"
+    );
+}
+
 /// Template literal `infer N extends number` should parse matching string
 /// captures into numeric literals. This keeps tuple string keys like "0" and
 /// "1" usable as ordinal indices.

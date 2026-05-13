@@ -1491,13 +1491,10 @@ impl<'a> CheckerState<'a> {
                             interface_type
                         };
                         if !self.is_assignable_to(class_instance_type, target_type) {
-                            let mut handled_as_member_mismatch = false;
-                            if !is_class {
-                                let analysis = self.analyze_assignability_failure(
-                                    class_instance_type,
-                                    target_type,
-                                );
-                                if let Some(
+                            let analysis = self
+                                .analyze_assignability_failure(class_instance_type, target_type);
+                            if !is_class
+                                && let Some(
                                     tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
                                         property_name,
                                         source_property_type,
@@ -1505,23 +1502,22 @@ impl<'a> CheckerState<'a> {
                                         ..
                                     },
                                 ) = analysis.failure_reason
-                                {
-                                    let member_name = self.ctx.types.resolve_atom(property_name);
-                                    if let Some(&class_member_idx) = class_members.get(&member_name)
-                                    {
-                                        let expected_str = self.format_type(target_property_type);
-                                        let actual_str = self.format_type(source_property_type);
-                                        incompatible_members.push((
-                                            class_member_idx,
-                                            member_name,
-                                            expected_str,
-                                            actual_str,
-                                        ));
-                                        handled_as_member_mismatch = true;
-                                    }
-                                }
-                            }
-                            if !handled_as_member_mismatch {
+                            {
+                                let member_name =
+                                    self.ctx.types.resolve_atom(property_name).to_string();
+                                let class_member_idx = class_members
+                                    .get(&member_name)
+                                    .copied()
+                                    .unwrap_or(class_error_idx);
+                                let expected_str = self.format_type(target_property_type);
+                                let actual_str = self.format_type(source_property_type);
+                                incompatible_members.push((
+                                    class_member_idx,
+                                    member_name,
+                                    expected_str,
+                                    actual_str,
+                                ));
+                            } else {
                                 let suppress_computed_name_class_diagnostic = is_class
                                     && !extends_same_base
                                     && self.class_data_has_computed_member_name(class_data);
