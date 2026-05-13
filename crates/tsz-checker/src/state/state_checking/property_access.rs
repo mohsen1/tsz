@@ -35,13 +35,12 @@ impl<'a> CheckerState<'a> {
         original_object_type: TypeId,
         prop_name: &str,
     ) -> Option<TypeId> {
-        let def_id =
-            crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)
-                .or_else(|| {
-                    self.ctx
-                        .definition_store
-                        .find_def_for_type(original_object_type)
-                })?;
+        let lookup_type =
+            crate::query_boundaries::common::application_info(self.ctx.types, original_object_type)
+                .map(|(base, _)| base)
+                .unwrap_or(original_object_type);
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, lookup_type)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(lookup_type))?;
         let sym_id = self.ctx.def_to_symbol_id(def_id)?;
         let symbol = self.get_cross_file_symbol(sym_id)?;
         if !symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
@@ -329,14 +328,17 @@ impl<'a> CheckerState<'a> {
         // This is especially important for hot paths like repeated `string[].push`
         // checks in class-heavy files.
         let mut result = self.resolve_property_access_via_boundary(object_type, prop_name);
-        if matches!(
+        if (matches!(
             result,
             tsz_solver::operations::property::PropertyAccessResult::Success {
                 type_id: TypeId::ANY,
                 from_index_signature: false,
                 ..
             }
-        ) && let Some(member_type) =
+        ) || matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+        )) && let Some(member_type) =
             self.recover_lazy_interface_member_type(original_object_type, prop_name)
         {
             result = tsz_solver::operations::property::PropertyAccessResult::Success {

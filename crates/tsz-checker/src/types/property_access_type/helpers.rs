@@ -229,6 +229,14 @@ impl<'a> CheckerState<'a> {
             };
             let declared_type = self.get_type_from_type_node(type_annotation);
             let declared_type = self.evaluate_application_type(declared_type);
+            if crate::query_boundaries::state::checking::is_type_parameter_like(
+                self.ctx.types,
+                declared_type,
+            ) && self
+                .type_parameter_constraint_has_explicit_property(declared_type, property_name)
+            {
+                return true;
+            }
             if matches!(
                 declared_type,
                 TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
