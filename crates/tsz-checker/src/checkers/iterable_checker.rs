@@ -1675,6 +1675,7 @@ impl<'a> CheckerState<'a> {
             || next_type == TypeId::UNKNOWN
             || next_type == TypeId::UNDEFINED
             || common::is_type_parameter_like(self.ctx.types, next_type)
+            || common::contains_free_type_parameters(self.ctx.types, next_type)
         {
             return true;
         }
