@@ -2,8 +2,8 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn super_accessor_error(
-        &mut self,
+    pub(super) const fn super_accessor_error(
+        &self,
         _object_expr: NodeIndex,
         _property_name: &str,
         _error_node: NodeIndex,
