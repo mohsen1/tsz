@@ -19,7 +19,7 @@
 //! resolved" (`None`), while these helpers collapse `UNKNOWN` to `None` for
 //! the (more common) "treat as cache miss" semantics.
 
-use tsz_binder::SymbolId;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::perf_counters::{CrossFileCacheMissCause, record_cross_file_cache_miss_cause};
 
 use crate::query_boundaries::common::type_id_is_known_to_db;
@@ -28,6 +28,91 @@ use crate::state_type_analysis::cross_file::CrossFileQueryKind;
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
+    pub fn program_has_module_augmentations(&self) -> bool {
+        if self
+            .global_module_augmentations_index
+            .as_ref()
+            .is_some_and(|index| !index.is_empty())
+            || self
+                .global_augmentation_targets_index
+                .as_ref()
+                .is_some_and(|index| !index.is_empty())
+        {
+            return true;
+        }
+
+        self.all_binders.as_ref().is_some_and(|binders| {
+            binders.iter().any(|binder| {
+                !binder.module_augmentations.is_empty()
+                    || !binder.augmentation_target_modules.is_empty()
+            })
+        }) || !self.binder.module_augmentations.is_empty()
+            || !self.binder.augmentation_target_modules.is_empty()
+    }
+
+    pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
+        let ptr = self.all_binders.as_ref().map_or(
+            self.binder as *const tsz_binder::BinderState as usize,
+            |binders| std::sync::Arc::as_ptr(binders) as usize,
+        ) as u64;
+        let mixed = ptr.wrapping_mul(0x9E37_79B1_85EB_CA87) ^ (ptr >> 32);
+        mixed.max(1)
+    }
+
+    pub fn symbol_arena_symbol_type_cache_is_stable(
+        &self,
+        sym_id: SymbolId,
+        delegate_arena: &tsz_parser::NodeArena,
+    ) -> bool {
+        let Some(symbol) = self.cross_file_cache_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
+            || symbol.declarations.len() != 1
+        {
+            return false;
+        }
+
+        // The `symbol_arenas` map stores one arena for the symbol, but merged
+        // or augmented symbols can also have declarations in other arenas. A
+        // cached symbol type is reusable only for the small stable slice where
+        // the single class/interface declaration is proven to belong solely to
+        // the delegated source-file arena.
+        symbol.declarations.iter().all(|&decl_idx| {
+            self.binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .is_some_and(|arenas| {
+                    arenas.len() == 1 && std::ptr::eq(arenas[0].as_ref(), delegate_arena)
+                })
+        })
+    }
+
+    fn cross_file_cache_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
+        if let Some(file_idx) = self.resolve_symbol_file_index(sym_id)
+            && let Some(binder) = self.get_binder_for_file(file_idx)
+            && let Some(sym) = binder.get_symbol(sym_id)
+        {
+            return Some(sym);
+        }
+        if let Some(sym) = self.binder.get_symbol(sym_id) {
+            return Some(sym);
+        }
+        for lib in self.lib_contexts.iter() {
+            if let Some(sym) = lib.binder.get_symbol(sym_id) {
+                return Some(sym);
+            }
+        }
+        if let Some(binders) = &self.all_binders {
+            for binder in binders.iter() {
+                if let Some(sym) = binder.get_symbol(sym_id) {
+                    return Some(sym);
+                }
+            }
+        }
+        None
+    }
+
     /// Look up a cached cross-file symbol-type via the canonical
     /// `CrossFileQueryKind::SymbolType` bucket.
     ///
@@ -103,6 +188,103 @@ impl<'a> CheckerContext<'a> {
             type_id,
             type_params,
         );
+    }
+
+    /// Look up a source-file symbol-arena result with an additional
+    /// program-local scope across the secondary and args-hash key slots. This
+    /// preserves sharing inside one program while preventing collisions across
+    /// virtual programs that reuse small `file_idx` / `SymbolId` values in the
+    /// same process.
+    pub fn cached_scoped_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        scope: u64,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if !self.share_owner_symbol_type_results {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::GateOff);
+            return None;
+        }
+        let Some((cached_type, params)) = self.definition_store.get_resolved_cross_file_query(
+            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            file_idx,
+            sym_id.0,
+            scope as u32,
+            scope >> 32,
+        ) else {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::BucketEmpty);
+            return None;
+        };
+        if matches!(
+            cached_type,
+            tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
+        ) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::SentinelErrorUnknown);
+            return None;
+        }
+        if !type_id_is_known_to_db(self.types, cached_type) {
+            record_cross_file_cache_miss_cause(CrossFileCacheMissCause::TypeIdNotInterned);
+            return None;
+        }
+        Some((cached_type, params))
+    }
+
+    pub fn cached_cross_file_symbol_type_in_scope(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        scope: Option<u64>,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if let Some(scope) = scope {
+            self.cached_scoped_cross_file_symbol_type(sym_id, file_idx, scope)
+        } else {
+            self.cached_cross_file_symbol_type(sym_id, file_idx)
+        }
+    }
+
+    /// Cache a source-file symbol-arena result with an additional program-local
+    /// scope. See `cached_scoped_cross_file_symbol_type`.
+    pub fn cache_scoped_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        scope: u64,
+        type_id: tsz_solver::TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        if !self.share_owner_symbol_type_results {
+            return;
+        }
+        if matches!(
+            type_id,
+            tsz_solver::TypeId::ERROR | tsz_solver::TypeId::UNKNOWN
+        ) {
+            return;
+        }
+        self.definition_store.cache_resolved_cross_file_query(
+            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            file_idx,
+            sym_id.0,
+            scope as u32,
+            scope >> 32,
+            type_id,
+            type_params,
+        );
+    }
+
+    pub fn cache_cross_file_symbol_type_in_scope(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        scope: Option<u64>,
+        type_id: tsz_solver::TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        if let Some(scope) = scope {
+            self.cache_scoped_cross_file_symbol_type(sym_id, file_idx, scope, type_id, type_params);
+        } else {
+            self.cache_cross_file_symbol_type(sym_id, file_idx, type_id, type_params);
+        }
     }
 
     /// Look up a cached cross-file interface-type via the canonical
@@ -409,6 +591,42 @@ mod tests {
         );
         assert_eq!(
             ctx.cached_cross_file_class_instance_type(SymbolId(13), 7),
+            None
+        );
+    }
+
+    #[test]
+    fn scoped_symbol_type_cache_does_not_collide_with_unscoped_entries() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+        let ctx = shared_context(&arena, &binder, &types, store);
+        let sym_id = SymbolId(11);
+        let file_idx = 7;
+        let scope = 0xCAFE_BABE_DEAD_BEEF;
+
+        ctx.cache_cross_file_symbol_type(sym_id, file_idx, TypeId::NUMBER, Vec::new());
+        ctx.cache_cross_file_symbol_type_in_scope(
+            sym_id,
+            file_idx,
+            Some(scope),
+            TypeId::STRING,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            ctx.cached_cross_file_symbol_type(sym_id, file_idx)
+                .map(|(type_id, _)| type_id),
+            Some(TypeId::NUMBER)
+        );
+        assert_eq!(
+            ctx.cached_cross_file_symbol_type_in_scope(sym_id, file_idx, Some(scope))
+                .map(|(type_id, _)| type_id),
+            Some(TypeId::STRING)
+        );
+        assert_eq!(
+            ctx.cached_cross_file_symbol_type_in_scope(sym_id, file_idx, Some(scope + 1)),
             None
         );
     }
