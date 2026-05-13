@@ -69,23 +69,33 @@ impl<'a> CheckerState<'a> {
         constraint: TypeId,
         arg_node: Option<tsz_parser::parser::NodeIndex>,
     ) -> bool {
-        if arg_node
-            .is_some_and(|arg_idx| self.type_query_constructor_access_level(arg_idx).is_some())
+        let constraint_is_constructable = self.constraint_is_constructable(constraint);
+        if constraint_is_constructable
+            && arg_node
+                .is_some_and(|arg_idx| self.type_query_constructor_access_level(arg_idx).is_some())
         {
             return false;
         }
+
         if self.is_successful_typeof_instantiation_arg(type_arg)
             && self.constraint_is_callable_or_constructable(constraint)
         {
+            if constraint_is_constructable
+                && self.constructor_accessibility_blocks_type_arg_constraint(type_arg, constraint)
+            {
+                return false;
+            }
             return true;
         }
-        let constraint_resolved = self.resolve_lazy_type(constraint);
-        if !self
-            .format_type_diagnostic(constraint_resolved)
-            .contains("new ")
-        {
+
+        if !constraint_is_constructable {
             return false;
         }
+
+        if self.constructor_accessibility_blocks_type_arg_constraint(type_arg, constraint) {
+            return false;
+        }
+
         {
             use crate::query_boundaries::common::{TypeQueryKind, classify_type_query};
 
@@ -96,10 +106,22 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
         }
-        if self.format_type_diagnostic(type_arg).starts_with("typeof ") {
-            return true;
-        }
         arg_node.is_some_and(|arg_idx| self.is_type_query_node_through_parens(arg_idx))
+    }
+
+    pub(crate) fn constraint_is_constructable(&mut self, constraint: TypeId) -> bool {
+        let constraint = self.resolve_lazy_type(constraint);
+        crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, constraint)
+            .is_some_and(|sigs| !sigs.is_empty())
+            || {
+                let evaluated = self.evaluate_type_for_assignability(constraint);
+                evaluated != constraint
+                    && crate::query_boundaries::common::construct_signatures_for_type(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                    .is_some_and(|sigs| !sigs.is_empty())
+            }
     }
 
     pub(crate) fn constraint_is_callable_or_constructable(&mut self, constraint: TypeId) -> bool {
