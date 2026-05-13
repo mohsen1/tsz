@@ -582,16 +582,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For JavaScript: Skip property declarations without initializers
-        // (they are TypeScript-only declarations: typed props, bare props)
-        // Exception: Private fields (#name) are always emitted — they are runtime declarations.
-        // Exception: `accessor` fields are always emitted — they are ES2024 auto-accessors.
-        // Exception: native class-field emit keeps uninitialised props as class fields.
+        // For JavaScript: skip property declarations without initializers unless they
+        // still have a runtime class-field form. A typed declaration like `x: T;`
+        // is type-only even when native class fields are available.
         let target_supports_native_fields =
             (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
         let preserves_uninitialized_fields =
             self.ctx.options.use_define_for_class_fields && target_supports_native_fields;
-        if prop.initializer.is_none() && !preserves_uninitialized_fields {
+        if prop.initializer.is_none() {
             let is_private = self
                 .arena
                 .get(prop.name)
@@ -599,7 +597,12 @@ impl<'a> Printer<'a> {
             let has_accessor = self
                 .arena
                 .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-            if !is_private && !has_accessor {
+            let type_only_native_field =
+                preserves_uninitialized_fields && prop.type_annotation.is_some();
+            if (!preserves_uninitialized_fields || type_only_native_field)
+                && !is_private
+                && !has_accessor
+            {
                 self.skip_comments_for_erased_node(node);
                 return;
             }
