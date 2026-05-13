@@ -7,9 +7,9 @@
     "jsTimeout": 2,
     "jsPassRate": 94.8,
     "dtsTotal": 1669,
-    "dtsPass": 1531,
-    "dtsFail": 138,
+    "dtsPass": 1527,
+    "dtsFail": 142,
     "dtsSkip": 11862,
-    "dtsPassRate": 91.7
+    "dtsPassRate": 91.5
   }
 }
