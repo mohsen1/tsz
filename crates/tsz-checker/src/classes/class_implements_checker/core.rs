@@ -1428,7 +1428,7 @@ impl<'a> CheckerState<'a> {
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
                     let check_whole_type = extends_same_base
-                        || ((is_class || interface_has_index_signature)
+                        || (interface_has_index_signature
                             && missing_members.is_empty()
                             && incompatible_members.is_empty());
                     if check_whole_type {
