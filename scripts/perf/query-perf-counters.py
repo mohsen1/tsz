@@ -109,6 +109,13 @@ def print_summary(snap: dict) -> None:
             f"  cross_file_type_params_cache  hits={fmt_int(tp_h)}  "
             f"misses={fmt_int(tp_m)}  hit%={tp_pct:.2f}"
         )
+    miss_causes = snap.get("cross_file_cache_miss_causes")
+    if miss_causes is not None:
+        total_miss_causes = sum(row["count"] for row in miss_causes)
+        print(f"  cross_file_cache_miss_causes total={fmt_int(total_miss_causes)}")
+        for row in miss_causes:
+            pct = 100.0 * row["count"] / total_miss_causes if total_miss_causes else 0.0
+            print(f"    {row['name']:<24} {fmt_int(row['count']):>8} {pct:>6.1f}%")
     print()
     print("checker:")
     sc = checker["state_constructed"]
@@ -195,11 +202,15 @@ def print_by_reason(snap: dict, optional=False) -> None:
         f"Dominant: {top['reason']} = {fmt_int(top['with_parent_cache_constructed'])} "
         f"({top_pct:.1f}% of with_parent_cache_constructed)"
     )
-    print(
-        "Next T2.2 migration target should reduce this reason. See "
-        "`docs/plan/PERFORMANCE_PLAN.md` §6/§7 for the lifetime-split and "
-        "typed-query migration playbooks."
-    )
+    t22_candidates = [r for r in rows_sorted if r["reason"] != "TypeEnvironmentCore"]
+    if t22_candidates:
+        target = t22_candidates[0]
+        target_pct = 100.0 * target["with_parent_cache_constructed"] / total if total else 0.0
+        print(
+            f"Top non-baseline T2.2 target: {target['reason']} = "
+            f"{fmt_int(target['with_parent_cache_constructed'])} ({target_pct:.1f}%)"
+        )
+    print("See `docs/plan/PERFORMANCE_PLAN.md` §6/§7 for the lifetime-split and typed-query playbooks.")
 
 
 def print_diff(post: dict, base: dict) -> None:

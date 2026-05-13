@@ -201,6 +201,29 @@ pub(crate) fn compile_named_files_get_diagnostics_with_lib_and_options(
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
     let lib_files = load_lib_files_for_test();
+    compile_named_files_get_diagnostics_with_lib_files_and_options(
+        files, entry_file, options, lib_files,
+    )
+}
+
+pub(crate) fn compile_named_files_get_diagnostics_with_compiled_libs_and_options(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    lib_names: &[&str],
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(lib_names);
+    compile_named_files_get_diagnostics_with_lib_files_and_options(
+        files, entry_file, options, lib_files,
+    )
+}
+
+fn compile_named_files_get_diagnostics_with_lib_files_and_options(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: Vec<Arc<LibFile>>,
+) -> Vec<(u32, String)> {
     let mut arenas = Vec::with_capacity(files.len());
     let mut binders = Vec::with_capacity(files.len());
     let mut roots = Vec::with_capacity(files.len());
