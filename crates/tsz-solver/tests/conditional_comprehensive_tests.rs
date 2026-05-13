@@ -2244,3 +2244,143 @@ fn test_distribution_mixed_branches() {
         panic!("Expected union result, got {:?}", interner.lookup(result));
     }
 }
+
+// =============================================================================
+// Concrete Array Extends Fast-Path Tests (issue #6399)
+// =============================================================================
+//
+// Structural rule: `Array<S> extends Array<X>` iff `S <: X`. The fast path
+// avoids structural expansion of Array<X> into ObjectWithIndex which would
+// trigger expensive method-signature comparisons that can hit cycle detection.
+
+/// `string[] extends Array<any>` → true branch ("yes").
+/// This is the primary reported case from issue #6399.
+#[test]
+fn test_conditional_string_array_extends_array_any_is_true() {
+    let interner = TypeInterner::new();
+    let check = interner.array(TypeId::STRING); // string[]
+    let extends = interner.array(TypeId::ANY); // Array<any>
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: yes,
+        false_type: no,
+        is_distributive: false,
+    };
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result, yes,
+        "string[] extends Array<any> should be true branch"
+    );
+}
+
+/// `number[] extends Array<any>` → true branch. Different name (number vs string)
+/// proves the fix is not specific to `string[]`.
+#[test]
+fn test_conditional_number_array_extends_array_any_is_true() {
+    let interner = TypeInterner::new();
+    let check = interner.array(TypeId::NUMBER);
+    let extends = interner.array(TypeId::ANY);
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: yes,
+        false_type: no,
+        is_distributive: false,
+    };
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result, yes,
+        "number[] extends Array<any> should be true branch"
+    );
+}
+
+/// `string extends Array<any>` → false branch. Non-array check type.
+#[test]
+fn test_conditional_primitive_extends_array_any_is_false() {
+    let interner = TypeInterner::new();
+    let extends = interner.array(TypeId::ANY);
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: extends,
+        true_type: yes,
+        false_type: no,
+        is_distributive: false,
+    };
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result, no,
+        "string extends Array<any> should be false branch"
+    );
+}
+
+/// `string[] extends Array<string>` → true (element subtype check: string <: string).
+#[test]
+fn test_conditional_string_array_extends_array_string_is_true() {
+    let interner = TypeInterner::new();
+    let check = interner.array(TypeId::STRING);
+    let extends = interner.array(TypeId::STRING);
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: yes,
+        false_type: no,
+        is_distributive: false,
+    };
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result, yes,
+        "string[] extends Array<string> should be true branch"
+    );
+}
+
+/// `number[] extends Array<string>` → false (number is not a subtype of string).
+#[test]
+fn test_conditional_number_array_extends_array_string_is_false() {
+    let interner = TypeInterner::new();
+    let check = interner.array(TypeId::NUMBER);
+    let extends = interner.array(TypeId::STRING);
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: yes,
+        false_type: no,
+        is_distributive: false,
+    };
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result, no,
+        "number[] extends Array<string> should be false branch"
+    );
+}
+
+/// `string[] extends string[]` via `Array(string)` — identical arrays are subtypes.
+#[test]
+fn test_conditional_array_extends_same_array_is_true() {
+    let interner = TypeInterner::new();
+    let arr = interner.array(TypeId::STRING);
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: arr,
+        extends_type: arr,
+        true_type: yes,
+        false_type: no,
+        is_distributive: false,
+    };
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result, yes,
+        "string[] extends string[] should be true branch"
+    );
+}
