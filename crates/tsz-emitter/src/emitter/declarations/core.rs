@@ -186,6 +186,10 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.ctx.flags.in_generator = prev_in_generator;
+        if self.function_has_recovered_pre_body_token(node, func.body) {
+            self.write_line();
+            self.write("{ }");
+        }
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
@@ -202,6 +206,21 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(func_name);
             }
         }
+    }
+
+    fn function_has_recovered_pre_body_token(&self, node: &Node, body: NodeIndex) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(body_node) = self.arena.get(body) else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (body_node.pos as usize).min(text.len());
+        let Some(prefix) = text.get(start..end) else {
+            return false;
+        };
+        prefix.contains('¬')
     }
 
     pub(in crate::emitter) fn emit_variable_declaration_list(&mut self, node: &Node) {

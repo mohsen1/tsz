@@ -1564,6 +1564,16 @@ impl<'a> Printer<'a> {
                 // But preserve rest parameters (`...`) even with missing names,
                 // matching tsc behavior: `function sum(...) { }`.
                 if param.name.is_none() && !param.dot_dot_dot_token {
+                    if let Some(recovered_name) =
+                        self.recovered_parameter_name_from_type_or_range(param_idx, param)
+                    {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.write(&recovered_name);
+                        self.remove_namespace_exported_parameter_name(param_idx);
+                    }
                     continue;
                 }
                 // Skip parameters where the name is an empty/missing identifier
@@ -1576,6 +1586,17 @@ impl<'a> Printer<'a> {
                     && let Some(ident) = self.arena.get_identifier(name_node)
                     && ident.escaped_text.is_empty()
                 {
+                    let Some(recovered_name) =
+                        self.recovered_parameter_name_from_type_or_range(param_idx, param)
+                    else {
+                        continue;
+                    };
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.write(&recovered_name);
+                    self.remove_namespace_exported_parameter_name(param_idx);
                     continue;
                 }
 
@@ -2031,6 +2052,12 @@ impl<'a> Printer<'a> {
             .map(|source_pos| source_pos.pos)
             .unwrap_or(search_end);
 
+        if let Some(recovered_name) =
+            self.recovered_empty_parameter_name_from_header(open_paren_pos, close_paren_pos)
+        {
+            self.write(&recovered_name);
+        }
+
         let mut comment_start = open_paren_pos.saturating_add(1);
         if let Some(source_text) = self.source_text {
             let bytes = source_text.as_bytes();
@@ -2047,6 +2074,49 @@ impl<'a> Printer<'a> {
         if comment_start < close_paren_pos {
             self.emit_comments_in_range(comment_start, close_paren_pos, true, false);
         }
+    }
+
+    fn recovered_parameter_name_from_type_or_range(
+        &self,
+        param_idx: NodeIndex,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> Option<String> {
+        let source = self.source_text?;
+
+        let raw = self
+            .arena
+            .get(param.type_annotation)
+            .and_then(|type_node| {
+                crate::safe_slice::slice(source, type_node.pos as usize, type_node.end as usize)
+                    .ok()
+            })
+            .or_else(|| {
+                self.arena.get(param_idx).and_then(|param_node| {
+                    crate::safe_slice::slice(
+                        source,
+                        param_node.pos as usize,
+                        param_node.end as usize,
+                    )
+                    .ok()
+                })
+            })?;
+
+        raw.trim_matches(|ch: char| ch == ':' || ch.is_whitespace())
+            .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+            .find(|part| !part.is_empty())
+            .map(str::to_string)
+    }
+
+    pub(in crate::emitter) fn recovered_empty_parameter_name_from_header(
+        &self,
+        open_paren_pos: u32,
+        close_paren_pos: u32,
+    ) -> Option<String> {
+        let source = self.source_text?;
+        let start = open_paren_pos.checked_add(1)? as usize;
+        let end = close_paren_pos as usize;
+        let raw = crate::safe_slice::slice(source, start, end).ok()?;
+        recovered_parameter_name_from_colon_header(raw)
     }
 
     fn emit_parameter_name_js(&mut self, name_idx: NodeIndex) {
@@ -2134,6 +2204,14 @@ impl<'a> Printer<'a> {
 
         None
     }
+}
+
+fn recovered_parameter_name_from_colon_header(raw: &str) -> Option<String> {
+    let after_colon = raw.trim().strip_prefix(':')?;
+    after_colon
+        .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
