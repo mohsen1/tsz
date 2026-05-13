@@ -17,19 +17,13 @@ select a non-child-checker checker hotspot.
 
 Raw artifacts are checked in under:
 
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-001-plain.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-002-plain.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-003-plain.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-003-plain-run2.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-004-plain.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-004-plain-run2.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-005-plain.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-005-plain-run2.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-006-plain.txt`
-- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-006-plain-run2.txt`
 - `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-plain-runs.csv`
+- `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-plain-runs.json`
 - `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-plain-summary.csv`
 - `docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-plain-summary.json`
+
+The run-level artifacts above are parsed directly from the full command output
+for each fixture/run pair and retain all numbers used in this record.
 
 ## Timing Summary (Median Over Available Runs)
 
@@ -63,7 +57,8 @@ From the latest attribution artifact (`2026-05-13-post-alias-mapped-monorepo-006
 - `checker.compute_type_of_symbol_cache_hits = 252,026`
 - `interner.intern_calls = 478,794` (`intern_hits = 402,055`, `intern_misses = 76,739`)
 
-From the timing run text on monorepo-006 (`...-006-plain*.txt`):
+From the parsed timing artifacts (monorepo-006 rows in
+`2026-05-13-timing-post-alias-mapped-plain-runs.{csv,json}`):
 
 - `Request cache misses = 25,000`
 - `Contextual cache bypasses = 50,000`

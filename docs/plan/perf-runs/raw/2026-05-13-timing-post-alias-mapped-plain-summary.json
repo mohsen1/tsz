@@ -11,7 +11,9 @@
     "max_rss_bytes_median": 134184960,
     "peak_footprint_bytes_median": 118703400,
     "check_pct_median": 45.5,
-    "diagnostics": 199
+    "diagnostics": 199,
+    "request_cache_misses_median": 500,
+    "contextual_cache_bypasses_median": 1000
   },
   {
     "fixture": "monorepo-002",
@@ -25,7 +27,9 @@
     "max_rss_bytes_median": 694829056,
     "peak_footprint_bytes_median": 658310680,
     "check_pct_median": 91.6,
-    "diagnostics": 1990
+    "diagnostics": 1990,
+    "request_cache_misses_median": 5000,
+    "contextual_cache_bypasses_median": 10000
   },
   {
     "fixture": "monorepo-003",
@@ -39,7 +43,9 @@
     "max_rss_bytes_median": 3401105408,
     "peak_footprint_bytes_median": 3243585292,
     "check_pct_median": 96.7,
-    "diagnostics": 9999
+    "diagnostics": 9999,
+    "request_cache_misses_median": 25000,
+    "contextual_cache_bypasses_median": 50000
   },
   {
     "fixture": "monorepo-004",
@@ -53,7 +59,9 @@
     "max_rss_bytes_median": 3426263040,
     "peak_footprint_bytes_median": 3317034776,
     "check_pct_median": 97.3,
-    "diagnostics": 10050
+    "diagnostics": 10050,
+    "request_cache_misses_median": 25000,
+    "contextual_cache_bypasses_median": 50000
   },
   {
     "fixture": "monorepo-005",
@@ -67,7 +75,9 @@
     "max_rss_bytes_median": 3444703232,
     "peak_footprint_bytes_median": 3333525272,
     "check_pct_median": 97.9,
-    "diagnostics": 10100
+    "diagnostics": 10100,
+    "request_cache_misses_median": 25000,
+    "contextual_cache_bypasses_median": 50000
   },
   {
     "fixture": "monorepo-006",
@@ -81,6 +91,8 @@
     "max_rss_bytes_median": 3475800064,
     "peak_footprint_bytes_median": 3355741964,
     "check_pct_median": 98.0,
-    "diagnostics": 10198
+    "diagnostics": 10198,
+    "request_cache_misses_median": 25000,
+    "contextual_cache_bypasses_median": 50000
   }
 ]
