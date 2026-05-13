@@ -43,6 +43,14 @@ Derived ratio:
 This confirms the shortcut is not just effective for time reduction but also
 stable at near-total coverage for interface call volume on monorepo-006.
 
+## Safety correction
+
+This count came from the original broad shortcut. The branch was later narrowed
+after targeted unit failures showed that empty interfaces and non-primitive
+member annotations need the normal hybrid type-lowering path. Keep the counter
+field, but do not treat the `24,760` hit count as the current guarded-branch
+baseline until monorepo-006 is remeasured.
+
 ## Decision
 
 1. Keep this scalar counter in the checker section as the primary guardrail for

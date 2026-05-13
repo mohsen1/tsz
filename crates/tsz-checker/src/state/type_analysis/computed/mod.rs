@@ -1833,13 +1833,13 @@ impl<'a> CheckerState<'a> {
             .type_parameters
             .as_ref()
             .is_some_and(|params| !params.nodes.is_empty())
+            || interface.members.nodes.is_empty()
         {
             return None;
         }
 
         let mut properties = Vec::with_capacity(interface.members.nodes.len());
-        let mut declaration_order = 0u32;
-        for &member_idx in &interface.members.nodes {
+        for (member_order, &member_idx) in interface.members.nodes.iter().enumerate() {
             let member_node = self.ctx.arena.get(member_idx)?;
             if member_node.kind != PROPERTY_SIGNATURE {
                 return None;
@@ -1848,8 +1848,10 @@ impl<'a> CheckerState<'a> {
             let name_atom = self
                 .get_property_name_resolved(sig.name)
                 .map(|name| self.ctx.types.intern_string(&name))?;
-            declaration_order += 1;
             let type_id = if sig.type_annotation.is_some() {
+                if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
+                    return None;
+                }
                 self.get_type_from_type_node_in_type_literal(sig.type_annotation)
             } else {
                 TypeId::ANY
@@ -1865,7 +1867,7 @@ impl<'a> CheckerState<'a> {
                 is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
-                declaration_order,
+                declaration_order: member_order as u32 + 1,
                 is_string_named: false,
                 is_symbol_named,
                 single_quoted_name: false,
@@ -1879,132 +1881,28 @@ impl<'a> CheckerState<'a> {
             Some(factory.object_with_symbol(properties, Some(sym_id)))
         }
     }
+
+    fn is_simple_local_interface_fastpath_type(&self, type_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        self.ctx.arena.get(type_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                kind if kind == SyntaxKind::AnyKeyword as u16
+                    || kind == SyntaxKind::BigIntKeyword as u16
+                    || kind == SyntaxKind::BooleanKeyword as u16
+                    || kind == SyntaxKind::NeverKeyword as u16
+                    || kind == SyntaxKind::NumberKeyword as u16
+                    || kind == SyntaxKind::ObjectKeyword as u16
+                    || kind == SyntaxKind::StringKeyword as u16
+                    || kind == SyntaxKind::SymbolKeyword as u16
+                    || kind == SyntaxKind::UndefinedKeyword as u16
+                    || kind == SyntaxKind::UnknownKeyword as u16
+                    || kind == SyntaxKind::VoidKeyword as u16
+            )
+        })
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tsz_solver::{QueryDatabase, TypeInterner};
-
-    fn make_prop(name: tsz_common::Atom, declaration_order: u32) -> PropertyInfo {
-        PropertyInfo {
-            name,
-            type_id: TypeId::ANY,
-            write_type: TypeId::ANY,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-        }
-    }
-
-    #[test]
-    fn synthetic_namespace_default_normalization_preserves_default_before_augmentations() {
-        let types = TypeInterner::new();
-        let default_atom = types.intern_string("default");
-        let configs_atom = types.intern_string("configs");
-        let mut props = vec![make_prop(configs_atom, 0), make_prop(default_atom, 1)];
-
-        CheckerState::normalize_namespace_export_declaration_order(&mut props);
-        let namespace_type = types.factory().object(props);
-        let shape = crate::query_boundaries::common::object_shape_for_type(&types, namespace_type)
-            .expect("namespace type should have an object shape");
-        let shape_props: Vec<_> = shape
-            .properties
-            .iter()
-            .map(|prop| {
-                (
-                    types.resolve_atom_ref(prop.name).to_string(),
-                    prop.declaration_order,
-                )
-            })
-            .collect();
-
-        assert_eq!(
-            shape_props,
-            vec![("configs".to_string(), 2), ("default".to_string(), 1)]
-        );
-    }
-
-    #[test]
-    fn ordered_namespace_export_entries_follow_first_declaration_span() {
-        use tsz_binder::{BinderState, SymbolTable, symbol_flags};
-        use tsz_checker::context::{CheckerOptions, ScriptTarget};
-        use tsz_parser::parser::ParserState;
-
-        let mut parser = ParserState::new("/test.ts".to_string(), String::new());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let third = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "third".to_string());
-        binder
-            .symbols
-            .get_mut(third)
-            .expect("third symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((30, 31)));
-
-        let first = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "first".to_string());
-        binder
-            .symbols
-            .get_mut(first)
-            .expect("first symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((10, 11)));
-
-        let second = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "second".to_string());
-        binder
-            .symbols
-            .get_mut(second)
-            .expect("second symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((20, 21)));
-
-        let missing_span = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "missingSpan".to_string());
-
-        let mut exports = SymbolTable::new();
-        exports.set("third".to_string(), third);
-        exports.set("missingSpan".to_string(), missing_span);
-        exports.set("first".to_string(), first);
-        exports.set("second".to_string(), second);
-
-        let types = TypeInterner::new();
-        let checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "/test.ts".to_string(),
-            CheckerOptions {
-                target: ScriptTarget::ES2020,
-                ..CheckerOptions::default()
-            },
-        );
-
-        let ordered = checker.ordered_namespace_export_entries(&exports);
-        let names: Vec<_> = ordered
-            .into_iter()
-            .map(|(name, _)| name.to_string())
-            .collect();
-        assert_eq!(
-            names,
-            vec![
-                "first".to_string(),
-                "second".to_string(),
-                "third".to_string(),
-                "missingSpan".to_string()
-            ]
-        );
-    }
-}
+mod tests;

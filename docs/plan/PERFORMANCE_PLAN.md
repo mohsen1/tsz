@@ -1197,24 +1197,24 @@ interface-to-interface recursion tuning. Decision record:
 **2026-05-13 `compute_type_of_symbol` simple-local-interface shortcut:** the
 interface branch now has an early direct-lowering path for local
 single-declaration interfaces with no local `extends`, no computed property
-names, no type parameters, and property-signature-only members. On monorepo-006
-attribution mode, diagnostics and call-shape buckets are unchanged (`10,198`
-diagnostics; interface kind calls `24,796`; call-site split
-`root=24,782` / `parent_interface=14`) while timing improves from
-`95.75s -> 84.24s` total and `94.06s -> 82.46s` check in the measured branch
-run. As expected, the older interface-fastpath gate matrix is mostly bypassed
-(`skip_all_three` drops from `24,767` to `7`) because the new shortcut returns
-before that block for eligible interfaces. Decision record:
+names, no type parameters, property-signature-only members, a non-empty member
+list, and only primitive keyword member annotations. The original broader
+shortcut measured a large monorepo-006 win (`95.75s -> 84.24s` total), but it
+also admitted empty interfaces and annotations that require hybrid type
+resolution; after targeted unit failures, the guarded branch now falls back to
+the full interface lowering path for those cases. Treat the original timing as
+historical until the narrowed guard is remeasured. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md).
 
 **2026-05-13 `compute_type_of_symbol` simple-local-interface hit counter:** a
 new checker scalar counter,
 `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits`, now
 records every interface-symbol call that returns through the simple local-object
-shortcut. On monorepo-006 attribution mode this counter reports `24,760` hits
-against `24,796` interface-kind calls (`99.85%`), confirming the shortcut is
-the dominant branch and providing a direct guardrail for future interface
-root-demand or lowering-cost edits. Decision record:
+shortcut. The original broad shortcut reported `24,760` hits against `24,796`
+interface-kind calls (`99.85%`); this is no longer the guarded-branch baseline.
+Keep the counter as the direct guardrail for future interface root-demand or
+lowering-cost edits, and refresh monorepo-006 before quoting hit-rate claims.
+Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md).
 
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done

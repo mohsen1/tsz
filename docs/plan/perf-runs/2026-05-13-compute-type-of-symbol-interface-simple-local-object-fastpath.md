@@ -12,11 +12,27 @@ single-declaration local interfaces that are safe to lower directly:
 
 1. local declaration only (no out-of-arena / cross-file same-index collisions),
 2. no `extends`, no computed property names, no type parameters,
-3. all members are `PROPERTY_SIGNATURE` with resolvable property names.
+3. all members are `PROPERTY_SIGNATURE` with resolvable property names,
+4. the member list is non-empty,
+5. annotated member types are primitive keyword type nodes.
 
 When eligible, build `PropertyInfo` rows directly and return
-`object_with_symbol(..., Some(sym_id))` (or `any` for empty member lists),
-without entering the heavier interface lowering path.
+`object_with_symbol(..., Some(sym_id))` without entering the heavier interface
+lowering path.
+
+## Safety correction
+
+The original branch admitted empty interfaces and member annotations that need
+the normal hybrid type-lowering resolvers. That regressed JSX, cross-module
+optional-property, and conditional-infer tests by turning unresolved aliases or
+empty object shapes into overly-permissive types. The replayed branch now falls
+back to the full interface lowering path for empty interfaces, type references,
+unions, conditional types, type literals, arrays, and other non-primitive member
+annotations.
+
+The measurement below is the original broad shortcut run and is kept only as
+historical evidence for why the shortcut was investigated. It must not be quoted
+as the current guarded fast-path result until the guarded branch is remeasured.
 
 ## Reproducer
 
@@ -55,8 +71,8 @@ Expected branch-shape shift from the new early-return path:
 
 ## Decision
 
-1. Keep this simple-local-object shortcut; it materially reduces checker time
-   with unchanged diagnostics and call-shape buckets.
+1. Keep only the guarded simple-local-object shortcut; correctness-sensitive
+   member annotations must stay on the full interface lowering path.
 2. Keep future interface work focused on safe root-call shortcutting and cheap
    direct-lowering cases, not additional tuning of the older interface fast-path
    gate matrix.
