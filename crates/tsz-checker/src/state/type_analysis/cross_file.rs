@@ -153,6 +153,9 @@ impl<'a> CheckerState<'a> {
         let Some(name) = name else {
             return TypeId::UNKNOWN;
         };
+        if name == "BuiltinIteratorReturn" {
+            return self.builtin_iterator_return_intrinsic_type();
+        }
         if let Some(&type_id) = self.ctx.type_parameter_scope.get(&name) {
             return type_id;
         }

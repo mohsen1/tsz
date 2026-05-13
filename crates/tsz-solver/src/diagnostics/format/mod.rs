@@ -133,6 +133,9 @@ pub struct TypeFormatter<'a> {
     /// This lets a recursive alias expand one structural layer before nested
     /// self-references elide as `...`.
     skipped_type_alias_expansion_visiting: FxHashSet<DefId>,
+    /// Optional compiler-controlled display replacement for the lib-only
+    /// `BuiltinIteratorReturn` alias.
+    builtin_iterator_return_type: Option<TypeId>,
     /// When true, don't follow `display_alias` when it points to an Intersection
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
@@ -374,6 +377,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_display_alias_chase: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
+            builtin_iterator_return_type: None,
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
@@ -589,6 +593,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_display_alias_chase: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
+            builtin_iterator_return_type: None,
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
@@ -782,6 +787,13 @@ impl<'a> TypeFormatter<'a> {
             self.preserve_optional_property_surface_syntax = true;
             self.preserve_optional_parameter_surface_syntax = true;
         }
+        self
+    }
+
+    /// Replace diagnostic display of the compiler-internal lib alias
+    /// `BuiltinIteratorReturn` with the option-selected concrete type.
+    pub const fn with_builtin_iterator_return_type(mut self, ty: TypeId) -> Self {
+        self.builtin_iterator_return_type = Some(ty);
         self
     }
 
@@ -1560,12 +1572,25 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
             TypeData::UnresolvedTypeName(name) => {
+                if self.atom(*name).as_ref() == "BuiltinIteratorReturn"
+                    && let Some(replacement) = self.builtin_iterator_return_type
+                {
+                    return self.format(replacement);
+                }
                 if let Some((def_id, body)) = self.skipped_type_alias_body_by_name(*name) {
                     return self.format_skipped_type_alias_body(def_id, body);
                 }
                 Cow::Owned(self.atom(*name).to_string())
             }
             TypeData::Lazy(def_id) => {
+                if let Some(replacement) = self.builtin_iterator_return_type
+                    && let Some(def_store) = self.def_store
+                    && let Some(def) = def_store.get(*def_id)
+                    && def.kind == crate::def::DefKind::TypeAlias
+                    && self.atom(def.name).as_ref() == "BuiltinIteratorReturn"
+                {
+                    return self.format(replacement);
+                }
                 if self.skip_type_alias_def_ids.contains(def_id)
                     && let Some(def_store) = self.def_store
                     && let Some(def) = def_store.get(*def_id)
