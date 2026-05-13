@@ -115,6 +115,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.package_specifier_for_package_json_path(current_path, module_path)
             {
                 package_specifier
+            } else if let Some(package_specifier) =
+                self.package_specifier_for_file_dependency_path(current_path, module_path)
+            {
+                package_specifier
             } else if binder.declared_modules.contains(module_path) {
                 // Ambient module declaration `declare module "url" {}` — the
                 // module specifier is the declared name itself, which is
@@ -167,6 +171,10 @@ impl<'a> DeclarationEmitter<'a> {
                     package_specifier
                 } else if let Some(package_specifier) =
                     self.package_specifier_for_package_json_path(current_path, module_path)
+                {
+                    package_specifier
+                } else if let Some(package_specifier) =
+                    self.package_specifier_for_file_dependency_path(current_path, module_path)
                 {
                     package_specifier
                 } else {
@@ -375,6 +383,12 @@ impl<'a> DeclarationEmitter<'a> {
 
             if let Some(package_specifier) =
                 self.package_specifier_for_package_json_path(current_path, source_path)
+            {
+                return Some(package_specifier);
+            }
+
+            if let Some(package_specifier) =
+                self.package_specifier_for_file_dependency_path(current_path, source_path)
             {
                 return Some(package_specifier);
             }
@@ -709,6 +723,99 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(format!("{package_name}/{subpath}"))
         }
+    }
+
+    pub(in crate::declaration_emitter) fn package_specifier_for_file_dependency_path(
+        &self,
+        current_path: &str,
+        source_path: &str,
+    ) -> Option<String> {
+        use std::path::Path;
+
+        let source = Path::new(source_path);
+        let source_canonical = source.canonicalize().ok();
+        let mut current_dir = Path::new(current_path).parent();
+
+        while let Some(dir) = current_dir {
+            let package_json_path = dir.join("package.json");
+            if let Ok(package_json_text) = std::fs::read_to_string(&package_json_path)
+                && let Ok(package_json) =
+                    serde_json::from_str::<serde_json::Value>(&package_json_text)
+            {
+                for section in [
+                    "dependencies",
+                    "devDependencies",
+                    "peerDependencies",
+                    "optionalDependencies",
+                ] {
+                    let Some(entries) = package_json
+                        .get(section)
+                        .and_then(|value| value.as_object())
+                    else {
+                        continue;
+                    };
+                    for (package_name, specifier) in entries {
+                        let Some(specifier) = specifier.as_str() else {
+                            continue;
+                        };
+                        let Some(target) = specifier
+                            .strip_prefix("file:")
+                            .or_else(|| specifier.strip_prefix("link:"))
+                        else {
+                            continue;
+                        };
+                        let package_root = Self::normalize_path_components(&dir.join(target));
+                        let package_root_canonical = package_root.canonicalize().ok();
+                        let source_is_inside_package = source_canonical
+                            .as_ref()
+                            .zip(package_root_canonical.as_ref())
+                            .is_some_and(|(source, root)| source.starts_with(root))
+                            || source.starts_with(&package_root);
+                        if !source_is_inside_package {
+                            continue;
+                        }
+
+                        let relative = if let Some(source_canonical) = source_canonical.as_ref()
+                            && let Some(package_root_canonical) = package_root_canonical.as_ref()
+                        {
+                            source_canonical.strip_prefix(package_root_canonical).ok()?
+                        } else {
+                            source.strip_prefix(&package_root).ok()?
+                        };
+                        let mut relative_path = relative.to_string_lossy().replace('\\', "/");
+                        relative_path = self.strip_ts_extensions(&relative_path);
+                        if relative_path.ends_with("/index") {
+                            relative_path.truncate(relative_path.len() - "/index".len());
+                        } else if relative_path == "index" {
+                            relative_path.clear();
+                        }
+
+                        return if relative_path.is_empty() {
+                            Some(package_name.to_string())
+                        } else {
+                            Some(format!("{package_name}/{relative_path}"))
+                        };
+                    }
+                }
+            }
+            current_dir = dir.parent();
+        }
+
+        None
+    }
+
+    fn normalize_path_components(path: &std::path::Path) -> std::path::PathBuf {
+        let mut normalized = std::path::PathBuf::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    normalized.pop();
+                }
+                _ => normalized.push(component.as_os_str()),
+            }
+        }
+        normalized
     }
 
     fn package_json_decl_entry_matches(
