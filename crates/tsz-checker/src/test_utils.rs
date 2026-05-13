@@ -74,6 +74,37 @@ pub fn check_js_source_diagnostics(source: &str) -> Vec<Diagnostic> {
     )
 }
 
+/// Types that expose a diagnostic code for code-only test assertions.
+pub trait HasDiagnosticCode {
+    fn diagnostic_code(&self) -> u32;
+}
+
+impl HasDiagnosticCode for Diagnostic {
+    fn diagnostic_code(&self) -> u32 {
+        self.code
+    }
+}
+
+impl<T: HasDiagnosticCode + ?Sized> HasDiagnosticCode for &T {
+    fn diagnostic_code(&self) -> u32 {
+        (*self).diagnostic_code()
+    }
+}
+
+impl<T> HasDiagnosticCode for (u32, T) {
+    fn diagnostic_code(&self) -> u32 {
+        self.0
+    }
+}
+
+/// Project diagnostic-like values to their diagnostic codes.
+pub fn diagnostic_codes<T: HasDiagnosticCode>(diagnostics: &[T]) -> Vec<u32> {
+    diagnostics
+        .iter()
+        .map(HasDiagnosticCode::diagnostic_code)
+        .collect()
+}
+
 /// Parse, bind, and type-check JavaScript source, returning only diagnostic codes.
 ///
 /// The caller supplies the test file name and any additional checker options.
@@ -89,28 +120,19 @@ pub fn check_js_source_codes_with_options(
         check_js: true,
         ..options
     };
-    check_source(source, file_name, options)
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
+    diagnostic_codes(&check_source(source, file_name, options))
 }
 
 /// Parse, bind, and type-check source, returning only diagnostic codes.
 ///
 /// Convenience wrapper for tests that only inspect error codes.
 pub fn check_source_codes(source: &str) -> Vec<u32> {
-    check_source_diagnostics(source)
-        .iter()
-        .map(|d| d.code)
-        .collect()
+    diagnostic_codes(&check_source_diagnostics(source))
 }
 
 /// Parse, bind, and type-check a named TypeScript source string, returning only diagnostic codes.
 pub fn check_source_codes_named(source: &str, file_name: &str) -> Vec<u32> {
-    check_source(source, file_name, CheckerOptions::default())
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
+    diagnostic_codes(&check_source(source, file_name, CheckerOptions::default()))
 }
 
 /// Parse, bind, and type-check source, returning `(code, message_text)` pairs.
@@ -125,17 +147,14 @@ pub fn check_source_code_messages(source: &str) -> Vec<(u32, String)> {
 
 /// Parse, bind, and type-check source with `experimental_decorators` enabled, returning codes.
 pub fn check_source_codes_experimental_decorators(source: &str) -> Vec<u32> {
-    check_source(
+    diagnostic_codes(&check_source(
         source,
         "test.ts",
         CheckerOptions {
             experimental_decorators: true,
             ..CheckerOptions::default()
         },
-    )
-    .iter()
-    .map(|d| d.code)
-    .collect()
+    ))
 }
 
 /// Parse, bind, and type-check source with `no_unused_parameters` enabled.
@@ -206,10 +225,7 @@ pub fn check_source_strict(source: &str) -> Vec<Diagnostic> {
 
 /// Code-only projection of [`check_source_strict`].
 pub fn check_source_strict_codes(source: &str) -> Vec<u32> {
-    check_source_strict(source)
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
+    diagnostic_codes(&check_source_strict(source))
 }
 
 /// `(code, message_text)` projection of [`check_source_strict`].
