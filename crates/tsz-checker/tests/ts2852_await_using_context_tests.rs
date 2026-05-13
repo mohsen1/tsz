@@ -50,6 +50,23 @@ async function f() {
 }
 
 #[test]
+fn await_using_in_async_function_with_await_context_does_not_emit_ts2852() {
+    let codes = check_codes(
+        r#"
+async function f() {
+    await Promise.resolve();
+    await using x = getResource();
+}
+"#,
+    );
+
+    assert!(
+        !codes.contains(&2852),
+        "did not expect TS2852 when await-context bits accompany await using, got {codes:?}"
+    );
+}
+
+#[test]
 fn await_using_in_nested_non_async_function_under_async_parent_emits_ts2852() {
     let codes = check_codes(
         r#"
