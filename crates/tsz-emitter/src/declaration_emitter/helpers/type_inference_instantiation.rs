@@ -262,9 +262,8 @@ impl<'a> DeclarationEmitter<'a> {
         match part {
             "string" => return Some("string"),
             "number" => return Some("number"),
-            "boolean" => return Some("boolean"),
+            "boolean" | "true" | "false" => return Some("boolean"),
             "bigint" => return Some("bigint"),
-            "true" | "false" => return Some("boolean"),
             _ => {}
         }
 
