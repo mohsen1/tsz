@@ -2,7 +2,7 @@
 
 **Owner:** Codex session
 **Branch:** `codex/perf-delegate-variable-symbol-cache-20260513`
-**Draft PR:** to be opened with this claim
+**Draft PR:** #6212
 **Sequences after:** #6203 (DelegateCrossArenaSymbol residue classification)
 **Input decision record:** [`perf-runs/2026-05-13-delegate-residue-classification.md`](../perf-runs/2026-05-13-delegate-residue-classification.md)
 
@@ -39,3 +39,12 @@ the 540 source-file variable-symbol child-checker constructions reported as
    and `DelegateCrossArenaSymbol` drop on `monorepo-006`.
 3. A follow-up decision record under `docs/plan/perf-runs/` captures the result
    and next target.
+
+## Result
+
+Implemented the conservative single-declaration annotated-variable subset in
+`2792c8607a`. On `monorepo-006`, the old `unstable_symbol` residue drops from
+540 to 0 (`not_class_or_interface = 0` in the post-#6208 detailed outcome
+schema), `delegate.cache_hits_cross_file` rises from 96 to 385, and
+`DelegateCrossArenaSymbol` drops from 828 to 539. Decision record:
+[`perf-runs/2026-05-13-delegate-variable-symbol-cache.md`](../perf-runs/2026-05-13-delegate-variable-symbol-cache.md).
