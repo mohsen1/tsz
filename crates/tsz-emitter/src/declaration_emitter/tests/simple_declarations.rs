@@ -3611,6 +3611,42 @@ function foo() {
 }
 
 #[test]
+fn test_jsdoc_type_tags_on_const_null_preserve_closure_type_syntax() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {?} */
+export const a = null;
+/** @type {*} */
+export const b = null;
+/** @type {string?} */
+export const c = null;
+/** @type {string=} */
+export const d = null;
+/** @type {string!} */
+export const e = null;
+/** @type {function(string, number): object} */
+export const f = null;
+/** @type {function(new: object, string, number)} */
+export const g = null;
+/** @type {Object.<string, number>} */
+export const h = null;
+"#,
+    );
+
+    assert!(
+        output.contains("export const a: unknown;"),
+        "Expected bare Closure unknown @type to win over const null fallback: {output}"
+    );
+    assert!(output.contains("export const b: any;"));
+    assert!(output.contains("export const c: string | null;"));
+    assert!(output.contains("export const d: string | undefined;"));
+    assert!(output.contains("export const e: string;"));
+    assert!(output.contains("export const f: (arg0: string, arg1: number) => object;"));
+    assert!(output.contains("export const g: new (arg1: string, arg2: number) => object;"));
+    assert!(output.contains("export const h: {\n    [x: string]: number;\n};"));
+}
+
+#[test]
 fn test_js_array_subclass_emits_array_any_and_constructors() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
