@@ -261,6 +261,9 @@ mod ts2323_tests;
 #[path = "../tests/ts2347_tests.rs"]
 mod ts2347_tests;
 #[cfg(test)]
+#[path = "../tests/ts2352_disjoint_literal_property_tests.rs"]
+mod ts2352_disjoint_literal_property_tests;
+#[cfg(test)]
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
 #[cfg(test)]

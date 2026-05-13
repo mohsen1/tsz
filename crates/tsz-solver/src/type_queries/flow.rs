@@ -1614,11 +1614,15 @@ fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -
         return other == TypeId::SYMBOL
             || matches!(db.lookup(other), Some(TypeData::UniqueSymbol(_)));
     }
-    // Two literals of the same primitive kind are comparable (e.g. "foo" ~ "baz",  1 ~ 2).
-    // In tsc, comparability checks the "base constraint" — both widen to the same primitive.
+    // Two literals are comparable only when they have the same value.
+    // tsc's comparable relation is bidirectional assignability: A ~ B iff A <: B or B <: A.
+    // Two distinct literals of the same primitive (e.g. "draft" vs "published", 1 vs 2) are
+    // NOT mutually assignable and therefore NOT comparable.  A literal IS comparable to its
+    // base primitive (e.g. "draft" ~ string) because the literal is a subtype of the primitive;
+    // that case is handled in the `literal vs its base primitive` branch below.
     if let Some(TypeData::Literal(lit_a)) = db.lookup(base) {
         if let Some(TypeData::Literal(lit_b)) = db.lookup(other) {
-            return std::mem::discriminant(&lit_a) == std::mem::discriminant(&lit_b);
+            return lit_a == lit_b;
         }
         // literal vs its base primitive: "foo" ~ string, 1 ~ number
         return match lit_a {
@@ -2691,6 +2695,63 @@ mod tests {
             super::instance_type_from_symbol_has_instance(&db, constructor),
             None,
             "asserts predicates must not be used for instanceof narrowing"
+        );
+    }
+
+    /// Two distinct string literals must NOT be primitive-comparable.
+    /// tsc's comparable relation requires bidirectional assignability:
+    /// "draft" !<: "published" and "published" !<: "draft", so they are not comparable.
+    #[test]
+    fn distinct_string_literals_not_comparable() {
+        let db = TypeInterner::new();
+        let lit_draft = db.literal_string("draft");
+        let lit_published = db.literal_string("published");
+        assert!(
+            !is_primitive_comparable(&db, lit_draft, lit_published),
+            "\"draft\" must NOT be primitive-comparable to \"published\""
+        );
+        assert!(
+            !is_primitive_comparable(&db, lit_published, lit_draft),
+            "\"published\" must NOT be primitive-comparable to \"draft\""
+        );
+    }
+
+    /// Two identical string literals must be primitive-comparable (same value).
+    #[test]
+    fn same_string_literal_is_comparable() {
+        let db = TypeInterner::new();
+        let lit_a = db.literal_string("draft");
+        let lit_b = db.literal_string("draft");
+        assert!(
+            is_primitive_comparable(&db, lit_a, lit_b),
+            "\"draft\" must be primitive-comparable to \"draft\""
+        );
+    }
+
+    /// A string literal must be primitive-comparable to its base primitive.
+    #[test]
+    fn string_literal_comparable_to_string_primitive() {
+        let db = TypeInterner::new();
+        let lit = db.literal_string("hello");
+        assert!(
+            is_primitive_comparable(&db, lit, TypeId::STRING),
+            "\"hello\" must be primitive-comparable to `string`"
+        );
+        assert!(
+            is_primitive_comparable(&db, TypeId::STRING, lit),
+            "`string` must be primitive-comparable to \"hello\""
+        );
+    }
+
+    /// Two distinct number literals must NOT be primitive-comparable.
+    #[test]
+    fn distinct_number_literals_not_comparable() {
+        let db = TypeInterner::new();
+        let lit_200 = db.literal_number(200.0);
+        let lit_404 = db.literal_number(404.0);
+        assert!(
+            !is_primitive_comparable(&db, lit_200, lit_404),
+            "200 must NOT be primitive-comparable to 404"
         );
     }
 
