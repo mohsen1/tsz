@@ -19515,9 +19515,11 @@ fn test_array_covariance_non_array() {
 // ReturnType, Parameters, and ConstructorParameters Utility Type Edge Cases
 // =============================================================================
 
-/// Test `ReturnType`<T> with a generic function: <T>(x: T) => T
-/// TypeScript's `ReturnType` extracts the return type, which for generic functions
-/// is the type parameter T itself (unsubstituted).
+/// Test `ReturnType<T>` with a generic function: `<U>(x: U) => U`
+/// When the return-only infer pattern matches a generic function, free type
+/// parameters must be instantiated to their upper bounds before binding the
+/// infer variable. An unconstrained `U` erases to `unknown`, so the result is
+/// `unknown` (not the raw `TypeParameter(U)`).
 #[test]
 fn test_return_type_generic_function() {
     let interner = TypeInterner::new();
@@ -19584,8 +19586,7 @@ fn test_return_type_generic_function() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // Expected: U (the type parameter) for ReturnType of <U>(x: U) => U
-    assert_eq!(result, u_param);
+    assert_eq!(result, TypeId::UNKNOWN);
 }
 
 /// Test `ReturnType`<T> with an overloaded function (Callable type with multiple signatures).

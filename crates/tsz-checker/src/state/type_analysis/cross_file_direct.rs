@@ -530,7 +530,8 @@ impl<'a> CheckerState<'a> {
                 &no_type_symbol,
                 &no_def_id,
                 &no_value_symbol,
-            );
+            )
+            .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type());
             let lowered = lowering.lower_type(annotation);
             return (lowered != TypeId::UNKNOWN && lowered != TypeId::ERROR).then_some(lowered);
         }
@@ -687,6 +688,7 @@ impl<'a> CheckerState<'a> {
             &no_def_id,
             &no_value_symbol,
         )
+        .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_name_def_id_resolver(&name_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_preferred_self_reference(symbol.escaped_name.clone(), def_id)

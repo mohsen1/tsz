@@ -27,7 +27,9 @@ impl<'a> Printer<'a> {
         // These are just type information in TypeScript (overload signatures)
         let has_recovered_trailing_comma =
             func.body.is_none() && self.has_recovered_declaration_trailing_comma(node);
-        if func.body.is_none() && !has_recovered_trailing_comma {
+        let has_recovered_anonymous_arrow =
+            func.body.is_none() && self.has_recovered_anonymous_function_arrow(node, func.name);
+        if func.body.is_none() && !has_recovered_trailing_comma && !has_recovered_anonymous_arrow {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -130,7 +132,7 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
-        if has_recovered_trailing_comma {
+        if has_recovered_trailing_comma || has_recovered_anonymous_arrow {
             self.write(" { }");
             self.function_scope_depth -= 1;
             if func.name.is_some() {
