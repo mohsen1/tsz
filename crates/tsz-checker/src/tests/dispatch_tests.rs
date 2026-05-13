@@ -632,6 +632,28 @@ type Bad = InstanceType<string>;
 }
 
 #[test]
+fn instancetype_private_constructor_constraint_violation_emits_ts2344() {
+    let diags = check_source_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+
+const WithPrivateCtor = class {
+    private constructor() {}
+};
+
+type Bad = InstanceType<typeof WithPrivateCtor>;
+"#,
+    );
+
+    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    assert_eq!(
+        ts2344.len(),
+        1,
+        "Expected private constructor InstanceType constraint violation to emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2352_array_assertion_anchors_first_excess_property() {
     let source = r#"
 <{ id: number; }[]>[{ foo: "s" }];

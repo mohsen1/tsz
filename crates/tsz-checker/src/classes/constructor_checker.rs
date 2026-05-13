@@ -932,17 +932,34 @@ impl<'a> CheckerState<'a> {
         if self.is_protected_ctor(type_id) {
             return Some(MemberAccessLevel::Protected);
         }
+        if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+            && let Some(sym_id) = shape.symbol
+            && let Some(access) = self.class_constructor_access_level(sym_id)
+        {
+            return Some(access);
+        }
 
         match classify_for_constructor_access(self.ctx.types, type_id) {
-            ConstructorAccessKind::SymbolRef(symbol) => self
-                .resolve_type_env_symbol(symbol, env)
-                .and_then(|resolved| {
-                    if resolved != type_id {
-                        self.constructor_access_level(resolved, env, visited)
-                    } else {
-                        None
-                    }
-                }),
+            ConstructorAccessKind::SymbolRef(symbol) => {
+                let sym_id = SymbolId(symbol.0);
+                if let Some(access) = self.class_constructor_access_level(sym_id) {
+                    return Some(access);
+                }
+                if let Some(access) =
+                    self.variable_class_expression_constructor_access_level(sym_id)
+                {
+                    return Some(access);
+                }
+                self.resolve_type_env_symbol(symbol, env)
+                    .and_then(|resolved| {
+                        if resolved != type_id {
+                            self.constructor_access_level(resolved, env, visited)
+                        } else {
+                            None
+                        }
+                    })
+            }
             ConstructorAccessKind::Application(app_id) => {
                 let app = self.ctx.types.type_application(app_id);
                 if app.base != type_id {
@@ -953,6 +970,50 @@ impl<'a> CheckerState<'a> {
             }
             ConstructorAccessKind::Other => None,
         }
+    }
+
+    fn variable_class_expression_constructor_access_level(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<MemberAccessLevel> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(
+            symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE,
+        ) {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(symbol.value_declaration)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let class_expr_idx = self.class_expression_from_expr(var_decl.initializer)?;
+        self.class_expression_constructor_access_level(class_expr_idx)
+    }
+
+    fn class_expression_constructor_access_level(
+        &self,
+        class_expr_idx: NodeIndex,
+    ) -> Option<MemberAccessLevel> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let class = self.ctx.arena.get_class_at(class_expr_idx)?;
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                continue;
+            };
+            if self.has_private_modifier(&ctor.modifiers) {
+                return Some(MemberAccessLevel::Private);
+            }
+            if self.has_protected_modifier(&ctor.modifiers) {
+                return Some(MemberAccessLevel::Protected);
+            }
+            return None;
+        }
+        None
     }
 
     fn constructor_access_level_for_type(

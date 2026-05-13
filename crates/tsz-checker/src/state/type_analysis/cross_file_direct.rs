@@ -275,6 +275,101 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn direct_lower_source_file_annotation_type(
+        &self,
+        annotation: NodeIndex,
+        delegate_binder: &BinderState,
+        symbol_arena: &NodeArena,
+    ) -> Option<TypeId> {
+        if Self::source_file_type_node_is_scope_independent(symbol_arena, annotation) {
+            let no_type_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
+            let no_def_id = |_node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> { None };
+            let no_value_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
+            let lowering = TypeLowering::with_hybrid_resolver(
+                symbol_arena,
+                self.ctx.types,
+                &no_type_symbol,
+                &no_def_id,
+                &no_value_symbol,
+            );
+            let lowered = lowering.lower_type(annotation);
+            return (lowered != TypeId::UNKNOWN && lowered != TypeId::ERROR).then_some(lowered);
+        }
+
+        let type_ref = symbol_arena
+            .get(annotation)
+            .and_then(|node| symbol_arena.get_type_ref(node))?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let name = symbol_arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| symbol_arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())?;
+        let target_sym_id = delegate_binder.file_locals.get(name)?;
+        let target_symbol = delegate_binder.get_symbol(target_sym_id)?;
+        if target_symbol.flags & symbol_flags::INTERFACE == 0 {
+            return None;
+        }
+
+        let (_interface_type, _params) = self.direct_cross_file_interface_lowering(
+            target_sym_id,
+            delegate_binder,
+            symbol_arena,
+            false,
+            true,
+        )?;
+        let def_id = self.ctx.get_or_create_def_id(target_sym_id);
+        Some(self.ctx.types.lazy(def_id))
+    }
+
+    pub(super) fn direct_source_file_variable_annotation_type(
+        &self,
+        sym_id: SymbolId,
+        delegate_binder: &BinderState,
+        symbol_arena: &NodeArena,
+        allow_source_file_arena: bool,
+    ) -> Option<TypeId> {
+        if !allow_source_file_arena || !is_direct_lowering_source_file_arena(symbol_arena) {
+            return None;
+        }
+        let symbol = delegate_binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::VARIABLE == 0 {
+            return None;
+        }
+        if symbol.flags & (symbol_flags::MODULE | symbol_flags::ALIAS) != 0 {
+            return None;
+        }
+        if symbol.declarations.len() != 1 {
+            return None;
+        }
+
+        let decl_idx = symbol.declarations[0];
+        let decl_node = symbol_arena.get(decl_idx)?;
+        let variable = symbol_arena.get_variable_declaration(decl_node)?;
+        let annotation = variable.type_annotation.into_option()?;
+        self.direct_lower_source_file_annotation_type(annotation, delegate_binder, symbol_arena)
+    }
+
+    pub(super) fn direct_source_file_variable_annotation_result(
+        &self,
+        sym_id: SymbolId,
+        direct_target: Option<(&NodeArena, &BinderState, Option<usize>)>,
+        allow_source_file_arena: bool,
+    ) -> Option<TypeId> {
+        let (symbol_arena, delegate_binder, _) = direct_target?;
+        self.direct_source_file_variable_annotation_type(
+            sym_id,
+            delegate_binder,
+            symbol_arena,
+            allow_source_file_arena,
+        )
+    }
+
     pub(super) fn direct_cross_file_interface_lowering(
         &self,
         sym_id: SymbolId,
@@ -461,8 +556,12 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
+    use crate::context::{CheckerContext, CheckerOptions};
     use crate::state::CheckerState;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
     use tsz_parser::parser::{ParserState, syntax_kind_ext};
+    use tsz_solver::TypeInterner;
 
     fn parse_interface_declarations(
         source: &str,
@@ -488,6 +587,24 @@ mod tests {
             })
             .collect();
         (arena, declarations)
+    }
+
+    fn parse_bound_source(
+        source: &str,
+    ) -> (
+        Arc<tsz_parser::parser::node::NodeArena>,
+        Arc<BinderState>,
+        TypeInterner,
+    ) {
+        let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        (
+            Arc::new(parser.get_arena().clone()),
+            Arc::new(binder),
+            TypeInterner::new(),
+        )
     }
 
     #[test]
@@ -564,6 +681,69 @@ mod tests {
 
         assert!(
             !CheckerState::source_file_interface_declarations_are_direct_lowerable(&declarations,)
+        );
+    }
+
+    #[test]
+    fn direct_source_file_variable_annotation_accepts_same_file_simple_interface() {
+        let (arena, binder, types) = parse_bound_source(
+            r#"
+                interface Leaf { value: number; tag: "leaf"; }
+                const leaf: Leaf = { value: 1, tag: "leaf" };
+            "#,
+        );
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let state = CheckerState { ctx };
+        let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
+
+        let result = state
+            .direct_source_file_variable_annotation_type(
+                leaf_sym,
+                binder.as_ref(),
+                arena.as_ref(),
+                true,
+            )
+            .expect("simple same-file interface annotation should lower directly");
+
+        assert!(
+            crate::query_boundaries::common::is_lazy_type(&types, result),
+            "variable annotation should preserve the interface lazy type"
+        );
+    }
+
+    #[test]
+    fn direct_source_file_variable_annotation_rejects_type_alias_reference() {
+        let (arena, binder, types) = parse_bound_source(
+            r#"
+                type Leaf = { value: number };
+                const leaf: Leaf = { value: 1 };
+            "#,
+        );
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let state = CheckerState { ctx };
+        let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
+
+        assert!(
+            state
+                .direct_source_file_variable_annotation_type(
+                    leaf_sym,
+                    binder.as_ref(),
+                    arena.as_ref(),
+                    true,
+                )
+                .is_none(),
         );
     }
 }
