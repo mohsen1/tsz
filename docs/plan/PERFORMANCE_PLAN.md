@@ -1168,6 +1168,28 @@ should target interface cold-call volume / lowering cost instead of more gate
 tuning. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath-outcomes.md).
 
+**2026-05-13 `compute_type_of_symbol` interface call-site outcomes:** new
+call-site counters classify interface calls by parent symbol kind in the
+resolution stack. On monorepo-006, root calls dominate
+(`24,782 / 24,796`, `99.94%`) while nested parent-interface calls are tiny
+(`14`, `0.06%`) and all other parent-kind buckets are zero. This narrows the
+next optimization lane to reducing top-level/root interface demand, not
+interface-to-interface recursion tuning. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-callsite-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-callsite-outcomes.md).
+
+**2026-05-13 `compute_type_of_symbol` simple-local-interface shortcut:** the
+interface branch now has an early direct-lowering path for local
+single-declaration interfaces with no local `extends`, no computed property
+names, no type parameters, and property-signature-only members. On monorepo-006
+attribution mode, diagnostics and call-shape buckets are unchanged (`10,198`
+diagnostics; interface kind calls `24,796`; call-site split
+`root=24,782` / `parent_interface=14`) while timing improves from
+`95.75s -> 84.24s` total and `94.06s -> 82.46s` check in the measured branch
+run. As expected, the older interface-fastpath gate matrix is mostly bypassed
+(`skip_all_three` drops from `24,767` to `7`) because the new shortcut returns
+before that block for eligible interfaces. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`

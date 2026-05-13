@@ -1401,6 +1401,39 @@ impl<'a> CheckerState<'a> {
 
         // Interface - return interface type with call signatures
         if flags & symbol_flags::INTERFACE != 0 {
+            if tsz_common::perf_counters::enabled_fast() {
+                let interface_callsite_outcome = if self.ctx.symbol_resolution_stack.len() < 2 {
+                    tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::Root
+                } else {
+                    let parent_sym_id = self.ctx.symbol_resolution_stack
+                        [self.ctx.symbol_resolution_stack.len() - 2];
+                    let parent_flags = self
+                        .get_symbol_globally(parent_sym_id)
+                        .map(|symbol| symbol.flags)
+                        .or_else(|| self.get_cross_file_symbol(parent_sym_id).map(|s| s.flags));
+                    match parent_flags {
+                        Some(parent_flags) if parent_flags & symbol_flags::INTERFACE != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentInterface
+                        }
+                        Some(parent_flags) if parent_flags & symbol_flags::TYPE_ALIAS != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentTypeAlias
+                        }
+                        Some(parent_flags) if parent_flags & symbol_flags::ALIAS != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentAlias
+                        }
+                        Some(_) => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentOther
+                        }
+                        None => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentMissing
+                        }
+                    }
+                };
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_callsite_outcome(
+                    interface_callsite_outcome,
+                );
+            }
+
             // Merged lib symbols can live in the main binder but still carry
             // declaration nodes from other arenas. Lowering those declarations
             // against the current arena produces incomplete interface shapes
@@ -1547,6 +1580,24 @@ impl<'a> CheckerState<'a> {
                 }
 
                 return (lib_type, Vec::new());
+            }
+
+            if let Some(interface_type) = self.try_lower_simple_local_interface_object(
+                sym_id,
+                &declarations,
+                has_out_of_arena_decl,
+                has_cross_file_same_index,
+                has_local_interface_decl,
+                has_local_interface_heritage_extends,
+                has_local_computed_property_name,
+            ) {
+                if let Some(shape) = type_environment::object_shape(self.ctx.types, interface_type)
+                {
+                    self.ctx
+                        .definition_store
+                        .set_instance_shape(self.ctx.get_or_create_def_id(sym_id), shape);
+                }
+                return (interface_type, Vec::new());
             }
 
             if !declarations.is_empty() {
@@ -1750,6 +1801,82 @@ impl<'a> CheckerState<'a> {
             &escaped_name,
             &factory,
         )
+    }
+
+    fn try_lower_simple_local_interface_object(
+        &mut self,
+        sym_id: SymbolId,
+        declarations: &[NodeIndex],
+        has_out_of_arena_decl: bool,
+        has_cross_file_same_index: bool,
+        has_local_interface_decl: bool,
+        has_local_interface_heritage_extends: bool,
+        has_local_computed_property_name: bool,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
+
+        if has_out_of_arena_decl
+            || has_cross_file_same_index
+            || !has_local_interface_decl
+            || has_local_interface_heritage_extends
+            || has_local_computed_property_name
+            || declarations.len() != 1
+        {
+            return None;
+        }
+
+        let decl_idx = declarations[0];
+        let node = self.ctx.arena.get(decl_idx)?;
+        let interface = self.ctx.arena.get_interface(node)?;
+        if interface
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty())
+        {
+            return None;
+        }
+
+        let mut properties = Vec::with_capacity(interface.members.nodes.len());
+        let mut declaration_order = 0u32;
+        for &member_idx in &interface.members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            if member_node.kind != PROPERTY_SIGNATURE {
+                return None;
+            }
+            let sig = self.ctx.arena.get_signature(member_node)?;
+            let name_atom = self
+                .get_property_name_resolved(sig.name)
+                .map(|name| self.ctx.types.intern_string(&name))?;
+            declaration_order += 1;
+            let type_id = if sig.type_annotation.is_some() {
+                self.get_type_from_type_node_in_type_literal(sig.type_annotation)
+            } else {
+                TypeId::ANY
+            };
+            let is_symbol_named = self.is_symbol_property_name(sig.name);
+            properties.push(PropertyInfo {
+                name: name_atom,
+                type_id,
+                write_type: type_id,
+                optional: sig.question_token,
+                readonly: self.has_readonly_modifier(&sig.modifiers),
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order,
+                is_string_named: false,
+                is_symbol_named,
+                single_quoted_name: false,
+            });
+        }
+
+        let factory = self.ctx.types.factory();
+        if properties.is_empty() {
+            Some(TypeId::ANY)
+        } else {
+            Some(factory.object_with_symbol(properties, Some(sym_id)))
+        }
     }
 }
 
