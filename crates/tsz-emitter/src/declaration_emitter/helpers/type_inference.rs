@@ -1316,7 +1316,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn property_access_declared_type_annotation_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(in crate::declaration_emitter) fn property_access_declared_type_annotation_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let binder = self.binder?;
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
