@@ -930,6 +930,13 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
             }
+            if self.index_constraint_keyof_matches_mapped_constraint(
+                index_constraint,
+                mapped_constraint,
+                keyof,
+            ) {
+                return;
+            }
 
             keyof
         } else {
