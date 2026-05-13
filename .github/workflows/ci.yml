@@ -250,6 +250,29 @@ jobs:
           if-no-files-found: error
           compression-level: 1
 
+  project-compile-guard:
+    name: project-compile-guard
+    needs: [gate, dist-binaries]
+    if: needs.gate.outputs.full_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    env:
+      npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile
+      TSZ_CI_CACHE_SAVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Run project compile guard
+        run: scripts/ci/project-compile-guard.sh
+
   wasm:
     name: wasm
     needs: gate
@@ -535,6 +558,7 @@ jobs:
       - gate
       - lint
       - dist-binaries
+      - project-compile-guard
       - wasm
       - wasm-web
       - node-harness-prep
@@ -574,6 +598,7 @@ jobs:
               required.update({
                   "wasm",
                   "wasm-web",
+                  "project-compile-guard",
                   "node-harness-prep",
                   "conformance-aggregate",
                   "conformance-snapshot-gate",
