@@ -2,7 +2,7 @@
 
 Issue: https://github.com/mohsen1/tsz/issues/6414
 Branch: `codex/cleanup-name-resolution-diagnostic-assertions-20260513`
-Status: WIP
+Status: Ready for review
 
 ## Scope
 
@@ -15,9 +15,7 @@ test cleanup.
 
 ## Verification
 
-Planned:
-
 - `cargo fmt --check`
-- focused `cargo nextest` for `name_resolution_boundary_tests`
+- `cargo nextest run -p tsz-checker --test name_resolution_boundary_tests --no-fail-fast` (46 tests passed)
 - `cargo clippy --profile ci-lint -p tsz-checker --all-targets -- -D warnings`
 - Full PR CI after marking ready.
