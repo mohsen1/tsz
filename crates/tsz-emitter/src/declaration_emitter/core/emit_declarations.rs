@@ -1624,19 +1624,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         member_idx: NodeIndex,
     ) -> bool {
-        let Some(member_node) = self.arena.get(member_idx) else {
-            return false;
-        };
-        let name_idx = if let Some(prop) = self.arena.get_property_decl(member_node) {
-            Some(prop.name)
-        } else if let Some(method) = self.arena.get_method_decl(member_node) {
-            Some(method.name)
-        } else {
-            self.arena
-                .get_accessor(member_node)
-                .map(|accessor| accessor.name)
-        };
-        if let Some(name_idx) = name_idx
+        if let Some(name_idx) = self.get_member_name_idx(member_idx)
             && let Some(name_node) = self.arena.get(name_idx)
         {
             return name_node.kind == SyntaxKind::PrivateIdentifier as u16;

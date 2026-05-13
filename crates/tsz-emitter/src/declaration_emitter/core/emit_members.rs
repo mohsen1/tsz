@@ -7,6 +7,23 @@ use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::declaration_emitter) enum ClassMemberKind {
+    Property,
+    Method,
+    Accessor,
+    Signature,
+    IndexSignature,
+    Constructor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::declaration_emitter) struct ClassMemberInfo {
+    pub kind: ClassMemberKind,
+    pub name: Option<NodeIndex>,
+    pub is_static: bool,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_method_declaration(
         &mut self,
@@ -1857,26 +1874,63 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn class_member_info(
+        &self,
+        member_idx: NodeIndex,
+    ) -> Option<ClassMemberInfo> {
+        let member_node = self.arena.get(member_idx)?;
+
+        if let Some(prop) = self.arena.get_property_decl(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Property,
+                name: Some(prop.name),
+                is_static: self.arena.is_static(&prop.modifiers),
+            });
+        }
+        if let Some(method) = self.arena.get_method_decl(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Method,
+                name: Some(method.name),
+                is_static: self.arena.is_static(&method.modifiers),
+            });
+        }
+        if let Some(accessor) = self.arena.get_accessor(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Accessor,
+                name: Some(accessor.name),
+                is_static: self.arena.is_static(&accessor.modifiers),
+            });
+        }
+        if let Some(sig) = self.arena.get_signature(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Signature,
+                name: Some(sig.name),
+                is_static: false,
+            });
+        }
+        if let Some(index) = self.arena.get_index_signature(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::IndexSignature,
+                name: None,
+                is_static: self.arena.is_static(&index.modifiers),
+            });
+        }
+        if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Constructor,
+                name: None,
+                is_static: false,
+            });
+        }
+        None
+    }
+
     /// Get the name `NodeIndex` of a class or interface member, if it has one.
     pub(in crate::declaration_emitter) fn get_member_name_idx(
         &self,
         member_idx: NodeIndex,
     ) -> Option<NodeIndex> {
-        let member_node = self.arena.get(member_idx)?;
-
-        if let Some(prop) = self.arena.get_property_decl(member_node) {
-            return Some(prop.name);
-        }
-        if let Some(method) = self.arena.get_method_decl(member_node) {
-            return Some(method.name);
-        }
-        if let Some(accessor) = self.arena.get_accessor(member_node) {
-            return Some(accessor.name);
-        }
-        if let Some(sig) = self.arena.get_signature(member_node) {
-            return Some(sig.name);
-        }
-        None
+        self.class_member_info(member_idx)?.name
     }
 
     /// Check if a member has a computed property name that should NOT be emitted in `.d.ts`.
@@ -1898,33 +1952,11 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         members: &tsz_parser::parser::NodeList,
     ) -> bool {
-        for &member_idx in &members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            // Check property declarations
-            if let Some(prop) = self.arena.get_property_decl(member_node)
-                && let Some(name_node) = self.arena.get(prop.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-            // Check method declarations
-            if let Some(method) = self.arena.get_method_decl(member_node)
-                && let Some(name_node) = self.arena.get(method.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-            // Check accessors
-            if let Some(accessor) = self.arena.get_accessor(member_node)
-                && let Some(name_node) = self.arena.get(accessor.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-        }
-        false
+        members
+            .nodes
+            .iter()
+            .copied()
+            .any(|member_idx| self.member_has_private_identifier_name(member_idx))
     }
 
     /// Check if a function body has any return statements with value expressions.
