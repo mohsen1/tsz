@@ -13,11 +13,12 @@
 //! bare `u8` discriminants. The helpers below are the primary typed entry
 //! points; a small number of call sites (such as `resolve_lazy` in
 //! `context/resolver.rs`) intentionally inline `get_resolved_cross_file_query`
-//! to preserve different sentinel-filtering semantics — `resolve_lazy`
-//! forwards `TypeId::UNKNOWN` so callers can distinguish "lazy reference
-//! resolved but symbol type is genuinely unknown" from "lazy reference not
-//! resolved" (`None`), while these helpers collapse `UNKNOWN` to `None` for
-//! the (more common) "treat as cache miss" semantics.
+//! to preserve different sentinel-filtering semantics. Most helpers in this
+//! module collapse `TypeId::UNKNOWN` to `None` for the common "treat as cache
+//! miss" behavior, while `resolve_lazy` and
+//! `cached_cross_file_class_instance_type` intentionally forward sentinel
+//! values so callers can distinguish "resolved to UNKNOWN/ANY/ERROR" from
+//! "no cache entry".
 
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::perf_counters::{CrossFileCacheMissCause, record_cross_file_cache_miss_cause};
