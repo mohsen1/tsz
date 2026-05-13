@@ -1,7 +1,7 @@
 # Claim: Readonly actual-lib alias admission
 
 Date: 2026-05-13
-Status: stacked behind `perf/actual-lib-alias-proof-admission-20260513`
+Status: prepared after #6594
 
 ## Claim
 
@@ -19,10 +19,15 @@ the remaining alias residues stay on fallback.
   - reports `DirectActualLibAliasBodyOutcome::Success` only for admitted names;
     unadmitted generic aliases still report `GenericAlias`.
   - keeps the direct return path gated on a successful proof outcome.
+  - preserves cached type parameters for type-alias entries that hit
+    `lib_delegation_cache`, while non-alias lib-cache hits keep their existing
+    empty-parameter return behavior.
 - Unit coverage asserts:
   - `Readonly` resolves through `direct_actual_lib_symbol_type`.
   - the returned type is neither `UNKNOWN` nor `ERROR`.
   - the direct result and `lib_delegation_cache` preserve the single `T` type
+    parameter.
+  - a later lib-cache hit for `Readonly` also returns the cached alias type
     parameter.
   - `Record` remains on fallback, and the proof/fallback parity test still
     covers `Record`, `Partial`, and `Readonly`.
@@ -42,4 +47,3 @@ the remaining alias residues stay on fallback.
 - `cargo fmt --all --check`
 - `git diff --check`
 - `cargo build -p tsz-cli --release --features perf-tools`
-

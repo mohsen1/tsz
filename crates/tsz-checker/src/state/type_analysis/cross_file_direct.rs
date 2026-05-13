@@ -1519,6 +1519,16 @@ mod tests {
             params.len(),
             "cache hits must preserve generic alias metadata",
         );
+
+        let (cached_result_ty, cached_result_params) = state
+            .delegate_cross_arena_symbol_resolution(sym_id)
+            .expect("Readonly cache hit should resolve through lib delegation cache");
+        assert_eq!(cached_result_ty, ty);
+        assert_eq!(
+            cached_result_params.len(),
+            params.len(),
+            "Readonly cache hits must return the cached alias type params",
+        );
     }
 
     #[test]

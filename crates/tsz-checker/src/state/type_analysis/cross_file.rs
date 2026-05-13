@@ -703,7 +703,7 @@ impl<'a> CheckerState<'a> {
 
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
-                && let Some((cached_type, _cached_params)) =
+                && let Some((cached_type, cached_params)) =
                     self.ctx.lib_delegation_cache.get(&sym_id).cloned()
             {
                 if let Some(p) = perf {
@@ -711,7 +711,16 @@ impl<'a> CheckerState<'a> {
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 self.ctx.symbol_types.insert(sym_id, cached_type);
-                return Some((cached_type, Vec::new()));
+                let cached_params = if cached_params.is_empty()
+                    || !self
+                        .get_cross_file_symbol(sym_id)
+                        .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+                {
+                    Vec::new()
+                } else {
+                    cached_params
+                };
+                return Some((cached_type, cached_params));
             }
 
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
