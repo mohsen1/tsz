@@ -91,6 +91,57 @@ A.toUpperCase()
 }
 
 #[test]
+fn imported_companion_const_keeps_readonly_alias_annotation_when_eval_fails() {
+    let diagnostics = check(
+        &[
+            (
+                "object-utils.ts",
+                r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value
+}
+"#,
+            ),
+            (
+                "a.ts",
+                r#"
+import { freeze } from "./object-utils.js"
+
+export interface Box {
+  value: string
+}
+
+export type BoxFactory = Readonly<{
+  raw(): Box
+}>
+
+export const Box: BoxFactory = freeze<BoxFactory>({
+  raw() {
+    return { value: "x" }
+  },
+})
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import { Box } from "./a.js"
+
+const x = Box.raw()
+const value: string = x.value
+"#,
+            ),
+        ],
+        "b.ts",
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "imported companion const should preserve the Readonly alias annotation when eager alias evaluation cannot reduce it, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn conflicted_reexport_keeps_local_namespace_surface() {
     let diagnostics = check(
         &[
