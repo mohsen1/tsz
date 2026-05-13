@@ -2375,8 +2375,9 @@ impl<'a> DeclarationEmitter<'a> {
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
                 if uses_reordered_js_member_comments {
-                    let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(member_node.pos);
-                    self.emit_jsdoc_comment_chain(&jsdoc_chain);
+                    let jsdoc_chain =
+                        self.leading_jsdoc_comment_chain_for_pos_with_style(member_node.pos);
+                    self.emit_jsdoc_comment_chain_preserving_multiline_style(&jsdoc_chain);
                 } else {
                     self.emit_leading_jsdoc_comments(member_node.pos);
                 }

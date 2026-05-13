@@ -34,32 +34,49 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for jsdoc in chain {
-            self.write_indent();
-            let trimmed = jsdoc.trim();
-            if !trimmed.contains('\n') {
-                self.write("/** ");
-                self.write(trimmed);
-                self.write(" */");
-                self.write_line();
-                continue;
-            }
+            self.emit_jsdoc_comment(jsdoc, false);
+        }
+    }
 
-            self.write("/**");
-            self.write_line();
-            for line in trimmed.lines() {
-                self.write_indent();
-                if line.trim().is_empty() {
-                    self.write(" *");
-                } else {
-                    self.write(" * ");
-                    self.write(line.trim());
-                }
-                self.write_line();
-            }
-            self.write_indent();
+    pub(crate) fn emit_jsdoc_comment_chain_preserving_multiline_style(
+        &mut self,
+        chain: &[(String, bool)],
+    ) {
+        if self.remove_comments {
+            return;
+        }
+
+        for (jsdoc, force_multiline) in chain {
+            self.emit_jsdoc_comment(jsdoc, *force_multiline);
+        }
+    }
+
+    fn emit_jsdoc_comment(&mut self, jsdoc: &str, force_multiline: bool) {
+        self.write_indent();
+        let trimmed = jsdoc.trim();
+        if !force_multiline && !trimmed.contains('\n') {
+            self.write("/** ");
+            self.write(trimmed);
             self.write(" */");
             self.write_line();
+            return;
         }
+
+        self.write("/**");
+        self.write_line();
+        for line in trimmed.lines() {
+            self.write_indent();
+            if line.trim().is_empty() {
+                self.write(" *");
+            } else {
+                self.write(" * ");
+                self.write(line.trim());
+            }
+            self.write_line();
+        }
+        self.write_indent();
+        self.write(" */");
+        self.write_line();
     }
 
     pub(crate) fn emit_multiline_jsdoc_comment(&mut self, jsdoc: &str) {

@@ -311,6 +311,16 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         pos: u32,
     ) -> Vec<String> {
+        self.leading_jsdoc_comment_chain_for_pos_with_style(pos)
+            .into_iter()
+            .map(|(jsdoc, _)| jsdoc)
+            .collect()
+    }
+
+    pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_pos_with_style(
+        &self,
+        pos: u32,
+    ) -> Vec<(String, bool)> {
         let Some(text) = self.source_file_text.as_deref() else {
             return Vec::new();
         };
@@ -336,7 +346,12 @@ impl<'a> DeclarationEmitter<'a> {
             return Vec::new();
         };
 
-        let mut chain = vec![get_jsdoc_content(nearest, text)];
+        let styled_comment = |comment: &tsz_common::comments::CommentRange| {
+            let raw = &text[comment.pos as usize..comment.end as usize];
+            (get_jsdoc_content(comment, text), raw.contains('\n'))
+        };
+
+        let mut chain = vec![styled_comment(nearest)];
         let mut current_start = nearest.pos as usize;
         for comment in self
             .all_comments
@@ -354,7 +369,7 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 break;
             }
-            chain.push(get_jsdoc_content(comment, text));
+            chain.push(styled_comment(comment));
             current_start = comment.pos as usize;
         }
         chain.reverse();
