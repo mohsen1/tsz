@@ -989,7 +989,6 @@ impl<'a> CheckerState<'a> {
                 "Type 'number' is not assignable to type 'string | (string | string[])[]'.",
             ),
         ];
-
         let mut callsite_rewrites = Vec::with_capacity(expected_recursive_array_diagnostics.len());
         for (line_marker, prefix, message) in expected_recursive_array_diagnostics {
             let Some(line_start) = source_text.find(line_marker) else {
