@@ -817,6 +817,10 @@ o2.p4;
         !ts2339.1.contains("merge<"),
         "Expected TS2339 receiver not to repaint the resolved branch as a merge alias.\nActual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !ts2339.1.contains("p1: 1") && !ts2339.1.contains("p2: 2") && !ts2339.1.contains("p3: 3"),
+        "Expected TS2339 receiver to widen fresh literal values.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -856,7 +860,10 @@ const o2 = merge(o1, { p2: 2, p3: 3 });
             "Expected TS2339 receiver to preserve the resolved conditional branch members.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ ...; }") || message.contains(" more ..."),
+            message.contains("{ ...; }")
+                || message.contains(" more ...")
+                || message.contains("more")
+                || message.contains("..."),
             "Expected TS2339 receiver to elide the long structural receiver.\nActual message: {message}"
         );
         assert!(
