@@ -282,6 +282,51 @@ export class UserStore<T extends User> {
 `,
   },
   {
+    key: "sound_mode",
+    title: "Sound Mode: Assignment",
+    category: "diagnostics",
+    description: "Fresh object literals stay exact after a variable assignment.",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+// Today the playground demonstrates one real Sound Mode prototype:
+// sticky freshness. Object literals keep their excess-property signal
+// after being assigned to a variable.
+interface Point2D { x: number; y: number }
+
+const point3d = { x: 1, y: 2, z: 3 };
+const point: Point2D = point3d;
+`,
+  },
+  {
+    key: "sound_mode_argument",
+    title: "Sound Mode: Function Argument",
+    category: "diagnostics",
+    description: "Freshness follows a variable into a function call.",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+interface Point2D { x: number; y: number }
+const point3d = { x: 1, y: 2, z: 3 };
+function draw(point: Point2D) {}
+draw(point3d);
+`,
+  },
+  {
+    key: "sound_mode_array",
+    title: "Sound Mode: Array Element",
+    category: "diagnostics",
+    description: "Freshness is checked when a variable enters a typed array.",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+interface Point2D { x: number; y: number }
+
+const point3d = { x: 1, y: 2, z: 3 };
+const points: Point2D[] = [point3d];
+`,
+  },
+  {
     key: "errors",
     title: "Type Errors",
     category: "diagnostics",

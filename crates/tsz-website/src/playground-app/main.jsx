@@ -99,10 +99,13 @@ function PlaygroundApp() {
   const outputCacheRef = useRef({ key: null, js: null, dts: null });
   const codeRef = useRef(initialExample.source);
   const strictModeRef = useRef(true);
+  const initialSoundMode = initialExampleKey.startsWith("sound_mode");
+  const soundModeRef = useRef(initialSoundMode);
 
   const [selectedExampleKey, setSelectedExampleKey] = useState(initialExampleKey);
   const [code, setCode] = useState(initialExample.source);
   const [strictMode, setStrictMode] = useState(true);
+  const [soundMode, setSoundMode] = useState(initialSoundMode);
   const [activePanel, setActivePanel] = useState("diagnostics");
   const [diagnostics, setDiagnostics] = useState([]);
   const [status, setStatus] = useState({ text: "loading editor...", className: "status-loading" });
@@ -114,10 +117,12 @@ function PlaygroundApp() {
 
   codeRef.current = code;
   strictModeRef.current = strictMode;
+  soundModeRef.current = soundMode;
 
   function getCurrentCompilerOptions() {
     return {
       strict: strictModeRef.current,
+      soundMode: soundModeRef.current,
       module: 99,
     };
   }
@@ -132,6 +137,7 @@ function PlaygroundApp() {
     return JSON.stringify({
       code: nextCode,
       strict: options.strict,
+      soundMode: options.soundMode,
       module: options.module,
     });
   }
@@ -157,8 +163,11 @@ function PlaygroundApp() {
   }
 
   function createCheckProgram(nextCode, options) {
-    const ProgramCtor = wasmRef.current.WasmProgram || wasmRef.current.TsProgram;
-    const program = new ProgramCtor();
+    if (!wasmRef.current.WasmProgram) {
+      throw new Error("WasmProgram is required for playground diagnostics");
+    }
+
+    const program = new wasmRef.current.WasmProgram();
     program.setCompilerOptions(JSON.stringify(options));
     for (const [name, content] of Object.entries(libFilesRef.current)) {
       program.addLibFile(name, content);
@@ -251,6 +260,7 @@ function PlaygroundApp() {
     const state = JSON.stringify({
       code: nextCode,
       strict: options.strict,
+      soundMode: options.soundMode,
       libCount: Object.keys(libFilesRef.current).length,
     });
 
@@ -384,6 +394,7 @@ function PlaygroundApp() {
     debugDiagnosticsLog("runCheck:start", {
       example: selectedExampleKey,
       strict: options.strict,
+      soundMode: options.soundMode,
       code: codeRef.current,
     });
 
@@ -709,7 +720,7 @@ function PlaygroundApp() {
 
   useEffect(() => {
     disposeLspParser();
-  }, [code, strictMode]);
+  }, [code, strictMode, soundMode]);
 
   useEffect(() => {
     if (!editorsReady || !wasmReady) return;
@@ -728,7 +739,7 @@ function PlaygroundApp() {
         checkTimeoutRef.current = null;
       }
     };
-  }, [code, strictMode, editorsReady, wasmReady]);
+  }, [code, strictMode, soundMode, editorsReady, wasmReady]);
 
   useEffect(() => {
     if (!editorsReady || !wasmReady) return;
@@ -749,6 +760,11 @@ function PlaygroundApp() {
 
   function handleStrictChange(event) {
     setStrictMode(event.target.checked);
+    resetOutputCache();
+  }
+
+  function handleSoundChange(event) {
+    setSoundMode(event.target.checked);
     resetOutputCache();
   }
 
@@ -795,6 +811,10 @@ function PlaygroundApp() {
           <label className="toolbar-check">
             <input type="checkbox" checked={strictMode} onChange={handleStrictChange} />
             <span>strict</span>
+          </label>
+          <label className="toolbar-check">
+            <input type="checkbox" checked={soundMode} onChange={handleSoundChange} />
+            <span>sound</span>
           </label>
         </div>
         <div className="toolbar-right">
