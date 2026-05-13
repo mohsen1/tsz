@@ -3578,6 +3578,39 @@ module.exports.MyClass.prototype = {
 }
 
 #[test]
+fn test_js_commonjs_export_assignment_inside_closure_emits_export_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function foo() {
+    module.exports = exports = function (o) {
+        return o;
+    };
+    const m = function () {
+    }
+    exports.methods = m;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function _exports(o: any): any;"),
+        "Expected closure CommonJS root assignment to emit export= function surface: {output}"
+    );
+    assert!(
+        output.contains("declare namespace _exports {\n    export { m as methods };\n}"),
+        "Expected closure CommonJS secondary exports to attach to the synthetic namespace: {output}"
+    );
+    assert!(
+        output.contains("export = _exports;\ndeclare function m(): void;"),
+        "Expected local function secondary export target to be emitted after export=: {output}"
+    );
+    assert!(
+        !output.contains("declare function foo"),
+        "Did not expect enclosing helper closure to leak as the declaration surface: {output}"
+    );
+}
+
+#[test]
 fn test_js_array_subclass_emits_array_any_and_constructors() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
