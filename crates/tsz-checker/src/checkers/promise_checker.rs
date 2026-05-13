@@ -18,15 +18,7 @@ struct ThenableAwaitInfo {
     has_callable_then: bool,
 }
 
-// =============================================================================
-// Promise and Async Type Checking Methods
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // Promise Type Detection
-    // =========================================================================
-
     /// Check if a name refers to a Promise-like type.
     ///
     /// Returns true for "Promise", "`PromiseLike`", or any name containing "Promise".
