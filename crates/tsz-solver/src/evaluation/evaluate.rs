@@ -1242,11 +1242,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // applications still need their evaluated structural form for displays
         // such as TS2339 on conditional helper aliases.
         let is_type_alias = matches!(app_def, Some((_, crate::def::DefKind::TypeAlias)));
-        let is_merge_alias = app_def
-            .as_ref()
-            .and_then(|(def_id, _)| self.resolver.get_def_name(*def_id))
-            .is_some_and(|name| self.interner.resolve_atom_ref(name).as_ref() == "merge");
-        if is_type_alias && !is_merge_alias {
+        if is_type_alias {
             return;
         }
         // Fast path: all-intrinsic args trivially have no free type
