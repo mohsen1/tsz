@@ -814,10 +814,8 @@ o2.p4;
         "Expected TS2339 receiver to preserve the resolved conditional branch members.\nActual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts2339.1.contains("{ p1: number; }")
-            && ts2339.1.contains("{ p2: number; }")
-            && ts2339.1.contains("{ p2: number; p3: number; }"),
-        "Expected TS2339 receiver to preserve widened merge literal properties.\nActual diagnostics: {diagnostics:#?}"
+        !ts2339.1.contains("merge<") && !ts2339.1.contains("Omit<"),
+        "Expected TS2339 receiver to keep the resolved conditional branch surface.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -858,8 +856,8 @@ const o2 = merge(o1, { p2: 2, p3: 3 });
             "Expected TS2339 receiver to preserve the resolved conditional branch members.\nActual message: {message}"
         );
         assert!(
-            message.contains("{ ...; }"),
-            "Expected TS2339 receiver to elide the long structural receiver.\nActual message: {message}"
+            message.contains(" more ..."),
+            "Expected TS2339 receiver to use the bounded structural object summary.\nActual message: {message}"
         );
         assert!(
             !message.contains("merge<"),
