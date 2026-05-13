@@ -1247,6 +1247,23 @@ with the remaining utility aliases still in the declaration-file residue table;
 see
 [`perf-runs/2026-05-13-actual-lib-alias-proof-result-attribution.md`](perf-runs/2026-05-13-actual-lib-alias-proof-result-attribution.md).
 
+**2026-05-13 alias proof/admission split follow-up:** the next stacked slice
+keeps direct-return behavior unchanged but moves the decorator allowlist out of
+the alias-body proof path. The proof helper can now return a typed proof for
+proven-but-unadmitted aliases and carries the measured outcome (`success`,
+`generic_alias`, or `name_not_admitted`) with the body, `DefId`, and type
+parameters. `direct_actual_lib_symbol_type` still returns only
+`DecoratorMetadata` / `DecoratorMetadataObject`; generic aliases and
+`PropertyKey` remain on fallback. This makes the next attribution run show
+which remaining aliases are generic proof successes instead of collapsing them
+all into `name_not_admitted`. Claim:
+[`claims/perf-actual-lib-alias-proof-admission-split-2026-05-13.md`](claims/perf-actual-lib-alias-proof-admission-split-2026-05-13.md).
+Branch-local monorepo-006 attribution on this slice keeps the behavior counters
+unchanged while moving alias-body outcomes to
+`{ success: 2, generic_alias: 8, missing_resolver_type: 5, name_not_admitted: 1 }`;
+see
+[`perf-runs/2026-05-13-actual-lib-alias-proof-admission-attribution.md`](perf-runs/2026-05-13-actual-lib-alias-proof-admission-attribution.md).
+
 **2026-05-13 value-bearing interface follow-up:** the current-main
 transplant of the selected actual-lib value-interface slice admits only
 `Function`, `Object`, and `RegExp` through `direct_actual_lib_symbol_type`.
