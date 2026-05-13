@@ -1,54 +1,85 @@
 # Sound Mode
 
+Sound Mode is a direction for `tsz`: a future way to ask for TypeScript checking that is stricter about the places where today's TypeScript intentionally trades type safety for compatibility and convenience.
+
+It is not the main workstream right now. The project is focused first on matching `tsc` behavior and then on performance tuning. Until those two foundations are in place, Sound Mode is an aspiration and a small prototype, not a product promise.
+
 <div class="alert alert-warning">
-  <strong>Experimental</strong> - Sound Mode is still in exploration. It stays behind explicit flags, its coverage is intentionally narrow, and its behavior may change as we validate the rollout.
+  <strong>Not active product work</strong> - Sound Mode exists today only as an experimental prototype behind explicit entrypoints. Its behavior is narrow, its public configuration is not settled, and it may change substantially.
 </div>
 
-**tsz** has an experimental **Sound Mode** for teams that want stricter TypeScript compatibility checks than `tsc` provides by default.
+## Current Reality
 
-## Current Status
+Today, Sound Mode is deliberately small.
 
-Today, Sound Mode is deliberately small:
+| Area | Current state |
+| --- | --- |
+| Work priority | Not actively being developed until `tsz` is fully compatible with `tsc` and performance tuning is done. |
+| Entrypoint | Hidden CLI flag `--sound`, plus the playground / WASM `soundMode` input. |
+| Config | No supported tsconfig surface. `compilerOptions.sound` is rejected by the normal `tsc`-compatible config path today. |
+| Scope | Project-wide checker boolean today. The design target is user-authored TypeScript implementation code first. |
+| Checks | A few narrow areas, including method bivariance tightening, partial `any` propagation, and sticky freshness behavior. |
+| Diagnostics | Standard TypeScript diagnostics such as `TS2322` / `TS2345`, not the intended public TSZ sound diagnostic surface. |
 
-1. **Current entrypoint:** hidden CLI flag `--sound`, plus the playground / WASM `soundMode` input
-2. **Current scoping:** project-wide checker boolean today; the design target is user-authored TypeScript implementation code first
-3. **Current behavior:** tighter checking in a few high-value areas such as method bivariance, partial `any` propagation, and sticky freshness
-4. **Current diagnostics:** standard TypeScript codes like `TS2322` / `TS2345`, not the final public TSZ diagnostic surface
+You can still try the prototype explicitly:
 
 ```bash
 tsz check --sound src/
 ```
 
+That command is useful for exploration, but it should not be read as the final shape of the feature.
+
 ## What It Is Not
 
-Sound Mode is **not**:
+Sound Mode is not:
 
 1. a formal proof of language soundness
-2. a promise that all `.d.ts` files are truthful
-3. a guarantee that third-party libraries are already purified
-4. a claim that every runtime bug is prevented
+2. a claim that every runtime bug can be prevented by a type checker
+3. a guarantee that all `.d.ts` files are truthful
+4. a promise that third-party libraries are already safe under stricter rules
+5. a stable public contract for configuration, diagnostics, editor support, or suppression syntax
 
-TypeScript itself treats full soundness as a non-goal. tsz uses the word **sound** as a product direction for a stricter mode, not as a theorem.
+The word "sound" is a product direction here: stricter, more explicit checking for known TypeScript escape hatches. It is not a theorem.
 
-## First Rollout
+## Why Keep The Page
 
-The base rollout is intentionally narrow:
+Sound Mode is on the site because the project still wants the conversation. TypeScript users have more practical experience with strictness tradeoffs than any design document can capture on its own.
 
-1. start with explicit opt-in via `--sound`
-2. focus on user source, not the whole ecosystem
-3. keep declaration files as trust boundaries instead of adoption blockers
-4. add migration tools before broadening semantics
+The useful question is not "can TypeScript become perfectly sound?" The useful question is: if `tsz` eventually offers a stricter mode, what should it reject, what should it leave alone, and what migration support would make it usable on real projects?
 
-The first stable target is roughly:
+## What It Wants To Be
 
-1. user-authored TypeScript source becomes `any`-less
-2. method bivariance stays rejected in sound-scoped code
-3. `useUnknownInCatchVariables`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes` become part of the default sound profile
-4. dedicated TSZ diagnostics and auditable suppressions land before the mode is treated as broadly user-facing
+The goal is not to prove TypeScript sound. TypeScript explicitly values JavaScript compatibility and ecosystem adoption over a fully sound type system, and `tsz` should not pretend otherwise.
 
-## Planned Flags
+The more practical goal is a mode for teams that would choose more explicit boundaries in exchange for fewer type-driven runtime surprises in their own source code. A useful first version would probably:
 
-These names reflect the intended rollout shape, but they are still planned rather than fully wired today. Do not put these in `compilerOptions` yet if you need tsc-compatible config parsing; today the normal tsconfig path rejects `compilerOptions.sound` as an unknown option.
+1. focus on user-authored TypeScript implementation files first
+2. reject a small, named set of patterns that are known to hide unsafe values or unsafe assignments
+3. treat declaration files and third-party packages as trust boundaries rather than asking every team to clean all of npm
+4. provide migration paths, report-only workflows, and auditable escapes before expecting broad adoption
+
+In other words: Sound Mode should make application code more honest without making the existing TypeScript ecosystem somebody's manual cleanup project.
+
+## A Plausible First Version
+
+The first useful version should be boringly narrow. The project plan currently points toward a default profile that:
+
+1. bans explicit `any` in sound-scoped user source
+2. disables method parameter bivariance in sound-scoped assignability
+3. implies `useUnknownInCatchVariables`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes`
+4. keeps declaration files as trust-boundary inputs by default
+5. emits dedicated TSZ sound diagnostics with auditable suppressions
+6. supports staged adoption, likely including a report-only mode
+
+More ambitious ideas, such as declaration-boundary projection, curated declaration overlays, broader ecosystem migration tooling, stricter array variance, and pedantic bug-finding checks, need to prove themselves separately. They should not be quietly marketed as part of the first stable guarantee.
+
+## Configuration Is Still Open
+
+Do not put Sound Mode options in `compilerOptions` today. The normal `tsc`-compatible config path rejects `compilerOptions.sound`.
+
+The eventual public shape could stay CLI-only for longer, use a `tszOptions`-style object, or later expose a flat `sound*` option family if that can coexist cleanly with vanilla `tsc` workflows. The exact owner is still an implementation decision.
+
+Names like these describe the direction, not working config:
 
 ```json
 {
@@ -61,43 +92,24 @@ These names reflect the intended rollout shape, but they are still planned rathe
 }
 ```
 
-The owning config object is still an implementation decision. The project may keep Sound Mode CLI-only for longer, use a `tszOptions`-style object, or later accept a `compilerOptions.sound` family if coexistence with vanilla `tsc` is acceptable.
+## Help Shape It
 
-Intended meaning:
+The most important input now is not more theory in isolation. It is feedback from TypeScript users about where stricter checking would actually help and where it would make real projects worse.
 
-1. `sound`: enable the default sound profile
-2. `soundReportOnly`: surface sound diagnostics without failing the run yet
-3. `soundPedantic`: add stricter bug-finding checks that are useful but not core to the first rollout
-4. `soundCheckDeclarations`: later opt-in for checking first-party declaration files too
+Useful questions:
 
-The public direction is a flat `sound*` family. We do **not** plan to expose a nested `sound: { ... }` config object as the main public shape.
+1. Which TypeScript unsoundness has caused real bugs in your codebase?
+2. Which stricter checks would you accept in application code but not in library declarations?
+3. Where would report-only mode, suppressions, or migration tools be required before adoption?
+4. How should `tsz` handle values crossing from third-party `.d.ts` files into sound-scoped source?
+5. Which existing TypeScript flags already feel like part of a stricter baseline?
 
-## Later Pilot Work
-
-Some of the most ambitious parts of Sound Mode are intentionally **not** part of the base guarantee yet.
-
-These stay separate until they are proven:
-
-1. declaration-boundary projection for third-party and project-reference `.d.ts`
-2. curated sound declaration overlays
-3. broader ecosystem-facing migration features
-
-The plan is to keep those behind a separate experimental track such as `soundBoundaryPilot`, instead of quietly folding them into base `sound` too early.
-
-## Why This Rollout Shape
-
-This approach keeps Sound Mode practical:
-
-1. teams can try it without first cleaning all of npm
-2. user-authored code gets stricter first
-3. declaration boundaries can be improved later without pretending they are solved today
-4. the product story stays honest while the implementation matures
+If you care about a stricter TypeScript, the project wants that feedback before Sound Mode becomes a larger implementation effort.
 
 ## Playground
 
-You can try the current demo in the [Playground](/playground/?example=sound_mode). The example is intentionally centered on the checks we are more comfortable advertising today, and the UI labels Sound Mode as experimental.
+You can try the current demo in the [Playground](/playground/?example=sound_mode). The example is intentionally limited to checks the project is comfortable showing today, and the UI labels Sound Mode as experimental.
 
-## Read More
+## Further Reading
 
-1. [Internal Roadmap](https://github.com/mohsen1/tsz/blob/main/docs/plan/ROADMAP.md)
-2. [Playground](/playground/)
+The detailed plan is tracked in [SOUND_MODE.md](https://github.com/mohsen1/tsz/blob/main/docs/plan/SOUND_MODE.md), and broader milestones are in the [Internal Roadmap](https://github.com/mohsen1/tsz/blob/main/docs/plan/ROADMAP.md).
