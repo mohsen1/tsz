@@ -1,5 +1,5 @@
 use crate::enums::evaluator::EnumEvaluator;
-use tsz_parser::parser::node::MethodDeclData;
+use tsz_parser::parser::node::{IndexSignatureData, MethodDeclData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -1027,8 +1027,15 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(type_id) =
                 self.get_node_type_or_names(&[accessor_idx, accessor.name])
             {
-                // If solver returned `any` but body clearly returns void, prefer void
-                if type_id == tsz_solver::types::TypeId::ANY
+                // Invalid ambient-style accessors in `.ts` sources have no body.
+                // tsc declaration emit prints `any` for their getter type even
+                // when checker recovery reports `void`.
+                if accessor_body.is_none()
+                    && !self.source_is_declaration_file
+                    && type_id == tsz_solver::types::TypeId::VOID
+                {
+                    self.write(": any");
+                } else if type_id == tsz_solver::types::TypeId::ANY
                     && accessor_body.is_some()
                     && self.body_returns_void(accessor_body)
                 {
@@ -1519,16 +1526,45 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_member_modifiers(&sig.modifiers);
 
         self.write("[");
-        self.emit_parameters(&sig.parameters);
+        if let Some(text) = self.recovered_legacy_index_signature_parameters(sig_node, sig) {
+            self.write(&text);
+        } else {
+            self.emit_parameters(&sig.parameters);
+        }
         self.write("]");
 
         if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(sig.type_annotation);
+        } else if !self.source_is_declaration_file {
+            self.write(": any");
         }
 
         self.write(";");
         self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn recovered_legacy_index_signature_parameters(
+        &self,
+        sig_node: &Node,
+        sig: &IndexSignatureData,
+    ) -> Option<String> {
+        let source = self.source_file_text.as_ref()?;
+        let pos = sig
+            .parameters
+            .nodes
+            .first()
+            .and_then(|idx| self.arena.get(*idx))
+            .map_or(sig_node.pos as usize, |node| node.pos as usize);
+        let line_start = source[..pos].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = source[pos..]
+            .find('\n')
+            .map_or(source.len(), |idx| pos + idx);
+        let line = source.get(line_start..line_end)?;
+        let start = line.find('[')?;
+        let end = line[start + 1..].find(']')? + start + 1;
+        let inner = line[start + 1..end].trim();
+        (inner.contains(',') && !inner.contains('\n')).then(|| inner.to_string())
     }
 
     pub(in crate::declaration_emitter) fn emit_type_alias_declaration(

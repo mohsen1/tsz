@@ -29,6 +29,70 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn test_invalid_ambient_style_getter_defaults_to_any() {
+    let source = r#"
+export class C {
+    get value()
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("get value(): any;"),
+        "Expected no-body getter recovery to emit any: {output}"
+    );
+}
+
+#[test]
+fn test_legacy_index_signature_defaults_to_any() {
+    let source = r#"
+export interface I {
+    [p];
+    [p2: string, p3: number];
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("[p]: any;"),
+        "Expected untyped index signature to emit any result: {output}"
+    );
+    assert!(
+        output.contains("[p2: string, p3: number]: any;"),
+        "Expected legacy index signature parameters to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_non_exported_namespace_hidden_inside_non_ambient_namespace() {
+    let source = r#"
+export namespace Outer {
+    namespace Hidden {
+        export var x;
+    }
+    export declare namespace Ambient {
+        var y;
+    }
+    export var z;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        !output.contains("namespace Hidden"),
+        "Expected hidden non-exported namespace to be elided: {output}"
+    );
+    assert!(
+        output.contains("namespace Ambient {\n        var y: any;"),
+        "Expected declared nested namespace body to remain ambient: {output}"
+    );
+    assert!(
+        output.contains("var z: any;"),
+        "Expected exported namespace member to be preserved: {output}"
+    );
+}
+
+#[test]
 fn test_defaulted_boolean_param_false_narrowing_return_type() {
     let source = r#"
 function removeUndefinedButNotFalse(x = true) {

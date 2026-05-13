@@ -182,11 +182,19 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(sig) = self.arena.get_index_signature(member_node) {
                     self.emit_member_modifiers(&sig.modifiers);
                     self.write("[");
-                    self.emit_parameters(&sig.parameters);
+                    if let Some(text) =
+                        self.recovered_legacy_index_signature_parameters(member_node, sig)
+                    {
+                        self.write(&text);
+                    } else {
+                        self.emit_parameters(&sig.parameters);
+                    }
                     self.write("]");
                     if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
+                    } else if !self.source_is_declaration_file {
+                        self.write(": any");
                     }
                 }
             }
@@ -370,11 +378,19 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(sig) = self.arena.get_index_signature(member_node) {
                     self.emit_member_modifiers(&sig.modifiers);
                     self.write("[");
-                    self.emit_parameters(&sig.parameters);
+                    if let Some(text) =
+                        self.recovered_legacy_index_signature_parameters(member_node, sig)
+                    {
+                        self.write(&text);
+                    } else {
+                        self.emit_parameters(&sig.parameters);
+                    }
                     self.write("]");
                     if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
+                    } else if !self.source_is_declaration_file {
+                        self.write(": any");
                     }
                 }
             }
