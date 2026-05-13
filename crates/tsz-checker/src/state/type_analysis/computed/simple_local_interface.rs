@@ -10,7 +10,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{PropertyInfo, TypeId, Visibility, is_compiler_managed_type};
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     pub(super) fn try_lower_simple_local_interface_object(
@@ -266,7 +266,9 @@ impl<'a> CheckerState<'a> {
 
         if type_name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.ctx.arena.get_identifier(type_name_node)
-                && is_compiler_managed_type(ident.escaped_text.as_str())
+                && crate::query_boundaries::common::is_compiler_managed_type(
+                    ident.escaped_text.as_str(),
+                )
             {
                 return TypeReferenceOutcome::IdentifierCompilerManagedType;
             }
