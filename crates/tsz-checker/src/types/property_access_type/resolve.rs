@@ -1872,6 +1872,26 @@ impl<'a> CheckerState<'a> {
                                 && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
                             {
                                 if binary.operator_token == SyntaxKind::EqualsToken as u16 {
+                                    let direct_rhs = self
+                                        .ctx
+                                        .arena
+                                        .skip_parenthesized_and_assertions(binary.right)
+                                        == idx;
+                                    let for_incrementor = self
+                                        .ctx
+                                        .arena
+                                        .parent_of(parent_idx)
+                                        .and_then(|loop_idx| self.ctx.arena.get(loop_idx))
+                                        .filter(|loop_node| {
+                                            loop_node.kind == syntax_kind_ext::FOR_STATEMENT
+                                        })
+                                        .and_then(|loop_node| self.ctx.arena.get_loop(loop_node))
+                                        .is_some_and(|loop_data| {
+                                            loop_data.incrementor == parent_idx
+                                        });
+                                    if !direct_rhs || for_incrementor {
+                                        break;
+                                    }
                                     let analyzer = self.flow_analyzer_for_property_reads();
                                     if analyzer
                                         .is_matching_reference(binary.left, access.expression)
