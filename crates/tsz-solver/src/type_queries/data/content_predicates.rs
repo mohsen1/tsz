@@ -71,6 +71,13 @@ pub fn contains_named_or_bound_type_parameters_db(db: &dyn TypeDatabase, type_id
 
 /// Like `contains_type_parameters_db`, but ignores references to a known
 /// locally-bound mapped key parameter.
+///
+/// `TypeParameter` and `Infer` are treated as leaves: their `constraint`
+/// and `default` fields are *metadata* about the parameter, not free usages
+/// by the enclosing type. Walking them would falsely flag instantiated
+/// mapped types as still containing outer parameters — the iteration
+/// variable `K`'s baked-in constraint `keyof T` still mentions `T` long
+/// after `T` was substituted in every structural position of the body.
 pub fn contains_type_parameters_except_name_db(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -79,11 +86,11 @@ pub fn contains_type_parameters_except_name_db(
     if type_id.is_intrinsic() {
         return false;
     }
-    contains_type_matching(db, type_id, |key| match key {
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => info.name != excluded_name,
-        TypeData::ThisType | TypeData::BoundParameter(_) => true,
-        _ => false,
-    })
+    crate::visitors::visitor_predicates::contains_free_type_parameters_except_name(
+        db,
+        type_id,
+        excluded_name,
+    )
 }
 
 /// Check if a type contains an indexed access whose object is a type parameter.

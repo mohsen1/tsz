@@ -875,6 +875,133 @@ fn contains_application_union_without_app() {
 }
 
 // =========================================================================
+// contains_type_parameters_except_name_db
+// =========================================================================
+//
+// The iteration variable `K` of a mapped type `{ [K in keyof T as F<K>]: ... }`
+// carries its declared constraint (`keyof T`) as immutable metadata baked into
+// the `TypeParameter` record. After the outer alias is instantiated with `T =
+// Obj`, every structural reference to `T` has been substituted, but `K`'s own
+// constraint metadata still mentions `T`. The "free type parameters except
+// `K`" check must treat `TypeParameter` as a leaf so that this stale constraint
+// reference is not mistaken for a live usage requiring further substitution.
+
+#[test]
+fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
+    use crate::types::{ConditionalType, TypeData};
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    // T (free) and K whose constraint references T.
+    let t_param = interner.type_param(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let keyof_t = interner.keyof(t_param);
+    let k_param = interner.type_param(TypeParamInfo {
+        name: k_name,
+        constraint: Some(keyof_t),
+        default: None,
+        is_const: false,
+    });
+
+    // Sanity: a bare K should not look free relative to itself, even though
+    // its baked-in constraint walks back to T.
+    assert!(!contains_type_parameters_except_name_db(
+        &interner, k_param, k_name,
+    ));
+
+    // `{} extends Pick<Obj, K> ? K : never` — but with `Pick` modelled as a
+    // Lazy alias and `Obj` as a concrete object — must report no free
+    // parameters when the iteration variable `K` is excluded.
+    let obj_prop = crate::types::PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: crate::types::Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let obj = interner.object(vec![obj_prop]);
+    let pick_base = interner.lazy(crate::def::DefId(7));
+    let pick_app = interner.application(pick_base, vec![obj, k_param]);
+    let empty_obj = interner.object(vec![]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: empty_obj,
+        extends_type: pick_app,
+        true_type: k_param,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert!(
+        !contains_type_parameters_except_name_db(&interner, cond, k_name),
+        "K's stale `keyof T` constraint must not count as a free reference"
+    );
+
+    // A genuinely free `U` in the same position must still be detected.
+    let u_name = interner.intern_string("U");
+    let u_param = interner.type_param(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let cond_with_u = interner.conditional(ConditionalType {
+        check_type: u_param,
+        extends_type: pick_app,
+        true_type: k_param,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert!(contains_type_parameters_except_name_db(
+        &interner,
+        cond_with_u,
+        k_name,
+    ));
+
+    // Renamed iteration variable: same structure with `P` instead of `K`
+    // must behave identically — the rule is structural, not name-based.
+    let p_name = interner.intern_string("P");
+    let keyof_t_for_p = interner.keyof(t_param);
+    let p_param = interner.type_param(TypeParamInfo {
+        name: p_name,
+        constraint: Some(keyof_t_for_p),
+        default: None,
+        is_const: false,
+    });
+    let pick_app_p = interner.application(pick_base, vec![obj, p_param]);
+    let cond_with_p = interner.conditional(ConditionalType {
+        check_type: empty_obj,
+        extends_type: pick_app_p,
+        true_type: p_param,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert!(!contains_type_parameters_except_name_db(
+        &interner,
+        cond_with_p,
+        p_name,
+    ));
+
+    // Suppress unused-binding warning on TypeData import.
+    let _ = matches!(
+        interner.lookup(t_param),
+        Some(TypeData::TypeParameter(_)) | None
+    );
+}
+
+// =========================================================================
 // is_literal_or_primitive_or_compound_of_those
 // =========================================================================
 //

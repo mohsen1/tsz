@@ -1673,11 +1673,20 @@ impl<'a> TypeInstantiator<'a> {
                 // (which has a proper TypeResolver) handle the full expansion.
                 let has_lazy_application =
                     template_has_lazy_application_in_composite(self.interner, new_template);
+                // The same hazard exists for the `as` clause (`name_type`): when
+                // it embeds an `Application(Lazy(_), _)` — e.g. `as ... extends
+                // Pick<T, K> ? K : never` — the NoopResolver eager-evaluation
+                // path collapses the unresolvable application to `never`, which
+                // silently filters out every key.  Defer to the outer evaluator
+                // when the as-clause carries a Lazy application in any position.
+                let name_type_has_lazy_application = new_name_type
+                    .is_some_and(|nt| type_contains_lazy_application(self.interner, nt));
                 let resolver_dependent_constraint =
                     mapped_constraint_needs_resolver(self.interner, new_constraint);
                 if self.preserve_meta_types
                     || has_lazy_extends
                     || has_lazy_application
+                    || name_type_has_lazy_application
                     || resolver_dependent_constraint
                 {
                     mapped_type
@@ -2509,6 +2518,27 @@ fn template_has_lazy_application_in_composite(
         }
         _ => false,
     }
+}
+
+/// Check whether `type_id` reaches an `Application(Lazy(_), _)` anywhere in
+/// its structure.
+///
+/// The instantiator runs with `NoopResolver`, which cannot expand `Lazy`
+/// alias bodies.  When such an application sits inside a position that the
+/// eager evaluator will try to reduce (conditional check/extends, mapped
+/// constraint, etc.), the unresolvable reference is silently folded into
+/// `never`, losing real type information.  Callers use this predicate to
+/// decide whether to defer evaluation to an outer evaluator that has a
+/// real `TypeResolver`.
+fn type_contains_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
+        if let TypeData::Application(app_id) = key {
+            let app = interner.type_application(*app_id);
+            !app.base.is_intrinsic() && matches!(interner.lookup(app.base), Some(TypeData::Lazy(_)))
+        } else {
+            false
+        }
+    })
 }
 
 /// Check whether a mapped constraint needs a real resolver before it can be
