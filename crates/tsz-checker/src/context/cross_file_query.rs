@@ -108,7 +108,7 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
-    fn source_file_symbol_type_requester_key(requester_file_idx: u32) -> u32 {
+    const fn source_file_symbol_type_requester_key(requester_file_idx: u32) -> u32 {
         requester_file_idx.saturating_add(1)
     }
 
