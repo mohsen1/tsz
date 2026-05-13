@@ -1136,6 +1136,33 @@ export {};
 }
 
 #[test]
+fn default_parameter_function_initializer_gets_contextual_type() {
+    let temp = TempDir::new("default_param_function_context").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"function withDefault(fn: (x: number) => string = (x) => String(x)) {
+    return fn(42);
+}
+
+const withDefault2 = (fn: (x: number) => string = (x) => String(x)) => fn(42);
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "default parameter function initializers should be contextually typed without TS7006:\n{output}"
+    );
+}
+
+#[test]
 fn batch_mode_uses_project_cwd_for_jsdoc_required_constructor_types() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
