@@ -346,8 +346,16 @@ name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 
 [[test]]
+name = "ts2353_omit_pick_excess_property_tests"
+path = "tests/ts2353_omit_pick_excess_property_tests.rs"
+
+[[test]]
 name = "ts2353_mapped_template_literal_key_tests"
 path = "tests/ts2353_mapped_template_literal_key_tests.rs"
+
+[[test]]
+name = "ts2352_merged_type_alias_const_tests"
+path = "tests/ts2352_merged_type_alias_const_tests.rs"
 
 [[test]]
 name = "ts2683_tests"

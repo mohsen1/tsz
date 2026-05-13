@@ -1911,7 +1911,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Returns the type parameter a class extends if the class adds no new instance members.
+    /// Returns the type parameter a class extends if the class adds no new members at all.
     pub(crate) fn get_extends_type_parameter_if_transparent(
         &mut self,
         class: &tsz_parser::parser::node::ClassData,
@@ -1948,49 +1948,25 @@ impl<'a> CheckerState<'a> {
 
         let base_type_param = extends_type_param?;
 
-        // Check if class adds any new instance members (excluding constructor)
+        // Class is transparent only if it adds no new members at all (no instance, no static).
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
 
-            // Skip constructors and static members
             match member_node.kind {
                 k if k == syntax_kind_ext::CONSTRUCTOR => continue,
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                    if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
-                        // Skip static properties
-                        if self.has_static_modifier(&prop.modifiers) {
-                            continue;
-                        }
-                        // Found an instance property - class is not transparent
-                        return None;
-                    }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                {
+                    return None;
                 }
-                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
-                        // Skip static methods
-                        if self.has_static_modifier(&method.modifiers) {
-                            continue;
-                        }
-                        // Found an instance method - class is not transparent
-                        return None;
-                    }
-                }
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                        // Skip static accessors
-                        if self.has_static_modifier(&accessor.modifiers) {
-                            continue;
-                        }
-                        // Found an instance accessor - class is not transparent
-                        return None;
-                    }
-                }
-                _ => {
-                    // Other member types - be conservative
-                    continue;
-                }
+                // Index signatures, abstract members, and other node kinds are
+                // conservatively skipped; if they prove non-transparent in practice,
+                // add them to the return-None arm above.
+                _ => continue,
             }
         }
 

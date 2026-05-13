@@ -651,6 +651,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym) = referenced_sym
                     && sym == target_sym
                 {
+                    if self.type_query_targets_value_side_of_merged_alias(sym) {
+                        return None;
+                    }
                     // Found a reference to the target symbol!
                     // If we are in a lazy context AND it's a bare identifier, it's safe.
                     if current_lazy && is_bare_identifier {
@@ -715,5 +718,13 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn type_query_targets_value_side_of_merged_alias(&self, sym_id: SymbolId) -> bool {
+        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            symbol.value_declaration.is_some()
+                && symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                && symbol.flags & tsz_binder::symbol_flags::VALUE != 0
+        })
     }
 }
