@@ -364,6 +364,19 @@ impl<'a> CheckerState<'a> {
 
         let mut seen_dts_ambient_violation = false;
         for &stmt_idx in &sf.statements.nodes {
+            if !is_dts
+                && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.ctx.error(
+                    stmt_node.pos,
+                    stmt_node.end.saturating_sub(stmt_node.pos),
+                    diagnostic_messages::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES
+                        .to_string(),
+                    diagnostic_codes::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES,
+                );
+            }
             if is_dts && !suppress_grammar && !seen_dts_ambient_violation {
                 seen_dts_ambient_violation = self.check_dts_statement_in_ambient_context(stmt_idx);
             }
