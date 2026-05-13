@@ -1890,6 +1890,19 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.ctx.options.legacy_decorators
+            && let Some(modifiers) = param.modifiers.as_ref()
+        {
+            for &mod_idx in &modifiers.nodes {
+                let Some(mod_node) = self.arena.get(mod_idx) else {
+                    continue;
+                };
+                if mod_node.kind == syntax_kind_ext::DECORATOR {
+                    self.skip_comments_for_erased_node(mod_node);
+                }
+            }
+        }
+
         if param.dot_dot_dot_token {
             self.write("...");
             if let Some(name_node) = self.arena.get(param.name) {

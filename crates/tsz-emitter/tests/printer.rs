@@ -2448,6 +2448,45 @@ fn legacy_member_decorator_private_name_uses_lowered_private_scope() {
     );
 }
 
+#[test]
+fn legacy_decorator_trailing_comments_move_to_lowered_calls() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare function y(...args: any[]): any;\ntype T = number;\n@y(1 as T, () => C) // class decorator comment\nclass C<T> {\n    @y(null as T) // method decorator comment\n    method(@y x, y) {} // method comment\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        legacy_decorators: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("method(x, y) { } // method comment"),
+        "The method's own trailing comment should remain on the method.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("y(null) // method decorator comment\n    ,"),
+        "The erased method decorator's trailing comment should move to the lowered decorator expression.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("y(1, () => C) // class decorator comment"),
+        "The erased class decorator's trailing comment should move to the lowered class decorator expression.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class C {\n    //"),
+        "Decorator comments must not leak into the class body after decorator tokens are erased.\nOutput:\n{output}"
+    );
+}
+
 /// Regression: classes inside a namespace IIFE were missing
 /// `__metadata("design:type", T)` calls under `--emitDecoratorMetadata`.
 /// The namespace transformer instantiated an `ES5ClassTransformer` but

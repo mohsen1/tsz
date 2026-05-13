@@ -533,6 +533,8 @@ impl<'a> Printer<'a> {
                         if !self.ctx.options.legacy_decorators {
                             self.emit(mod_idx);
                             self.write_line();
+                        } else {
+                            self.skip_comments_for_erased_node(mod_node);
                         }
                     } else if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
                         if !suppress_static {
@@ -714,6 +716,8 @@ impl<'a> Printer<'a> {
                         if !self.ctx.options.legacy_decorators {
                             self.emit(mod_idx);
                             self.write_line();
+                        } else {
+                            self.skip_comments_for_erased_node(mod_node);
                         }
                     } else if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
                         if !suppress_static {
