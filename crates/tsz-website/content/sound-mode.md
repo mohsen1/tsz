@@ -20,12 +20,6 @@ Sound Mode is not:
 
 The word "sound" is a product direction here: stricter, more explicit checking for known TypeScript escape hatches. It is not a theorem.
 
-## Why Keep The Page
-
-Sound Mode is on the site because the project still wants the conversation. TypeScript users have more practical experience with strictness tradeoffs than any design document can capture on its own.
-
-The useful question is not "can TypeScript become perfectly sound?" The useful question is: if `tsz` eventually offers a stricter mode, what should it reject, what should it leave alone, and what migration support would make it usable on real projects?
-
 ## What It Wants To Be
 
 The goal is not to prove TypeScript sound. TypeScript explicitly values JavaScript compatibility and ecosystem adoption over a fully sound type system, and `tsz` should not pretend otherwise.
