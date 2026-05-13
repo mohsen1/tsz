@@ -170,9 +170,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_named_export_names.extend(module_exports_obj_names);
         self.js_module_exports_object_stmts = module_exports_obj_stmts;
         self.js_require_property_import_aliases.clear();
-        let (cjs_aliases, cjs_alias_stmts) = self.collect_js_cjs_export_aliases(source_file);
-        self.js_cjs_export_aliases = cjs_aliases;
-        self.js_cjs_export_alias_statements = cjs_alias_stmts;
+        let cjs_aliases = self.collect_js_cjs_export_aliases(source_file);
+        self.js_cjs_export_aliases = cjs_aliases.aliases;
+        self.js_cjs_export_alias_value_declarations = cjs_aliases.value_declarations;
+        self.js_cjs_export_alias_statements = cjs_aliases.skipped_statements;
         // Mark CJS alias local names as used so they survive usage analysis pruning.
         if let Some(binder) = self.binder
             && let Some(ref mut used) = self.used_symbols

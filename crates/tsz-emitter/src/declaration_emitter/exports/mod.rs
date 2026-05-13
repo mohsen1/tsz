@@ -429,6 +429,16 @@ impl<'a> DeclarationEmitter<'a> {
         if self.js_cjs_export_aliases.is_empty() {
             return;
         }
+        for (export_name, type_text) in self.js_cjs_export_alias_value_declarations.clone() {
+            self.write_indent();
+            self.write("export const ");
+            self.write(&export_name);
+            self.write(": ");
+            self.write(&type_text);
+            self.write(";");
+            self.write_line();
+        }
+        self.js_cjs_export_alias_value_declarations.clear();
         let aliases = self.js_cjs_export_aliases.clone();
         self.write_indent();
         self.write("export { ");
