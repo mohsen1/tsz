@@ -5668,6 +5668,23 @@ function f2() {
 }
 
 #[test]
+fn test_js_returned_function_tuple_rest_expansion_avoids_prior_param_name_collisions() {
+    let output = emit_js_dts(
+        r#"
+function wrap() {
+    /** @type {(a: string, ...rest: [a: number]) => void} */
+    return function (a, ...rest) {};
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function wrap(): (a: string, a_1: number) => void;"),
+        "Expected tuple-rest expansion to avoid colliding with prior parameter names: {output}"
+    );
+}
+
+#[test]
 fn test_js_reordered_accessor_comments_keep_backing_field_comment() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
