@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `fix-this-call-signature-return-6383-20260513`
-- **PR**: TBD
+- **PR**: #6392
 - **Status**: ready
 - **Workstream**: conformance / public false-positive fixes
 
