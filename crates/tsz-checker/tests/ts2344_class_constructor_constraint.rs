@@ -5,33 +5,11 @@
 //! `Parameters<T>` requires `T extends (...args: any) => any`, so `Parameters<typeof C>`
 //! must emit TS2344 because `typeof C` is not callable (only constructable).
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::check_source;
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
+    check_source(source, "test.ts", CheckerOptions::default())
         .into_iter()
         .map(|d| (d.code, d.message_text))
         .collect()
@@ -46,8 +24,10 @@ fn test_parameters_of_class_constructor_emits_ts2344() {
         r#"
 interface Array<T> {}
 interface Boolean {}
+interface CallableFunction {}
 interface Function {}
 interface IArguments {}
+interface NewableFunction {}
 interface Number {}
 interface Object {}
 interface RegExp {}
@@ -79,8 +59,10 @@ fn test_parameters_of_function_no_ts2344() {
         r#"
 interface Array<T> {}
 interface Boolean {}
+interface CallableFunction {}
 interface Function {}
 interface IArguments {}
+interface NewableFunction {}
 interface Number {}
 interface Object {}
 interface RegExp {}
@@ -111,8 +93,10 @@ fn test_constructor_parameters_of_class_no_ts2344() {
         r#"
 interface Array<T> {}
 interface Boolean {}
+interface CallableFunction {}
 interface Function {}
 interface IArguments {}
+interface NewableFunction {}
 interface Number {}
 interface Object {}
 interface RegExp {}
@@ -137,6 +121,82 @@ type Ccps = ConstructorParameters<typeof C>;
     );
 }
 
+/// `InstanceType<typeof C>` must reject private constructors because the
+/// constraint requires a public constructor signature.
+#[test]
+fn test_instance_type_of_private_constructor_emits_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+class WithPrivateCtor {
+    private constructor() {}
+}
+
+type Bad = InstanceType<typeof WithPrivateCtor>;
+        "#,
+    );
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert_eq!(
+        ts2344_errors.len(),
+        1,
+        "Should emit one TS2344 for InstanceType<typeof WithPrivateCtor> with a private constructor.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
+
+/// `InstanceType<typeof C>` must reject protected constructors for the same
+/// public-constructor constraint.
+#[test]
+fn test_instance_type_of_protected_constructor_emits_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+class WithProtectedCtor {
+    protected constructor() {}
+}
+
+type Bad = InstanceType<typeof WithProtectedCtor>;
+        "#,
+    );
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert_eq!(
+        ts2344_errors.len(),
+        1,
+        "Should emit one TS2344 for InstanceType<typeof WithProtectedCtor> with a protected constructor.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
+
 /// `typeof` applied to a generic class expression with type arguments remains
 /// value-space. It satisfies constructor constraints like `InstanceType`'s.
 #[test]
@@ -145,8 +205,10 @@ fn test_instance_type_of_generic_class_expression_type_query_no_ts2344() {
         r#"
 interface Array<T> {}
 interface Boolean {}
+interface CallableFunction {}
 interface Function {}
 interface IArguments {}
+interface NewableFunction {}
 interface Number {}
 interface Object {}
 interface RegExp {}
