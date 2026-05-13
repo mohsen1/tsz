@@ -556,6 +556,44 @@ function createRootContext(params: Partial<ParseParamsNoData>) {
 }
 
 #[test]
+fn zod_object_literal_optional_indexed_access_property_accepts_boolean() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "expected default libs to load");
+
+    let diags = check_source_with_libs(
+        r#"
+type ParseParams = {
+    data: unknown;
+    async: boolean;
+};
+
+type ParseParamsNoData = Omit<ParseParams, "data">;
+type Target = { async?: ParseParamsNoData["async"] };
+
+declare function createRootContext(params: Target): void;
+
+createRootContext({ async: false });
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        diags.is_empty(),
+        "Expected boolean to be assignable to optional Omit<...>[\"async\"] property, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn zod_reexport_cycle_keeps_in_progress_class_method_placeholders() {
     let diags = check_multi_file(
         &[
