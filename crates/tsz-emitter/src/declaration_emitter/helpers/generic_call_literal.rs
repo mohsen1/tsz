@@ -18,6 +18,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
+                    .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
@@ -27,6 +28,164 @@ impl<'a> DeclarationEmitter<'a> {
                 self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &type_text)
                     .unwrap_or(type_text)
             })
+    }
+
+    fn call_expression_local_overload_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let args = call.arguments.as_ref()?;
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(call.expression)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+
+        let mut candidates = Vec::new();
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            if callable.body.is_some()
+                || callable
+                    .type_parameters
+                    .is_some_and(|params| !params.nodes.is_empty())
+                || callable.type_annotation.is_none()
+                || !self.function_signature_accepts_call_arguments(
+                    self.arena,
+                    callable.parameters,
+                    call,
+                )
+            {
+                continue;
+            }
+            let Some(return_type) = self
+                .emit_type_node_text_from_arena(self.arena, callable.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, callable.type_annotation))
+            else {
+                continue;
+            };
+            let exact =
+                self.overload_signature_exact_literal_match(callable.parameters, &args.nodes);
+            if exact || self.overload_signature_accepts_arguments(callable.parameters, &args.nodes)
+            {
+                candidates.push((exact, return_type.trim().to_string()));
+            }
+        }
+
+        candidates
+            .iter()
+            .find_map(|(exact, return_type)| exact.then(|| return_type.clone()))
+            .or_else(|| {
+                candidates
+                    .into_iter()
+                    .next()
+                    .map(|(_, return_type)| return_type)
+            })
+    }
+
+    fn overload_signature_exact_literal_match(
+        &self,
+        parameters: &NodeList,
+        arg_nodes: &[NodeIndex],
+    ) -> bool {
+        !arg_nodes.is_empty()
+            && parameters
+                .nodes
+                .iter()
+                .zip(arg_nodes.iter())
+                .all(|(&param_idx, &arg_idx)| {
+                    let Some(param_type) = self.overload_parameter_type_text(param_idx) else {
+                        return false;
+                    };
+                    let Some(arg_type) = self.overload_argument_type_text(arg_idx) else {
+                        return false;
+                    };
+                    Self::overload_type_text_is_single_literal(&arg_type)
+                        && param_type.trim() == arg_type.trim()
+                })
+    }
+
+    fn overload_signature_accepts_arguments(
+        &self,
+        parameters: &NodeList,
+        arg_nodes: &[NodeIndex],
+    ) -> bool {
+        parameters
+            .nodes
+            .iter()
+            .zip(arg_nodes.iter())
+            .all(|(&param_idx, &arg_idx)| {
+                let Some(param_type) = self.overload_parameter_type_text(param_idx) else {
+                    return false;
+                };
+                let Some(arg_type) = self.overload_argument_type_text(arg_idx) else {
+                    return false;
+                };
+                Self::overload_type_accepts_argument_type(&param_type, &arg_type)
+            })
+    }
+
+    fn overload_parameter_type_text(&self, param_idx: NodeIndex) -> Option<String> {
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        self.emit_type_node_text_from_arena(self.arena, param.type_annotation)
+            .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+            .map(|text| text.trim().to_string())
+    }
+
+    fn overload_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+        self.reference_declared_type_annotation_text(arg_idx)
+            .or_else(|| self.const_literal_initializer_text(arg_idx))
+            .or_else(|| self.preferred_expression_type_text(arg_idx))
+            .filter(|text| text != "any" && text != "unknown")
+            .map(|text| text.trim().to_string())
+    }
+
+    fn overload_type_accepts_argument_type(param_type: &str, arg_type: &str) -> bool {
+        let param_parts = Self::split_top_level_union_type_parts(param_type);
+        let arg_parts = Self::split_top_level_union_type_parts(arg_type);
+        !arg_parts.is_empty()
+            && arg_parts.iter().all(|arg_part| {
+                param_parts.iter().any(|param_part| {
+                    Self::overload_type_part_accepts_argument(param_part, arg_part)
+                })
+            })
+    }
+
+    fn overload_type_part_accepts_argument(param_part: &str, arg_part: &str) -> bool {
+        let param_part = param_part.trim();
+        let arg_part = arg_part.trim();
+        param_part == arg_part
+            || Self::overload_literal_primitive_name(arg_part)
+                .is_some_and(|primitive| primitive == param_part)
+    }
+
+    fn overload_type_text_is_single_literal(type_text: &str) -> bool {
+        let parts = Self::split_top_level_union_type_parts(type_text);
+        parts.len() == 1 && Self::overload_literal_primitive_name(&parts[0]).is_some()
+    }
+
+    fn overload_literal_primitive_name(type_text: &str) -> Option<&'static str> {
+        let trimmed = type_text.trim();
+        if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+        {
+            return Some("string");
+        }
+        if matches!(trimmed, "true" | "false") {
+            return Some("boolean");
+        }
+        trimmed.parse::<f64>().ok().map(|_| "number")
     }
 
     fn call_expression_function_variable_return_type_text(
