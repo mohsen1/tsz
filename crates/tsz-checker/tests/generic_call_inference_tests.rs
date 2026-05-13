@@ -13,10 +13,9 @@
 
 use tsz_checker::context::CheckerOptions;
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
-use tsz_checker::test_utils::check_source_with_libs_code_messages;
+use tsz_checker::test_utils::{check_source_with_libs_code_messages, load_compiled_lib_files};
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
@@ -30,22 +29,7 @@ fn compile_and_get_raw_diagnostics(source: &str) -> Vec<tsz_checker::diagnostics
 }
 
 fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-
-    lib_paths
-        .iter()
-        .filter_map(|lib_path| {
-            let content = std::fs::read_to_string(lib_path).ok()?;
-            let file_name = lib_path.file_name()?.to_string_lossy().to_string();
-            Some(Arc::new(LibFile::from_source(file_name, content)))
-        })
-        .collect()
+    load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
 fn compile_with_es5_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {

@@ -3,27 +3,21 @@
 //! These tests verify that TS2322 "Type 'X' is not assignable to type 'Y'" errors
 //! are properly emitted in various contexts.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_checker::state::CheckerState;
-use tsz_checker::test_utils::{HasDiagnosticCode, diagnostic_codes as project_diagnostic_codes};
+use tsz_checker::test_utils::{
+    HasDiagnosticCode, diagnostic_codes as project_diagnostic_codes, load_lib_files,
+};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
+    load_lib_files(&[
         "es5.d.ts",
         "es2015.d.ts",
         "es2015.core.d.ts",
@@ -40,27 +34,7 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "dom.generated.d.ts",
         "dom.iterable.d.ts",
         "esnext.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                let lib_file = LibFile::from_source(file_name.to_string(), content);
-                lib_files.push(Arc::new(lib_file));
-                break;
-            }
-        }
-    }
-
-    lib_files
+    ])
 }
 
 fn with_lib_contexts(source: &str, file_name: &str, options: CheckerOptions) -> Vec<(u32, String)> {

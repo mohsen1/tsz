@@ -4,12 +4,12 @@
 //! assignments are recognized as class instance property declarations,
 //! preventing false TS2339 errors.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::context::LibContext;
+use tsz_checker::test_utils::load_compiled_lib_files;
 
 fn check_js(source: &str) -> Vec<(u32, String)> {
     let options = CheckerOptions {
@@ -108,70 +108,11 @@ fn count_code(diags: &[(u32, String)], code: u32) -> usize {
 }
 
 fn load_es5_lib_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-
-    for root in &lib_roots {
-        let lib_path = root.join("es5.d.ts");
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(&lib_path)
-        {
-            return vec![Arc::new(LibFile::from_source(
-                "lib.es5.d.ts".to_string(),
-                content,
-            ))];
-        }
-    }
-
-    Vec::new()
+    load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
 fn load_es5_and_dom_lib_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        (
-            manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-            "es5.d.ts",
-            "dom.d.ts",
-        ),
-        (
-            manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-            "es5.d.ts",
-            "dom.d.ts",
-        ),
-        (
-            manifest_dir.join("../../TypeScript/lib"),
-            "lib.es5.d.ts",
-            "lib.dom.d.ts",
-        ),
-    ];
-
-    for (root, es5_name, dom_name) in lib_roots {
-        let es5_path = root.join(es5_name);
-        let dom_path = root.join(dom_name);
-        if es5_path.exists()
-            && dom_path.exists()
-            && let Ok(es5_content) = std::fs::read_to_string(&es5_path)
-            && let Ok(dom_content) = std::fs::read_to_string(&dom_path)
-        {
-            return vec![
-                Arc::new(LibFile::from_source(
-                    "lib.es5.d.ts".to_string(),
-                    es5_content,
-                )),
-                Arc::new(LibFile::from_source(
-                    "lib.dom.d.ts".to_string(),
-                    dom_content,
-                )),
-            ];
-        }
-    }
-
-    Vec::new()
+    load_compiled_lib_files(&["lib.es5.d.ts", "lib.dom.d.ts"])
 }
 
 fn check_js_with_es5_lib(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
