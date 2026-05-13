@@ -1918,8 +1918,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if name == "default" {
                 return None;
             }
-            let sym_id = self.ctx.binder.file_locals.get(name)?;
-            return Some(sym_id);
+            return self.resolve_value_symbol_in_scope(expr_name);
         }
 
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {
