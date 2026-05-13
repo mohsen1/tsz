@@ -155,14 +155,14 @@ o2.p4;
     assert!(
         messages
             .iter()
-            .any(|msg| msg.contains("merge<{ p1: number; }, { p2: number; }>")),
-        "o1 receiver should display widened object-literal property types through merge, got: {messages:#?}"
+            .any(|msg| msg.contains("{ p1: number; } & { p2: number; }")),
+        "o1 receiver should display widened object-literal property types, got: {messages:#?}"
     );
     assert!(
         messages.iter().any(|msg| msg.contains(
-            "merge<merge<{ p1: number; }, { p2: number; }>, { p2: number; p3: number; }>"
+            r#"Omit<{ p1: number; } & { p2: number; }, "p2"> & { p2: number; p3: number; }"#
         )),
-        "o2 receiver should display widened object-literal property types through merge, got: {messages:#?}"
+        "o2 receiver should display widened object-literal property types through Omit, got: {messages:#?}"
     );
     assert!(
         !messages
