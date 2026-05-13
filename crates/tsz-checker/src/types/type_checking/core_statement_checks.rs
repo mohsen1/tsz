@@ -315,45 +315,43 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 false
-            } else {
-                if self.return_annotation_is_enumerate_length(stmt_idx) {
-                    self.error_type_not_assignable_generic_at(
-                        TypeId::NUMBER,
-                        expected_type,
-                        fallback_error_node,
-                    );
-                    false
-                } else if self.should_report_primitive_to_generic_indexed_conditional_return(
+            } else if self.return_annotation_is_enumerate_length(stmt_idx) {
+                self.error_type_not_assignable_generic_at(
+                    TypeId::NUMBER,
+                    expected_type,
+                    fallback_error_node,
+                );
+                false
+            } else if self.should_report_primitive_to_generic_indexed_conditional_return(
+                return_type,
+                expected_type,
+            ) {
+                self.error_type_not_assignable_generic_at(
                     return_type,
                     expected_type,
-                ) {
-                    self.error_type_not_assignable_generic_at(
-                        return_type,
-                        expected_type,
-                        source_error_node,
-                    );
-                    false
-                } else {
-                    let ok = self.check_assignable_or_report_at_exact_anchor(
-                        return_type,
-                        expected_type,
-                        source_error_node,
-                        fallback_error_node,
-                    );
-                    if !ok {
-                        // TS2409: In constructors, also emit the constructor-specific diagnostic
-                        // alongside the TS2322 already emitted by check_assignable_or_report.
-                        if is_in_constructor {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.error_at_node(
+                    source_error_node,
+                );
+                false
+            } else {
+                let ok = self.check_assignable_or_report_at_exact_anchor(
+                    return_type,
+                    expected_type,
+                    source_error_node,
+                    fallback_error_node,
+                );
+                if !ok {
+                    // TS2409: In constructors, also emit the constructor-specific diagnostic
+                    // alongside the TS2322 already emitted by check_assignable_or_report.
+                    if is_in_constructor {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
                             fallback_error_node,
                             diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                             diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
                         );
-                        }
                     }
-                    ok
                 }
+                ok
             }
         } else {
             true
