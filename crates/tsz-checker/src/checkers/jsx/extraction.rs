@@ -10,120 +10,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn is_react_jsx_component_alias_application(&self, type_id: TypeId) -> bool {
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-            .or_else(|| {
-                self.ctx.types.get_display_alias(type_id).and_then(|alias| {
-                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
-                })
-            });
-        let Some(app) = app else {
-            return false;
-        };
-        matches!(
-            self.format_type(app.base).as_str(),
-            "React.ComponentType" | "ComponentType" | "React.ReactType" | "ReactType"
-        )
-    }
-
-    fn is_react_jsx_component_alias_display(&self, type_id: TypeId) -> bool {
-        let display = self.format_type(type_id);
-        display == "React.ComponentType"
-            || display == "ComponentType"
-            || display == "React.ReactType"
-            || display == "ReactType"
-            || display.starts_with("React.ComponentType<")
-            || display.starts_with("ComponentType<")
-            || display.starts_with("React.ReactType<")
-            || display.starts_with("ReactType<")
-    }
-
-    fn is_react_jsx_component_branch_display(&self, type_id: TypeId) -> bool {
-        let display = self.format_type(type_id);
-        let base = display.split('<').next().unwrap_or(display.as_str());
-        matches!(
-            base,
-            "React.ComponentClass"
-                | "ComponentClass"
-                | "React.FunctionComponent"
-                | "FunctionComponent"
-                | "React.StatelessComponent"
-                | "StatelessComponent"
-                | "React.SFC"
-                | "SFC"
-        )
-    }
-
-    fn jsx_class_component_props_alias_hint(&self, instance_type: TypeId) -> Option<TypeId> {
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, instance_type)
-            .or_else(|| {
-                self.ctx
-                    .types
-                    .get_display_alias(instance_type)
-                    .and_then(|alias| {
-                        crate::query_boundaries::common::type_application(self.ctx.types, alias)
-                    })
-            })?;
-        let &props_arg = app.args.first()?;
-        crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_arg)
-            .then_some(props_arg)
-    }
-
-    fn store_jsx_props_display_alias_if_matching(&mut self, props_type: TypeId, alias: TypeId) {
-        if self.ctx.types.get_display_alias(props_type).is_some() {
-            return;
-        }
-        let alias_evaluated = self.evaluate_type_with_env(alias);
-        if alias_evaluated != TypeId::ERROR
-            && self.is_assignable_to(alias_evaluated, props_type)
-            && self.is_assignable_to(props_type, alias_evaluated)
-        {
-            self.ctx.types.store_display_alias(props_type, alias);
-        }
-    }
-
-    fn jsx_type_contains_callable_surface(&mut self, type_id: TypeId) -> bool {
-        let mut stack = vec![type_id];
-        let mut seen = rustc_hash::FxHashSet::default();
-        while let Some(current) = stack.pop() {
-            if !seen.insert(current) {
-                continue;
-            }
-            let evaluated = self.evaluate_type_with_env(current);
-            let resolved = self.resolve_type_for_property_access(evaluated);
-            let resolved = self.resolve_lazy_type(resolved);
-            if resolved != current {
-                stack.push(resolved);
-            }
-            if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, current)
-                .is_some()
-                || crate::query_boundaries::common::call_signatures_for_type(
-                    self.ctx.types,
-                    current,
-                )
-                .is_some_and(|sigs| !sigs.is_empty())
-                || crate::query_boundaries::common::construct_signatures_for_type(
-                    self.ctx.types,
-                    current,
-                )
-                .is_some_and(|sigs| !sigs.is_empty())
-            {
-                return true;
-            }
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, current)
-            {
-                stack.extend(members);
-            }
-            if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, current)
-            {
-                stack.extend(members);
-            }
-        }
-        false
-    }
-
     pub(super) fn apply_jsx_library_managed_attributes(
         &mut self,
         component_type: TypeId,
@@ -474,10 +360,26 @@ impl<'a> CheckerState<'a> {
     ) {
         let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
         let is_this_tag = tag_text == "this";
-        if is_this_tag {
+        if is_this_tag
+            && self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .is_some_and(|class_info| !class_info.in_static_member)
+        {
+            use crate::diagnostics::diagnostic_codes;
+
+            if let Some((start, _)) = self.get_node_span(tag_name_idx)
+                && self.ctx.diagnostics.iter().any(|diag| {
+                    diag.code == diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT
+                        && diag.start == start
+                })
+            {
+                return;
+            }
             self.error_at_node_msg(
                 tag_name_idx,
-                crate::diagnostics::diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,
+                diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,
                 &[&tag_text],
             );
             return;

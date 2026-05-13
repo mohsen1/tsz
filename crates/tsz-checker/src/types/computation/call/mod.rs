@@ -8,8 +8,8 @@
 //! Split into submodules:
 //! - `inner` — the main `get_type_of_call_expression_inner` implementation
 
-mod import_conflict;
 mod inner;
+mod namespace_conflict;
 mod nominal_lib_object_callbacks;
 mod tail_helpers;
 

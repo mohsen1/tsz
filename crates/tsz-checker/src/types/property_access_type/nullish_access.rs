@@ -106,23 +106,26 @@ impl<'a> CheckerState<'a> {
                 self.explicit_variable_annotation_type_for_nullish_receiver(expression)
             && !initialized_to_declared_nullish
         {
-            let (declared_non_nullish, _) = self.split_nullish_type(declared_receiver);
-            let lookup_type = declared_non_nullish.unwrap_or(declared_receiver);
-            if !matches!(lookup_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
-                && let PropertyAccessResult::PropertyNotFound { .. } =
-                    self.resolve_property_access_with_env(lookup_type, property_name)
-            {
-                self.error_property_not_exist_at(
-                    property_name,
-                    self.diagnostic_display_type_for_missing_property(lookup_type, lookup_type),
-                    name_or_argument,
-                );
-                return self.finalize_property_access_result(
-                    idx,
-                    TypeId::ERROR,
-                    skip_flow_narrowing,
-                    false,
-                );
+            let (declared_non_nullish, declared_nullish) =
+                self.split_nullish_type(declared_receiver);
+            if declared_nullish.is_none() {
+                let lookup_type = declared_non_nullish.unwrap_or(declared_receiver);
+                if !matches!(lookup_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                    && let PropertyAccessResult::PropertyNotFound { .. } =
+                        self.resolve_property_access_with_env(lookup_type, property_name)
+                {
+                    self.error_property_not_exist_at(
+                        property_name,
+                        self.diagnostic_display_type_for_missing_property(lookup_type, lookup_type),
+                        name_or_argument,
+                    );
+                    return self.finalize_property_access_result(
+                        idx,
+                        TypeId::ERROR,
+                        skip_flow_narrowing,
+                        false,
+                    );
+                }
             }
         }
 

@@ -1,5 +1,4 @@
-//! JSX namespace/symbol resolution, element type lookups, intrinsic elements,
-//! closing element checks, children contextual type, and attribute name extraction.
+//! JSX namespace resolution, intrinsic elements, closing checks, and attributes.
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
@@ -756,12 +755,6 @@ impl<'a> CheckerState<'a> {
                     request,
                 )
             };
-            // Keep `<this/>` strict even when props recovery succeeds: JSX
-            // component-shape recovery for callable/constructable unions must
-            // not suppress TS2604 for the `this` keyword tag form.
-            if self.get_jsx_tag_name_text(tag_name_idx) == "this" {
-                self.check_jsx_element_has_signatures(resolved_component_type, tag_name_idx);
-            }
             // Class components with multiple construct signatures (e.g. React.Component
             // in react16.d.ts has 2 constructors) must go through overload resolution
             // even when props extraction succeeds. tsc treats JSX elements as calls to
@@ -829,6 +822,15 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
                     if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                    }
+                    // Keep `<this/>` strict even when props recovery succeeds,
+                    // but run after return validation so TS2604 is not added
+                    // when TS2786 already explains the same tag.
+                    if self.get_jsx_tag_name_text(tag_name_idx) == "this" {
+                        self.check_jsx_element_has_signatures(
+                            resolved_component_type,
+                            tag_name_idx,
+                        );
                     }
                     let props_type = self
                         .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
@@ -1912,8 +1914,6 @@ impl<'a> CheckerState<'a> {
                 self.jsx_children_contextual_type_for_body_shape(children_type, child_count)
             })
     }
-    // JSX Attribute Name Extraction
-
     /// Extract the attribute name from a JSX attribute name node.
     ///
     /// Handles both simple identifiers (`name`) and namespaced names (`ns:name`).

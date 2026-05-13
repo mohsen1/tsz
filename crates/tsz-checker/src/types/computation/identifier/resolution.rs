@@ -288,7 +288,15 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            self.error_type_only_value_at(name, idx);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    &[name],
+                ),
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            );
             return TypeId::ERROR;
         }
 
@@ -386,7 +394,15 @@ impl<'a> CheckerState<'a> {
                 | "object"
                 | "bigint"
         ) {
-            self.error_type_only_value_at(name, idx);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    &[name],
+                ),
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            );
             return TypeId::ERROR;
         }
         // Suppress in single-file mode to prevent cascading false positives

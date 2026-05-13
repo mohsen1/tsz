@@ -28,33 +28,33 @@ let d: string | number = "before";
 
 if (typeof a === "string") {
   [a = 1] = [];
-  a.toUpperCase();
-  a.toFixed();
+  const aNumber: number = a;
+  const aString: string = a;
 }
 
 if (typeof b === "string") {
   [b = 1] = [undefined];
-  b.toUpperCase();
-  b.toFixed();
+  const bNumber: number = b;
+  const bString: string = b;
 }
 
 if (typeof c === "string") {
   [c = 1] = tupleSource;
-  c.toUpperCase();
-  c.toFixed();
+  const cNumber: number = c;
+  const cString: string = c;
 }
 
 if (typeof d === "string") {
   ({ y: d = 1 } = objectSource);
-  d.toUpperCase();
-  d.toFixed();
+  const dNumber: number = d;
+  const dString: string = d;
 }
 "#,
     );
 
-    let ts2339: Vec<_> = diagnostics
+    let ts2322: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| *code == 2339)
+        .filter(|(code, _)| *code == 2322)
         .map(|(_, message)| message.as_str())
         .collect();
     let ts18048: Vec<_> = diagnostics
@@ -69,14 +69,15 @@ if (typeof d === "string") {
     );
 
     assert_eq!(
-        ts2339.len(),
+        ts2322.len(),
         4,
-        "expected only the toUpperCase errors after defaulted destructuring flow, got {diagnostics:#?}"
+        "expected only the string assignment errors after defaulted destructuring flow, got {diagnostics:#?}"
     );
     assert!(
-        ts2339
-            .iter()
-            .all(|message| { message.contains("toUpperCase") && !message.contains("toFixed") }),
-        "defaulted destructuring should narrow each receiver before property access: {ts2339:#?}"
+        ts2322.iter().all(|message| {
+            message.contains("string")
+                && !message.contains("number' is not assignable to type 'number")
+        }),
+        "defaulted destructuring should narrow each receiver before assignment checks: {ts2322:#?}"
     );
 }

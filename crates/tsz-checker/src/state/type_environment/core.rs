@@ -1536,6 +1536,72 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn jsdoc_template_params_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        use tsz_common::comments::{
+            get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment,
+        };
+
+        let sf = arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = arena.get(decl_idx)?;
+        let mut search_pos = node.pos;
+        // EXPORT_DECLARATION wraps `export class Foo {}` so the leading JSDoc
+        // attaches before the `export` keyword; walk up to find the real anchor.
+        if let Some(ext) = arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent) = arena.get(ext.parent)
+            && parent.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION
+        {
+            search_pos = parent.pos;
+        }
+
+        let leading = get_leading_comments_from_cache(comments, search_pos, source_text);
+        let mut jsdoc: Option<String> = None;
+        for comment in leading.iter().rev() {
+            let end = comment.end as usize;
+            let check = search_pos as usize;
+            if end <= check
+                && source_text
+                    .get(end..check)
+                    .is_some_and(|gap| gap.chars().all(char::is_whitespace))
+                && is_jsdoc_comment(comment, source_text)
+            {
+                jsdoc = Some(get_jsdoc_content(comment, source_text));
+                break;
+            }
+        }
+        let jsdoc = jsdoc?;
+
+        let names = Self::jsdoc_template_type_params(&jsdoc);
+        if names.is_empty() {
+            return None;
+        }
+
+        let mut params = Vec::with_capacity(names.len());
+        for (name, is_const) in names {
+            if name.is_empty() {
+                continue;
+            }
+            params.push(tsz_solver::TypeParamInfo {
+                name: self.ctx.types.intern_string(&name),
+                constraint: None,
+                default: None,
+                is_const,
+            });
+        }
+
+        if params.is_empty() {
+            None
+        } else {
+            Some(params)
+        }
+    }
+
     fn extract_simple_type_params_from_decl_in_arena(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
@@ -1555,9 +1621,26 @@ impl<'a> CheckerState<'a> {
             type_parameters
         } else if !mixed_class_interface && flags & symbol_flags::CLASS != 0 {
             let class = arena.get_class(node)?;
-            class.type_parameters.as_ref()?
+            let Some(type_parameters) = class.type_parameters.as_ref() else {
+                // Class with no AST type-parameters: the slow path's only work
+                // is a JSDoc @template scan that already reads from the arena.
+                // Reproduce it arena-directly so we don't construct a
+                // `with_parent_cache_attributed` child checker just for this.
+                return Some(
+                    self.jsdoc_template_params_in_arena(arena, decl_idx)
+                        .unwrap_or_default(),
+                );
+            };
+            type_parameters
         } else if flags & symbol_flags::INTERFACE != 0 {
-            let iface = arena.get_interface(node)?;
+            let Some(iface) = arena.get_interface(node) else {
+                // Merged symbols such as `Array` can present a value
+                // declaration before the interface declaration. This candidate
+                // cannot contribute type parameters, but returning `None`
+                // would force a child checker before the later interface decl
+                // gets a chance to provide the real params.
+                return Some(Vec::new());
+            };
             if let Some(name_node) = arena.get(iface.name)
                 && let Some(name_ident) = arena.get_identifier(name_node)
                 && name_ident.escaped_text.as_str() != sym_escaped_name
@@ -1565,6 +1648,8 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             let Some(type_parameters) = iface.type_parameters.as_ref() else {
+                // Interface with no AST type parameters also has an arena-only
+                // result: the slow path returns an empty parameter list.
                 return Some(Vec::new());
             };
             type_parameters

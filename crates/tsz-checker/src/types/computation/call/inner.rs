@@ -339,12 +339,17 @@ impl<'a> CheckerState<'a> {
             None => &[],
         };
 
-        if self.callee_is_import_conflict_module(call.expression) {
-            return self.error_not_callable_and_collect_any_args(
-                callee_type,
-                call.expression,
+        if self.callee_name_conflicts_with_namespace_module(call.expression) {
+            self.error_not_callable_at(callee_type, call.expression);
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
                 args,
+                |_i, _arg_count| Some(TypeId::ANY),
+                check_excess_properties,
+                None,
+                CallableContext::none(),
             );
+            return TypeId::ERROR;
         }
 
         // Check if callee is any/error (don't report for those)
@@ -453,12 +458,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if self.callee_is_import_conflict_module(call.expression) {
-            return self.error_not_callable_and_collect_any_args(
-                callee_type,
-                call.expression,
+        if self.callee_name_conflicts_with_namespace_module(call.expression) {
+            self.error_not_callable_at(callee_type, call.expression);
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
                 args,
+                |_i, _arg_count| Some(TypeId::ANY),
+                check_excess_properties,
+                None,
+                CallableContext::none(),
             );
+            return TypeId::ERROR;
         }
 
         let mut nullish_cause = None;
