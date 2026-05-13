@@ -1232,7 +1232,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
         self.interner
-            .store_display_alias_preferring_application(evaluated, original_type_id);
+            .store_display_alias(evaluated, original_type_id);
     }
 
     fn is_structural_display_alias_result(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
