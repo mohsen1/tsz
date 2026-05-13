@@ -158,17 +158,16 @@ impl<'a> CheckerState<'a> {
             interface_name.to_string()
         };
 
-        if let Some(shape) =
+        let (mut properties, mut has_index_signature) = if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
         {
-            let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
-            if !shape.properties.is_empty() {
-                return (shape.properties.to_vec(), has_index_signature, display_name);
-            }
-        }
-
-        let mut properties = Vec::new();
-        let mut has_index_signature = false;
+            (
+                shape.properties.to_vec(),
+                shape.string_index.is_some() || shape.number_index.is_some(),
+            )
+        } else {
+            (Vec::new(), false)
+        };
 
         for &decl_idx in interface_declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
@@ -230,8 +229,9 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
-                properties.push(PropertyInfo {
-                    name: self.ctx.types.intern_string(&name),
+                let member_atom = self.ctx.types.intern_string(&name);
+                let property_info = PropertyInfo {
+                    name: member_atom,
                     type_id: member_type,
                     write_type: member_type,
                     optional: sig.question_token,
@@ -244,7 +244,12 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
-                });
+                };
+                if let Some(existing) = properties.iter_mut().find(|p| p.name == member_atom) {
+                    *existing = property_info;
+                } else {
+                    properties.push(property_info);
+                }
             }
         }
 
@@ -1466,7 +1471,7 @@ impl<'a> CheckerState<'a> {
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
                     let check_whole_type = extends_same_base
-                        || ((is_class || interface_has_index_signature)
+                        || (interface_has_index_signature
                             && missing_members.is_empty()
                             && incompatible_members.is_empty());
                     if check_whole_type {
