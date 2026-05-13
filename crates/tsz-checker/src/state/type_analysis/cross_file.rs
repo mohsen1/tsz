@@ -677,16 +677,22 @@ impl<'a> CheckerState<'a> {
         };
 
         if should_delegate {
-            // PERF: count cross-arena delegation calls for the perf plan.
-            // See `docs/plan/PERFORMANCE_PLAN.md`. Gate once with
-            // `enabled_fast()` and cache the resulting `&'static
-            // PerfCounters` pointer in `perf`. An enabled run pays the
-            // gate read plus one `counters()` `OnceLock<PerfCounters>`
-            // deref per delegate entry (vs. one per increment); a
-            // disabled run pays only the gate read and the subsequent
-            // `if let Some(p) = perf` checks are predictable branches
-            // on a local `None` that the optimizer folds away. Same
-            // pattern `TypeInterner::intern` uses for `pc`.
+            let symbol_type_cache_file_idx = self.symbol_arena_symbol_type_cache_file_idx(
+                needs_cross_file_delegation,
+                cross_file_idx,
+                delegate_arena_source,
+                delegate_arena,
+                sym_id,
+            );
+            let symbol_type_cache_from_symbol_arena =
+                symbol_type_cache_file_idx.is_some() && !needs_cross_file_delegation;
+            let symbol_type_cache_scope = symbol_type_cache_from_symbol_arena
+                .then(|| self.ctx.source_file_symbol_type_cache_scope());
+            let source_cache_scope = symbol_type_cache_scope.unwrap_or(0);
+            let requester_file_idx = self.ctx.current_file_idx as u32;
+
+            // Gate perf counters once; disabled runs pay only predictable
+            // `if let Some(p) = perf` branches.
             let perf = if tsz_common::perf_counters::enabled_fast() {
                 Some(tsz_common::perf_counters::counters())
             } else {
@@ -704,7 +710,8 @@ impl<'a> CheckerState<'a> {
             // Fast path: check lib delegation cache by SymbolId.
             // Each lib SymbolId is delegated at most once; subsequent lookups
             // return the cached result directly.
-            if !needs_cross_file_delegation
+            if symbol_type_cache_file_idx.is_none()
+                && !needs_cross_file_delegation
                 && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
             {
                 if let Some(p) = perf {
@@ -716,11 +723,18 @@ impl<'a> CheckerState<'a> {
             }
 
             // Thread-safe fast path: check the global resolved cross-file query cache.
-            if needs_cross_file_delegation
-                && let Some((cached_type, cached_params)) = self.ctx.cached_cross_file_symbol_type(
-                    sym_id,
-                    cross_file_idx.unwrap_or(self.ctx.current_file_idx) as u32,
-                )
+            if let Some(cache_file_idx) = symbol_type_cache_file_idx
+                && let Some((cached_type, cached_params)) = if symbol_type_cache_from_symbol_arena {
+                    self.ctx.cached_source_file_symbol_arena_type(
+                        sym_id,
+                        cache_file_idx as u32,
+                        source_cache_scope,
+                        requester_file_idx,
+                    )
+                } else {
+                    self.ctx
+                        .cached_cross_file_symbol_type(sym_id, cache_file_idx as u32)
+                }
             {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_cross_file
@@ -731,7 +745,9 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
-                if needs_cross_file_delegation && let Some(file_idx) = cross_file_idx {
+                if let Some(file_idx) = symbol_type_cache_file_idx
+                    && !symbol_type_cache_from_symbol_arena
+                {
                     self.ctx.cache_cross_file_symbol_type(
                         sym_id,
                         file_idx as u32,
@@ -766,7 +782,7 @@ impl<'a> CheckerState<'a> {
                     (arena, binder, file_idx)
                 })
             };
-            if let Some((symbol_arena, delegate_binder, delegate_file_idx)) = direct_target
+            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
                 && let Some((direct_type, direct_params)) = self
                     .direct_cross_file_interface_lowering(
                         sym_id,
@@ -776,15 +792,28 @@ impl<'a> CheckerState<'a> {
                     )
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
-                if needs_cross_file_delegation && let Some(file_idx) = delegate_file_idx {
-                    self.ctx.cache_cross_file_symbol_type(
-                        sym_id,
-                        file_idx as u32,
-                        direct_type,
-                        direct_params.clone(),
-                    );
+                if let Some(file_idx) = symbol_type_cache_file_idx
+                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
+                {
+                    if symbol_type_cache_from_symbol_arena {
+                        self.ctx.cache_source_file_symbol_arena_type(
+                            sym_id,
+                            file_idx as u32,
+                            source_cache_scope,
+                            requester_file_idx,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    } else {
+                        self.ctx.cache_cross_file_symbol_type(
+                            sym_id,
+                            file_idx as u32,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    }
                 }
-                if !needs_cross_file_delegation {
+                if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
                     self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
                 }
                 return Some((direct_type, direct_params));
@@ -1059,21 +1088,33 @@ impl<'a> CheckerState<'a> {
 
             // Cache the result for lib delegations by SymbolId.
             // This prevents redundant child checker creation for the same lib symbol.
-            if !needs_cross_file_delegation {
+            if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
                 self.ctx.lib_delegation_cache.insert(sym_id, result);
             }
 
             // Write through to the canonical cross-file symbol-type cache so
             // other parallel checkers can reuse this result without rebuilding
             // a child checker.
-            if needs_cross_file_delegation {
-                let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
-                self.ctx.cache_cross_file_symbol_type(
-                    sym_id,
-                    target_file_idx as u32,
-                    result,
-                    result_params.clone(),
-                );
+            if let Some(target_file_idx) = symbol_type_cache_file_idx
+                && (!symbol_type_cache_from_symbol_arena || result_params.is_empty())
+            {
+                if symbol_type_cache_from_symbol_arena {
+                    self.ctx.cache_source_file_symbol_arena_type(
+                        sym_id,
+                        target_file_idx as u32,
+                        source_cache_scope,
+                        requester_file_idx,
+                        result,
+                        result_params.clone(),
+                    );
+                } else {
+                    self.ctx.cache_cross_file_symbol_type(
+                        sym_id,
+                        target_file_idx as u32,
+                        result,
+                        result_params.clone(),
+                    );
+                }
             }
 
             self.ctx.leave_recursion();
