@@ -158,17 +158,16 @@ impl<'a> CheckerState<'a> {
             interface_name.to_string()
         };
 
-        if let Some(shape) =
+        let (mut properties, mut has_index_signature) = if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
         {
-            let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
-            if !shape.properties.is_empty() {
-                return (shape.properties.to_vec(), has_index_signature, display_name);
-            }
-        }
-
-        let mut properties = Vec::new();
-        let mut has_index_signature = false;
+            (
+                shape.properties.to_vec(),
+                shape.string_index.is_some() || shape.number_index.is_some(),
+            )
+        } else {
+            (Vec::new(), false)
+        };
 
         for &decl_idx in interface_declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
@@ -230,8 +229,9 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
-                properties.push(PropertyInfo {
-                    name: self.ctx.types.intern_string(&name),
+                let member_atom = self.ctx.types.intern_string(&name);
+                let property_info = PropertyInfo {
+                    name: member_atom,
                     type_id: member_type,
                     write_type: member_type,
                     optional: sig.question_token,
@@ -244,7 +244,12 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
-                });
+                };
+                if let Some(existing) = properties.iter_mut().find(|p| p.name == member_atom) {
+                    *existing = property_info;
+                } else {
+                    properties.push(property_info);
+                }
             }
         }
 
@@ -1189,6 +1194,26 @@ impl<'a> CheckerState<'a> {
                                 class_member_types.insert(class_member_idx, computed);
                                 computed
                             };
+                            if matches!(
+                                class_member_type,
+                                tsz_solver::TypeId::ANY | tsz_solver::TypeId::ERROR
+                            ) {
+                                let class_instance_type =
+                                    self.get_class_instance_type(class_idx, class_data);
+                                if let Some(shape) =
+                                    crate::query_boundaries::common::object_shape_for_type(
+                                        self.ctx.types,
+                                        class_instance_type,
+                                    )
+                                {
+                                    let member_atom = self.ctx.types.intern_string(&member_name);
+                                    if let Some(prop) =
+                                        shape.properties.iter().find(|p| p.name == member_atom)
+                                    {
+                                        class_member_type = prop.type_id;
+                                    }
+                                }
+                            }
                             // Substitute `this` type in class members too — the class method
                             // may return `this` (polymorphic), which must be replaced with the
                             // concrete class instance type for a fair comparison against the
@@ -1466,7 +1491,7 @@ impl<'a> CheckerState<'a> {
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
                     let check_whole_type = extends_same_base
-                        || ((is_class || interface_has_index_signature)
+                        || (interface_has_index_signature
                             && missing_members.is_empty()
                             && incompatible_members.is_empty());
                     if check_whole_type {
@@ -1491,29 +1516,57 @@ impl<'a> CheckerState<'a> {
                             interface_type
                         };
                         if !self.is_assignable_to(class_instance_type, target_type) {
-                            let suppress_computed_name_class_diagnostic = is_class
-                                && !extends_same_base
-                                && self.class_data_has_computed_member_name(class_data);
-                            if !suppress_computed_name_class_diagnostic {
-                                let message = if is_class {
-                                    format!(
-                                        "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
-                                    )
-                                } else {
-                                    format!(
-                                        "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
-                                    )
-                                };
-                                let diagnostic_code = if is_class {
-                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
-                                } else {
-                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
-                                };
-                                self.error_at_node(class_error_idx, &message, diagnostic_code);
-                                if extends_same_base {
-                                    // tsc suppresses member-level TS2416 when TS2720 is emitted
-                                    // for extends+implements same base patterns
-                                    incompatible_members.clear();
+                            let analysis = self
+                                .analyze_assignability_failure(class_instance_type, target_type);
+                            if !is_class
+                                && let Some(
+                                    tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+                                        property_name,
+                                        source_property_type,
+                                        target_property_type,
+                                        ..
+                                    },
+                                ) = analysis.failure_reason
+                            {
+                                let member_name =
+                                    self.ctx.types.resolve_atom(property_name).to_string();
+                                let class_member_idx = class_members
+                                    .get(&member_name)
+                                    .copied()
+                                    .unwrap_or(class_error_idx);
+                                let expected_str = self.format_type(target_property_type);
+                                let actual_str = self.format_type(source_property_type);
+                                incompatible_members.push((
+                                    class_member_idx,
+                                    member_name,
+                                    expected_str,
+                                    actual_str,
+                                ));
+                            } else {
+                                let suppress_computed_name_class_diagnostic = is_class
+                                    && !extends_same_base
+                                    && self.class_data_has_computed_member_name(class_data);
+                                if !suppress_computed_name_class_diagnostic {
+                                    let message = if is_class {
+                                        format!(
+                                            "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
+                                        )
+                                    } else {
+                                        format!(
+                                            "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
+                                        )
+                                    };
+                                    let diagnostic_code = if is_class {
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
+                                    } else {
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
+                                    };
+                                    self.error_at_node(class_error_idx, &message, diagnostic_code);
+                                    if extends_same_base {
+                                        // tsc suppresses member-level TS2416 when TS2720 is emitted
+                                        // for extends+implements same base patterns
+                                        incompatible_members.clear();
+                                    }
                                 }
                             }
                         }

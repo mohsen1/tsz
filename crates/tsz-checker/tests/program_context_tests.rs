@@ -18,6 +18,7 @@ fn empty_program_context() -> ProgramContext {
         lib_contexts: Arc::new(vec![]),
         all_arenas: Arc::new(vec![]),
         all_binders: Arc::new(vec![]),
+        source_file_symbol_type_cache_scope: 1,
         skeleton_declared_modules: None,
         skeleton_expando_index: None,
         skeleton_module_augmentations_index: None,
