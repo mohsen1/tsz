@@ -945,7 +945,107 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // These were pre-computed by `precompute_type_query_flow_types` during
             // `check_type_alias_declaration` and stored in `node_types`.
             let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
-                self.const_array_to_enum_object_type_query(expr_name_idx)
+                let const_asserted_array_tuple_in_decl_arena = || -> Option<TypeId> {
+                    let expr_node = decl_arena.get(expr_name_idx)?;
+                    let ident = decl_arena.get_identifier(expr_node)?;
+                    let sym_id = resolve_text_symbol(&ident.escaped_text)?;
+                    let symbol = decl_binder.get_symbol(sym_id)?;
+                    if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
+                        return None;
+                    }
+
+                    let mut value_decl = if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else {
+                        symbol.primary_declaration()?
+                    };
+                    let mut value_node = decl_arena.get(value_decl)?;
+                    if value_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        value_decl = decl_arena.get_extended(value_decl)?.parent;
+                        value_node = decl_arena.get(value_decl)?;
+                    }
+                    if value_node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                        || !decl_arena.is_const_variable_declaration(value_decl)
+                    {
+                        return None;
+                    }
+
+                    let decl = decl_arena.get_variable_declaration(value_node)?;
+                    let assertion_expr = decl_arena.skip_parenthesized(decl.initializer);
+                    let initializer_is_const_assertion = decl_arena
+                        .get(assertion_expr)
+                        .and_then(|node| decl_arena.get_type_assertion(node))
+                        .and_then(|assertion| decl_arena.get(assertion.type_node))
+                        .is_some_and(|type_node| {
+                            type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
+                        });
+                    if !initializer_is_const_assertion {
+                        return None;
+                    }
+
+                    let initializer =
+                        decl_arena.skip_parenthesized_and_assertions(decl.initializer);
+                    let init_node = decl_arena.get(initializer)?;
+                    if init_node.kind
+                        != tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    {
+                        return None;
+                    }
+
+                    let array = decl_arena.get_literal_expr(init_node)?;
+                    let mut elements = Vec::with_capacity(array.elements.nodes.len());
+                    for &element in &array.elements.nodes {
+                        if element.is_none() {
+                            return None;
+                        }
+                        let element = decl_arena.skip_parenthesized_and_assertions(element);
+                        let element_node = decl_arena.get(element)?;
+                        let element_type = match element_node.kind {
+                            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral
+                                    as u16 =>
+                            {
+                                decl_arena
+                                    .get_literal(element_node)
+                                    .map(|lit| factory.literal_string(&lit.text))?
+                            }
+                            k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
+                                let value =
+                                    decl_arena.get_literal(element_node).and_then(|lit| {
+                                        lit.value.or_else(|| {
+                                            tsz_common::numeric::parse_numeric_literal_value(
+                                                &lit.text,
+                                            )
+                                        })
+                                    })?;
+                                factory.literal_number(value)
+                            }
+                            k if k == tsz_scanner::SyntaxKind::TrueKeyword as u16 => {
+                                factory.literal_boolean(true)
+                            }
+                            k if k == tsz_scanner::SyntaxKind::FalseKeyword as u16 => {
+                                factory.literal_boolean(false)
+                            }
+                            k if k == tsz_scanner::SyntaxKind::NullKeyword as u16 => TypeId::NULL,
+                            k if k == tsz_scanner::SyntaxKind::UndefinedKeyword as u16 => {
+                                TypeId::UNDEFINED
+                            }
+                            _ => return None,
+                        };
+                        elements.push(tsz_solver::TupleElement {
+                            type_id: element_type,
+                            name: None,
+                            optional: false,
+                            rest: false,
+                        });
+                    }
+
+                    Some(factory.tuple(elements))
+                };
+
+                self.const_asserted_array_tuple_type_query(expr_name_idx)
+                    .or_else(const_asserted_array_tuple_in_decl_arena)
+                    .or_else(|| self.const_array_to_enum_object_type_query(expr_name_idx))
                     .or_else(|| self.const_object_member_literal_type_query(expr_name_idx))
                     .or_else(|| {
                         self.ctx
