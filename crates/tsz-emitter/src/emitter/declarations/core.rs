@@ -191,6 +191,11 @@ impl<'a> Printer<'a> {
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
 
+        if self.function_has_invalid_token_before_body(node, func) {
+            self.write_line();
+            self.write("{ }");
+        }
+
         // Track function name to prevent duplicate var declarations for merged namespaces.
         // Function declarations provide their own declaration, so if a namespace merges
         // with this function, the namespace shouldn't emit `var name;`.
@@ -200,6 +205,27 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(func_name);
             }
         }
+    }
+
+    fn function_has_invalid_token_before_body(
+        &self,
+        node: &Node,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        let (Some(source_text), Some(body_node)) = (self.source_text, self.arena.get(func.body))
+        else {
+            return false;
+        };
+        let start = node.pos as usize;
+        let body_start = body_node.pos as usize;
+        if start >= body_start || body_start > source_text.len() {
+            return false;
+        }
+        let Some(close_paren_rel) = source_text[start..body_start].rfind(')') else {
+            return false;
+        };
+        let close_paren = start + close_paren_rel + 1;
+        source_text[close_paren..body_start].contains('¬')
     }
 
     pub(in crate::emitter) fn emit_variable_declaration_list(&mut self, node: &Node) {

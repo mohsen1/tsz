@@ -2009,6 +2009,12 @@ impl<'a> Printer<'a> {
     ) {
         self.emit_function_parameters_js(params);
         self.map_closing_paren_backward(search_start, search_end);
+        if let Some(recovered_name) =
+            self.recovered_colon_parameter_name(params, open_paren_pos, search_start, search_end)
+        {
+            self.write(&recovered_name);
+            return;
+        }
         if !params.is_empty() {
             return;
         }
@@ -2034,6 +2040,49 @@ impl<'a> Printer<'a> {
         if comment_start < close_paren_pos {
             self.emit_comments_in_range(comment_start, close_paren_pos, true, false);
         }
+    }
+
+    fn recovered_colon_parameter_name(
+        &self,
+        params: &[NodeIndex],
+        open_paren_pos: u32,
+        search_start: u32,
+        search_end: u32,
+    ) -> Option<String> {
+        if !params.iter().copied().all(|param_idx| {
+            self.arena
+                .get_parameter_at(param_idx)
+                .is_some_and(|param| self.get_identifier_text_idx(param.name).is_empty())
+        }) {
+            return None;
+        }
+
+        let source_text = self.source_text?;
+        let first_param_pos = params
+            .iter()
+            .filter_map(|&param_idx| self.arena.get(param_idx).map(|node| node.pos))
+            .min()
+            .unwrap_or(search_start);
+        let start = open_paren_pos.min(first_param_pos).min(search_start) as usize;
+        let end = search_end as usize;
+        if start >= end || end > source_text.len() {
+            return None;
+        }
+        let segment = &source_text[start..end];
+        let inner = if let Some(open) = segment.find('(') {
+            let close = segment[open + 1..]
+                .find(')')
+                .map_or(segment.len(), |close| close + open + 1);
+            &segment[open + 1..close]
+        } else {
+            segment.split(')').next().unwrap_or(segment)
+        };
+        let tail = inner.trim_start().strip_prefix(':')?.trim_start();
+        let name: String = tail
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        (!name.is_empty()).then_some(name)
     }
 
     fn emit_parameter_name_js(&mut self, name_idx: NodeIndex) {
