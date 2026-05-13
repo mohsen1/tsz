@@ -23,8 +23,8 @@ fn no_errors(source: &str) {
 // ---------------------------------------------------------------------------
 
 /// `MyPartial<A | B>` must produce `MyPartial<A> | MyPartial<B>` so that
-/// member-specific properties like `name` (only in NodeA) and `id` (only in
-/// NodeB) remain accessible.  Without distribution, both are lost because
+/// member-specific properties like `name` (only in `NodeA`) and `id` (only in
+/// `NodeB`) remain accessible.  Without distribution, both are lost because
 /// `keyof (NodeA | NodeB)` collapses to only the common key `type`.
 #[test]
 fn homomorphic_partial_union_preserves_member_specific_properties() {
@@ -124,7 +124,7 @@ const _b: Flagged<A | B> = { z: true };             // NodeB branch
 // Verify that the distribution result is a union (assignability both ways)
 // ---------------------------------------------------------------------------
 
-/// A value valid for the NodeA branch must be assignable to the distributed type.
+/// A value valid for the `NodeA` branch must be assignable to the distributed type.
 #[test]
 fn homomorphic_distributed_union_accepts_branch_a_value() {
     no_errors(
@@ -141,7 +141,7 @@ const _: Identity<A | B> = val_a;
     );
 }
 
-/// A value valid for the NodeB branch must also be assignable.
+/// A value valid for the `NodeB` branch must also be assignable.
 #[test]
 fn homomorphic_distributed_union_accepts_branch_b_value() {
     no_errors(
