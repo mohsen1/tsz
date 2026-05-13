@@ -12,14 +12,19 @@ Issue #6282 reports that `--lib esnext` still emits TS2339 for `Symbol.dispose` 
 
 ## Files Touched
 
-- `crates/tsz-cli/src/driver/core.rs` (expected, lib resolution if needed)
-- `crates/tsz-core/src/config/mod.rs` or lib-resolution tests (expected, if transitive expansion is the root cause)
-- `crates/tsz-cli/tests/tsc_compat_tests.rs` or driver tests (expected regression)
+- `crates/tsz-cli/src/driver/check.rs`
+- `crates/tsz-cli/tests/config_tests.rs`
+- `crates/tsz-cli/tests/driver_tests.rs`
+- `crates/tsz-cli/tests/tsc_compat_tests.rs`
 
 ## Verification
 
 - `cargo run -p tsz-cli --bin tsz -- --noEmit --strict --lib esnext /tmp/issue6282.ts` (pass)
 - `cargo test -p tsz-cli --test tsc_compat_tests esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics -- --nocapture` (1 passed)
 - `cargo test -p tsz-cli collect_diagnostics_ -- --nocapture` (20 passed, 1 ignored)
+- `cargo test -p tsz-cli resolve_lib_files_from_dir_esnext_includes_disposable_reference`
+- `cargo test -p tsz-cli compile_lib_esnext_loads_disposable_symbols`
 - `cargo fmt --all -- --check` (pass)
+- `cargo fmt --check`
+- `.target/debug/tsz --noEmit --lib esnext <repro.ts>`
 - `git diff --check` (pass)
