@@ -1834,6 +1834,7 @@ impl<'a> Printer<'a> {
                     return;
                 }
                 self.write_semicolon();
+                self.skip_recovered_empty_statement_skipped_token_comments(node);
             }
 
             // JSX

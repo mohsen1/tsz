@@ -873,6 +873,29 @@ impl<'a> Printer<'a> {
         self.emit_unemitted_comments_between_impl(from_pos, to_pos, true)
     }
 
+    pub(in crate::emitter) fn skip_recovered_empty_statement_skipped_token_comments(
+        &mut self,
+        node: &Node,
+    ) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        let Some(slice) = text.get(start..end) else {
+            return;
+        };
+        if !slice.as_bytes().contains(&b'\\') {
+            return;
+        }
+
+        while self.comment_emit_idx < self.all_comments.len()
+            && self.all_comments[self.comment_emit_idx].end <= node.end
+        {
+            self.comment_emit_idx += 1;
+        }
+    }
+
     fn emit_unemitted_comments_between_impl(
         &mut self,
         from_pos: u32,
