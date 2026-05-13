@@ -362,6 +362,10 @@ name = "ts2677_intersection_predicate_tests"
 path = "tests/ts2677_intersection_predicate_tests.rs"
 
 [[test]]
+name = "ts2673_anonymous_class_private_ctor_tests"
+path = "tests/ts2673_anonymous_class_private_ctor_tests.rs"
+
+[[test]]
 name = "ts2352_merged_type_alias_const_tests"
 path = "tests/ts2352_merged_type_alias_const_tests.rs"
 
@@ -752,6 +756,10 @@ path = "tests/union_origin_display_tests.rs"
 [[test]]
 name = "jsdoc_class_property_target_display"
 path = "tests/jsdoc_class_property_target_display.rs"
+
+[[test]]
+name = "jsdoc_class_template_arena_direct_tests"
+path = "tests/jsdoc_class_template_arena_direct_tests.rs"
 
 [[test]]
 name = "jsdoc_prototype_assignment_target_display"
