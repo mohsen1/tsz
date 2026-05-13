@@ -11,6 +11,21 @@ enum DecoratorMemberName {
     Computed { expr: NodeIndex, key: String },
 }
 
+#[derive(Clone, Copy)]
+enum LegacyMemberDecoratorScopeFilter {
+    RequiresPrivateNameScope,
+    DoesNotRequirePrivateNameScope,
+}
+
+impl LegacyMemberDecoratorScopeFilter {
+    const fn matches(self, requires_private_name_scope: bool) -> bool {
+        match self {
+            Self::RequiresPrivateNameScope => requires_private_name_scope,
+            Self::DoesNotRequirePrivateNameScope => !requires_private_name_scope,
+        }
+    }
+}
+
 impl DecoratorMemberName {
     fn dedupe_key(&self) -> String {
         match self {
@@ -47,6 +62,20 @@ impl<'a> Printer<'a> {
         self.arena.get(expr_idx).is_some_and(|node| {
             node.is_identifier() && self.get_identifier_text_idx(expr_idx) == "await"
         })
+    }
+
+    fn legacy_decorator_expression_contains_private_identifier(&self, expr_idx: NodeIndex) -> bool {
+        let mut stack = vec![expr_idx];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.arena.get(current) else {
+                continue;
+            };
+            if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                return true;
+            }
+            stack.extend(self.arena.get_children(current));
+        }
+        false
     }
 
     fn emit_legacy_decorator_expression(&mut self, expr_idx: NodeIndex) {
@@ -213,6 +242,68 @@ impl<'a> Printer<'a> {
             runtime_index += 1;
         }
         result
+    }
+
+    pub(in crate::emitter) fn legacy_member_decorator_needs_private_name_scope(
+        &self,
+        member_idx: NodeIndex,
+    ) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+
+        let (modifiers, parameters): (_, Option<&NodeList>) = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.arena.get_method_decl(member_node) else {
+                    return false;
+                };
+                (&method.modifiers, Some(&method.parameters))
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    return false;
+                };
+                (&prop.modifiers, None)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let Some(accessor) = self.arena.get_accessor(member_node) else {
+                    return false;
+                };
+                (&accessor.modifiers, None)
+            }
+            _ => return false,
+        };
+
+        for dec_idx in self.collect_class_decorators(modifiers) {
+            let Some(dec_node) = self.arena.get(dec_idx) else {
+                continue;
+            };
+            let Some(dec) = self.arena.get_decorator(dec_node) else {
+                continue;
+            };
+            if self.legacy_decorator_expression_contains_private_identifier(dec.expression) {
+                return true;
+            }
+        }
+
+        if let Some(parameters) = parameters {
+            for (_, decorators) in self.collect_param_decorators(parameters) {
+                for dec_idx in decorators {
+                    let Some(dec_node) = self.arena.get(dec_idx) else {
+                        continue;
+                    };
+                    let Some(dec) = self.arena.get_decorator(dec_node) else {
+                        continue;
+                    };
+                    if self.legacy_decorator_expression_contains_private_identifier(dec.expression)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Collect parameter decorators from the constructor of a class.
@@ -818,10 +909,35 @@ impl<'a> Printer<'a> {
     /// - Methods/accessors: `__decorate([...], ClassName.prototype, "name", null);`
     /// - Properties: `__decorate([...], ClassName.prototype, "name", void 0);`
     /// - Static members: `__decorate([...], ClassName, "name", ...);`
-    pub(in crate::emitter) fn emit_legacy_member_decorator_calls(
+    pub(in crate::emitter) fn emit_legacy_member_decorator_calls_without_private_name_scope(
         &mut self,
         class_name: &str,
         members: &[NodeIndex],
+    ) {
+        self.emit_legacy_member_decorator_calls_filtered(
+            class_name,
+            members,
+            LegacyMemberDecoratorScopeFilter::DoesNotRequirePrivateNameScope,
+        );
+    }
+
+    pub(in crate::emitter) fn emit_legacy_member_decorator_calls_requiring_private_name_scope(
+        &mut self,
+        class_name: &str,
+        members: &[NodeIndex],
+    ) {
+        self.emit_legacy_member_decorator_calls_filtered(
+            class_name,
+            members,
+            LegacyMemberDecoratorScopeFilter::RequiresPrivateNameScope,
+        );
+    }
+
+    fn emit_legacy_member_decorator_calls_filtered(
+        &mut self,
+        class_name: &str,
+        members: &[NodeIndex],
+        scope_filter: LegacyMemberDecoratorScopeFilter,
     ) {
         if class_name.is_empty() {
             return;
@@ -925,6 +1041,12 @@ impl<'a> Printer<'a> {
             // For getter/setter pairs, tsc emits only one __decorate call
             // for the first accessor that has decorators. Skip the second.
             if is_accessor && !emitted_accessor_names.insert(member_key) {
+                continue;
+            }
+
+            let needs_private_name_scope =
+                self.legacy_member_decorator_needs_private_name_scope(member_idx);
+            if !scope_filter.matches(needs_private_name_scope) {
                 continue;
             }
 

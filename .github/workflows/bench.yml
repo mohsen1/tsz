@@ -12,11 +12,12 @@ on:
     - cron: '0 15 * * *'
   workflow_dispatch:
 
-# Only one benchmark runs at a time. New runs cancel in-progress ones to ensure
-# fresh data on the website without wasting CI minutes on stale commits.
+# Only one benchmark runs at a time. Let the active full run finish so it can
+# publish a merged artifact for the website; GitHub concurrency still keeps only
+# the newest pending run and replaces older pending runs as main advances.
 concurrency:
   group: bench
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
