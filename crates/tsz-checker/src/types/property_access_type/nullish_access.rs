@@ -67,6 +67,61 @@ impl<'a> CheckerState<'a> {
             return property_type.unwrap_or(TypeId::ERROR);
         }
 
+        // If the non-nullish receiver still lacks the property, tsc reports the
+        // missing property on that receiver type instead of masking it with a
+        // possibly-nullish diagnostic. Example: `let s: Symbol = null; s.foo`
+        // reports TS2339 for `foo`, while `let s: string | null; s.length`
+        // reports TS18047 because `length` exists on `string`.
+        let (non_nullish_base, _) = self.split_nullish_type(object_type_for_access);
+        if property_type.is_none()
+            && let Some(non_nullish_base) = non_nullish_base
+            && !matches!(
+                non_nullish_base,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+            )
+            && let PropertyAccessResult::PropertyNotFound { .. } =
+                self.resolve_property_access_with_env(non_nullish_base, property_name)
+        {
+            self.error_property_not_exist_at(
+                property_name,
+                self.diagnostic_display_type_for_missing_property(
+                    non_nullish_base,
+                    non_nullish_base,
+                ),
+                name_or_argument,
+            );
+            return self.finalize_property_access_result(
+                idx,
+                TypeId::ERROR,
+                skip_flow_narrowing,
+                false,
+            );
+        }
+
+        if property_type.is_none()
+            && let Some(declared_receiver) =
+                self.explicit_variable_annotation_type_for_nullish_receiver(expression)
+        {
+            let (declared_non_nullish, _) = self.split_nullish_type(declared_receiver);
+            let lookup_type = declared_non_nullish.unwrap_or(declared_receiver);
+            if !matches!(lookup_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                && let PropertyAccessResult::PropertyNotFound { .. } =
+                    self.resolve_property_access_with_env(lookup_type, property_name)
+            {
+                self.error_property_not_exist_at(
+                    property_name,
+                    self.diagnostic_display_type_for_missing_property(lookup_type, lookup_type),
+                    name_or_argument,
+                );
+                return self.finalize_property_access_result(
+                    idx,
+                    TypeId::ERROR,
+                    skip_flow_narrowing,
+                    false,
+                );
+            }
+        }
+
         let is_type_nullish =
             object_type_for_access == TypeId::NULL || object_type_for_access == TypeId::UNDEFINED;
 
@@ -181,5 +236,27 @@ impl<'a> CheckerState<'a> {
             skip_flow_narrowing,
             false,
         )
+    }
+
+    fn explicit_variable_annotation_type_for_nullish_receiver(
+        &mut self,
+        expression: NodeIndex,
+    ) -> Option<TypeId> {
+        let expr_node = self.ctx.arena.get(expression)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expression)?;
+        let value_decl = self.ctx.binder.get_symbol(sym_id)?.value_declaration;
+        let decl_node = self.ctx.arena.get(value_decl)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        if var_decl.type_annotation.is_some() {
+            return Some(self.get_type_from_type_node(var_decl.type_annotation));
+        }
+        self.jsdoc_type_annotation_for_node(value_decl)
+            .or_else(|| self.jsdoc_type_annotation_for_node_inference(value_decl))
     }
 }

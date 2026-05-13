@@ -1638,7 +1638,41 @@ impl<'a> CheckerState<'a> {
                     self.resolve_identifier_symbol_in_type_position(idx)
             {
                 let lib_binders = self.get_lib_binders();
-                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                if let Some(alias_symbol) =
+                    self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    && alias_symbol.has_any_flags(symbol_flags::ALIAS)
+                    && alias_symbol.is_type_only
+                    && let Some(module_name) = alias_symbol.import_module.as_ref()
+                    && let Some(import_name) = alias_symbol.import_name.as_deref()
+                {
+                    let source_file_idx = self
+                        .ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .unwrap_or(self.ctx.current_file_idx);
+                    if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
+                        module_name,
+                        import_name,
+                        Some(source_file_idx),
+                    ) {
+                        let target_has_type = self
+                            .get_cross_file_symbol(target_sym_id)
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .get_symbol_with_libs(target_sym_id, &lib_binders)
+                            })
+                            .is_some_and(|target_symbol| {
+                                target_symbol.has_any_flags(symbol_flags::TYPE)
+                            });
+                        if target_has_type {
+                            return Some(target_sym_id.0);
+                        }
+                    }
+                }
+                if let Some(symbol) = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                {
                     if symbol.escaped_name != ident.escaped_text {
                         return self
                             .resolve_entity_name_text_to_def_id_for_lowering(
@@ -1656,9 +1690,12 @@ impl<'a> CheckerState<'a> {
                             self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                             && target_sym_id != sym_id
                             && self
-                                .ctx
-                                .binder
-                                .get_symbol_with_libs(target_sym_id, &lib_binders)
+                                .get_cross_file_symbol(target_sym_id)
+                                .or_else(|| {
+                                    self.ctx
+                                        .binder
+                                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                                })
                                 .is_some_and(|target_symbol| {
                                     target_symbol.has_any_flags(symbol_flags::TYPE)
                                 })

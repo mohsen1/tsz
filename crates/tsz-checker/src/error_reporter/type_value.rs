@@ -232,6 +232,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if self.is_declaration_name_for_type_only_value_diagnostic(idx) {
+            return;
+        }
+
+        let local_same_name_value = (!self.is_identifier_in_type_position(idx))
+            .then(|| self.local_current_file_value_symbol_named(name))
+            .flatten();
+        if local_same_name_value.is_some_and(|sym_id| {
+            self.local_same_name_value_suppresses_type_only_value_diagnostic(idx, sym_id)
+        }) {
+            return;
+        }
+
         // Check if this is an ES2015+ type that requires specific lib support
         let is_es2015_type = lib_loader::is_es2015_plus_type(name);
         let allow_in_parse_recovery = self.has_type_only_value_in_parse_recovery_context(name, idx);
@@ -296,6 +309,50 @@ impl<'a> CheckerState<'a> {
         };
 
         self.error_at_node(idx, &message, code);
+    }
+
+    fn is_declaration_name_for_type_only_value_diagnostic(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+        self.get_declaration_name_node(parent) == Some(idx)
+    }
+
+    fn local_same_name_value_suppresses_type_only_value_diagnostic(
+        &self,
+        idx: NodeIndex,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        if self
+            .require_call_bound_identifier_type_only_kind(idx)
+            .is_some()
+        {
+            return false;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+        if symbol.value_declaration.is_none() {
+            return false;
+        }
+        if !symbol.declarations.contains(&symbol.value_declaration) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(symbol.value_declaration) else {
+            return true;
+        };
+        matches!(
+            node.kind,
+            syntax_kind_ext::VARIABLE_DECLARATION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+        )
     }
 
     /// Check if the identifier at `idx` is used as a computed property name
@@ -640,7 +697,7 @@ impl<'a> CheckerState<'a> {
     /// Determine whether a cross-file type-only export came from `import type`
     /// (TS1361) or `export type` (TS1362) by resolving the target module and
     /// walking the export symbol's alias chain for a direct type-only marker.
-    fn classify_cross_file_type_only_kind(
+    pub(crate) fn classify_cross_file_type_only_kind(
         &self,
         module_specifier: &str,
         export_name: &str,

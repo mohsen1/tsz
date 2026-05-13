@@ -12,6 +12,7 @@
 mod children;
 mod diagnostics;
 mod extraction;
+mod extraction_class_props;
 mod extraction_render_fallback;
 mod orchestration;
 mod overloads;
