@@ -118,6 +118,36 @@ fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
 }
 
 #[test]
+fn relative_module_augmentation_missing_target_reports_ts2664() {
+    let temp = TempDir::new("relative_module_augmentation_missing_target").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"declare module "./nonexistent" {
+    interface Extra {
+        extra: boolean;
+    }
+}
+
+export {};
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(code, 0, "missing relative augmentation target should fail");
+    assert!(
+        output.contains("error TS2664: Invalid module name in augmentation, module './nonexistent' cannot be found."),
+        "expected TS2664 for unresolved relative module augmentation, got:\n{output}"
+    );
+}
+
+#[test]
 fn accessor_modifier_below_es2015_reports_ts18045() {
     let temp = TempDir::new("accessor_modifier_below_es2015").expect("temp dir");
     write_file(
@@ -193,6 +223,49 @@ const sym = Symbol("unique");
     assert!(
         output.contains("error TS2585: 'Symbol' only refers to a type, but is being used as a value here. Do you need to change your target library?"),
         "expected TS2585 for Symbol value without es2015 lib, got:\n{output}"
+    );
+}
+
+#[test]
+fn async_function_without_promise_constructor_reports_ts2705() {
+    let temp = TempDir::new("async_promise_target_lib").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"async function asyncFn(): Promise<string> {
+    return "hello";
+}
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es5",
+            "--ignoreDeprecations",
+            "6.0",
+            "--lib",
+            "es5",
+            "--pretty",
+            "false",
+            "test.ts",
+        ],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(
+        code, 0,
+        "ES5 async function without Promise constructor should fail"
+    );
+    assert!(
+        output.contains(
+            "error TS2705: An async function or method in ES5 requires the 'Promise' constructor."
+        ),
+        "expected TS2705 for async function without Promise constructor, got:\n{output}"
     );
 }
 
@@ -1175,6 +1248,33 @@ export {};
     assert_eq!(
         code, 0,
         "--lib esnext should load disposable symbols and avoid unrelated builtin lib diagnostics:\n{output}"
+    );
+}
+
+#[test]
+fn default_parameter_function_initializer_gets_contextual_type() {
+    let temp = TempDir::new("default_param_function_context").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"function withDefault(fn: (x: number) => string = (x) => String(x)) {
+    return fn(42);
+}
+
+const withDefault2 = (fn: (x: number) => string = (x) => String(x)) => fn(42);
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "default parameter function initializers should be contextually typed without TS7006:\n{output}"
     );
 }
 
@@ -4066,5 +4166,39 @@ fn tsc_parity_show_config_unsupported_extension_files_entry() {
         &temp.path,
         &["--showConfig"],
         "tsz --showConfig must match tsc when files lists an unsupported extension",
+    );
+}
+
+#[test]
+fn this_type_predicate_narrows_receiver_property() {
+    let temp = TempDir::new("this_predicate_receiver_property").expect("temp dir");
+    write_file(
+        &temp.path.join("main.ts"),
+        r#"
+class Container<T> {
+  value: T | null = null;
+
+  hasValue(): this is Container<T> & { value: T } {
+    return this.value !== null;
+  }
+}
+
+const container = new Container<number>();
+
+if (container.hasValue()) {
+  const value: number = container.value;
+}
+"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "main.ts"],
+    )
+    .expect("tsz should run");
+
+    assert_eq!(
+        code, 0,
+        "`this is ...` predicates must narrow receiver properties, got: {output}"
     );
 }

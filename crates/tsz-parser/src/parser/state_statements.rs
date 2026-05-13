@@ -1035,32 +1035,12 @@ impl ParserState {
                 self.parse_statement()
             }
         } else if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
-            let modifier_start = self.token_pos();
             self.parse_error_at_current_token(
                 "Declaration or statement expected.",
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
             );
             self.next_token();
             let downstream_start = self.token_pos();
-            if matches!(
-                self.token(),
-                SyntaxKind::BreakKeyword | SyntaxKind::ContinueKeyword | SyntaxKind::ReturnKeyword
-            ) {
-                while !self.is_token(SyntaxKind::SemicolonToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                    && !self.scanner.has_preceding_line_break()
-                {
-                    self.next_token();
-                }
-                if self.is_token(SyntaxKind::SemicolonToken) {
-                    self.next_token();
-                }
-                return self.arena.add_token(
-                    syntax_kind_ext::EMPTY_STATEMENT,
-                    modifier_start,
-                    self.token_pos(),
-                );
-            }
             let preserve_downstream_expected = matches!(
                 self.token(),
                 SyntaxKind::BreakKeyword
