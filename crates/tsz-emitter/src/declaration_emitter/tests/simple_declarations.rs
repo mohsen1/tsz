@@ -5975,6 +5975,73 @@ export class C {
 }
 
 #[test]
+fn test_js_getter_uses_jsdoc_type_tag() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /** @type {string=} */
+    get p1() {
+        return undefined;
+    }
+
+    /** @type {?string} */
+    get p2() {
+        return null;
+    }
+
+    /** @type {string | null} */
+    get p3() {
+        return null;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("get p1(): string | undefined;"),
+        "Expected getter @type to override undefined body inference: {output}"
+    );
+    assert!(
+        output.contains("get p2(): string | null;"),
+        "Expected nullable getter @type to override null body inference: {output}"
+    );
+    assert!(
+        output.contains("get p3(): string | null;"),
+        "Expected explicit union getter @type to override null body inference: {output}"
+    );
+}
+
+#[test]
+fn test_js_accessor_pair_preserves_jsdoc_type_comments_and_optional_param_type() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /** @type {string=} */
+    get value() {
+        return undefined;
+    }
+
+    /** @param {string=} value */
+    set value(value) {
+        this.value = value;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "    /** @param {string=} value */\n    set value(value: string | undefined);"
+        ),
+        "Expected reordered setter comment to stay single-line and optional param to emit as a union: {output}"
+    );
+    assert!(
+        output.contains("    /** @type {string=} */\n    get value(): string | undefined;"),
+        "Expected reordered getter comment to stay single-line and @type to drive getter type: {output}"
+    );
+}
+
+#[test]
 fn test_js_setter_does_not_lift_nested_nullish_from_array_element_union() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
