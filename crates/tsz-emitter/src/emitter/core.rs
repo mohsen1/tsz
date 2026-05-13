@@ -345,6 +345,11 @@ pub struct Printer<'a> {
     /// Defaults to `tslib_1`, but is allocated per file to avoid user bindings.
     pub(crate) commonjs_tslib_import_binding: String,
 
+    /// Synthesized Node ESM `createRequire` import/require binding names.
+    /// Used for `import x = require("...")` in files resolved to ESM under
+    /// node16/node18/node20/nodenext module emit.
+    pub(crate) node_esm_create_require_names: Option<(String, String)>,
+
     /// Set of generated temp names (_a, _b, etc.) to avoid collisions.
     /// Tracks ALL generated temp names across destructuring and for-of lowering.
     pub(crate) generated_temp_names: FxHashSet<String>,
@@ -921,6 +926,7 @@ impl<'a> Printer<'a> {
             file_identifiers: FxHashSet::default(),
             helper_import_aliases: FxHashMap::default(),
             commonjs_tslib_import_binding: "tslib_1".to_string(),
+            node_esm_create_require_names: None,
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
