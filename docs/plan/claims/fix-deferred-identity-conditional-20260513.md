@@ -4,7 +4,7 @@
 - **Branch**: `fix-deferred-identity-conditional-20260513`
 - **Base**: `upstream/main`
 - **Issue**: #6064
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/6124
 - **Status**: wip
 - **Workstream**: solver false-positive
 
