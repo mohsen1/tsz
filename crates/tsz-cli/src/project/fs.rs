@@ -411,7 +411,7 @@ fn ensure_file_exists(path: &Path, original: &Path) -> Result<()> {
     }
 
     if !path.is_file() {
-        bail!("path is not a file: {}", path.display());
+        bail!("TS6231: {}", original.display());
     }
 
     Ok(())
@@ -686,7 +686,7 @@ mod tests {
     fn test_ensure_file_exists_rejects_directory_paths() {
         let dir = unique_temp_dir("directory");
         let err = ensure_file_exists(&dir, Path::new("directory")).unwrap_err();
-        assert!(err.to_string().contains("path is not a file"));
+        assert!(err.to_string().starts_with("TS6231: "));
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -563,9 +563,9 @@ impl<'a> TypeLowering<'a> {
                     base_type
                 };
                 // Fill in missing type arguments from defaults (tsc's
-                // fillMissingTypeArguments). When `Effect<void>` is written but
-                // `Effect` has 3 type params with defaults for the last 2, the
-                // Application should be `Application(Effect, [void, never, never])`.
+                // fillMissingTypeArguments). Defaults can reference earlier type
+                // params, so resolve them through the solver helper instead of
+                // copying the raw default type.
                 if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
                     && let Some(resolve_params) = self.lazy_type_params_resolver
                     && let Some(type_params) = resolve_params(def_id)
@@ -573,10 +573,13 @@ impl<'a> TypeLowering<'a> {
                     && type_params[type_args.len()..]
                         .iter()
                         .all(|p| p.default.is_some())
+                    && let Some(defaulted_args) = tsz_solver::fill_application_defaults(
+                        self.interner,
+                        &type_args,
+                        &type_params,
+                    )
                 {
-                    for param in &type_params[type_args.len()..] {
-                        type_args.push(param.default.unwrap());
-                    }
+                    type_args = defaulted_args;
                 }
                 return self.interner.application(base_type, type_args);
             }
@@ -586,11 +589,9 @@ impl<'a> TypeLowering<'a> {
                 && let Some(type_params) = resolve_params(def_id)
                 && !type_params.is_empty()
                 && type_params.iter().all(|param| param.default.is_some())
+                && let Some(default_args) =
+                    tsz_solver::fill_application_defaults(self.interner, &[], &type_params)
             {
-                let default_args = type_params
-                    .into_iter()
-                    .map(|param| param.default.unwrap_or(TypeId::ERROR))
-                    .collect();
                 return self.interner.application(base_type, default_args);
             }
 

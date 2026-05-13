@@ -236,9 +236,21 @@ impl<'a> CheckerState<'a> {
             }
 
             let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+            // Only mark a property as excess when EVERY normalized view of the
+            // target reports it as missing. The original `target` may still be
+            // an alias-displayed Application/Mapped whose constraint isn't
+            // fully evaluated (e.g. `Omit<P, "x">`'s body uses `Exclude<keyof P,
+            // "x">` which `extract_string_literal_keys` can't reduce to literals
+            // without full evaluation). When `effective_target` or
+            // `resolved_target` has been reduced to a concrete object whose
+            // shape contains the property, we must trust those verdicts —
+            // otherwise we emit TS2353 false positives for valid Pick/Omit
+            // assignments like `const p: Omit<Person, "email"> = { name, age }`.
+            // Structural rule: a generic mapped receiver "lacks property X"
+            // only when no normalized form can locate X.
             if [target, effective_target, resolved_target]
                 .into_iter()
-                .any(|candidate| {
+                .all(|candidate| {
                     self.generic_mapped_receiver_lacks_explicit_property(
                         candidate,
                         prop_name.as_ref(),
