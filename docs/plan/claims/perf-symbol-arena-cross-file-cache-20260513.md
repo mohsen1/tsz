@@ -14,8 +14,10 @@ constructs 924 `DelegateCrossArenaSymbol` child checkers, all from
 - For `delegate_cross_arena_symbol_resolution`, detect non-current
   `symbol_arenas` class/interface targets that map to source files and
   whose single declaration is proven to live only in that source-file arena.
-- Use the existing `cached_cross_file_symbol_type` /
-  `cache_cross_file_symbol_type` helpers for those targets.
+- Use the `SymbolType` cache bucket for those targets. Source-file
+  symbol-arena entries add a program-local scope across the secondary key
+  fields so virtual conformance programs that reuse small `file_idx` /
+  `SymbolId` values cannot collide in the same process.
 - Keep declaration-file / lib-style delegations, and programs with module
   augmentations, on the existing `lib_delegation_cache` / child-checker
   fallback path. Module augmentation can change source-file symbol answers
@@ -48,19 +50,23 @@ scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json
 exits non-zero because the generated fixture emits expected diagnostics, but
 it writes perf JSON.
 
-An unguarded prototype observed on `monorepo-006`:
+The module-augmentation-guarded and program-scoped implementation observed on
+`monorepo-006`:
 
-- `delegate.cache_hits_cross_file = 632` (previous refreshed run: `0`).
-- `DelegateCrossArenaSymbol = 292` child checkers (previous refreshed run:
+- `delegate.cache_hits_cross_file = 96` (previous refreshed run: `0`).
+- `DelegateCrossArenaSymbol = 828` child checkers (previous refreshed run:
   `924`).
-- `cross_file_cache_miss_causes`: `bucket_empty = 251`, other buckets `0`.
-- Remaining `DelegateCrossArenaSymbol` misses: 251 source-file targets plus
-  41 declaration-file targets.
+- `cross_file_cache_miss_causes`: `bucket_empty = 247`, other buckets `0`.
 
-That prototype regressed conformance by caching module-augmentation programs
-and merged, augmented, generic, or requester-sensitive source-file payloads.
-The PR now requires a program without module augmentations, a single
-class/interface declaration registered solely in the delegated arena, skips
-writes with type parameters, and includes the requesting file in source-file
-symbol-arena cache keys; re-measure this guarded version before treating the
-prototype counters as final.
+The unguarded prototype regressed the
+`moduleAugmentationImportsAndExports*` conformance group by caching
+source-file symbol answers in a program with module augmentation. The PR now
+detects module augmentations through the global augmentation indexes / binders.
+The PR also scopes source-file symbol-arena cache keys by the requesting file
+and a process-local program salt so requester-sensitive answers and unrelated
+virtual programs do not share `(file_idx, SymbolId)` entries, requires a single
+class/interface declaration registered solely in the delegated arena, and skips
+writes with type parameters before using the shared bucket. Local targeted
+conformance:
+`./scripts/conformance/conformance.sh run --workers 4 --filter
+moduleAugmentationImportsAndExports` passes 6/6.

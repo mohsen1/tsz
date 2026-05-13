@@ -35,6 +35,7 @@ mod lifetime_scopes;
 mod module_entity;
 mod request_cache;
 mod resolver;
+mod source_file_symbol_type_cache_scope;
 pub(crate) mod speculation;
 mod strict_mode;
 mod symbol_file_targets;
@@ -47,6 +48,7 @@ pub use aliases::*;
 // internal self-test exercises the `WorkerContext` re-exported above) but
 // do not re-export the duplicates from here.
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
+use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
@@ -1022,6 +1024,9 @@ pub struct CheckerContext<'a> {
     /// speculative request-local results across editor operations.
     pub share_owner_symbol_type_results: bool,
 
+    /// Identity scope for source-file symbol-arena shared cache keys.
+    pub source_file_symbol_type_cache_scope: u64,
+
     /// Mapping from Binder `SymbolId` to Solver `DefId`.
     /// Used during migration to avoid creating duplicate `DefIds` for the same symbol.
     /// Wrapped in `RefCell` to allow mutation through shared references (for use in Fn closures).
@@ -1396,6 +1401,8 @@ pub struct ProgramContext {
     pub all_arenas: Arc<Vec<Arc<NodeArena>>>,
     /// All binders for cross-file resolution (indexed by `file_idx`).
     pub all_binders: Arc<Vec<Arc<BinderState>>>,
+    /// Unique cache scope for source-file symbol-arena symbol-type entries.
+    pub source_file_symbol_type_cache_scope: u64,
     /// Pre-computed declared modules from skeleton index.
     pub skeleton_declared_modules: Option<Arc<GlobalDeclaredModules>>,
     /// Pre-computed expando index from skeleton index.
@@ -1538,6 +1545,7 @@ impl Default for ProgramContext {
             lib_contexts: Arc::new(vec![]),
             all_arenas: Arc::new(vec![]),
             all_binders: Arc::new(vec![]),
+            source_file_symbol_type_cache_scope: next_source_file_symbol_type_cache_scope(),
             skeleton_declared_modules: None,
             skeleton_expando_index: None,
             skeleton_module_augmentations_index: None,
@@ -1647,6 +1655,7 @@ impl ProgramContext {
             ctx.definition_store = Arc::clone(store);
             ctx.share_owner_symbol_type_results = true;
         }
+        ctx.source_file_symbol_type_cache_scope = self.source_file_symbol_type_cache_scope;
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // When the shared DefinitionStore was fully populated (via from_semantic_defs
         // during project setup), skip the expensive per-binder iteration. Instead,
@@ -1700,6 +1709,8 @@ impl ProgramContext {
     /// so drivers can compute it once and share via `Arc` across all checkers.
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
+        self.source_file_symbol_type_cache_scope = next_source_file_symbol_type_cache_scope();
+
         // Phase 2 step 2: when the driver pre-built
         // `skeleton_module_augmentations_index` from `SkeletonIndex`, skip the
         // per-binder `module_augmentations` loop entirely and reuse the

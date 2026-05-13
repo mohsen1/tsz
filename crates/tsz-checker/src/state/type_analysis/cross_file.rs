@@ -686,17 +686,13 @@ impl<'a> CheckerState<'a> {
             );
             let symbol_type_cache_from_symbol_arena =
                 symbol_type_cache_file_idx.is_some() && !needs_cross_file_delegation;
+            let symbol_type_cache_scope = symbol_type_cache_from_symbol_arena
+                .then(|| self.ctx.source_file_symbol_type_cache_scope());
+            let source_cache_scope = symbol_type_cache_scope.unwrap_or(0);
+            let requester_file_idx = self.ctx.current_file_idx as u32;
 
-            // PERF: count cross-arena delegation calls for the perf plan.
-            // See `docs/plan/PERFORMANCE_PLAN.md`. Gate once with
-            // `enabled_fast()` and cache the resulting `&'static
-            // PerfCounters` pointer in `perf`. An enabled run pays the
-            // gate read plus one `counters()` `OnceLock<PerfCounters>`
-            // deref per delegate entry (vs. one per increment); a
-            // disabled run pays only the gate read and the subsequent
-            // `if let Some(p) = perf` checks are predictable branches
-            // on a local `None` that the optimizer folds away. Same
-            // pattern `TypeInterner::intern` uses for `pc`.
+            // Gate perf counters once; disabled runs pay only predictable
+            // `if let Some(p) = perf` branches.
             let perf = if tsz_common::perf_counters::enabled_fast() {
                 Some(tsz_common::perf_counters::counters())
             } else {
@@ -732,7 +728,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.cached_source_file_symbol_arena_type(
                         sym_id,
                         cache_file_idx as u32,
-                        self.ctx.current_file_idx as u32,
+                        source_cache_scope,
+                        requester_file_idx,
                     )
                 } else {
                     self.ctx
@@ -802,7 +799,8 @@ impl<'a> CheckerState<'a> {
                         self.ctx.cache_source_file_symbol_arena_type(
                             sym_id,
                             file_idx as u32,
-                            self.ctx.current_file_idx as u32,
+                            source_cache_scope,
+                            requester_file_idx,
                             direct_type,
                             direct_params.clone(),
                         );
@@ -1104,7 +1102,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx.cache_source_file_symbol_arena_type(
                         sym_id,
                         target_file_idx as u32,
-                        self.ctx.current_file_idx as u32,
+                        source_cache_scope,
+                        requester_file_idx,
                         result,
                         result_params.clone(),
                     );
