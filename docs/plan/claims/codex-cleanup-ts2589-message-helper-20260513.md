@@ -1,8 +1,8 @@
 # chore(checker-tests): reuse TS2589 diagnostic helper
 
 Branch: `codex/cleanup-ts2589-message-helper-20260513`
-PR: pending
-Status: claim
+PR: [#6122](https://github.com/mohsen1/tsz/pull/6122)
+Status: ready
 
 ## Scope
 
