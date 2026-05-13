@@ -1,6 +1,6 @@
 # Claim: dedupe JSDoc callback rest diagnostic code projections
 
-Status: WIP
+Status: Ready
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6278
 Branch: `codex/cleanup-jsdoc-callback-rest-codes-20260513`
@@ -15,3 +15,8 @@ Branch: `codex/cleanup-jsdoc-callback-rest-codes-20260513`
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_callback_rest_tests::)' --no-fail-fast`
+
+## Verification
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_callback_rest_tests::)' --no-fail-fast` (4 passed)
