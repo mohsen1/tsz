@@ -13,5 +13,7 @@ mod core_type_query;
 pub(crate) mod cross_file;
 mod cross_file_cache;
 pub(crate) mod cross_file_direct;
+#[cfg(test)]
+mod cross_file_query_kind_tests;
 pub(crate) mod cross_file_query_types;
 mod symbol_type_helpers;
