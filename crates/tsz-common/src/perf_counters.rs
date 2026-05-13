@@ -1972,6 +1972,7 @@ mod json_tests {
             "alias_shortcut_outcomes",
             "direct_interface_lowering_outcomes",
             "cross_file_cache_miss_causes",
+            "source_file_symbol_arena_cache_eligibility_outcomes",
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
@@ -2552,6 +2553,7 @@ mod json_tests {
         let source_idx = CrossArenaSymbolMissSource::SymbolArena.as_index();
         let kind_idx = CrossArenaSymbolMissKind::Class.as_index();
         let aso_idx = CrossArenaAliasShortcutOutcome::Success.as_index();
+        let sfsa_idx = SourceFileSymbolArenaCacheEligibilityOutcome::Cacheable.as_index();
         let dilo_idx = DirectCrossFileInterfaceLoweringOutcome::Success.as_index();
 
         let before_source =
@@ -2563,6 +2565,8 @@ mod json_tests {
             .load(Ordering::Relaxed);
         let before_aso =
             c.delegate_cross_arena_alias_shortcut_outcome[aso_idx].load(Ordering::Relaxed);
+        let before_sfsa =
+            c.source_file_symbol_arena_cache_eligibility_outcome[sfsa_idx].load(Ordering::Relaxed);
         let before_dilo =
             c.direct_cross_file_interface_lowering_outcome[dilo_idx].load(Ordering::Relaxed);
 
@@ -2571,6 +2575,8 @@ mod json_tests {
         c.delegate_cross_arena_symbol_miss_target_declaration_file
             .fetch_add(1, Ordering::Relaxed);
         c.delegate_cross_arena_alias_shortcut_outcome[aso_idx].fetch_add(1, Ordering::Relaxed);
+        c.source_file_symbol_arena_cache_eligibility_outcome[sfsa_idx]
+            .fetch_add(1, Ordering::Relaxed);
         c.direct_cross_file_interface_lowering_outcome[dilo_idx].fetch_add(1, Ordering::Relaxed);
 
         let snap = PerfCounters::snapshot();
@@ -2612,6 +2618,16 @@ mod json_tests {
         assert!(
             success_row["count"].as_u64().unwrap_or(0) > before_aso,
             "alias_shortcut_outcomes[success] did not reflect the bump",
+        );
+
+        let sfsa = json["source_file_symbol_arena_cache_eligibility_outcomes"]
+            .as_array()
+            .expect("source_file_symbol_arena_cache_eligibility_outcomes is array");
+        let cacheable_row = &sfsa[sfsa_idx];
+        assert_eq!(cacheable_row["name"], "cacheable");
+        assert!(
+            cacheable_row["count"].as_u64().unwrap_or(0) > before_sfsa,
+            "source_file_symbol_arena_cache_eligibility_outcomes[cacheable] did not reflect the bump",
         );
 
         let dilo = json["direct_interface_lowering_outcomes"]

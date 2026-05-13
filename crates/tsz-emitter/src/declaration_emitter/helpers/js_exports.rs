@@ -38,6 +38,12 @@ use super::{
     JsStaticMethodInfo, JsStaticMethodKey,
 };
 
+pub(in crate::declaration_emitter) struct JsCjsExportAliasCollection {
+    pub aliases: Vec<(String, String)>,
+    pub value_declarations: Vec<(String, String)>,
+    pub skipped_statements: FxHashSet<NodeIndex>,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     fn is_js_commonjs_export_identifier_text(text: &str) -> bool {
         let mut chars = text.chars();
@@ -813,11 +819,15 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Collect CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
-    pub(crate) fn collect_js_cjs_export_aliases(
+    pub(in crate::declaration_emitter) fn collect_js_cjs_export_aliases(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> (Vec<(String, String)>, FxHashSet<NodeIndex>) {
-        let empty = (Vec::new(), FxHashSet::default());
+    ) -> JsCjsExportAliasCollection {
+        let empty = JsCjsExportAliasCollection {
+            aliases: Vec::new(),
+            value_declarations: Vec::new(),
+            skipped_statements: FxHashSet::default(),
+        };
         if !self.source_file_is_js(source_file) {
             return empty;
         }
@@ -864,6 +874,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         let mut aliases = Vec::new();
+        let mut value_declarations = Vec::new();
         let mut skipped = FxHashSet::default();
         let mut seen = FxHashSet::default();
         let mut ordered_aliases: Vec<_> = alias_map.iter().collect();
@@ -878,11 +889,96 @@ impl<'a> DeclarationEmitter<'a> {
             for &s in stmts {
                 skipped.insert(s);
             }
+            if let Some(type_text) =
+                self.js_commonjs_export_alias_value_type_text(source_file, export_name, local_name)
+            {
+                value_declarations.push((export_name.clone(), type_text));
+            }
             if seen.insert((export_name.clone(), local_name.clone())) {
                 aliases.push((export_name.clone(), local_name.clone()));
             }
         }
-        (aliases, skipped)
+        JsCjsExportAliasCollection {
+            aliases,
+            value_declarations,
+            skipped_statements: skipped,
+        }
+    }
+
+    fn js_commonjs_export_alias_value_type_text(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        export_name: &str,
+        alias_local_name: &str,
+    ) -> Option<String> {
+        let mut alias_type = false;
+        let mut value_types = Vec::new();
+        let mut has_undefined = false;
+        let mut seen = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((name_idx, initializer)) =
+                self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
+            else {
+                continue;
+            };
+            if self.js_commonjs_export_name_text(name_idx).as_deref() != Some(export_name) {
+                continue;
+            }
+            if self.get_identifier_text(initializer).as_deref() == Some(alias_local_name) {
+                alias_type = true;
+                continue;
+            }
+            let Some(type_text) = self.js_commonjs_export_alias_assignment_type_text(initializer)
+            else {
+                continue;
+            };
+            if type_text == "undefined" {
+                has_undefined = true;
+                continue;
+            }
+            if seen.insert(type_text.clone()) {
+                value_types.push(type_text);
+            }
+        }
+        if value_types.is_empty() {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+        if alias_type {
+            parts.push(format!("typeof {alias_local_name}"));
+        }
+        parts.extend(value_types);
+        if has_undefined {
+            parts.push("undefined".to_string());
+        }
+        if parts.len() <= 1 {
+            return None;
+        }
+        Some(parts.join(" | "))
+    }
+
+    fn js_commonjs_export_alias_assignment_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        if self.get_identifier_text(initializer).as_deref() == Some("undefined")
+            || init_node.kind == SyntaxKind::UndefinedKeyword as u16
+            || self.is_void_expression(init_node)
+        {
+            return Some("undefined".to_string());
+        }
+        if init_node.kind == SyntaxKind::StringLiteral as u16
+            || init_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            let literal = self.arena.get_literal(init_node)?;
+            return Some(format!("{:?}", literal.text));
+        }
+        self.js_synthetic_export_value_type_text(initializer)
     }
 
     pub(crate) fn collect_js_local_export_aliases(
