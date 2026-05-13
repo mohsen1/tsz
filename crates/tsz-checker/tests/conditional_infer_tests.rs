@@ -2,6 +2,19 @@
 
 use tsz_checker::diagnostics::Diagnostic;
 
+fn check_source_strict_with_default_libs(source: &str) -> Vec<Diagnostic> {
+    let libs = tsz_checker::test_utils::load_default_lib_files();
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        tsz_checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+        &libs,
+    )
+}
+
 /// Test that conditional types with `infer V` pattern resolve to concrete types
 /// when the check type is a concrete application of the same generic interface.
 ///
@@ -105,7 +118,7 @@ type ExtractPropsMatch =
 const matched: true = null as any as ExtractPropsMatch;
 "#;
 
-    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let diagnostics = check_source_strict_with_default_libs(source);
     assert!(
         diagnostics.iter().all(|d| d.code != 2322),
         "expected InferProps equality to hold; all diagnostics: {:?}",
@@ -213,6 +226,50 @@ type B3 = B2[0];
     assert!(
         diagnostics.iter().all(|diag| diag.code != 2339),
         "recursive indexed access must not cascade into TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_array_application_infer_flatten_resolves_to_leaf() {
+    let source = r#"
+type Flatten<T> = T extends Array<infer U> ? Flatten<U> : T;
+
+type F0 = Flatten<number[]>;
+type F1 = Flatten<number[][]>;
+type F2 = Flatten<number[][][]>;
+type F3 = Flatten<Array<Array<number>>>;
+
+const f0: F0 = 42;
+const f1: F1 = 42;
+const f2: F2 = 42;
+const f3: F3 = 42;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "recursive Array<infer U> flatten should accept leaf numbers. Actual diagnostics: {diagnostics:#?}"
+    );
+
+    let rejection_source = r#"
+type Flatten<T> = T extends Array<infer U> ? Flatten<U> : T;
+
+type F0 = Flatten<number[]>;
+type F1 = Flatten<number[][]>;
+type F2 = Flatten<number[][][]>;
+type F3 = Flatten<Array<Array<number>>>;
+
+const bad0: F0 = [42];
+const bad1: F1 = [[42]];
+const bad2: F2 = [[[42]]];
+const bad3: F3 = [[42]];
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(rejection_source);
+    let ts2322_count = diagnostics.iter().filter(|diag| diag.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 4,
+        "recursive Array<infer U> flatten should reject nested arrays after resolving to number. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
