@@ -94,7 +94,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
+    pub(super) fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
         let (base, args) =
             crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
         self.is_awaited_application_base(base)
@@ -531,7 +531,7 @@ impl<'a> CheckerState<'a> {
     /// 1. Finding the `then` property on the object
     /// 2. Getting its call signature
     /// 3. Extracting the first param of the `onfulfilled` callback (which is T)
-    fn extract_awaited_type_from_thenable(&mut self, type_id: TypeId) -> Option<TypeId> {
+    pub(super) fn extract_awaited_type_from_thenable(&mut self, type_id: TypeId) -> Option<TypeId> {
         self.extract_awaited_type_from_valid_thenable(type_id, false)
             .awaited_type
     }
@@ -1759,105 +1759,6 @@ impl<'a> CheckerState<'a> {
         } else {
             type_id
         }
-    }
-
-    pub(crate) fn evaluate_awaited_application_for_assignability(
-        &mut self,
-        type_id: TypeId,
-    ) -> TypeId {
-        self.evaluate_awaited_application_for_assignability_inner(type_id, 0)
-    }
-
-    pub(super) fn evaluate_awaited_application_for_assignability_inner(
-        &mut self,
-        type_id: TypeId,
-        depth: u8,
-    ) -> TypeId {
-        if depth > 8 {
-            return type_id;
-        }
-        if self.awaited_application_arg(type_id).is_none() {
-            if let Some(elem) =
-                crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)
-            {
-                let evaluated_elem =
-                    self.evaluate_awaited_application_for_assignability_inner(elem, depth + 1);
-                if evaluated_elem != elem {
-                    return self.ctx.types.factory().array(evaluated_elem);
-                }
-            }
-            if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-            {
-                let mut changed = false;
-                let evaluated_members: Vec<_> = members
-                    .into_iter()
-                    .map(|member| {
-                        let evaluated = self.evaluate_awaited_application_for_assignability_inner(
-                            member,
-                            depth + 1,
-                        );
-                        changed |= evaluated != member;
-                        evaluated
-                    })
-                    .collect();
-                if changed {
-                    return self.ctx.types.factory().union(evaluated_members);
-                }
-            }
-            if let Some(elems) =
-                crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
-            {
-                let mut changed = false;
-                let evaluated_elems: Vec<_> = elems
-                    .into_iter()
-                    .map(|mut elem| {
-                        let evaluated = self.evaluate_awaited_application_for_assignability_inner(
-                            elem.type_id,
-                            depth + 1,
-                        );
-                        changed |= evaluated != elem.type_id;
-                        elem.type_id = evaluated;
-                        elem
-                    })
-                    .collect();
-                if changed {
-                    return self.ctx.types.factory().tuple(evaluated_elems);
-                }
-            }
-            if let Some(evaluated) =
-                self.evaluate_awaited_object_properties_for_assignability(type_id, depth)
-            {
-                return evaluated;
-            }
-            return type_id;
-        }
-
-        if self.awaited_application_arg_from_type(type_id).is_some() {
-            let evaluated = self.evaluate_application_type(type_id);
-            if evaluated != type_id {
-                return self
-                    .evaluate_awaited_application_for_assignability_inner(evaluated, depth + 1);
-            }
-        }
-
-        let Some(arg) = self.awaited_application_arg(type_id) else {
-            return type_id;
-        };
-        let arg = self.evaluate_type_for_assignability(arg);
-
-        if let Some(awaited) = self
-            .unwrap_promise_type(arg)
-            .or_else(|| self.extract_awaited_type_from_thenable(arg))
-        {
-            return self.evaluate_awaited_application_for_assignability_inner(awaited, depth + 1);
-        }
-
-        // Awaited<T> is transparent for non-thenables. If the conditional
-        // evaluator preserved the raw alias application, keep assignability in
-        // step with tsc's getAwaitedType without incorrectly treating
-        // Awaited<Promise<T>> as Promise<T>.
-        arg
     }
 
     /// Check that `Generator<TYield, any, any>` (or `AsyncGenerator`) is assignable

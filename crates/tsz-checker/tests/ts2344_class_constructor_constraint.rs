@@ -5,14 +5,8 @@
 //! `Parameters<T>` requires `T extends (...args: any) => any`, so `Parameters<typeof C>`
 //! must emit TS2344 because `typeof C` is not callable (only constructable).
 
-use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
-
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 /// `Parameters<typeof C>` must emit TS2344 because a class constructor

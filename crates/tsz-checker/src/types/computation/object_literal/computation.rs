@@ -215,15 +215,6 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn expression_is_const_assertion(&self, expr_idx: NodeIndex) -> bool {
-        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
-        self.ctx
-            .arena
-            .get(expr_idx)
-            .and_then(|node| self.ctx.arena.get_type_assertion(node))
-            .is_some_and(|assertion| self.is_const_assertion_type_node(assertion.type_node))
-    }
-
     /// Returns `true` when the symbol's value type comes from a non-fresh source:
     /// either an explicit variable type annotation or a const-asserted initializer.
     fn sym_has_non_widening_declared_value_type(&self, sym_id: tsz_binder::SymbolId) -> bool {

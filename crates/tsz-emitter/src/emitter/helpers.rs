@@ -1295,6 +1295,12 @@ impl<'a> Printer<'a> {
                 if is_external && self.in_namespace_iife {
                     return true;
                 }
+                // In Node ESM emit, `import x = require("...")` is not erased.
+                // TypeScript lowers it to a per-file `createRequire` binding and
+                // rewrites each alias to `const x = __require("...")`.
+                if is_external && self.ctx.options.resolved_node_module_to_esm {
+                    return false;
+                }
                 if is_es_module_output && is_external {
                     return true;
                 }

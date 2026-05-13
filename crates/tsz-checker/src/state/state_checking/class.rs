@@ -1508,7 +1508,7 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use crate::query_boundaries::common::call_signatures_for_type;
 
         // Skip validation for error types or any — these won't produce meaningful diagnostics
@@ -1563,14 +1563,36 @@ impl<'a> CheckerState<'a> {
             None,
         );
 
-        if !matches!(
-            result,
-            crate::query_boundaries::common::CallResult::Success(_)
-        ) {
+        let crate::query_boundaries::common::CallResult::Success(return_type) = result else {
             self.error_at_node(
                 decorator_node,
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+            );
+            return;
+        };
+
+        let return_type = self.evaluate_type_for_assignability(return_type);
+        if matches!(return_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) {
+            return;
+        }
+
+        let expected_return = self
+            .ctx
+            .types
+            .factory()
+            .union2(TypeId::VOID, class_constructor_type);
+        if !self.is_assignable_to(return_type, expected_return) {
+            let return_str = self.format_type_diagnostic(return_type);
+            let expected_str = self.format_type_diagnostic(expected_return);
+            let message = format_message(
+                diagnostic_messages::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&return_str, &expected_str],
+            );
+            self.error_at_node(
+                decorator_node,
+                &message,
+                diagnostic_codes::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
         }
     }

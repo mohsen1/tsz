@@ -9,6 +9,9 @@ use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
 
+type JsCommonJsClosureSecondaryMember = (NodeIndex, NodeIndex, NodeIndex);
+type JsCommonJsClosureExport = (NodeIndex, NodeIndex, Vec<JsCommonJsClosureSecondaryMember>);
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_js_class_define_property_accessors_for_name(
         &mut self,
@@ -447,6 +450,53 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
+    pub(in crate::declaration_emitter) fn statement_emits_js_object_literal_namespace(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                continue;
+            }
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            if decl_list.declarations.nodes.len() != 1 {
+                continue;
+            }
+            let Some(&decl_idx) = decl_list.declarations.nodes.first() else {
+                continue;
+            };
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_if_possible(
         &mut self,
         decl_name: NodeIndex,
@@ -802,7 +852,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn js_commonjs_export_assignment_closure(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> Option<(NodeIndex, NodeIndex, Vec<(NodeIndex, NodeIndex, NodeIndex)>)> {
+    ) -> Option<JsCommonJsClosureExport> {
         if !self.source_file_is_js(source_file) {
             return None;
         }
@@ -941,7 +991,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_js_commonjs_closure_export_assignment(
         &mut self,
         root_initializer: NodeIndex,
-        secondary_members: &[(NodeIndex, NodeIndex, NodeIndex)],
+        secondary_members: &[JsCommonJsClosureSecondaryMember],
     ) {
         let export_name = if self.reserved_names.contains("_exports") {
             self.generate_unique_name("_exports")
@@ -2375,9 +2425,7 @@ impl<'a> DeclarationEmitter<'a> {
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
                 if uses_reordered_js_member_comments {
-                    let jsdoc_chain =
-                        self.leading_jsdoc_comment_chain_for_pos_with_style(member_node.pos);
-                    self.emit_jsdoc_comment_chain_preserving_multiline_style(&jsdoc_chain);
+                    self.emit_leading_jsdoc_comment_chain_preserving_source(member_node.pos);
                 } else {
                     self.emit_leading_jsdoc_comments(member_node.pos);
                 }
@@ -3880,70 +3928,6 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    fn emit_js_commonjs_constructor_prototype_class(&mut self, name_idx: NodeIndex) -> bool {
-        let Some(export_name) = self.js_commonjs_export_name_text(name_idx) else {
-            return false;
-        };
-        let prototype_members = self.js_prototype_object_members_for_export_name(&export_name);
-        if prototype_members.is_empty() {
-            return false;
-        }
-
-        self.write_indent();
-        self.write("export class ");
-        self.write(&export_name);
-        self.write(" {");
-        self.write_line();
-        self.increase_indent();
-
-        for member_idx in prototype_members {
-            self.emit_js_commonjs_constructor_prototype_member(member_idx);
-        }
-
-        self.decrease_indent();
-        self.write_indent();
-        self.write("}");
-        self.write_line();
-        self.emitted_module_indicator = true;
-        true
-    }
-
-    fn emit_js_commonjs_constructor_prototype_member(&mut self, member_idx: NodeIndex) {
-        let Some(member_node) = self.arena.get(member_idx) else {
-            return;
-        };
-        let before_jsdoc_len = self.writer.len();
-        let saved_comment_idx = self.comment_emit_idx;
-        self.emit_leading_jsdoc_comments(member_node.pos);
-        let before_member_len = self.writer.len();
-
-        if let Some(prop) = self.arena.get_property_assignment(member_node) {
-            if let Some(type_text) = self
-                .function_expression_type_text_from_ast(prop.initializer)
-                .or_else(|| {
-                    self.resolve_declaration_type_text(&[prop.initializer], Some(prop.initializer))
-                        .map(|resolved| resolved.emitted_type_text)
-                })
-                .or_else(|| self.allowlisted_initializer_type_text(prop.initializer))
-            {
-                self.write_indent();
-                self.emit_node(prop.name);
-                self.write(": ");
-                self.write(&type_text);
-                self.write(";");
-                self.write_line();
-            }
-        } else {
-            self.emit_class_member(member_idx);
-        }
-
-        if self.writer.len() == before_member_len {
-            self.writer.truncate(before_jsdoc_len);
-            self.comment_emit_idx = saved_comment_idx;
-            self.skip_comments_in_node(member_node.pos, member_node.end);
-        }
-    }
-
     fn js_proto_property_assignment_type_text(&self, member_idx: NodeIndex) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
         let prop = self.arena.get_property_assignment(member_node)?;
@@ -4027,83 +4011,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_prototype_object_members_for_export_name(&name)
     }
 
-    fn js_prototype_object_members_for_export_name(&self, name: &str) -> Vec<NodeIndex> {
-        let Some(source_file_idx) = self.current_source_file_idx else {
-            return Vec::new();
-        };
-        let Some(source_file_node) = self.arena.get(source_file_idx) else {
-            return Vec::new();
-        };
-        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
-            return Vec::new();
-        };
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            let expr_idx = self
-                .arena
-                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
-            let Some(expr_node) = self.arena.get(expr_idx) else {
-                continue;
-            };
-            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                continue;
-            }
-            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
-                continue;
-            };
-            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-                continue;
-            }
-            let lhs = self
-                .arena
-                .skip_parenthesized_and_assertions_and_comma(binary.left);
-            let Some(lhs_node) = self.arena.get(lhs) else {
-                continue;
-            };
-            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                continue;
-            }
-            let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
-                continue;
-            };
-            if self
-                .get_identifier_text(lhs_access.name_or_argument)
-                .as_deref()
-                != Some("prototype")
-            {
-                continue;
-            }
-            let receiver_name = self
-                .get_identifier_text(lhs_access.expression)
-                .or_else(|| self.module_exports_property_reference_name(lhs_access.expression));
-            if receiver_name.as_deref() != Some(name) {
-                continue;
-            }
-            let rhs = self
-                .arena
-                .skip_parenthesized_and_assertions_and_comma(binary.right);
-            let Some(rhs_node) = self.arena.get(rhs) else {
-                continue;
-            };
-            if rhs_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                continue;
-            }
-            let Some(object) = self.arena.get_literal_expr(rhs_node) else {
-                continue;
-            };
-            return object.elements.nodes.clone();
-        }
-        Vec::new()
-    }
-
     fn js_function_body_returns_new_named(&self, body_idx: NodeIndex, name: &str) -> bool {
         let Some(body_node) = self.arena.get(body_idx) else {
             return false;
@@ -4164,6 +4071,70 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         self.get_identifier_text(new_expr.expression).as_deref() == Some(name)
+    }
+
+    pub(in crate::declaration_emitter) fn emit_deferred_js_export_equals_dependency_classes(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if !self.source_is_js_file || self.js_export_equals_names.is_empty() {
+            return;
+        }
+
+        let deferred = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    return false;
+                }
+                let Some(class) = self.arena.get_class(stmt_node) else {
+                    return false;
+                };
+                self.should_defer_js_export_equals_dependency_class(class.name, &class.modifiers)
+            })
+            .collect::<Vec<_>>();
+        if deferred.is_empty() {
+            return;
+        }
+
+        let export_equals_names = std::mem::take(&mut self.js_export_equals_names);
+        for class_idx in deferred {
+            self.emit_class_declaration(class_idx);
+        }
+        self.js_export_equals_names = export_equals_names;
+    }
+
+    pub(in crate::declaration_emitter) fn should_defer_js_export_equals_dependency_class(
+        &self,
+        name_idx: NodeIndex,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        self.source_is_js_file
+            && !self.js_export_equals_names.is_empty()
+            && !self
+                .arena
+                .has_modifier(modifiers, SyntaxKind::ExportKeyword)
+            && !self.is_js_named_exported_name(name_idx)
+            && !self.is_js_export_equals_name(name_idx)
+            && self.is_js_export_equals_namespace_alias_local(name_idx)
+    }
+
+    fn is_js_export_equals_namespace_alias_local(&self, name_idx: NodeIndex) -> bool {
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+
+        self.js_export_equals_names.iter().any(|root_name| {
+            self.js_namespace_export_aliases
+                .get(root_name)
+                .is_some_and(|aliases| aliases.iter().any(|alias| alias.local_name == name))
+        })
     }
 
     // Export/import emission → exports.rs

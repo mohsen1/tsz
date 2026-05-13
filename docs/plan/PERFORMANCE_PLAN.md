@@ -38,14 +38,9 @@ Current guidance:
 
 ### Parallel PR Coordination (as of 2026-05-13)
 
-- Open overlap watchlist: [#6260](https://github.com/mohsen1/tsz/pull/6260)
-  (`perf(checker): reduce declaration symbol-arena delegation`) updates the
-  T2.2 declaration-file residue and related status-row numbers in this plan.
-- Until #6260 merges, prefer non-overlapping documentation slices in other PRs
-  (metadata fixes, measurement-model clarifications, and new decision records)
-  rather than editing the same status-row counters.
-- After #6260 merges, rebase and fold its `41 -> 11` declaration-file residue
-  update into any pending local branch before further T2.2 plan edits.
+- #6260 and #6286 have merged. Before further T2.2 declaration-file edits,
+  rebase on `main` and preserve the current conservative `41 -> 40` actual-lib
+  baseline unless the PR carries fresh conformance and counter evidence.
 
 ---
 
@@ -83,11 +78,11 @@ measurement once available.
 | --- | --- | --- |
 | Gate local `large-ts-repo` fallback | Done | Audit completed: `LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"` at `scripts/bench/bench-vs-tsgo.sh:105` is the only local fixture fallback, and it is already gated behind `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1` (lines 112-114). No other implicit local-fixture paths found. Fixture provenance in diagnostics JSON is the T0.2 piece (#4970). |
 | Perf-only diagnostics JSON | Done (#4945, #4970) | T0.2 shipped. `PhaseTimings` sub-buckets (`config_discovery_ms`, `source_discovery_ms`, `module_resolution_ms`, `load_libs_ms`) split in #4970. |
-| Perf-only counter JSON | Done (#4948, follow-ups in #4960/#4993/#5009/#5015/#5060/#5061/#5064/#5069/#5072/#5843/#5863) | T0.3 shipped. `interner.intern_calls`/`hits`/`misses` and `resolver.is_file_calls`/`is_dir_calls`/`read_dir_calls` are now wired and exposed in JSON. `lock_wait_histogram_ns` is now wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061), still gated on the `perf-counters-timing` cargo feature per §3. The `delegate.calls` / `delegate.misses` / `delegate.cache_hits_cross_file` trio is now wired at all 11 cross-arena child-checker construction sites: 4 in `cross_file.rs` (#5061 + #5064), 7 in non-cross_file paths (ExpandoProperty / CallableTruthiness / CallHelpers / ImportType — #5069 added `calls`, #5072 added `misses`). At every construction site `calls = misses + cache_hits_cross_file + cache_hits_lib` holds, making attribution-mode bench output self-consistent. **#5843 added** the four classification arrays the text dump prints — `delegate_miss_classification` (by_source, by_kind, declaration-file/source-file totals), `alias_shortcut_outcomes`, `direct_interface_lowering_outcomes` — to `PerfCounterSnapshot` JSON. **#5863 added** `cross_file_cache_miss_causes` (4 buckets: `gate_off` / `bucket_empty` / `sentinel_error_unknown` / `type_id_not_interned`) wired into the four reader helpers in `crates/tsz-checker/src/context/cross_file_query.rs`. **#6208 refines #6203** as `source_file_symbol_arena_cache_eligibility_outcomes`, splitting stable-key availability from concrete structural rejections for source-file symbol-arena delegations. |
+| Perf-only counter JSON | Done (#4948, follow-ups in #4960/#4993/#5009/#5015/#5060/#5061/#5064/#5069/#5072/#5843/#5863) | T0.3 shipped. `interner.intern_calls`/`hits`/`misses` and `resolver.is_file_calls`/`is_dir_calls`/`read_dir_calls` are now wired and exposed in JSON. `lock_wait_histogram_ns` is now wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061), still gated on the `perf-counters-timing` cargo feature per §3. The `delegate.calls` / `delegate.misses` / `delegate.cache_hits_cross_file` trio is now wired at all 11 cross-arena child-checker construction sites: 4 in `cross_file.rs` (#5061 + #5064), 7 in non-cross_file paths (ExpandoProperty / CallableTruthiness / CallHelpers / ImportType — #5069 added `calls`, #5072 added `misses`). At every construction site `calls = misses + cache_hits_cross_file + cache_hits_lib` holds, making attribution-mode bench output self-consistent. **#5843 added** the four classification arrays the text dump prints — `delegate_miss_classification` (by_source, by_kind, declaration-file/source-file totals), `alias_shortcut_outcomes`, `direct_interface_lowering_outcomes` — to `PerfCounterSnapshot` JSON. **#5863 added** `cross_file_cache_miss_causes` (4 buckets: `gate_off` / `bucket_empty` / `sentinel_error_unknown` / `type_id_not_interned`) wired into the four reader helpers in `crates/tsz-checker/src/context/cross_file_query.rs`. **#6208 refines #6203** as `source_file_symbol_arena_cache_eligibility_outcomes`, splitting stable-key availability from concrete structural rejections for source-file symbol-arena delegations. **The declaration-file residue naming slice adds** `delegate_declaration_file_miss_residues`, a bounded `(name, kind, source, target_file, count)` table for the remaining declaration-file child-checker tail. |
 | Fresh phase split | Done (refreshed 2026-05-13) | See `docs/plan/perf-runs/2026-05-13-typeenv-arena-direct-attribution.md`. After the #6144 TypeEnvironmentCore arena-direct slice, the cliff remains checker-dominated (monorepo-003..006: check ≈ 97-98 % in attribution mode). `large-ts-repo` remains deferred (previous OOM / stack-overflow blocker); re-measure after one more measured child-checker path is removed or stack behavior is re-audited. |
 | Resolver/source-discovery fast path | **Deferred** | Resolver lookups ~1/file, package.json reads ~1/package on cliff. Not on the hot path. Revisit only after T2.2 lands. |
 | Checker lifetime split | **Promoted** | T0.4 measured `with_parent_cache_constructed = 1.28 × files` on monorepo-006. The 2026-05-11 attribution run, post-#5090 (`reset_for_next_file` boundary), measures 1.22 × files — a ~5 % drop from the same fixture. **T2.1.A** scaffolding (inventory + shells + reset boundary) is on `perf/master`. **T2.1.B** sequential session-reuse path behind `TSZ_FILE_SESSION_REUSE` shipped at `32d1c20bfe`; the `CheckerContext::switch_to_file` boundary in `crates/tsz-checker/src/context/file_session_reset.rs` clears file-local state while preserving the shared `QueryCache` and program-stable caches. **T2.1.C** parallel session reuse (#5842, merged `ee20f50f0e`) extends the same boundary to the rayon-chunked parallel driver path. **T2.1.D** ("replace the hottest child-checker path with an explicit session lease or typed query") is the next concrete code PR; the data driving the target choice should come from the refreshed attribution run that consumes the #5843/#5863 classification + miss-cause buckets. Decision record: [`perf-runs/2026-05-11-attribution-lock-wait.md`](perf-runs/2026-05-11-attribution-lock-wait.md). |
-| Typed cross-file query migration | **Promoted — highest Tier 2 priority** | #6111 landed the first `DelegateCrossArenaSymbol` source-file symbol-arena gateway path. #6144 then removes the dominant `TypeEnvironmentCore` arena-only type-param child-checker path. #6191 converts 96 stable source-file symbol-arena bucket-empty misses into cross-file cache hits on monorepo-006, dropping `DelegateCrossArenaSymbol` from 924 to 828. #6203 classifies the residue: 247 stable source-file keys are cold first reads, 540 are source-file variable symbols outside the current stability proof, and 41 are declaration-file targets. #6212 proves and admits the annotated single-declaration variable slice, dropping the variable-driven `not_class_or_interface` outcome from 540 to 0 and `DelegateCrossArenaSymbol` from 828 to 539 on monorepo-006. #6231 adds a direct source-file interface query for scope-independent stable interfaces, dropping `DelegateCrossArenaSymbol` from 539 to 292 on monorepo-006. #6243 adds a direct source-file variable annotation query for scope-independent annotations and same-file direct interfaces, dropping `DelegateCrossArenaSymbol` from 292 to 41 on monorepo-006. #6260 routes a conservative actual bundled-lib option/registry interface slice through the existing lib resolver, dropping `DelegateCrossArenaSymbol` from 41 to 40 and `checker.with_parent_cache_constructed` from 56 to 55 on monorepo-006. The next target is now the remaining 40 declaration-file misses: 16 type aliases plus 24 interfaces that need namespace-qualified, merged-lib, or conformance-backed proof. Decision records: [`perf-runs/2026-05-13-delegate-bucket-empty-attribution.md`](perf-runs/2026-05-13-delegate-bucket-empty-attribution.md), [`perf-runs/2026-05-13-delegate-residue-classification.md`](perf-runs/2026-05-13-delegate-residue-classification.md), [`perf-runs/2026-05-13-delegate-variable-symbol-cache.md`](perf-runs/2026-05-13-delegate-variable-symbol-cache.md), [`perf-runs/2026-05-13-delegate-source-file-direct-interface.md`](perf-runs/2026-05-13-delegate-source-file-direct-interface.md), [`perf-runs/2026-05-13-delegate-source-file-variable-direct.md`](perf-runs/2026-05-13-delegate-source-file-variable-direct.md), [`perf-runs/2026-05-13-delegate-actual-lib-direct.md`](perf-runs/2026-05-13-delegate-actual-lib-direct.md). |
+| Typed cross-file query migration | **Promoted — highest Tier 2 priority** | #6111 landed the first `DelegateCrossArenaSymbol` source-file symbol-arena gateway path. #6144 then removes the dominant `TypeEnvironmentCore` arena-only type-param child-checker path. #6191 converts 96 stable source-file symbol-arena bucket-empty misses into cross-file cache hits on monorepo-006, dropping `DelegateCrossArenaSymbol` from 924 to 828. #6203 classifies the residue: 247 stable source-file keys are cold first reads, 540 are source-file variable symbols outside the current stability proof, and 41 are declaration-file targets. #6212 proves and admits the annotated single-declaration variable slice, dropping the variable-driven `not_class_or_interface` outcome from 540 to 0 and `DelegateCrossArenaSymbol` from 828 to 539 on monorepo-006. #6231 adds a direct source-file interface query for scope-independent stable interfaces, dropping `DelegateCrossArenaSymbol` from 539 to 292 on monorepo-006. #6243 adds a direct source-file variable annotation query for scope-independent annotations and same-file direct interfaces, dropping `DelegateCrossArenaSymbol` from 292 to 41 on monorepo-006. #6260/#6286 route a conservative actual bundled-lib option/registry interface slice through the existing lib resolver, dropping `DelegateCrossArenaSymbol` from 41 to 40 and `checker.with_parent_cache_constructed` from 56 to 55 on monorepo-006. #6314 broadens the proven non-DOM/non-webworker interface slice, dropping `DelegateCrossArenaSymbol` from 40 to 31 and `checker.with_parent_cache_constructed` from 55 to 40 while keeping aliases and value-merged symbols on fallback paths. #6302 adds the first namespace-qualified actual-lib slice for `Intl.CollatorOptions`; its isolated pre-#6314 run dropped `DelegateCrossArenaSymbol` from 40 to 39 and `checker.with_parent_cache_constructed` from 55 to 54. The post-#6314/#6302 refresh measures `DelegateCrossArenaSymbol = 30` and `checker.with_parent_cache_constructed = 39` on monorepo-006. This allowlist-expansion follow-up keeps those main safety gates and the `Intl.CollatorOptions` namespace path, while routing additional iterator/regexp/disposable lib interfaces through `resolve_lib_type_with_params`; its isolated measured branch dropped `DelegateCrossArenaSymbol` from 40 to 30, `checker.with_parent_cache_constructed` from 55 to 33, and `delegate.misses` from 54 to 32. The latest attribution slice names the remaining declaration-file misses as concrete rows; the repeated utility-alias shortcut failed full conformance, so the next alias work should first make the direct/lib delegation cache preserve generic type parameters and then introduce a typed actual-lib alias-body query or canonical `DefinitionStore` entry rather than expanding a name allowlist. Decision records: [`perf-runs/2026-05-13-delegate-bucket-empty-attribution.md`](perf-runs/2026-05-13-delegate-bucket-empty-attribution.md), [`perf-runs/2026-05-13-delegate-residue-classification.md`](perf-runs/2026-05-13-delegate-residue-classification.md), [`perf-runs/2026-05-13-delegate-variable-symbol-cache.md`](perf-runs/2026-05-13-delegate-variable-symbol-cache.md), [`perf-runs/2026-05-13-delegate-source-file-direct-interface.md`](perf-runs/2026-05-13-delegate-source-file-direct-interface.md), [`perf-runs/2026-05-13-delegate-source-file-variable-direct.md`](perf-runs/2026-05-13-delegate-source-file-variable-direct.md), [`perf-runs/2026-05-13-delegate-actual-lib-direct.md`](perf-runs/2026-05-13-delegate-actual-lib-direct.md), [`perf-runs/2026-05-13-delegate-intl-lib-direct.md`](perf-runs/2026-05-13-delegate-intl-lib-direct.md), [`perf-runs/2026-05-13-delegate-actual-lib-allowlist-expansion.md`](perf-runs/2026-05-13-delegate-actual-lib-allowlist-expansion.md), [`perf-runs/2026-05-13-delegate-post-lib-residue.md`](perf-runs/2026-05-13-delegate-post-lib-residue.md), [`perf-runs/2026-05-13-delegate-decl-residue-names.md`](perf-runs/2026-05-13-delegate-decl-residue-names.md). |
 | Lib snapshot Phase 2/3 | Demoted | Revive only if lib construction/merge is measured as non-trivial. |
 | Interner redesign | **De-prioritised — not contention-bound** | 2026-05-11 attribution run with `--features perf-tools` (transitively enabling `tsz-common/perf-counters-timing`) measured the lock-wait histogram across monorepo-001..006. At the cliff (monorepo-006, 2.4 M intern calls): 97.5 % of waits land in `<100ns`, only 4 observations exceeded `100µs`, and zero exceeded `10ms`. The interner is not contention-bound on the current single-threaded checking workload. Revisit only if a future change introduces parallel checking, multi-worker interning, or a workload that materially shifts the histogram tail. Decision record: [`perf-runs/2026-05-11-attribution-lock-wait.md`](perf-runs/2026-05-11-attribution-lock-wait.md). |
 
@@ -1042,9 +1037,12 @@ architecture target programmatically:
   `crates/tsz-checker/src/context/cross_file_query.rs`. Splits the
   load-bearing `cache_hits_cross_file = 0` figure into its
   structural root causes.
+- The declaration-file residue naming slice adds
+  `delegate_declaration_file_miss_residues`, a bounded table of
+  `(name, kind, source, target_file, count)` rows for declaration-file
+  `DelegateCrossArenaSymbol` misses after all current direct paths decline.
 
-Schema version stays at `1` — pure additive extensions. No
-producer-atomics or text-dump changes.
+Schema version stays at `1` — pure additive extensions.
 
 ### PR 6B+: Typed Cross-File Query PRs
 
@@ -1107,15 +1105,49 @@ cold reads, 540 source-file variable symbols outside the current stability
 proof, and 41 declaration-file targets. The next implementation target remains
 the variable-symbol slice, gated on a requester-independence proof.
 
-**2026-05-13 post-#6260 update:** the actual bundled-lib direct path handles a
-conservative option/registry interface slice of the remaining declaration-file
-residue through the existing lib resolver instead of constructing a child
-checker. On monorepo-006 this drops `DelegateCrossArenaSymbol` from 41 to 40,
-`checker.with_parent_cache_constructed` from 56 to 55, and `delegate.misses`
-from 55 to 54 with unchanged diagnostic count. The next implementation target
-is the 40 remaining declaration-file misses: 16 type aliases plus 24 interfaces
-that need namespace-qualified, merged-lib, or conformance-backed proof before
-admission.
+**2026-05-13 post-#6260/#6286 update:** the actual bundled-lib direct path now
+handles a non-DOM/non-webworker interface slice of the remaining
+declaration-file residue through the existing lib resolver instead of
+constructing a child checker. On monorepo-006 this drops
+`DelegateCrossArenaSymbol` from 41 to 31, `checker.with_parent_cache_constructed`
+from 56 to 40, and `delegate.misses` from 55 to 39 with unchanged diagnostic
+count. The next implementation target is the 31 remaining declaration-file
+misses: 16 type aliases plus 15 interfaces that need namespace-qualified,
+merged-lib, or conformance-backed proof before admission.
+
+**2026-05-13 post-#6260 allowlist expansion update:** the allowlist now admits
+additional iterator/regexp/disposable lib interfaces and routes those names
+through `resolve_lib_type_with_params` in the same direct path. On monorepo-006
+this drops `DelegateCrossArenaSymbol` from 40 to 30, lowers
+`checker.with_parent_cache_constructed` from 55 to 33, and reduces
+`delegate.misses` from 54 to 32 with unchanged diagnostic count. The next
+implementation target is the remaining declaration-file misses: type aliases
+plus interfaces that still need namespace-qualified, merged-lib, or
+conformance-backed proof before admission.
+
+**2026-05-13 declaration-file residue naming update:** the attribution JSON now
+includes `delegate_declaration_file_miss_residues`, a bounded table of
+`(name, kind, source, target_file, count)` rows for declaration-file
+`DelegateCrossArenaSymbol` misses. On current-main monorepo-006 the field
+reports 27 distinct rows accounting for 30 remaining declaration-file children.
+The repeated utility aliases are `FlatArray`, `IteratorResult`, and `Record` (2
+each); the one-off rows are the `lib.es5.d.ts` global interfaces/utility
+aliases, iterator interfaces, `Intl` option surfaces, and decorator metadata
+aliases listed in
+`docs/plan/perf-runs/2026-05-13-delegate-decl-residue-names.md`. The next PR
+should target a concrete subset from that table rather than relying on the
+aggregate 16-alias / 14-interface split.
+
+**2026-05-13 utility-alias safety update:** the direct shortcut for repeated
+actual-lib aliases (`FlatArray`, `IteratorResult`, `Record`) failed full
+conformance, with regressions in iterator-return and `Record`-driven
+mapped/assignability cases. The next safe slice is preparatory: preserve generic
+type-parameter metadata in `lib_delegation_cache` for the next typed query while
+leaving the current cache-hit return contract unchanged. Actual-lib aliases
+remain on the fallback path until a typed alias-body query or canonical
+`DefinitionStore` entry proves the alias shape without relying on a name
+allowlist. Claim:
+[`claims/perf-lib-delegation-cache-type-params-2026-05-13.md`](claims/perf-lib-delegation-cache-type-params-2026-05-13.md).
 
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 

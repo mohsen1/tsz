@@ -1301,6 +1301,7 @@ pub(super) fn collect_diagnostics(
     };
     let baseline_lib_datetimeformatpart_diagnostics = if !options.no_check
         && !options.lib_is_default
+        && !has_esnext_umbrella_lib(checker_libs)
         && should_preserve_datetimeformatpart_spelling_baseline(checker_libs)
         && !baseline_lib_datetimeformatpart_interfaces.is_empty()
     {
@@ -3865,6 +3866,15 @@ fn should_preserve_datetimeformatpart_spelling_baseline(checker_libs: &CheckerLi
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(is_datetimeformatpart_spelling_baseline_trigger_lib)
+    })
+}
+
+fn has_esnext_umbrella_lib(checker_libs: &CheckerLibSet) -> bool {
+    checker_libs.files.iter().any(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, "lib.esnext.d.ts" | "esnext.d.ts"))
     })
 }
 

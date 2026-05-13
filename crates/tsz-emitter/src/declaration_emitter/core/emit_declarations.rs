@@ -1,8 +1,8 @@
 use rustc_hash::FxHashSet;
 use tracing::debug;
 use tsz_common::comments::is_jsdoc_comment;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
@@ -565,70 +565,6 @@ impl<'a> DeclarationEmitter<'a> {
         found_in_ambient_module
     }
 
-    fn emit_deferred_js_export_equals_dependency_classes(
-        &mut self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        if !self.source_is_js_file || self.js_export_equals_names.is_empty() {
-            return;
-        }
-
-        let deferred = source_file
-            .statements
-            .nodes
-            .iter()
-            .copied()
-            .filter(|&stmt_idx| {
-                let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                    return false;
-                };
-                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
-                    return false;
-                }
-                let Some(class) = self.arena.get_class(stmt_node) else {
-                    return false;
-                };
-                self.should_defer_js_export_equals_dependency_class(class.name, &class.modifiers)
-            })
-            .collect::<Vec<_>>();
-        if deferred.is_empty() {
-            return;
-        }
-
-        let export_equals_names = std::mem::take(&mut self.js_export_equals_names);
-        for class_idx in deferred {
-            self.emit_class_declaration(class_idx);
-        }
-        self.js_export_equals_names = export_equals_names;
-    }
-
-    fn should_defer_js_export_equals_dependency_class(
-        &self,
-        name_idx: NodeIndex,
-        modifiers: &Option<NodeList>,
-    ) -> bool {
-        self.source_is_js_file
-            && !self.js_export_equals_names.is_empty()
-            && !self
-                .arena
-                .has_modifier(modifiers, SyntaxKind::ExportKeyword)
-            && !self.is_js_named_exported_name(name_idx)
-            && !self.is_js_export_equals_name(name_idx)
-            && self.is_js_export_equals_namespace_alias_local(name_idx)
-    }
-
-    fn is_js_export_equals_namespace_alias_local(&self, name_idx: NodeIndex) -> bool {
-        let Some(name) = self.get_identifier_text(name_idx) else {
-            return false;
-        };
-
-        self.js_export_equals_names.iter().any(|root_name| {
-            self.js_namespace_export_aliases
-                .get(root_name)
-                .is_some_and(|aliases| aliases.iter().any(|alias| alias.local_name == name))
-        })
-    }
-
     fn prune_unused_named_import_specifiers_from_output(output: &str) -> String {
         let lines = output.lines().collect::<Vec<_>>();
         let mut changed = false;
@@ -957,50 +893,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain.clear();
     }
 
-    fn statement_emits_js_object_literal_namespace(&self, stmt_idx: NodeIndex) -> bool {
-        if !self.source_is_js_file {
-            return false;
-        }
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-            return false;
-        }
-        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
-            return false;
-        };
-
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                continue;
-            }
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            if decl_list.declarations.nodes.len() != 1 {
-                continue;
-            }
-            let Some(&decl_idx) = decl_list.declarations.nodes.first() else {
-                continue;
-            };
-            let Some(decl_node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                continue;
-            };
-            if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
-                return true;
-            }
-        }
-
-        false
-    }
-
     fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
@@ -1294,7 +1186,10 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&type_text);
                 } else if let Some((type_text, substituted_parameter_type_query)) =
                     scoped_preferred_return.as_ref()
+                    && let Some(func_name_text) = self.get_identifier_text(func_name)
+                    && let printed_return_type = self.print_type_id(effective_return_type_id)
                     && (direct_function_return
+                        || printed_return_type == format!("ReturnType<typeof {func_name_text}>")
                         || self.should_prefer_source_return_type_text(
                             preferred_return.as_deref().unwrap_or(type_text),
                             effective_return_type_id,
@@ -1384,14 +1279,7 @@ impl<'a> DeclarationEmitter<'a> {
                         && !tp.nodes.is_empty()
                     {
                         let printed_type_text =
-                            self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
-                        let printed_type_text = self
-                            .restore_mapped_return_type_param_constraints(func, &printed_type_text);
-                        let printed_type_text = self
-                            .rewrite_returned_auto_accessor_parameter_unknowns(
-                                func,
-                                &printed_type_text,
-                            );
+                            self.inferred_function_return_type_text(func, effective_return_type_id);
                         let printed_type_text = self
                             .expand_rest_tuple_parameters_in_function_type_text(
                                 func_body,

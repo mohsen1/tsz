@@ -28,6 +28,73 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(crate) fn emit_leading_jsdoc_comment_chain_preserving_source(&mut self, pos: u32) {
+        if self.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_file_text.clone() else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let Some(nearest_idx) = self
+            .all_comments
+            .iter()
+            .enumerate()
+            .filter(|(_, comment)| comment.end as usize <= actual_start)
+            .filter(|(_, comment)| is_jsdoc_comment(comment, &text))
+            .filter(|(_, comment)| {
+                Self::jsdoc_attaches_through_var_prefix(&text[comment.end as usize..actual_start])
+            })
+            .max_by_key(|(_, comment)| comment.end)
+            .map(|(idx, _)| idx)
+        else {
+            return;
+        };
+
+        let mut chain = vec![nearest_idx];
+        let mut current_start = self.all_comments[nearest_idx].pos as usize;
+        for idx in (0..nearest_idx).rev() {
+            let comment = &self.all_comments[idx];
+            if !is_jsdoc_comment(comment, &text) {
+                continue;
+            }
+
+            let between = &text[comment.end as usize..current_start];
+            if !between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                break;
+            }
+
+            chain.push(idx);
+            current_start = comment.pos as usize;
+        }
+        chain.reverse();
+
+        for (position, idx) in chain.iter().copied().enumerate() {
+            let comment = &self.all_comments[idx];
+            let next_on_same_line = chain.get(position + 1).is_some_and(|next_idx| {
+                let next = &self.all_comments[*next_idx];
+                !text[comment.end as usize..next.pos as usize].contains('\n')
+            });
+            self.emit_jsdoc_comment_text_preserving_source(
+                &text,
+                comment.pos,
+                comment.end,
+                next_on_same_line,
+            );
+        }
+    }
+
     pub(crate) fn emit_jsdoc_comment_chain(&mut self, chain: &[String]) {
         if self.remove_comments {
             return;
@@ -35,19 +102,6 @@ impl<'a> DeclarationEmitter<'a> {
 
         for jsdoc in chain {
             self.emit_jsdoc_comment(jsdoc, false);
-        }
-    }
-
-    pub(crate) fn emit_jsdoc_comment_chain_preserving_multiline_style(
-        &mut self,
-        chain: &[(String, bool)],
-    ) {
-        if self.remove_comments {
-            return;
-        }
-
-        for (jsdoc, force_multiline) in chain {
-            self.emit_jsdoc_comment(jsdoc, *force_multiline);
         }
     }
 
@@ -102,6 +156,92 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
+    fn emit_jsdoc_comment_text_preserving_source(
+        &mut self,
+        text: &str,
+        comment_pos: u32,
+        comment_end: u32,
+        next_on_same_line: bool,
+    ) {
+        let bytes = text.as_bytes();
+        let ct = &text[comment_pos as usize..comment_end as usize];
+        let source_indent = {
+            let cp = comment_pos as usize;
+            let mut line_start = cp;
+            if line_start > 0 {
+                let mut i = line_start;
+                while i > 0 {
+                    i -= 1;
+                    if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                        line_start = i + 1;
+                        break;
+                    }
+                    if i == 0 {
+                        line_start = 0;
+                    }
+                }
+            }
+
+            let mut width = 0usize;
+            for &b in &bytes[line_start..cp] {
+                if b == b' ' {
+                    width += 1;
+                } else if b == b'\t' {
+                    width = (width / 4 + 1) * 4;
+                } else {
+                    break;
+                }
+            }
+            width
+        };
+
+        self.write_indent();
+        if ct.contains('\n') {
+            let mut first = true;
+            for line in ct.split('\n') {
+                if first {
+                    self.write(line.trim_end());
+                    first = false;
+                } else {
+                    self.write_line();
+                    let line_bytes = line.as_bytes();
+                    let mut line_width = 0usize;
+                    let mut char_width = 0usize;
+                    for &b in line_bytes.iter() {
+                        if b == b' ' {
+                            line_width += 1;
+                            char_width += 1;
+                        } else if b == b'\t' {
+                            line_width = (line_width / 4 + 1) * 4;
+                            char_width += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let content = line[char_width..].trim_end();
+                    let output_indent = (self.indent_level as usize) * 4;
+                    let out_width = if line_width >= source_indent {
+                        output_indent + (line_width - source_indent)
+                    } else {
+                        output_indent.saturating_sub(source_indent - line_width)
+                    };
+                    for _ in 0..out_width {
+                        self.write_raw(" ");
+                    }
+                    self.write(content);
+                }
+            }
+        } else {
+            self.write(ct);
+        }
+
+        if next_on_same_line {
+            self.write(" ");
+        } else {
+            self.write_line();
+        }
+    }
+
     pub(crate) fn emit_leading_jsdoc_comments(&mut self, pos: u32) {
         if self.remove_comments {
             return;
@@ -127,34 +267,6 @@ impl<'a> DeclarationEmitter<'a> {
             let ct = &text[c_pos as usize..c_end as usize];
             // Skip empty block comments like /**/
             if ct.starts_with("/**") && ct != "/**/" {
-                let si = {
-                    let cp = c_pos as usize;
-                    let mut ls = cp;
-                    if ls > 0 {
-                        let mut i = ls;
-                        while i > 0 {
-                            i -= 1;
-                            if bytes[i] == b'\n' || bytes[i] == b'\r' {
-                                ls = i + 1;
-                                break;
-                            }
-                            if i == 0 {
-                                ls = 0;
-                            }
-                        }
-                    }
-                    let mut w = 0usize;
-                    for &b in &bytes[ls..cp] {
-                        if b == b' ' {
-                            w += 1;
-                        } else if b == b'\t' {
-                            w = (w / 4 + 1) * 4;
-                        } else {
-                            break;
-                        }
-                    }
-                    w
-                };
                 // Check if the next comment is a JSDoc comment on the same
                 // source line — if so, emit a space instead of a newline to
                 // keep consecutive JSDoc comments on one line (matching tsc).
@@ -168,54 +280,12 @@ impl<'a> DeclarationEmitter<'a> {
                         next_ct.starts_with("/**") && next_ct != "/**/" && !between.contains('\n')
                     }
                 };
-                self.write_indent();
-                if ct.contains('\n') {
-                    let mut first = true;
-                    for line in ct.split('\n') {
-                        if first {
-                            self.write(line.trim_end());
-                            first = false;
-                        } else {
-                            self.write_line();
-                            let line_bytes = line.as_bytes();
-                            // Count leading whitespace visual width
-                            // (tabs expand to next multiple of 4)
-                            let mut line_ws = 0usize;
-                            let mut char_ws = 0usize;
-                            for &b in line_bytes.iter() {
-                                if b == b' ' {
-                                    line_ws += 1;
-                                    char_ws += 1;
-                                } else if b == b'\t' {
-                                    line_ws = (line_ws / 4 + 1) * 4;
-                                    char_ws += 1;
-                                } else {
-                                    break;
-                                }
-                            }
-                            let content = line[char_ws..].trim_end();
-                            // Compute output indent: apply the relative offset
-                            // from the source /** indent to the output indent.
-                            let output_indent = (self.indent_level as usize) * 4;
-                            let out_ws = if line_ws >= si {
-                                output_indent + (line_ws - si)
-                            } else {
-                                output_indent.saturating_sub(si - line_ws)
-                            };
-                            for _ in 0..out_ws {
-                                self.write_raw(" ");
-                            }
-                            self.write(content);
-                        }
-                    }
-                } else {
-                    self.write(ct);
-                }
-                if next_on_same_line {
-                    self.write(" ");
-                } else {
-                    self.write_line();
-                }
+                self.emit_jsdoc_comment_text_preserving_source(
+                    &text,
+                    c_pos,
+                    c_end,
+                    next_on_same_line,
+                );
             }
             self.comment_emit_idx += 1;
         }

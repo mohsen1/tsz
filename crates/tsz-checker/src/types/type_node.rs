@@ -93,6 +93,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         match node.kind {
+            k if k == SyntaxKind::TrueKeyword as u16 => self.ctx.types.literal_boolean(true),
+
+            k if k == SyntaxKind::FalseKeyword as u16 => self.ctx.types.literal_boolean(false),
+
             // Type reference (e.g., "MyType", "Array<T>")
             k if k == syntax_kind_ext::TYPE_REFERENCE => self.get_type_from_type_reference(idx),
 

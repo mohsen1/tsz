@@ -178,6 +178,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_is_ambiguous(&mut self, contextual: TypeId) -> bool {
+        if self.union_context_for_array_literal_prefers_tuple(contextual) {
+            return false;
+        }
+
         let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
@@ -185,6 +189,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut applicable_shapes = Vec::new();
+        let mut saw_tuple_applicable = false;
+        let mut saw_non_tuple_applicable = false;
         for member in members {
             // Skip null/undefined/void — these don't contribute to array contextual
             // typing ambiguity. tsc strips these before checking (getNonNullableType).
@@ -198,12 +204,22 @@ impl<'a> CheckerState<'a> {
                 if !applicable_shapes.contains(&applicable) {
                     applicable_shapes.push(applicable);
                 }
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
+                    saw_tuple_applicable = true;
+                } else {
+                    saw_non_tuple_applicable = true;
+                }
                 continue;
             }
 
             if let Some(applicable) = self.promise_like_array_context_shape(member) {
                 if !applicable_shapes.contains(&applicable) {
                     applicable_shapes.push(applicable);
+                }
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
+                    saw_tuple_applicable = true;
+                } else {
+                    saw_non_tuple_applicable = true;
                 }
                 continue;
             }
@@ -237,6 +253,7 @@ impl<'a> CheckerState<'a> {
                     if !applicable_shapes.contains(&value_type) {
                         applicable_shapes.push(value_type);
                     }
+                    saw_non_tuple_applicable = true;
                     continue;
                 }
             }
@@ -248,7 +265,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        applicable_shapes.len() > 1
+        applicable_shapes.len() > 1 && (!saw_tuple_applicable || saw_non_tuple_applicable)
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
@@ -629,13 +646,20 @@ impl<'a> CheckerState<'a> {
         // types should be inferred independently to preserve literal types during
         // generic inference (e.g., `fx<T extends [string, 'a'|'b']>(x: T)` called
         // with `['x', 'a']` should infer `["x", "a"]`, not `[string, string]`).
-        let effective_contextual = if union_array_context_is_ambiguous {
-            None
-        } else if tuple_context_from_constraint {
-            resolved_contextual_type
-        } else {
-            applicable_contextual_type.or(resolved_contextual_type)
-        };
+        //
+        // EXCEPTION: When the contextual union is ALL tuples (force_tuple_for_union_context),
+        // preserve the contextual type even when "ambiguous". Per-position typing
+        // (`get_tuple_element_type_with_count`) unions element types across union members
+        // (e.g. `["a"] | ["b"]` gives position-0 context `"a" | "b"`), which preserves
+        // literal types so `["a"]` correctly checks against `["a"] | ["b"]`.
+        let effective_contextual =
+            if union_array_context_is_ambiguous && !force_tuple_for_union_context {
+                None
+            } else if tuple_context_from_constraint {
+                resolved_contextual_type
+            } else {
+                applicable_contextual_type.or(resolved_contextual_type)
+            };
         let ctx_helper = match effective_contextual {
             Some(resolved) => Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -734,13 +758,20 @@ impl<'a> CheckerState<'a> {
             }
 
             // Build per-element typing request instead of mutating ctx.contextual_type
-            let elem_request = if union_array_context_is_ambiguous {
+            let elem_request = if union_array_context_is_ambiguous && !force_tuple_for_union_context
+            {
                 // When the contextual union is ambiguous (multiple applicable element types),
                 // clear the contextual type for each element so closures don't inherit
                 // the array's union contextual type and inadvertently get typed parameters.
+                // EXCEPTION: union-of-all-tuples is handled via per-position typing below.
                 crate::context::TypingRequest::NONE
             } else if let Some(ref helper) = ctx_helper {
-                if tuple_context.is_some() {
+                if tuple_context.is_some() || force_tuple_for_union_context {
+                    // For a union of all tuple types (force_tuple_for_union_context), use
+                    // per-position contextual typing: the element type at position `index`
+                    // is the union of each member tuple's type at that position.
+                    // e.g. `["a"] | ["b"]` gives position 0 context `"a" | "b"`,
+                    // preserving string literal types instead of widening to `string`.
                     match helper.get_tuple_element_type_with_count(index, total_elem_count) {
                         Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,

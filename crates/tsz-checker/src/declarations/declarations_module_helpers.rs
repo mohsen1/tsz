@@ -98,6 +98,20 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         false
     }
 
+    /// Check whether a module augmentation target exists.
+    ///
+    /// Relative augmentation names must resolve from the declaring file. The
+    /// ambient-module and project-wide specifier fallbacks in `module_exists`
+    /// are valid for bare module names, but they are not source-file-specific
+    /// enough for `declare module "./x"`.
+    pub(crate) fn module_augmentation_target_exists(&self, module_name: &str) -> bool {
+        if self.is_relative_module_name(module_name) {
+            self.ctx.resolve_import_target(module_name).is_some()
+        } else {
+            self.module_exists(module_name)
+        }
+    }
+
     /// Check if a module name matches any wildcard ambient module pattern.
     pub(crate) fn matches_ambient_module_pattern(&self, module_name: &str) -> bool {
         let module_name = module_name.trim().trim_matches('"').trim_matches('\'');

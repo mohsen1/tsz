@@ -475,6 +475,41 @@ fn resolve_lib_files_from_dir_follows_transitive_references_by_default() {
 }
 
 #[test]
+fn resolve_lib_files_from_dir_esnext_includes_disposable_reference() {
+    let temp = TempDir::new().expect("temp dir");
+    write_file(
+        &temp.path,
+        "lib.esnext.d.ts",
+        "/// <reference lib=\"esnext.disposable\" />\n",
+    );
+    write_file(
+        &temp.path,
+        "lib.esnext.disposable.d.ts",
+        "interface SymbolConstructor { readonly dispose: unique symbol; readonly asyncDispose: unique symbol; }\n",
+    );
+
+    let resolved = resolve_lib_files_from_dir(&["esnext".to_string()], &temp.path)
+        .expect("explicit esnext lib resolution should follow disposable references");
+    let names: Vec<String> = resolved
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    assert_eq!(names.first().map(|s| s.as_str()), Some("lib.esnext.d.ts"));
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "lib.esnext.disposable.d.ts"),
+        "--lib esnext must include esnext.disposable transitively: {names:?}"
+    );
+}
+
+#[test]
 fn resolve_default_lib_files_from_dir_uses_es6_root_for_es2015_target() {
     let temp = TempDir::new().expect("temp dir");
     write_file(

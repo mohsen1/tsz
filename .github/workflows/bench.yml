@@ -12,13 +12,12 @@ on:
     - cron: '0 15 * * *'
   workflow_dispatch:
 
-# Workflow-run benchmarks coalesce aggressively so stale main commits do not
-# spend self-hosted runner time in prepare/shards. Scheduled and manual runs are
-# protected from workflow-run cancellation; workflow-run gates skip cheaply while
-# an explicit benchmark is active.
+# Only one benchmark runs at a time. Let the active full run finish so it can
+# publish a merged artifact for the website; GitHub concurrency still keeps only
+# the newest pending run and replaces older pending runs as main advances.
 concurrency:
-  group: bench-${{ github.event_name == 'workflow_run' && 'workflow-run' || 'explicit' }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+  group: bench
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -29,7 +28,6 @@ env:
   BENCH_FULL: "1"
   BENCH_COLD: "1"
   BENCH_PGO: "1"
-  BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS: "900"
   TSC_NPM_SPEC: "6.0.2"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -45,61 +43,20 @@ jobs:
       should_run: ${{ steps.gate.outputs.should_run }}
     steps:
       - id: gate
-        env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           should_run=true
 
+          # Only check CI conclusion for workflow_run triggers
           if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
             if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
               echo "CI conclusion was '${{ github.event.workflow_run.conclusion }}'; skipping bench."
               should_run=false
-            else
-              if [[ "${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}" != "0" ]]; then
-                echo "Waiting ${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}s for main to settle before starting bench."
-                sleep "${BENCH_WORKFLOW_RUN_DEBOUNCE_SECONDS}"
-              fi
-
-              explicit_runs=$(
-                {
-                  gh run list \
-                    --repo "${{ github.repository }}" \
-                    --workflow Bench \
-                    --status queued \
-                    --json databaseId,event \
-                    --jq ".[] | select((.event == \"schedule\" or .event == \"workflow_dispatch\") and (.databaseId != ${GITHUB_RUN_ID})) | .databaseId" || true
-                  gh run list \
-                    --repo "${{ github.repository }}" \
-                    --workflow Bench \
-                    --status in_progress \
-                    --json databaseId,event \
-                    --jq ".[] | select((.event == \"schedule\" or .event == \"workflow_dispatch\") and (.databaseId != ${GITHUB_RUN_ID})) | .databaseId" || true
-                } 2>/dev/null | sort -u | wc -l | tr -d '[:space:]'
-              )
-              if [[ "${explicit_runs}" != "0" ]]; then
-                echo "A scheduled/manual Bench run is queued or active; skipping workflow-run bench."
-                should_run=false
-              fi
-
-              # Previously we hard-skipped if BENCH_TARGET_SHA != HEAD of
-              # main. Combined with the 15-minute debounce above and the
-              # repo's high merge cadence, that check skipped every single
-              # workflow_run-triggered bench, leaving only the daily 03:00
-              # UTC cron to refresh tsz.dev/benchmarks. Supersession is
-              # already handled by `concurrency.cancel-in-progress` (a newer
-              # workflow_run cancels older ones), so a finite "stale" run is
-              # at worst a small amount of self-hosted runner time and at
-              # best a fresher data point on the public site than letting
-              # the run skip outright.
-              latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
-                --jq '.object.sha' 2>/dev/null || true)
-              if [[ -n "$latest_main_sha" && "${BENCH_TARGET_SHA}" != "$latest_main_sha" ]]; then
-                echo "Note: target ${BENCH_TARGET_SHA} differs from current main ${latest_main_sha}; proceeding anyway (concurrency.cancel-in-progress will preempt this run if a newer workflow_run starts)."
-              fi
             fi
           fi
+
+          # Concurrency group handles all coalescing - no debounce or explicit run checks needed
 
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
 
@@ -118,25 +75,11 @@ jobs:
           fetch-depth: 1
 
       - id: prepare-gate
-        name: Re-check benchmark target before prepare
-        env:
-          GH_TOKEN: ${{ github.token }}
+        name: Confirm benchmark should proceed
         shell: bash
         run: |
-          set -euo pipefail
-          should_run=true
-
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            latest_main_sha=$(gh api "repos/${{ github.repository }}/git/ref/heads/main" \
-              --jq '.object.sha' 2>/dev/null || true)
-            if [[ -n "$latest_main_sha" && "${BENCH_TARGET_SHA}" != "$latest_main_sha" ]]; then
-              # Informational only — see bench-gate for the rationale.
-              # Supersession is handled by concurrency.cancel-in-progress.
-              echo "Note: target ${BENCH_TARGET_SHA} differs from current main ${latest_main_sha}; proceeding."
-            fi
-          fi
-
-          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+          # Concurrency group handles supersession - just proceed
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
       - name: Restore GCS caches
         if: steps.prepare-gate.outputs.should_run == 'true'

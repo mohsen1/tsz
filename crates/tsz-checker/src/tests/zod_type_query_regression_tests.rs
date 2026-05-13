@@ -48,6 +48,55 @@ fetch("/entries")
 }
 
 #[test]
+fn zod_parse_async_promise_resolve_awaited_union_flattens_to_sync_return() {
+    let diags = check_source_diagnostics(
+        r#"
+type Awaited<T> =
+    T extends null | undefined ? T :
+    T extends object & { then(onfulfilled: infer F, ...args: infer _): any; } ?
+        F extends ((value: infer V, ...args: infer _) => any) ? Awaited<V> : never :
+    T;
+
+interface Promise<T> {
+    then<TResult1 = T>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null
+    ): Promise<TResult1>;
+}
+interface PromiseLike<T> {
+    then<TResult1 = T>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null
+    ): PromiseLike<TResult1>;
+}
+interface PromiseConstructor {
+    resolve<T>(value: T): Promise<Awaited<T>>;
+}
+declare var Promise: PromiseConstructor;
+
+type INVALID = { valid: false };
+type OK<T> = { valid: true; value: T };
+type SyncParseReturnType<T> = OK<T> | INVALID;
+type AsyncParseReturnType<T> = Promise<SyncParseReturnType<T>>;
+type ParseReturnType<T> = SyncParseReturnType<T> | AsyncParseReturnType<T>;
+
+abstract class ZodType<Output> {
+    abstract _parse(): ParseReturnType<Output>;
+    _parseAsync(): AsyncParseReturnType<Output> {
+        const result = this._parse();
+        return Promise.resolve(result);
+    }
+}
+"#,
+    );
+
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Promise.resolve(ParseReturnType<T>) should flatten Awaited<T> to SyncParseReturnType<T>; got: {relevant:#?}"
+    );
+}
+
+#[test]
 fn object_literal_function_property_can_read_earlier_self_property() {
     let diags = check_source_diagnostics(
         r#"
@@ -499,6 +548,44 @@ function createRootContext(params: Partial<ParseParamsNoData>) {
     assert!(
         diags.is_empty(),
         "Expected cross-file object literal context to reduce `Partial<Omit<...>>` property reads, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn zod_object_literal_optional_indexed_access_property_accepts_boolean() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "expected default libs to load");
+
+    let diags = check_source_with_libs(
+        r#"
+type ParseParams = {
+    data: unknown;
+    async: boolean;
+};
+
+type ParseParamsNoData = Omit<ParseParams, "data">;
+type Target = { async?: ParseParamsNoData["async"] };
+
+declare function createRootContext(params: Target): void;
+
+createRootContext({ async: false });
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        diags.is_empty(),
+        "Expected boolean to be assignable to optional Omit<...>[\"async\"] property, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message_text))

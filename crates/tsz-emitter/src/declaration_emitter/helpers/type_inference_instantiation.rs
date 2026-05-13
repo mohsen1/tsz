@@ -20,20 +20,6 @@ impl<'a> DeclarationEmitter<'a> {
         if binary.operator_token == SyntaxKind::BarBarToken as u16
             || binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
         {
-            if self.expression_type_is_never_for_decl_emit(binary.right)
-                && let Some(left_text) = self
-                    .short_circuit_operand_type_text(binary.left)
-                    .filter(|text| text != "any" && text != "unknown")
-                    .or_else(|| {
-                        self.enclosing_parameter_type_annotation_text_for_identifier(binary.left)
-                    })
-                    .or_else(|| self.reference_declared_type_annotation_text(binary.left))
-                && let Some(non_undefined) = Self::remove_undefined_from_union_text(&left_text)
-                && Self::is_simple_identifier_text(&non_undefined)
-            {
-                return Some(format!("NonNullable<{non_undefined}>"));
-            }
-
             if let (Some(left_text), Some(right_text)) = (
                 self.short_circuit_operand_type_text(binary.left),
                 self.short_circuit_operand_type_text(binary.right),
@@ -249,7 +235,6 @@ impl<'a> DeclarationEmitter<'a> {
                 literal_parts.push(part);
             }
         }
-        Self::sort_primitive_name_string_literals(&mut literal_parts);
 
         Some(ShortCircuitOrTypeText {
             text: literal_parts.join(" | "),
@@ -262,9 +247,8 @@ impl<'a> DeclarationEmitter<'a> {
         match part {
             "string" => return Some("string"),
             "number" => return Some("number"),
-            "boolean" => return Some("boolean"),
+            "boolean" | "true" | "false" => return Some("boolean"),
             "bigint" => return Some("bigint"),
-            "true" | "false" => return Some("boolean"),
             _ => {}
         }
 
@@ -299,21 +283,6 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn short_circuit_literal_part_is_wide(part: &str) -> bool {
         matches!(part.trim(), "string" | "number" | "boolean" | "bigint")
-    }
-
-    fn sort_primitive_name_string_literals(parts: &mut [String]) {
-        fn primitive_name_rank(part: &str) -> Option<usize> {
-            match part.trim() {
-                r#""string""# | "'string'" => Some(0),
-                r#""number""# | "'number'" => Some(1),
-                r#""boolean""# | "'boolean'" => Some(2),
-                _ => None,
-            }
-        }
-
-        if parts.iter().all(|part| primitive_name_rank(part).is_some()) {
-            parts.sort_by_key(|part| primitive_name_rank(part).unwrap_or(usize::MAX));
-        }
     }
 
     pub(in crate::declaration_emitter) fn expression_type_is_never_for_decl_emit(

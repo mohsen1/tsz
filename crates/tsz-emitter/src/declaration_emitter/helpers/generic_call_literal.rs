@@ -15,6 +15,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.call_expression_returned_local_class_constructor_text(expr_idx, false))
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
+                    .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
                     .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
@@ -22,7 +23,6 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.call_expression_parameters_return_tuple_type_text(expr_idx))
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
-                    .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
             })
             .map(Self::normalize_constructor_arrow_return_object_text)
@@ -875,6 +875,22 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         if self.function_expression_has_type_parameters(call.expression) {
+            return true;
+        }
+
+        if call
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return true;
+        }
+
+        if self
+            .arena
+            .get(call.expression)
+            .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
+        {
             return true;
         }
 

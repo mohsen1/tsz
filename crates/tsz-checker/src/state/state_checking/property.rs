@@ -149,6 +149,32 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn string_index_key_accepts_property_name(
+        &mut self,
+        key_type: TypeId,
+        prop_name: &str,
+        is_symbol_named: bool,
+    ) -> bool {
+        if key_type == TypeId::SYMBOL {
+            return is_symbol_named
+                || prop_name.starts_with("[Symbol.")
+                || prop_name.starts_with("__unique_")
+                || prop_name.starts_with("__@");
+        }
+
+        if key_type == TypeId::STRING {
+            return true;
+        }
+
+        if is_symbol_named {
+            return false;
+        }
+
+        let prop_literal =
+            crate::query_boundaries::common::create_string_literal_type(self.ctx.types, prop_name);
+        self.is_assignable_to(prop_literal, key_type)
+    }
+
     fn union_member_has_type_parameter_for_excess_display(&self, member: TypeId) -> bool {
         query::is_type_parameter_like(self.ctx.types, member)
             || crate::query_boundaries::common::contains_generic_type_parameters(
@@ -858,10 +884,11 @@ impl<'a> CheckerState<'a> {
                 });
 
             // When the target has a string index signature, outer property names are
-            // all valid (any string key is accepted). But we still need to check
-            // nested object literals against the index signature VALUE type for excess
-            // properties. E.g., for target `{ [k: string]: { a: 0 } & { b: 0 } }`,
-            // a nested `{ a: 0, b: 0, c: 0 }` should flag `c` as excess.
+            // valid only when they are accepted by the index key type. Broad
+            // `[k: string]` accepts every string key, while template-literal
+            // index keys such as `` `data-${string}` `` only accept matching
+            // property names. We still check nested object literals against the
+            // applicable index signature VALUE type for excess properties.
             if let Some(ref idx_sig) = target_shape.string_index {
                 if self.try_union_index_signature_value_check(
                     source_props,
@@ -873,6 +900,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let idx_value_type = idx_sig.value_type;
+                let idx_key_type = idx_sig.key_type;
+                let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
                 for source_prop in source_props {
                     if explicit_property_names.is_some()
                         && !explicit_property_names
@@ -881,11 +910,31 @@ impl<'a> CheckerState<'a> {
                     {
                         continue;
                     }
-                    // Combine with any named property type (if the property also exists explicitly)
-                    let mut nested_types = vec![idx_value_type];
-                    if let Some(target_prop) =
-                        target_props.iter().find(|p| p.name == source_prop.name)
-                    {
+
+                    let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                    let matches_index = self.string_index_key_accepts_property_name(
+                        idx_key_type,
+                        prop_name.as_ref(),
+                        source_prop.is_symbol_named,
+                    );
+                    let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
+
+                    if !matches_index && target_prop.is_none() {
+                        let report_idx = self
+                            .find_object_literal_property_element(
+                                object_literal_idx,
+                                source_prop.name,
+                            )
+                            .unwrap_or(object_literal_idx);
+                        self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
+                        continue;
+                    }
+
+                    let mut nested_types = Vec::new();
+                    if matches_index {
+                        nested_types.push(idx_value_type);
+                    }
+                    if let Some(target_prop) = target_prop {
                         if self.check_object_literal_named_property_value(
                             idx,
                             source_prop.name,
@@ -896,6 +945,9 @@ impl<'a> CheckerState<'a> {
                             return;
                         }
                         nested_types.push(target_prop.type_id);
+                    }
+                    if nested_types.is_empty() {
+                        continue;
                     }
                     let nested_target =
                         tsz_solver::utils::intersection_or_single(self.ctx.types, nested_types);
@@ -912,6 +964,7 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
                 }
+                self.emit_tracked_excess_property(first_excess, target);
                 return;
             }
 
@@ -1595,6 +1648,13 @@ impl<'a> CheckerState<'a> {
 
             for shape in union_shapes {
                 if let Some(string_index) = &shape.string_index {
+                    if !self.string_index_key_accepts_property_name(
+                        string_index.key_type,
+                        prop_name.as_ref(),
+                        source_prop.is_symbol_named,
+                    ) {
+                        continue;
+                    }
                     if Self::index_value_type_is_deferred(self.ctx.types, string_index.value_type) {
                         has_deferred_index_value_type = true;
                         continue;

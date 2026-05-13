@@ -6180,6 +6180,48 @@ class C {
 }
 
 #[test]
+fn test_js_accessor_pair_preserves_multiline_jsdoc_type_comments_when_reordered() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /**
+     * @type {string=}
+     */
+    get value() {
+        return undefined;
+    }
+
+    /**
+     * @param {string=} value
+     */
+    set value(value) {
+        this.value = value;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("    /**\n     * @param {string=} value\n     */\n    set value(value: string | undefined);"),
+        "Expected reordered setter comment to stay multiline: {output}"
+    );
+    assert!(
+        output.contains(
+            "    /**\n     * @type {string=}\n     */\n    get value(): string | undefined;"
+        ),
+        "Expected reordered getter comment to stay multiline: {output}"
+    );
+    assert!(
+        !output.contains("/** @param {string=} value */\n    set value"),
+        "Did not expect reordered setter comment to collapse to one line: {output}"
+    );
+    assert!(
+        !output.contains("/** @type {string=} */\n    get value"),
+        "Did not expect reordered getter comment to collapse to one line: {output}"
+    );
+}
+
+#[test]
 fn test_js_setter_does_not_lift_nested_nullish_from_array_element_union() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
