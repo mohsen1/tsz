@@ -192,56 +192,61 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Returns `true` when the symbol was declared with a non-widening literal
-    /// type — either an explicit literal type annotation (`const a: "v" = "v"`)
-    /// or a const-asserted initializer (`const a = "v" as const`).
-    fn sym_has_non_widening_literal_decl(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    fn variable_declaration_for_symbol_decl(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::VariableDeclarationData> {
+        let mut current = decl_idx;
+        for _ in 0..4 {
+            let node = self.ctx.arena.get(current)?;
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+                return Some(var_decl);
+            }
+            current = self.ctx.arena.get_extended(current)?.parent;
+        }
+        None
+    }
+
+    fn expression_is_type_assertion(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::TYPE_ASSERTION
+        })
+    }
+
+    fn expression_is_const_assertion(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        self.ctx
+            .arena
+            .get(expr_idx)
+            .and_then(|node| self.ctx.arena.get_type_assertion(node))
+            .is_some_and(|assertion| self.is_const_assertion_type_node(assertion.type_node))
+    }
+
+    /// Returns `true` when the symbol's value type comes from a non-fresh source:
+    /// either an explicit variable type annotation or a const-asserted initializer.
+    fn sym_has_non_widening_declared_value_type(&self, sym_id: tsz_binder::SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        // value_declaration may point to the Identifier node; walk up to the
-        // enclosing VariableDeclaration if needed.
-        let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
-            return false;
-        };
-        let var_node = if decl_node.kind == SyntaxKind::Identifier as u16 {
-            let Some(ext) = self.ctx.arena.get_extended(symbol.value_declaration) else {
-                return false;
-            };
-            let Some(p) = self.ctx.arena.get(ext.parent) else {
-                return false;
-            };
-            p
-        } else {
-            decl_node
-        };
-        let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_node) else {
-            return false;
-        };
 
-        if let Some(ann) = self.ctx.arena.get(var_decl.type_annotation) {
-            if ann.kind == syntax_kind_ext::LITERAL_TYPE {
-                return true;
-            }
-        }
-
-        if let Some(init) = self.ctx.arena.get(var_decl.initializer) {
-            if (init.kind == syntax_kind_ext::AS_EXPRESSION
-                || init.kind == syntax_kind_ext::TYPE_ASSERTION)
-                && let Some(assertion) = self.ctx.arena.get_type_assertion(init)
-            {
-                return self.is_const_assertion_type_node(assertion.type_node);
-            }
-        }
-
-        false
+        std::iter::once(symbol.value_declaration)
+            .chain(symbol.declarations.iter().copied())
+            .any(|decl_idx| {
+                self.variable_declaration_for_symbol_decl(decl_idx)
+                    .is_some_and(|var_decl| {
+                        self.ctx.arena.get(var_decl.type_annotation).is_some()
+                            || self.expression_is_const_assertion(var_decl.initializer)
+                    })
+            })
     }
 
-    fn identifier_refers_to_non_widening_literal_sym(&self, node_idx: NodeIndex) -> bool {
+    fn identifier_refers_to_non_widening_declared_value_type(&self, node_idx: NodeIndex) -> bool {
         self.ctx
             .binder
             .resolve_identifier(self.ctx.arena, node_idx)
-            .is_some_and(|sym_id| self.sym_has_non_widening_literal_decl(sym_id))
+            .is_some_and(|sym_id| self.sym_has_non_widening_declared_value_type(sym_id))
     }
 
     fn object_literal_variable_initializer_symbol(
@@ -1058,12 +1063,11 @@ impl<'a> CheckerState<'a> {
                         // - A contextual type narrows the property to a literal
                         // - The value is a type assertion (`as T` / `<T>expr`) or an identifier
                         //   whose declaration is non-widening (const-asserted or literal-annotated).
-                        let value_has_non_widening_source =
-                            self.ctx.arena.get(prop.initializer).is_some_and(|n| {
-                                n.kind == syntax_kind_ext::AS_EXPRESSION
-                                    || n.kind == syntax_kind_ext::TYPE_ASSERTION
-                            }) || self
-                                .identifier_refers_to_non_widening_literal_sym(prop.initializer);
+                        let value_has_non_widening_source = self
+                            .expression_is_type_assertion(prop.initializer)
+                            || self.identifier_refers_to_non_widening_declared_value_type(
+                                prop.initializer,
+                            );
                         let property_context_preserves_literal = property_context_type
                             .is_some_and(|ct| !is_literal_permissive_context(ct));
                         let widening_eligible = !self.ctx.in_const_assertion
@@ -1585,8 +1589,9 @@ impl<'a> CheckerState<'a> {
                             value_type,
                             property_context_type,
                         );
-                        let shorthand_is_non_widening = shorthand_sym
-                            .is_some_and(|sym_id| self.sym_has_non_widening_literal_decl(sym_id));
+                        let shorthand_is_non_widening = shorthand_sym.is_some_and(|sym_id| {
+                            self.sym_has_non_widening_declared_value_type(sym_id)
+                        });
                         if !self.ctx.in_const_assertion
                             && !self.ctx.preserve_literal_types
                             && property_context_type.is_none_or(is_literal_permissive_context)
