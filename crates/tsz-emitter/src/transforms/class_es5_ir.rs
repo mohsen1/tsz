@@ -303,6 +303,14 @@ struct AutoAccessorFieldInfo {
     is_static: bool,
 }
 
+struct Tc39Es5MemberDecorator {
+    decorators_var: String,
+    decorator_exprs: Vec<String>,
+    kind: &'static str,
+    name: String,
+    is_static: bool,
+}
+
 /// Context for ES5 class transformation
 pub struct ES5ClassTransformer<'a> {
     arena: &'a NodeArena,
@@ -323,6 +331,10 @@ pub struct ES5ClassTransformer<'a> {
     legacy_decorators: bool,
     /// Whether to emit `__metadata` calls in `__decorate` arrays
     emit_decorator_metadata: bool,
+    /// Whether to emit TC39 decorator helper calls for ES5 output.
+    tc39_decorators: bool,
+    /// Whether the current TC39-decorated class needs instance extra initializers.
+    tc39_has_instance_member_decorators: bool,
     /// Base indent level for raw IR strings (0 for top-level, 1+ for nested contexts)
     indent_base: u32,
     /// Counter for generating unique temp variable names (_a, _b, _c, ...)
@@ -358,6 +370,8 @@ impl<'a> ES5ClassTransformer<'a> {
             class_decorators: Vec::new(),
             legacy_decorators: false,
             emit_decorator_metadata: false,
+            tc39_decorators: false,
+            tc39_has_instance_member_decorators: false,
             indent_base: 0,
             temp_var_counter: Cell::new(0),
             computed_prop_temp_map: std::collections::HashMap::new(),
@@ -372,6 +386,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
         self.use_define_for_class_fields = enable;
+    }
+
+    pub const fn set_tc39_decorators(&mut self, enabled: bool) {
+        self.tc39_decorators = enabled;
     }
 
     pub const fn set_skip_static_members(&mut self, skip: bool) {
@@ -1135,6 +1153,181 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
+    fn collect_tc39_es5_member_decorators(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<Tc39Es5MemberDecorator> {
+        let mut result = Vec::new();
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            let (modifiers, name_idx, kind) = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if !method.body.is_some() {
+                        continue;
+                    }
+                    (&method.modifiers, method.name, "method")
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    (&accessor.modifiers, accessor.name, "getter")
+                }
+                k if k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    (&accessor.modifiers, accessor.name, "setter")
+                }
+                _ => continue,
+            };
+
+            let decorators = self.collect_decorators_from_modifiers(modifiers);
+            if decorators.is_empty() {
+                continue;
+            }
+            let Some(name) = get_identifier_text(self.arena, name_idx) else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+
+            let prefix = if self.arena.is_static(modifiers) {
+                "_static_"
+            } else {
+                "_"
+            };
+            result.push(Tc39Es5MemberDecorator {
+                decorators_var: format!("{prefix}{name}_decorators"),
+                decorator_exprs: self.render_decorator_expressions(&decorators),
+                kind,
+                name,
+                is_static: self.arena.is_static(modifiers),
+            });
+        }
+        result
+    }
+
+    pub fn wrap_tc39_es5_output(
+        &self,
+        class_idx: NodeIndex,
+        override_name: Option<&str>,
+        inner_output: &str,
+    ) -> Option<String> {
+        let class_node = self.arena.get(class_idx)?;
+        let class_data = self.arena.get_class(class_node)?;
+        let class_name = override_name
+            .map(ToOwned::to_owned)
+            .or_else(|| get_identifier_text(self.arena, class_data.name))?;
+        let member_decorators = self.collect_tc39_es5_member_decorators(class_data);
+        if member_decorators.is_empty() {
+            return None;
+        }
+
+        let alias = "_a";
+        let base_indent = "    ".repeat(self.indent_base as usize);
+        let body_indent = "    ".repeat((self.indent_base + 1) as usize);
+        let inner_indent = "    ".repeat((self.indent_base + 2) as usize);
+        let decorator_indent = "    ".repeat((self.indent_base + 3) as usize);
+
+        let prefix = format!("var {class_name} = ");
+        let mut class_expr = inner_output.trim_end().strip_prefix(&prefix)?.to_string();
+        if let Some(stripped) = class_expr.strip_suffix(';') {
+            class_expr = stripped.to_string();
+        }
+        let mut class_expr_lines = class_expr.lines();
+        let first_class_line = class_expr_lines.next().unwrap_or_default();
+
+        let has_instance = member_decorators.iter().any(|member| !member.is_static);
+        let has_static = member_decorators.iter().any(|member| member.is_static);
+
+        let mut out = String::new();
+        out.push_str(&format!("{base_indent}var {class_name} = function () {{\n"));
+        out.push_str(&format!("{body_indent}var {alias};\n"));
+        if has_instance {
+            out.push_str(&format!(
+                "{body_indent}var _instanceExtraInitializers = [];\n"
+            ));
+        }
+        if has_static {
+            out.push_str(&format!(
+                "{body_indent}var _staticExtraInitializers = [];\n"
+            ));
+        }
+        for member in &member_decorators {
+            out.push_str(&format!("{body_indent}var {};\n", member.decorators_var));
+        }
+
+        out.push_str(&format!(
+            "{body_indent}return {alias} = {first_class_line}\n"
+        ));
+        let remaining_class_lines: Vec<&str> = class_expr_lines.collect();
+        for (idx, line) in remaining_class_lines.iter().enumerate() {
+            out.push_str(&inner_indent);
+            out.push_str(line);
+            if idx + 1 == remaining_class_lines.len() {
+                out.push_str(",\n");
+            } else {
+                out.push('\n');
+            }
+        }
+        out.push_str(&format!("{inner_indent}(function () {{\n"));
+        out.push_str(&format!(
+            "{decorator_indent}var _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"
+        ));
+        for member in &member_decorators {
+            out.push_str(&format!(
+                "{decorator_indent}{} = [{}];\n",
+                member.decorators_var,
+                member.decorator_exprs.join(", ")
+            ));
+            let extra_var = if member.is_static {
+                "_staticExtraInitializers"
+            } else {
+                "_instanceExtraInitializers"
+            };
+            out.push_str(&format!(
+                "{decorator_indent}__esDecorate({alias}, null, {}, {{ kind: \"{}\", name: \"{}\", static: {}, private: false, access: {{ {} }}, metadata: _metadata }}, null, {extra_var});\n",
+                member.decorators_var,
+                member.kind,
+                member.name,
+                member.is_static,
+                self.tc39_es5_member_access(member),
+            ));
+        }
+        out.push_str(&format!(
+            "{decorator_indent}if (_metadata) Object.defineProperty({alias}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n"
+        ));
+        if has_static {
+            out.push_str(&format!(
+                "{decorator_indent}__runInitializers({alias}, _staticExtraInitializers);\n"
+            ));
+        }
+        out.push_str(&format!("{inner_indent}}})(),\n"));
+        out.push_str(&format!("{inner_indent}{alias};\n"));
+        out.push_str(&format!("{base_indent}}}();"));
+        Some(out)
+    }
+
+    fn tc39_es5_member_access(&self, member: &Tc39Es5MemberDecorator) -> String {
+        let name = &member.name;
+        match member.kind {
+            "setter" => format!(
+                "has: function (obj) {{ return \"{name}\" in obj; }}, set: function (obj, value) {{ obj.{name} = value; }}"
+            ),
+            _ => format!(
+                "has: function (obj) {{ return \"{name}\" in obj; }}, get: function (obj) {{ return obj.{name}; }}"
+            ),
+        }
+    }
+
     /// Emit `__decorate` calls for decorated members inside the IIFE body.
     fn emit_member_decorator_ir(&self, body: &mut Vec<IRNode>, class_idx: NodeIndex) {
         let Some(class_node) = self.arena.get(class_idx) else {
@@ -1644,6 +1837,11 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         self.class_name = class_name;
+        self.tc39_has_instance_member_decorators = self.tc39_decorators
+            && self
+                .collect_tc39_es5_member_decorators(class_data)
+                .iter()
+                .any(|member| !member.is_static);
 
         // Collect private fields and accessors
         let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
@@ -2489,6 +2687,7 @@ impl<'a> ES5ClassTransformer<'a> {
         params: &NodeList,
         use_this: bool,
     ) {
+        let mut consumed_tc39_instance_initializers = false;
         for &param_idx in &params.nodes {
             let Some(param_node) = self.arena.get(param_idx) else {
                 continue;
@@ -2505,13 +2704,58 @@ impl<'a> ES5ClassTransformer<'a> {
                 } else {
                     IRNode::this()
                 };
-                // this.param = param; or _this.param = param;
-                body.push(IRNode::expr_stmt(IRNode::assign(
-                    IRNode::prop(receiver, param_name.clone()),
-                    IRNode::id(param_name.clone()),
-                )));
+                let value = if self.tc39_instance_initializers_needed()
+                    && !consumed_tc39_instance_initializers
+                {
+                    consumed_tc39_instance_initializers = true;
+                    let receiver_text = if use_this { "_this" } else { "this" };
+                    IRNode::Raw(
+                        format!(
+                            "(__runInitializers({receiver_text}, _instanceExtraInitializers), {param_name})"
+                        )
+                        .into(),
+                    )
+                } else {
+                    IRNode::id(param_name.clone())
+                };
+
+                if self.use_define_for_class_fields {
+                    body.push(IRNode::DefineProperty {
+                        target: Box::new(receiver),
+                        property_name: IRMethodName::Identifier(param_name.clone().into()),
+                        descriptor: IRPropertyDescriptor {
+                            get: None,
+                            set: None,
+                            value: Some(Box::new(value)),
+                            get_leading_comment: None,
+                            set_leading_comment: None,
+                            enumerable: true,
+                            configurable: true,
+                            writable: true,
+                            trailing_comment: None,
+                        },
+                        leading_comment: None,
+                    });
+                } else {
+                    // this.param = param; or _this.param = param;
+                    body.push(IRNode::expr_stmt(IRNode::assign(
+                        IRNode::prop(receiver, param_name.clone()),
+                        value,
+                    )));
+                }
             }
         }
+
+        if self.tc39_instance_initializers_needed() && !consumed_tc39_instance_initializers {
+            let receiver_text = if use_this { "_this" } else { "this" };
+            body.push(IRNode::expr_stmt(IRNode::Raw(
+                format!("__runInitializers({receiver_text}, _instanceExtraInitializers)").into(),
+            )));
+        }
+    }
+
+    const fn tc39_instance_initializers_needed(&self) -> bool {
+        self.tc39_decorators && self.tc39_has_instance_member_decorators
     }
 
     /// Emit private field initializations using `WeakMap.set()`
