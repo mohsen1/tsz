@@ -6478,3 +6478,126 @@ fn ts2322_fresh_object_literal_with_compatible_props_is_assignable_to_string_ind
         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
 }
+
+// =============================================================================
+// Issue #5887: optional generic `|| {}` / `?? {}` not assignable to `object`
+// Structural rule: when (T | undefined) || X or (T | undefined) ?? X where T
+// is an unconstrained type parameter, tsc produces (T & {}) | X (the
+// non-nullable intersection of T). For X = {}, this reduces to {} which IS
+// assignable to `object`. Any name for T must work (generalization check).
+// =============================================================================
+
+#[test]
+fn test_ts2322_no_false_positive_optional_generic_or_empty_object_as_object_return() {
+    // function test<D>(input?: D): object { return input || {}; }
+    // TSC: OK (no TS2322). The `||` result is `D & {} | {}` = `{}` after
+    // non-nullable type-parameter reduction; `{}` is assignable to `object`.
+    let source = r#"
+        function test<D>(input?: D): object {
+            return input || {};
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | undefined) || {{}}` returned as `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_optional_generic_nullish_coalesce_empty_object_as_object() {
+    // function test<D>(input?: D): object { return input ?? {}; }
+    // The `??` operator also applies the non-nullable approximation.
+    let source = r#"
+        function test<D>(input?: D): object {
+            return input ?? {};
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | undefined) ?? {{}}` returned as `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_optional_generic_name_invariant() {
+    // The fix must not be keyed on the type-parameter name.
+    // Use three different names to verify generality.
+    let source = r#"
+        function withT<T>(x?: T): object { return x || {}; }
+        function withK<K>(x?: K): object { return x || {}; }
+        function withValue<Value>(x?: Value): object { return x || {}; }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for optional generic `|| {{}}` with various type-param names, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_generic_null_or_empty_object_as_object() {
+    // function test<D>(input: D | null): object { return input || {}; }
+    // null-union instead of undefined-union — same rule applies.
+    let source = r#"
+        function test<D>(input: D | null): object {
+            return input || {};
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | null) || {{}}` returned as `object`, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_optional_generic_or_primitive_fallback_still_errors() {
+    // function test<D>(input?: D): string { return input || "hello"; }
+    // D is unconstrained, so `D & {}` is not assignable to `string`.
+    // This should still be a TS2322 error.
+    let source = r#"
+        function test<D>(input?: D): string {
+            return input || "hello";
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for `(D | undefined) || \"hello\"` returned as `string`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_constrained_to_object_optional_generic_no_false_positive() {
+    // function test<D extends object>(x?: D): object { return x || {}; }
+    // D extends object so D is definitely assignable to object; the whole
+    // pattern should still compile cleanly.
+    let source = r#"
+        function test<D extends object>(x?: D): object {
+            return x || {};
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D extends object | undefined) || {{}}`, got: {diags:?}"
+    );
+}
