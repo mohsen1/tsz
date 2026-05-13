@@ -1291,6 +1291,42 @@ const value = 1;
 }
 
 #[test]
+fn test_js_export_equals_class_keeps_leading_typedef_local() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+    item = 3;
+    method() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    let expected = r#"export = Conn;
+/**
+ * @typedef {string | number} Whatever
+ */
+declare class Conn {
+    item: number;
+    method(): void;
+}
+declare namespace Conn {
+    export { Whatever };
+}
+type Whatever = string | number;
+"#;
+
+    assert_eq!(
+        output, expected,
+        "Expected export= class typedef to remain local and follow the namespace: {output}"
+    );
+}
+
+#[test]
 fn test_js_multiline_typedef_before_function_variable_is_emitted() {
     let source = r#"
 /**

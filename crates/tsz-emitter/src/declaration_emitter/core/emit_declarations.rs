@@ -909,6 +909,27 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        let js_export_equals_root_name = if self.source_is_js_file {
+            match kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .arena
+                    .get_function(stmt_node)
+                    .map(|func| func.name)
+                    .filter(|&name| self.is_js_export_equals_name(name)),
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(stmt_node)
+                    .map(|class| class.name)
+                    .filter(|&name| self.is_js_export_equals_name(name)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(name_idx) = js_export_equals_root_name {
+            self.emit_pending_js_export_equals_for_name(name_idx);
+        }
+
         let is_variable_like_export = kind == syntax_kind_ext::VARIABLE_STATEMENT
             || (kind == syntax_kind_ext::EXPORT_DECLARATION
                 && self
@@ -916,7 +937,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .get_export_decl(stmt_node)
                     .and_then(|export| self.arena.get(export.export_clause))
                     .is_some_and(|clause| clause.kind == syntax_kind_ext::VARIABLE_STATEMENT));
-        if !is_variable_like_export {
+        if !is_variable_like_export && js_export_equals_root_name.is_none() {
             self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos);
         }
 
@@ -957,6 +978,13 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
             }
+        } else if js_export_equals_root_name.is_some()
+            && has_jsdoc_type_alias
+            && !has_jsdoc_type_function_signature
+        {
+            let styled_chain = self.leading_jsdoc_comment_chain_for_pos_with_style(stmt_node.pos);
+            self.emit_jsdoc_comment_chain_preserving_multiline_style(&styled_chain);
+            self.mark_leading_comments_emitted_before(stmt_node.pos);
         } else if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
