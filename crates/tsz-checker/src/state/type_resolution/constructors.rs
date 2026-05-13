@@ -378,7 +378,7 @@ impl<'a> CheckerState<'a> {
                     params: shape.params.clone(),
                     this_type: None,
                     return_type: shape.return_type,
-                    type_predicate: None,
+                    type_predicate: shape.type_predicate,
                     is_method: shape.is_method,
                 };
                 let instantiated_call = if type_args.len() < shape.type_params.len() {
