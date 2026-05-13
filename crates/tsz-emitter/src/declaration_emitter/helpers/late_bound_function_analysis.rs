@@ -148,23 +148,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn js_late_bound_collision_alias_name(
-        &self,
-        namespace_member_name: &str,
-        reserved_member_names: &FxHashSet<String>,
-    ) -> String {
-        let mut suffix = 1usize;
-        loop {
-            let candidate = format!("{namespace_member_name}_{suffix}");
-            if !self.reserved_names.contains(&candidate)
-                && !reserved_member_names.contains(&candidate)
-            {
-                return candidate;
-            }
-            suffix += 1;
-        }
-    }
-
     fn resolved_const_late_bound_assignment_key(
         &self,
         sym_id: SymbolId,
@@ -878,23 +861,7 @@ impl<'a> DeclarationEmitter<'a> {
             let namespace_member_name = if let Some(namespace_member_name) =
                 member.namespace_member_name.as_deref()
             {
-                if self.source_is_js_file && self.reserved_names.contains(namespace_member_name) {
-                    let synthetic_name = self.js_late_bound_collision_alias_name(
-                        namespace_member_name,
-                        &reserved_member_names,
-                    );
-                    reserved_member_names.insert(synthetic_name.clone());
-                    self.reserved_names.insert(synthetic_name.clone());
-                    export_alias =
-                        Some((synthetic_name.clone(), namespace_member_name.to_string()));
-                    synthetic_name
-                } else {
-                    if self.source_is_js_file {
-                        self.reserved_names
-                            .insert(namespace_member_name.to_string());
-                    }
-                    namespace_member_name.to_string()
-                }
+                namespace_member_name.to_string()
             } else {
                 let synthetic_name = if self.source_is_js_file {
                     Self::js_late_bound_synthetic_member_name(

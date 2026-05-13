@@ -2868,8 +2868,7 @@ declare function baz(): void;
 declare namespace baz {
     let _class: boolean;
     export { _class as class };
-    let normal_1: boolean;
-    export { normal_1 as normal };
+    export let normal: boolean;
 }"#;
     assert!(
         output.contains(expected),
@@ -2878,7 +2877,7 @@ declare namespace baz {
 }
 
 #[test]
-fn test_js_late_bound_function_reserved_alias_skips_existing_namespace_member_name() {
+fn test_js_late_bound_namespace_member_names_do_not_alias_against_top_level_scope() {
     let source = r#"
 const normal = 0;
 function foo() {}
@@ -2888,13 +2887,12 @@ foo.normal_1 = false;
 
     let output = emit_js_dts_with_usage_analysis(source);
     let expected = r#"declare namespace foo {
-    let normal_2: boolean;
-    export { normal_2 as normal };
+    let normal: boolean;
     let normal_1: boolean;
 }"#;
     assert!(
         output.contains(expected),
-        "Expected JS reserved alias generation to avoid existing namespace member names.\nOutput:\n{output}"
+        "Expected JS namespace member names to stay local to the namespace scope.\nOutput:\n{output}"
     );
 }
 
