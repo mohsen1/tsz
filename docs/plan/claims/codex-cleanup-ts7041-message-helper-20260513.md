@@ -1,6 +1,6 @@
 # Claim: reuse TS7041 diagnostic message helper
 
-Status: WIP
+Status: ready for review
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6160
 Branch: `codex/cleanup-ts7041-message-helper-20260513`
@@ -14,6 +14,11 @@ Branch: `codex/cleanup-ts7041-message-helper-20260513`
   cleanup.
 
 ## Verification Plan
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(ts7041_tests::)' --no-fail-fast`
+
+## Verification
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(ts7041_tests::)' --no-fail-fast`
