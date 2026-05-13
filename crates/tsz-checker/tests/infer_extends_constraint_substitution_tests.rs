@@ -43,6 +43,63 @@ fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool 
     diags.iter().any(|d| d.code == code)
 }
 
+#[test]
+fn template_literal_middle_infer_matches_known_substring() {
+    let source = r#"
+type DropString<S extends string, T extends string> =
+  S extends `${infer Before}${T}${infer After}`
+    ? `${Before}${After}`
+    : S;
+
+type DS1 = DropString<'hello', 'l'>;
+const ds1: DS1 = 'helo';
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected DropString<'hello', 'l'> to evaluate to 'helo', got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn template_literal_trailing_infer_matches_union_suffix() {
+    let source = r#"
+type Whitespace = ' ' | '\t' | '\n';
+
+type TrimRight<S extends string> =
+  S extends `${infer Rest}${Whitespace}`
+    ? TrimRight<Rest>
+    : S;
+
+type TR1 = TrimRight<'hello  '>;
+const tr1: TR1 = 'hello';
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected TrimRight<'hello  '> to evaluate to 'hello', got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn template_literal_type_parameter_delimiters_match() {
+    let source = r#"
+type Param<S extends string, L extends string, R extends string> =
+  S extends `${L}${infer X}${R}` ? X : never;
+
+type P1 = Param<"(hello)", "(", ")">;
+const p1: P1 = "hello";
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected Param<'(hello)', '(', ')'> to evaluate to 'hello', got diagnostics: {diags:?}"
+    );
+}
+
 /// `infer A extends keyof T` should work when T is a substituted type parameter.
 /// `GetPath<T, P>` recursively walks a path through an object type.
 #[test]

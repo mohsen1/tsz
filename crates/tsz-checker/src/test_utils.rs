@@ -97,12 +97,130 @@ impl<T> HasDiagnosticCode for (u32, T) {
     }
 }
 
+/// Types that expose both diagnostic code and message text.
+pub trait HasDiagnosticMessage: HasDiagnosticCode {
+    fn diagnostic_message(&self) -> &str;
+}
+
+impl HasDiagnosticMessage for Diagnostic {
+    fn diagnostic_message(&self) -> &str {
+        &self.message_text
+    }
+}
+
+impl<T: HasDiagnosticMessage + ?Sized> HasDiagnosticMessage for &T {
+    fn diagnostic_message(&self) -> &str {
+        (*self).diagnostic_message()
+    }
+}
+
+impl HasDiagnosticMessage for (u32, String) {
+    fn diagnostic_message(&self) -> &str {
+        &self.1
+    }
+}
+
+impl HasDiagnosticMessage for (u32, &str) {
+    fn diagnostic_message(&self) -> &str {
+        self.1
+    }
+}
+
 /// Project diagnostic-like values to their diagnostic codes.
 pub fn diagnostic_codes<T: HasDiagnosticCode>(diagnostics: &[T]) -> Vec<u32> {
     diagnostics
         .iter()
         .map(HasDiagnosticCode::diagnostic_code)
         .collect()
+}
+
+/// Count diagnostics with the given diagnostic code.
+pub fn diagnostic_count<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> usize {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.diagnostic_code() == code)
+        .count()
+}
+
+/// Count diagnostics whose code matches the supplied predicate.
+pub fn diagnostic_count_where<T: HasDiagnosticCode>(
+    diagnostics: &[T],
+    mut matches: impl FnMut(u32) -> bool,
+) -> usize {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| matches(diagnostic.diagnostic_code()))
+        .count()
+}
+
+/// Borrow diagnostics with the given diagnostic code.
+pub fn diagnostics_with_code<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> Vec<&T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.diagnostic_code() == code)
+        .collect()
+}
+
+/// Borrow diagnostics whose code matches the supplied predicate.
+pub fn diagnostics_where<T: HasDiagnosticCode>(
+    diagnostics: &[T],
+    mut matches: impl FnMut(u32) -> bool,
+) -> Vec<&T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| matches(diagnostic.diagnostic_code()))
+        .collect()
+}
+
+/// Borrow diagnostics with any of the supplied diagnostic codes.
+pub fn diagnostics_with_any_code<'a, T: HasDiagnosticCode>(
+    diagnostics: &'a [T],
+    codes: &[u32],
+) -> Vec<&'a T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| codes.contains(&diagnostic.diagnostic_code()))
+        .collect()
+}
+
+/// Borrow diagnostics excluding the supplied diagnostic codes.
+pub fn diagnostics_without_codes<'a, T: HasDiagnosticCode>(
+    diagnostics: &'a [T],
+    excluded_codes: &[u32],
+) -> Vec<&'a T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| !excluded_codes.contains(&diagnostic.diagnostic_code()))
+        .collect()
+}
+
+/// Return whether any diagnostic has the given code.
+pub fn has_diagnostic_code<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.diagnostic_code() == code)
+}
+
+/// Return whether any diagnostic code matches the supplied predicate.
+pub fn has_diagnostic_code_where<T: HasDiagnosticCode>(
+    diagnostics: &[T],
+    mut matches: impl FnMut(u32) -> bool,
+) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| matches(diagnostic.diagnostic_code()))
+}
+
+/// Return whether any diagnostic has one of the supplied diagnostic codes.
+pub fn has_any_diagnostic_code<T: HasDiagnosticCode>(diagnostics: &[T], codes: &[u32]) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| codes.contains(&diagnostic.diagnostic_code()))
+}
+
+/// Return whether any diagnostic matches an arbitrary predicate.
+pub fn has_diagnostic_where<T>(diagnostics: &[T], matches: impl FnMut(&T) -> bool) -> bool {
+    diagnostics.iter().any(matches)
 }
 
 /// Project diagnostics to `(code, message_text)` pairs.
@@ -112,6 +230,87 @@ pub fn diagnostic_code_messages(
     diagnostics
         .into_iter()
         .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+/// Borrow diagnostics as `(code, message_text)` pairs.
+pub fn diagnostic_code_message_refs(diagnostics: &[Diagnostic]) -> Vec<(u32, &str)> {
+    diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.as_str()))
+        .collect()
+}
+
+/// Borrow diagnostics with the given code as `(code, message_text)` pairs.
+pub fn diagnostic_code_message_refs_with_code(
+    diagnostics: &[Diagnostic],
+    code: u32,
+) -> Vec<(u32, &str)> {
+    diagnostics_with_code(diagnostics, code)
+        .into_iter()
+        .map(|d| (d.code, d.message_text.as_str()))
+        .collect()
+}
+
+/// Borrow diagnostic messages for diagnostics with the given code.
+pub fn diagnostic_messages_with_code(diagnostics: &[Diagnostic], code: u32) -> Vec<&str> {
+    diagnostics_with_code(diagnostics, code)
+        .into_iter()
+        .map(|d| d.message_text.as_str())
+        .collect()
+}
+
+/// Return whether any diagnostic has the given code and message fragment.
+pub fn has_diagnostic_code_message<T: HasDiagnosticMessage>(
+    diagnostics: &[T],
+    code: u32,
+    message_fragment: &str,
+) -> bool {
+    diagnostics.iter().any(|diagnostic| {
+        diagnostic.diagnostic_code() == code
+            && diagnostic.diagnostic_message().contains(message_fragment)
+    })
+}
+
+/// Return whether any diagnostic message contains the supplied text.
+pub fn has_diagnostic_message<T: HasDiagnosticMessage>(
+    diagnostics: &[T],
+    message_fragment: &str,
+) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.diagnostic_message().contains(message_fragment))
+}
+
+/// Borrow diagnostics with the given code and message text.
+pub fn diagnostics_with_code_message<'a, T: HasDiagnosticMessage>(
+    diagnostics: &'a [T],
+    code: u32,
+    message_fragment: &str,
+) -> Vec<&'a T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.diagnostic_code() == code
+                && diagnostic.diagnostic_message().contains(message_fragment)
+        })
+        .collect()
+}
+
+/// Borrow diagnostics with the given code and any message text.
+pub fn diagnostics_with_code_any_message<'a, T: HasDiagnosticMessage>(
+    diagnostics: &'a [T],
+    code: u32,
+    message_fragments: &[&str],
+) -> Vec<&'a T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.diagnostic_code() == code
+                && message_fragments
+                    .iter()
+                    .any(|fragment| diagnostic.diagnostic_message().contains(fragment))
+        })
         .collect()
 }
 
@@ -344,6 +543,7 @@ fn compiled_lib_test_roots() -> Vec<PathBuf> {
     let m = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut roots = vec![
         m.join("../../TypeScript/lib"),
+        m.join("../tsz-website/src/lib"),
         m.join("../../scripts/conformance/node_modules/typescript/lib"),
         m.join("../../scripts/emit/node_modules/typescript/lib"),
         m.join("../../scripts/node_modules/typescript/lib"),

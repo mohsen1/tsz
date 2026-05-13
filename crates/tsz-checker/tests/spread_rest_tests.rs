@@ -1,57 +1,11 @@
 //! Tests for spread and rest operator type checking
 
-use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::{check_source_diagnostics, diagnostic_codes};
-
-fn diagnostic_count(diagnostics: &[Diagnostic], code: u32) -> usize {
-    diagnostics.iter().filter(|d| d.code == code).count()
-}
-
-fn diagnostics_with_code(diagnostics: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
-    diagnostics.iter().filter(|d| d.code == code).collect()
-}
-
-fn diagnostics_where(
-    diagnostics: &[Diagnostic],
-    mut matches: impl FnMut(u32) -> bool,
-) -> Vec<&Diagnostic> {
-    diagnostics.iter().filter(|d| matches(d.code)).collect()
-}
-
-fn diagnostic_count_where(
-    diagnostics: &[Diagnostic],
-    mut matches: impl FnMut(u32) -> bool,
-) -> usize {
-    diagnostics.iter().filter(|d| matches(d.code)).count()
-}
-
-fn diagnostic_messages_with_code(diagnostics: &[Diagnostic], code: u32) -> Vec<&str> {
-    diagnostics_with_code(diagnostics, code)
-        .into_iter()
-        .map(|d| d.message_text.as_str())
-        .collect()
-}
-
-fn has_diagnostic_where(
-    diagnostics: &[Diagnostic],
-    matches: impl FnMut(&Diagnostic) -> bool,
-) -> bool {
-    diagnostics.iter().any(matches)
-}
-
-fn diagnostic_code_messages(diagnostics: &[Diagnostic]) -> Vec<(u32, &str)> {
-    diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.as_str()))
-        .collect()
-}
-
-fn diagnostic_code_messages_with_code(diagnostics: &[Diagnostic], code: u32) -> Vec<(u32, &str)> {
-    diagnostics_with_code(diagnostics, code)
-        .into_iter()
-        .map(|d| (d.code, d.message_text.as_str()))
-        .collect()
-}
+use tsz_checker::test_utils::{
+    check_source_diagnostics, diagnostic_code_message_refs as diagnostic_code_messages,
+    diagnostic_code_message_refs_with_code as diagnostic_code_messages_with_code, diagnostic_codes,
+    diagnostic_count, diagnostic_count_where, diagnostic_messages_with_code, diagnostics_where,
+    diagnostics_with_code, has_diagnostic_where,
+};
 
 #[test]
 fn test_array_spread_with_tuple() {

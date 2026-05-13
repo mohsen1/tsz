@@ -910,6 +910,22 @@ fn types_are_comparable_for_assertion_inner(
             .any(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
     }
 
+    // For intersection source S1 & S2 & ... & Sn: any member comparable to target suffices.
+    // For intersection target T1 & T2 & ... & Tn: source must be comparable to every member
+    // (tsc's eachTypeRelatedToType via comparableRelation).
+    if let Some(TypeData::Intersection(list_id)) = db.lookup(source) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| types_are_comparable_for_assertion_inner(db, m, target, depth + 1));
+    }
+    if let Some(TypeData::Intersection(list_id)) = db.lookup(target) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .all(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
+    }
+
     // Enum comparability: unwrap to member type union, matching
     // `types_are_comparable_inner` behavior.
     if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(source) {
