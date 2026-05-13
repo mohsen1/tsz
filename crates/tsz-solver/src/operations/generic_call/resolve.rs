@@ -541,50 +541,72 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // contextual type is a bare type parameter whose constraint doesn't contain
         // literal types, properties like `false` are widened to `boolean`.
         //
-        // We suppress widening in two cases:
-        // (a) The constraint contains literal types (discriminated union protection)
-        // (b) The type parameter is referenced in another type param's constraint,
+        // We suppress widening in three cases:
+        // (a) The constraint contains literal types (discriminated union protection).
+        // (b) The placeholder is referenced in another type param's constraint,
         //     because widening would cause a mismatch between the widened candidate
         //     and the un-widened contextual type used for callback parameters.
+        // (c) The type parameter has the TS 5.0 `const` modifier and its constraint
+        //     does not allow a mutable array-like target. `const T` preserves the
+        //     literal shape of the argument expression, so the round-1 inference
+        //     seed must be the un-widened argument shape — without this,
+        //     `<const T>(x: T, y: number)` widens `{ a: 1 }` to `{ a: number }`
+        //     before inference and the literal is lost.
         let widenable_placeholders: FxHashSet<TypeId> = var_map
             .keys()
             .filter(|&&placeholder_id| {
-                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(placeholder_id) {
-                    // (a) Skip if constraint implies literal types
-                    if let Some(constraint) = tp.constraint {
-                        let inst = instantiate_call_type(
-                            self.interner,
-                            constraint,
-                            &substitution,
-                            actual_this_type,
-                        );
-                        if type_implies_literals_deep(self.interner, inst) {
-                            return false;
-                        }
-                    }
-                    // (b) Skip if this placeholder is referenced in another type param's
-                    // constraint (e.g., TContext in TMethods extends Record<..., (ctx: TContext) => ...>)
-                    let is_referenced_in_other_constraints =
-                        func.type_params.iter().any(|other_tp| {
-                            if other_tp.name == tp.name {
-                                return false; // Skip self
-                            }
-                            if let Some(constraint) = other_tp.constraint {
-                                let inst = instantiate_call_type(
-                                    self.interner,
-                                    constraint,
-                                    &substitution,
-                                    actual_this_type,
-                                );
-                                type_references_placeholder(self.interner, inst, placeholder_id)
-                            } else {
-                                false
-                            }
-                        });
-                    !is_referenced_in_other_constraints
-                } else {
-                    false
+                let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(placeholder_id) else {
+                    return false;
+                };
+                // Instantiate the placeholder's own constraint once and share it
+                // between (a) literal-implication and (c) const-mutable-array checks.
+                let inst_constraint = tp.constraint.map(|constraint| {
+                    instantiate_call_type(
+                        self.interner,
+                        constraint,
+                        &substitution,
+                        actual_this_type,
+                    )
+                });
+                // (a)
+                if inst_constraint
+                    .is_some_and(|inst| type_implies_literals_deep(self.interner, inst))
+                {
+                    return false;
                 }
+                // (b)
+                let is_referenced_in_other_constraints = func.type_params.iter().any(|other_tp| {
+                    if other_tp.name == tp.name {
+                        return false;
+                    }
+                    let Some(constraint) = other_tp.constraint else {
+                        return false;
+                    };
+                    let inst = instantiate_call_type(
+                        self.interner,
+                        constraint,
+                        &substitution,
+                        actual_this_type,
+                    );
+                    type_references_placeholder(self.interner, inst, placeholder_id)
+                });
+                if is_referenced_in_other_constraints {
+                    return false;
+                }
+                // (c). An unconstrained `const T` falls through here: no constraint
+                // means no mutable-array-like target, so widening is suppressed —
+                // which matches tsc's behavior of preserving literals for `const T`.
+                if tp.is_const
+                    && !inst_constraint.is_some_and(|inst| {
+                        crate::type_queries::constraint_allows_mutable_array_like(
+                            self.interner,
+                            inst,
+                        )
+                    })
+                {
+                    return false;
+                }
+                true
             })
             .copied()
             .collect();
