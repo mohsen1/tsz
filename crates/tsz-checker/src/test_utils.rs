@@ -105,6 +105,16 @@ pub fn diagnostic_codes<T: HasDiagnosticCode>(diagnostics: &[T]) -> Vec<u32> {
         .collect()
 }
 
+/// Project diagnostics to `(code, message_text)` pairs.
+pub fn diagnostic_code_messages(
+    diagnostics: impl IntoIterator<Item = Diagnostic>,
+) -> Vec<(u32, String)> {
+    diagnostics
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 /// Parse, bind, and type-check JavaScript source, returning only diagnostic codes.
 ///
 /// The caller supplies the test file name and any additional checker options.
@@ -123,6 +133,25 @@ pub fn check_js_source_codes_with_options(
     diagnostic_codes(&check_source(source, file_name, options))
 }
 
+/// Parse, bind, and type-check JavaScript source, returning `(code, message_text)` pairs.
+pub fn check_js_source_code_messages_with_options(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        ..options
+    };
+    diagnostic_code_messages(check_source(source, file_name, options))
+}
+
+/// Parse, bind, and type-check JavaScript source, returning `(code, message_text)` pairs.
+pub fn check_js_source_code_messages(source: &str) -> Vec<(u32, String)> {
+    check_js_source_code_messages_with_options(source, "test.js", CheckerOptions::default())
+}
+
 /// Parse, bind, and type-check source, returning only diagnostic codes.
 ///
 /// Convenience wrapper for tests that only inspect error codes.
@@ -139,10 +168,7 @@ pub fn check_source_codes_named(source: &str, file_name: &str) -> Vec<u32> {
 ///
 /// Convenience wrapper for tests that inspect both error codes and message text.
 pub fn check_source_code_messages(source: &str) -> Vec<(u32, String)> {
-    check_source_diagnostics(source)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(check_source_diagnostics(source))
 }
 
 /// Parse, bind, and type-check source with `experimental_decorators` enabled, returning codes.
@@ -194,10 +220,7 @@ pub fn check_with_options_code_messages(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
-    check_with_options(source, options)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(check_with_options(source, options))
 }
 
 /// Canonical "strict" `CheckerOptions` for tests that opt into the
@@ -235,11 +258,11 @@ pub fn check_source_strict_messages(source: &str) -> Vec<(u32, String)> {
 
 /// Strict `(code, message_text)` diagnostics excluding TS2318 missing-default-lib noise.
 pub fn check_source_strict_messages_without_missing_libs(source: &str) -> Vec<(u32, String)> {
-    check_source_strict(source)
-        .into_iter()
-        .filter(|d| d.code != 2318)
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(
+        check_source_strict(source)
+            .into_iter()
+            .filter(|d| d.code != 2318),
+    )
 }
 
 /// Standard `lib.d.ts` source roots probed by checker tests, ordered by
@@ -450,10 +473,9 @@ pub fn check_source_with_libs_code_messages(
     options: CheckerOptions,
     lib_files: &[Arc<LibFile>],
 ) -> Vec<(u32, String)> {
-    check_source_with_libs(source, file_name, options, lib_files)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(check_source_with_libs(
+        source, file_name, options, lib_files,
+    ))
 }
 
 /// Parse, bind, and type-check a multi-file project, returning the entry
@@ -593,8 +615,10 @@ mod tests {
     //! These pin the contracts that 100s of checker tests rely on:
     //! - `check_source_diagnostics` ≡ `check_source(source, "test.ts", default)`.
     //! - `check_source_codes` is a code-only projection of `check_source_diagnostics`.
+    //! - `diagnostic_code_messages` is a `(code, message)` projection of diagnostics.
     //! - `check_source_code_messages` projects to (code, message) pairs.
     //! - `check_js_source_diagnostics` uses `test.js` + `check_js: true`.
+    //! - `check_js_source_code_messages_with_options` uses checked-JS options.
     //! - `check_source_codes_experimental_decorators` enables the decorator flag.
     //! - `check_source_no_unused_params` / `_no_unused_locals` enable the
     //!   matching unused-detection flag.
@@ -621,6 +645,17 @@ mod tests {
         let codes = check_source_codes(source);
         let projected: Vec<u32> = diags.iter().map(|d| d.code).collect();
         assert_eq!(codes, projected);
+    }
+
+    #[test]
+    fn diagnostic_code_messages_projects_owned_diagnostics() {
+        let source = "interface I {} const x = new I();";
+        let diags = check_source_diagnostics(source);
+        let projected: Vec<(u32, String)> = diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect();
+        assert_eq!(diagnostic_code_messages(diags), projected);
     }
 
     #[test]
@@ -676,6 +711,26 @@ mod tests {
             js_codes, ts_codes,
             "JS source with TS syntax should emit different diagnostics than TS path"
         );
+    }
+
+    #[test]
+    fn check_js_source_code_messages_with_options_matches_checked_js_projection() {
+        let source = "var x: number = 'hi';";
+        let opts = CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        };
+        let pairs = check_js_source_code_messages_with_options(source, "custom.js", opts.clone());
+        let explicit = check_source(
+            source,
+            "custom.js",
+            CheckerOptions {
+                allow_js: true,
+                check_js: true,
+                ..opts
+            },
+        );
+        assert_eq!(pairs, diagnostic_code_messages(explicit));
     }
 
     #[test]

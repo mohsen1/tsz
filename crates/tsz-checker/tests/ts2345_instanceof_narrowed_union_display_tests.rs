@@ -21,13 +21,8 @@
 //! independently so that future refactors of the diagnostic source-display
 //! and call-finalize layers cannot regress them silently.
 
-use tsz_checker::context::CheckerOptions;
-
 fn diagnostic_messages(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 /// Non-generic shape: `A | B` narrowed by `instanceof B` to `B`. `A` has a
