@@ -20,6 +20,10 @@ struct DirectActualLibAliasBodyProof {
     outcome: DirectActualLibAliasBodyOutcome,
 }
 
+fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
+    matches!(name, "DecoratorMetadata" | "DecoratorMetadataObject")
+}
+
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
     let basename = std::path::Path::new(file_name)
         .file_name()
@@ -228,12 +232,6 @@ impl<'a> CheckerState<'a> {
         name: &str,
         delegate_arena: &NodeArena,
     ) -> Option<DirectActualLibAliasBodyProof> {
-        if !matches!(name, "DecoratorMetadata" | "DecoratorMetadataObject") {
-            record_direct_actual_lib_alias_body_outcome(
-                DirectActualLibAliasBodyOutcome::NameNotAdmitted,
-            );
-            return None;
-        }
         if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             record_direct_actual_lib_alias_body_outcome(
                 DirectActualLibAliasBodyOutcome::NotTypeAlias,
@@ -291,18 +289,19 @@ impl<'a> CheckerState<'a> {
         };
 
         let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-        if !params.is_empty() {
-            record_direct_actual_lib_alias_body_outcome(
-                DirectActualLibAliasBodyOutcome::GenericAlias,
-            );
-            return None;
-        }
-        record_direct_actual_lib_alias_body_outcome(DirectActualLibAliasBodyOutcome::Success);
+        let outcome = if !params.is_empty() {
+            DirectActualLibAliasBodyOutcome::GenericAlias
+        } else if !is_direct_actual_lib_alias_body_admitted(name) {
+            DirectActualLibAliasBodyOutcome::NameNotAdmitted
+        } else {
+            DirectActualLibAliasBodyOutcome::Success
+        };
+        record_direct_actual_lib_alias_body_outcome(outcome);
         Some(DirectActualLibAliasBodyProof {
             body,
             type_params: params,
             def_id,
-            outcome: DirectActualLibAliasBodyOutcome::Success,
+            outcome,
         })
     }
 
@@ -338,8 +337,11 @@ impl<'a> CheckerState<'a> {
                 body: alias_type,
                 type_params: params,
                 def_id: _def_id,
-                outcome: _outcome,
+                outcome,
             } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
+            if outcome != DirectActualLibAliasBodyOutcome::Success {
+                return None;
+            }
             self.ctx.symbol_types.insert(sym_id, alias_type);
             self.ctx
                 .lib_delegation_cache
@@ -871,7 +873,7 @@ mod tests {
     use crate::test_utils::load_lib_files;
     use std::sync::Arc;
     use tsz_binder::BinderState;
-    use tsz_common::perf_counters::CrossArenaSymbolMissSource;
+    use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
     use tsz_parser::parser::{ParserState, syntax_kind_ext};
     use tsz_solver::{TypeId, TypeInterner};
 
@@ -1344,6 +1346,27 @@ mod tests {
             .symbol_arenas
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
+        let symbol = state
+            .get_cross_file_symbol(sym_id)
+            .expect("PropertyKey symbol should be available")
+            .clone();
+
+        let proof = state
+            .direct_actual_lib_type_alias_body(
+                sym_id,
+                &symbol,
+                "PropertyKey",
+                delegate_arena.expect("PropertyKey should have a delegate arena"),
+            )
+            .expect("PropertyKey should have a proven actual-lib alias body");
+        assert_eq!(
+            proof.outcome,
+            DirectActualLibAliasBodyOutcome::NameNotAdmitted
+        );
+        assert!(
+            proof.type_params.is_empty(),
+            "PropertyKey is non-generic but remains unadmitted",
+        );
 
         assert!(
             state
@@ -1398,6 +1421,21 @@ mod tests {
             .symbol_arenas
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
+        let symbol = state
+            .get_cross_file_symbol(sym_id)
+            .expect("Record symbol should be available")
+            .clone();
+
+        let proof = state
+            .direct_actual_lib_type_alias_body(
+                sym_id,
+                &symbol,
+                "Record",
+                delegate_arena.expect("Record should have a delegate arena"),
+            )
+            .expect("Record should have a proven actual-lib alias body");
+        assert_eq!(proof.outcome, DirectActualLibAliasBodyOutcome::GenericAlias);
+        assert_eq!(proof.type_params.len(), 2, "Record should expose K and T");
 
         assert!(
             state
