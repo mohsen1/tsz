@@ -3258,6 +3258,173 @@ const a = f({ d: [] });
     );
 }
 
+// ─── Issue #6261: const type param preserves literals across multiple params ──
+//
+// Structural rule: when a generic call has a `const` type parameter whose
+// constraint does not allow a mutable array-like target, the literal shape of
+// the argument expression must be the round-1 inference seed. The presence
+// of additional non-const parameters, multiple type parameters, class
+// constructors, or interface methods does not change this rule.
+
+#[test]
+fn const_type_param_class_constructor_preserves_object_literal() {
+    // tsc preserves `g.value.x: 1` even though the constructor signature
+    // includes the const type param via a property.
+    let source = r#"
+class ConstContainer<const T> { constructor(public value: T) {} }
+const g = new ConstContainer({ x: 1 });
+const _gx: 1 = g.value.x;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "class const type param should preserve literal property type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_multiple_const_params_preserve_each_literal() {
+    let source = r#"
+function multiConst<const T, const U>(x: T, y: U): [T, U] { return [x, y]; }
+const e = multiConst({ a: 1 }, { b: 2 });
+const _e0a: 1 = e[0].a;
+const _e1b: 2 = e[1].b;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "multiple const type params must each preserve literal property types. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_sibling_primitive_param_preserves_literal() {
+    // The presence of a sibling non-const parameter (`y: number`) must not
+    // cause T to be widened.
+    let source = r#"
+function f<const T>(x: T, y: number): T { return x; }
+const r = f({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "sibling primitive param must not break const literal preservation. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_when_const_param_is_second_preserves_literal() {
+    // Position of the const-typed parameter must not matter.
+    let source = r#"
+function f<const T>(x: number, y: T): T { return y; }
+const r = f(2, { b: 1 });
+const _rb: 1 = r.b;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "const param at non-first position must still preserve literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_renamed_preserves_literal() {
+    // Renaming the type parameter must not affect the rule (the fix is
+    // structural, not name-driven).
+    let source = r#"
+function renamed<const P>(x: P, y: number): P { return x; }
+const r = renamed({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "renaming const type param must not break preservation. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_mixed_const_and_non_const_preserves_const_literal() {
+    // `const T` preserves; `U` (non-const) widens normally.
+    let source = r#"
+function mixed<const T, U>(x: T, y: U): [T, U] { return [x, y]; }
+const r = mixed({ a: 1 }, { b: 2 });
+const _ra: 1 = r[0].a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "const T should preserve literal even when sibling U is non-const. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_interface_method_preserves_literal() {
+    let source = r#"
+interface ConstMethod { process<const T>(value: T): T; }
+declare const cm: ConstMethod;
+const h = cm.process({ y: 2 });
+const _hy: 2 = h.y;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "interface method with const type param should preserve literal. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_aliased_readonly_array_constraint_preserves_literal() {
+    // An alias wrapping the readonly-array constraint must still trigger
+    // literal preservation (the constraint is resolved before the
+    // mutable-array check).
+    let source = r#"
+type ROArr = readonly unknown[];
+function f<const T extends ROArr>(x: T, y: number): T { return x; }
+const r = f([1, 2, 3], 0);
+const _r: readonly [1, 2, 3] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "aliased readonly-array constraint must still preserve literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn non_const_type_param_still_widens_object_literal_property() {
+    // Negative case: without `const`, the literal property type must widen
+    // (proves the fix is gated on `is_const`, not unconditional).
+    let source = r#"
+function f<T>(x: T, y: number): T { return x; }
+const r = f({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "non-const T must still widen property literal to number. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_mutable_array_constraint_widens() {
+    // Negative case: `const T extends unknown[]` (mutable array) should
+    // widen because the constraint allows a mutable-array target. This
+    // proves the (c) branch is gated on `constraint_allows_mutable_array_like`.
+    let source = r#"
+function f<const T extends unknown[]>(x: T): T { return x; }
+const r = f([1, 2, 3]);
+const _r: [1, 2, 3] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "mutable-array constraint must keep widening behavior. Got: {diags:#?}"
+    );
+}
+
 // ─── Symbol-keyed property exclusion from string-index inference ─────────────
 
 #[test]
