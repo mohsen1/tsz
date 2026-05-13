@@ -16,6 +16,8 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
+                    .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
+                    .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
@@ -24,6 +26,126 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|type_text| {
                 self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &type_text)
                     .unwrap_or(type_text)
+            })
+    }
+
+    fn call_expression_function_variable_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let parts = self.function_type_parts_for_expression(callee_idx)?;
+        let return_type = parts.return_type.trim();
+        if return_type == "any" || return_type == "unknown" || !return_type.contains('"') {
+            return None;
+        }
+        Some(return_type.to_string())
+    }
+
+    fn generic_call_returned_identity_callback_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let arguments = call.arguments.as_ref()?;
+        let binder = self.binder?;
+        let sym_id = self.value_reference_symbol(call.expression).or_else(|| {
+            let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+            let callee_name = self.get_identifier_text(callee_idx)?;
+            binder.file_locals.get(&callee_name)
+        })?;
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
+            let returned_param_index =
+                self.returned_parameter_index_from_function_body(source_arena, func)?;
+            let returned_param_node =
+                source_arena.get(*func.parameters.nodes.get(returned_param_index)?)?;
+            let returned_param = source_arena.get_parameter(returned_param_node)?;
+            let param_type_text = self
+                .emit_type_node_text_from_arena(source_arena, returned_param.type_annotation)
+                .or_else(|| {
+                    self.source_slice_from_arena(source_arena, returned_param.type_annotation)
+                })?;
+            let source_function_type = Self::parse_function_type_text(param_type_text.trim())?;
+
+            let mut type_param_constraints = Vec::new();
+            let type_param_names = func
+                .type_parameters
+                .as_ref()?
+                .nodes
+                .iter()
+                .copied()
+                .filter_map(|param_idx| {
+                    let param_node = source_arena.get(param_idx)?;
+                    let param = source_arena.get_type_parameter(param_node)?;
+                    let name = identifier_text(source_arena, param.name)?;
+                    if param.constraint.is_some()
+                        && let Some(constraint) = self
+                            .emit_type_node_text_from_arena(source_arena, param.constraint)
+                            .or_else(|| {
+                                self.source_slice_from_arena(source_arena, param.constraint)
+                            })
+                    {
+                        type_param_constraints.push((name.clone(), constraint));
+                    }
+                    Some(name)
+                })
+                .collect::<Vec<_>>();
+            let arg_idx = *arguments.nodes.get(returned_param_index)?;
+            let (param_name, value_text) = self.infer_constrained_identity_callback_substitution(
+                &source_function_type,
+                arg_idx,
+                &type_param_names,
+                &type_param_constraints,
+            )?;
+            Some(Self::replace_whole_words_in_text(
+                param_type_text.trim(),
+                &[(param_name, value_text)],
+            ))
+        })
+    }
+
+    fn returned_parameter_index_from_function_body(
+        &self,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+    ) -> Option<usize> {
+        let body_node = source_arena.get(func.body)?;
+        let block = source_arena.get_block(body_node)?;
+        if block.statements.nodes.len() != 1 {
+            return None;
+        }
+        let stmt_node = source_arena.get(*block.statements.nodes.first()?)?;
+        let ret = source_arena.get_return_statement(stmt_node)?;
+        let returned_name = identifier_text(source_arena, ret.expression)?;
+        func.parameters
+            .nodes
+            .iter()
+            .copied()
+            .enumerate()
+            .find_map(|(index, param_idx)| {
+                let param_node = source_arena.get(param_idx)?;
+                let param = source_arena.get_parameter(param_node)?;
+                (identifier_text(source_arena, param.name).as_deref()
+                    == Some(returned_name.as_str()))
+                .then_some(index)
             })
     }
 

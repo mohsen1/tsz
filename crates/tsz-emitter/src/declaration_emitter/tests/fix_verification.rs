@@ -1613,6 +1613,45 @@ const result = getInterfaceFromString({ type: "two" }, "three");
 }
 
 #[test]
+fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo<T extends "foo">(f: (x: T) => T) {
+    return f;
+}
+
+function bar<T extends "foo" | "bar">(f: (x: T) => T) {
+    return f;
+}
+
+let f = foo(x => x);
+let fResult = f("foo");
+
+let g = foo((x => x));
+let gResult = g("foo");
+
+let h = bar(x => x);
+let hResult = h("foo");
+hResult = h("bar");
+"#,
+    );
+
+    for expected in [
+        r#"declare let f: (x: "foo") => "foo";"#,
+        r#"declare let fResult: "foo";"#,
+        r#"declare let g: (x: "foo") => "foo";"#,
+        r#"declare let gResult: "foo";"#,
+        r#"declare let h: (x: "foo" | "bar") => "foo" | "bar";"#,
+        r#"declare let hResult: "foo" | "bar";"#,
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected constrained identity callback inference to emit `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"
