@@ -893,14 +893,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 });
             }
 
+            let rest_pattern = pattern_elems[rest_index].type_id;
+
+            // Structural rule: when the rest pattern is `Array(P)` (e.g.
+            // `...unknown[]`, `...string[]`, `...(infer R)[]`), the collected
+            // source rest is structurally `Array<element-union>`. Match the
+            // element union against `P` so infer variables in `P` bind to the
+            // remaining tuple element union and constraint-only Array patterns
+            // accept the rest. `match_infer_pattern` cannot do this projection
+            // generally because Tuple-vs-Array assignability semantics differ
+            // in other call paths (see issue #6179).
+            if let Some(TypeData::Array(pattern_elem)) = self.interner().lookup(rest_pattern) {
+                let rest_tuple = self.interner().tuple(rest_elems);
+                let Some(element_union) = crate::type_queries::get_array_or_tuple_element_type(
+                    self.interner(),
+                    rest_tuple,
+                ) else {
+                    return false;
+                };
+                return self.match_infer_pattern(
+                    element_union,
+                    pattern_elem,
+                    bindings,
+                    visited,
+                    checker,
+                );
+            }
+
             let rest_tuple = self.interner().tuple(rest_elems);
-            return self.match_infer_pattern(
-                rest_tuple,
-                pattern_elems[rest_index].type_id,
-                bindings,
-                visited,
-                checker,
-            );
+            return self.match_infer_pattern(rest_tuple, rest_pattern, bindings, visited, checker);
         }
 
         if source_len > pattern_len {
@@ -1094,67 +1115,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 visited,
                 checker,
             ),
-            TypeData::Array(pattern_elem) => {
-                // Structural rule: a tuple `[A, B, C]` projects to
-                // `Array<A | B | C>` for element-only operations, so an Array
-                // pattern matches a Tuple source by decomposing the tuple to
-                // its element-type union before recursing into the element.
-                match self.interner().lookup(source) {
-                    Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
-                        let Some(source_elem) =
-                            crate::type_queries::get_array_or_tuple_element_type(
-                                self.interner(),
-                                source,
-                            )
+            TypeData::Array(pattern_elem) => match self.interner().lookup(source) {
+                Some(TypeData::Array(source_elem)) => {
+                    self.match_infer_pattern(source_elem, pattern_elem, bindings, visited, checker)
+                }
+                Some(TypeData::Union(members)) => {
+                    let members = self.interner().type_list(members);
+                    let mut combined = FxHashMap::default();
+                    for &member in members.iter() {
+                        let Some(TypeData::Array(source_elem)) = self.interner().lookup(member)
                         else {
                             return false;
                         };
-                        self.match_infer_pattern(
+                        let mut member_bindings = FxHashMap::default();
+                        let mut local_visited = FxHashSet::default();
+                        if !self.match_infer_pattern(
                             source_elem,
                             pattern_elem,
-                            bindings,
-                            visited,
+                            &mut member_bindings,
+                            &mut local_visited,
                             checker,
-                        )
-                    }
-                    Some(TypeData::Union(members)) => {
-                        let members = self.interner().type_list(members);
-                        let mut combined = FxHashMap::default();
-                        for &member in members.iter() {
-                            let Some(source_elem) =
-                                crate::type_queries::get_array_or_tuple_element_type(
-                                    self.interner(),
-                                    member,
-                                )
-                            else {
-                                return false;
-                            };
-                            let mut member_bindings = FxHashMap::default();
-                            let mut local_visited = FxHashSet::default();
-                            if !self.match_infer_pattern(
-                                source_elem,
-                                pattern_elem,
-                                &mut member_bindings,
-                                &mut local_visited,
-                                checker,
-                            ) {
-                                return false;
-                            }
-                            for (name, ty) in member_bindings {
-                                combined
-                                    .entry(name)
-                                    .and_modify(|existing| {
-                                        *existing = self.interner().union2(*existing, ty);
-                                    })
-                                    .or_insert(ty);
-                            }
+                        ) {
+                            return false;
                         }
-                        bindings.extend(combined);
-                        true
+                        for (name, ty) in member_bindings {
+                            combined
+                                .entry(name)
+                                .and_modify(|existing| {
+                                    *existing = self.interner().union2(*existing, ty);
+                                })
+                                .or_insert(ty);
+                        }
                     }
-                    _ => false,
+                    bindings.extend(combined);
+                    true
                 }
-            }
+                _ => false,
+            },
             TypeData::Tuple(pattern_elems) => match self.interner().lookup(source) {
                 Some(TypeData::Tuple(source_elems)) => {
                     let source_elems = self.interner().tuple_list(source_elems);
