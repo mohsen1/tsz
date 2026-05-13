@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `fix/conformance-ts2786-complex-signatures-20260513`
-- **PR**: TBD
+- **PR**: #6186
 - **Status**: ready
 - **Workstream**: conformance
 
