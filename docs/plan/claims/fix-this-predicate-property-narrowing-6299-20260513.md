@@ -1,19 +1,23 @@
-# fix(checker): apply this-predicate property narrowing
+# Claim: fix this-predicate property narrowing (#6299)
 
-- **Date**: 2026-05-13
-- **Branch**: `fix-this-predicate-property-narrowing-6299-20260513`
-- **PR**: TBD
-- **Status**: claim
-- **Workstream**: 1 (Diagnostic conformance / control-flow narrowing)
+Status: ready
+Branch: fix-this-predicate-property-narrowing-6299-20260513
+PR: #6303
+Owner: Codex
+Created: 2026-05-13
 
-## Intent
+## Scope
 
-Issue #6299 reports that method type predicates of the form `this is C<T> & { value: T }` do not narrow property accesses on the receiver. The fix should apply the predicate's narrowed receiver type through the existing control-flow/type-guard path without special-casing the repro.
+Fix the false positive where a method returning `this is Container<T> & { value: T }` narrows the receiver but a subsequent `container.value` read still reports `T | null`.
 
-## Files Touched
+## Files touched
 
-- TBD
+- `crates/tsz-checker/src/flow/control_flow/call_condition_narrowing.rs`
+- `crates/tsz-cli/tests/tsc_compat_tests.rs`
+- `docs/plan/claims/fix-this-predicate-property-narrowing-6299-20260513.md`
 
 ## Verification
 
-- TBD
+- `cargo run -p tsz-cli --bin tsz -- --noEmit --strict --pretty false /tmp/issue6299.ts` passed
+- `cargo test -p tsz-cli --test tsc_compat_tests this_type_predicate_narrows_receiver_property -- --nocapture` passed
+- `cargo fmt --all -- --check` passed

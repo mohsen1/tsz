@@ -3989,3 +3989,37 @@ fn tsc_parity_show_config_unsupported_extension_files_entry() {
         "tsz --showConfig must match tsc when files lists an unsupported extension",
     );
 }
+
+#[test]
+fn this_type_predicate_narrows_receiver_property() {
+    let temp = TempDir::new("this_predicate_receiver_property").expect("temp dir");
+    write_file(
+        &temp.path.join("main.ts"),
+        r#"
+class Container<T> {
+  value: T | null = null;
+
+  hasValue(): this is Container<T> & { value: T } {
+    return this.value !== null;
+  }
+}
+
+const container = new Container<number>();
+
+if (container.hasValue()) {
+  const value: number = container.value;
+}
+"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "main.ts"],
+    )
+    .expect("tsz should run");
+
+    assert_eq!(
+        code, 0,
+        "`this is ...` predicates must narrow receiver properties, got: {output}"
+    );
+}
