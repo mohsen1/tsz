@@ -3518,6 +3518,37 @@ module.exports = class {
 }
 
 #[test]
+fn test_js_module_exports_anonymous_class_secondary_class_emits_once() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+module.exports = class {
+    constructor(p) {
+        this.t = 12 + p;
+    }
+};
+module.exports.Sub = class {
+    constructor() {
+        this.instance = new module.exports(10);
+    }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace exports {\n    export { Sub };\n}"),
+        "Expected secondary anonymous class exports to be aliased through the export= namespace: {output}"
+    );
+    assert!(
+        output.contains("declare class Sub {"),
+        "Expected secondary anonymous class exports to emit a local class declaration: {output}"
+    );
+    assert!(
+        !output.contains("export class Sub"),
+        "Did not expect the secondary class assignment to also emit as a named export: {output}"
+    );
+}
+
+#[test]
 fn test_js_array_subclass_emits_array_any_and_constructors() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
