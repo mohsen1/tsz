@@ -12,32 +12,7 @@
 //! invariant too: tsc still reports TS2322 for `null` assigned to a function or
 //! class type whose nested members mention an unresolved type.
 
-fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        tsz_checker::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
-}
+use tsz_checker::test_utils::check_source_code_messages as get_diagnostics;
 
 /// Class property with a function type annotation that references an unresolved
 /// type should show the annotation text in TS2322, not the internal `error` sentinel.
