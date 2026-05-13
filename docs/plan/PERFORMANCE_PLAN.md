@@ -24,6 +24,17 @@ Current guidance:
    pooling, and migrate child-checker cases into typed cross-file queries one
    reason at a time.
 5. Keep lib snapshot Phase 2/3 and interner redesign counter-gated.
+6. Every project benchmark fixture that currently fails to run (OOM, stack
+   overflow, panic, hang, or any non-zero exit before the runner records a
+   timing) must eventually pass. A failing fixture is a correctness/scaling
+   bug masquerading as a missing data point: it withholds the very baseline
+   the rest of this plan depends on, so "we can't measure it" is never an
+   acceptable end state. Each currently-failing fixture (e.g. `large-ts-repo`
+   OOM/stack-overflow, monorepo-006 cliff failures) must have either an open
+   issue with a root-cause hypothesis or a tier-2 task that is expected to
+   resolve it; once resolved, the fixture rejoins the standard bench matrix
+   and its result is required in PR descriptions that quote large-project
+   numbers.
 
 ### Parallel PR Coordination (as of 2026-05-13)
 
