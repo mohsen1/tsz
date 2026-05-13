@@ -1665,6 +1665,33 @@ function ensureNotNullOrUndefined<T>(x: T) {
 }
 
 #[test]
+fn test_returned_local_function_object_expands_nested_function_signatures() {
+    let output = emit_dts_with_binding(
+        r#"
+function foo<T>(v: T) {
+    function a<T>(a: T) { return a; }
+    function b(): T { return v; }
+
+    function c<T>(v: T) {
+        function a<T>(a: T) { return a; }
+        function b(): T { return v; }
+        return { a, b };
+    }
+
+    return { a, b, c };
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function foo<T>(v: T): {\n    a: <T_1>(a: T_1) => T_1;\n    b: () => T;\n    c: <T_1>(v: T_1) => {\n        a: <T_2>(a: T_2) => T_2;\n        b: () => T_1;\n    };\n};"
+        ),
+        "Expected returned local functions to expand without typeof references: {output}"
+    );
+}
+
+#[test]
 fn test_js_typedef_emits_jsdoc_template_default() {
     let output = emit_js_dts(
         r#"
