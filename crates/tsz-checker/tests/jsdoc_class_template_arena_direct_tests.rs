@@ -19,24 +19,16 @@
 //! a regression that hardcodes the name `T` cannot pass.
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
+use tsz_checker::test_utils::{
+    check_js_source_code_messages_with_options, check_source_code_messages,
+};
 
 fn check_js(source: &str) -> Vec<(u32, String)> {
-    let options = CheckerOptions {
-        check_js: true,
-        ..CheckerOptions::default()
-    };
-    check_source(source, "test.js", options)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    check_js_source_code_messages_with_options(source, "test.js", CheckerOptions::default())
 }
 
 fn check_ts(source: &str) -> Vec<(u32, String)> {
-    check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    check_source_code_messages(source)
 }
 
 #[test]
