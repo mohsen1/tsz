@@ -12,7 +12,8 @@ constructs 924 `DelegateCrossArenaSymbol` child checkers, all from
 ## Scope
 
 - For `delegate_cross_arena_symbol_resolution`, detect non-current
-  `symbol_arenas` targets that map to source files.
+  `symbol_arenas` class/interface targets that map to source files and
+  whose single declaration is proven to live only in that source-file arena.
 - Use the existing `cached_cross_file_symbol_type` /
   `cache_cross_file_symbol_type` helpers for those targets.
 - Keep declaration-file / lib-style delegations, and programs with module
@@ -20,6 +21,8 @@ constructs 924 `DelegateCrossArenaSymbol` child checkers, all from
   fallback path. Module augmentation can change source-file symbol answers
   based on importer graph state, so the shared `(file_idx, SymbolId)` key is
   intentionally disabled for those programs.
+- Do not write generic payloads from this `symbol_arenas` path into the
+  shared bucket.
 - Keep child-checker fallback and diagnostics behavior unchanged.
 
 ## Expected signal
@@ -45,7 +48,7 @@ scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json
 exits non-zero because the generated fixture emits expected diagnostics, but
 it writes perf JSON.
 
-The module-augmentation-guarded implementation observed on `monorepo-006`:
+An unguarded prototype observed on `monorepo-006`:
 
 - `delegate.cache_hits_cross_file = 632` (previous refreshed run: `0`).
 - `DelegateCrossArenaSymbol = 292` child checkers (previous refreshed run:
@@ -54,10 +57,9 @@ The module-augmentation-guarded implementation observed on `monorepo-006`:
 - Remaining `DelegateCrossArenaSymbol` misses: 251 source-file targets plus
   41 declaration-file targets.
 
-The unguarded prototype regressed the
-`moduleAugmentationImportsAndExports*` conformance group by caching
-source-file symbol answers in a program with module augmentation. The PR now
-detects module augmentations through the global augmentation indexes / binders
-and leaves those programs on the old child-checker path. Local targeted
-conformance: `./scripts/conformance/conformance.sh run --workers 4 --filter
-moduleAugmentationImportsAndExports` passes 6/6.
+That prototype regressed conformance by caching module-augmentation programs
+and merged, augmented, or generic source-file payloads. The PR now requires a
+program without module augmentations, a single class/interface declaration
+registered solely in the delegated arena, and skips writes with type
+parameters before using the shared bucket; re-measure this guarded version
+before treating the prototype counters as final.
