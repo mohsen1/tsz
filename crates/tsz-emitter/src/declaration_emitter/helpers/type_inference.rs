@@ -27,8 +27,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-mod generic_new_expression;
-
 pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
     pub(in crate::declaration_emitter) modifiers: Option<&'b NodeList>,
     pub(in crate::declaration_emitter) type_parameters: Option<&'b NodeList>,

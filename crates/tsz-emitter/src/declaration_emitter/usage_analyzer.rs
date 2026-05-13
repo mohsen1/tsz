@@ -25,7 +25,6 @@ use tsz_solver::visitor;
 use crate::transforms::emit_utils::string_literal_text;
 use crate::type_cache_view::TypeCacheView;
 
-mod module_surface;
 mod type_walk;
 mod value_references;
 
