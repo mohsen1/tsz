@@ -270,6 +270,33 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn symbol_arena_symbol_type_cache_is_stable(
+        &self,
+        sym_id: SymbolId,
+        delegate_arena: &tsz_parser::NodeArena,
+    ) -> bool {
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.declarations.is_empty() {
+            return false;
+        }
+
+        // The `symbol_arenas` map stores one arena for the symbol, but merged
+        // or augmented symbols can also have declarations in other arenas. A
+        // cached symbol type is reusable only when every declaration is proven
+        // to belong solely to the delegated source-file arena.
+        symbol.declarations.iter().all(|&decl_idx| {
+            self.ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .is_some_and(|arenas| {
+                    arenas.len() == 1 && std::ptr::eq(arenas[0].as_ref(), delegate_arena)
+                })
+        })
+    }
+
     fn try_resolve_cross_arena_named_alias_without_child(
         &mut self,
         sym_id: SymbolId,
@@ -688,6 +715,7 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .is_some_and(|source_file| !source_file.is_declaration_file)
                     })
+                    .filter(|arena| self.symbol_arena_symbol_type_cache_is_stable(sym_id, arena))
                     .and_then(|arena| self.ctx.get_file_idx_for_arena(arena))
             } else {
                 None

@@ -12,11 +12,13 @@ constructs 924 `DelegateCrossArenaSymbol` child checkers, all from
 ## Scope
 
 - For `delegate_cross_arena_symbol_resolution`, detect non-current
-  `symbol_arenas` targets that map to source files.
+  `symbol_arenas` targets that map to source files and whose declarations
+  are proven to live only in that source-file arena.
 - Use the existing `cached_cross_file_symbol_type` /
   `cache_cross_file_symbol_type` helpers for those targets.
-- Keep declaration-file / lib-style delegations on the existing
-  `lib_delegation_cache` path.
+- Keep declaration-file / lib-style delegations, and merged or augmented
+  source-file symbols, on the existing `lib_delegation_cache` / child-checker
+  fallback path.
 - Keep child-checker fallback and diagnostics behavior unchanged.
 
 ## Expected signal
@@ -42,7 +44,7 @@ scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json
 exits non-zero because the generated fixture emits expected diagnostics, but
 it writes perf JSON.
 
-Observed on `monorepo-006`:
+An unguarded prototype observed on `monorepo-006`:
 
 - `delegate.cache_hits_cross_file = 632` (previous refreshed run: `0`).
 - `DelegateCrossArenaSymbol = 292` child checkers (previous refreshed run:
@@ -50,3 +52,8 @@ Observed on `monorepo-006`:
 - `cross_file_cache_miss_causes`: `bucket_empty = 251`, other buckets `0`.
 - Remaining `DelegateCrossArenaSymbol` misses: 251 source-file targets plus
   41 declaration-file targets.
+
+That prototype regressed conformance by caching merged or augmented
+source-file symbols. The PR now requires every declaration to be registered
+solely in the delegated arena before using the shared bucket; re-measure this
+guarded version before treating the prototype counters as final.
