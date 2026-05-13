@@ -6,11 +6,8 @@
 //! > resolved base-class member is a `get` / `set` accessor, the access is
 //! > valid. TypeScript never emits TS2340 in that shape.
 //!
-//! TS2855 ("Class field … is not accessible … via super") and TS2540
-//! ("Cannot assign to … because it is a read-only property") still cover
-//! the `super.<field>` and `super.<readonly-accessor> = …` shapes via the
-//! existing property-checker paths, and are exercised below to prove this
-//! change does not unmask either of them incorrectly.
+//! `super.<field>` reads still emit TS2855 via the separate field path,
+//! which is exercised below.
 
 use tsz_checker::test_utils::{check_source_code_messages, has_diagnostic_code};
 
@@ -43,8 +40,6 @@ class Derived extends Base {
 
 #[test]
 fn super_public_get_accessor_read_renamed_no_ts2340() {
-    // Anti-hardcoding: paired with the previous test to prove the rule is
-    // not keyed on the property name.
     assert_no_ts2340(
         r#"
 class A {
@@ -199,8 +194,6 @@ class Derived extends Base {
 
 #[test]
 fn super_field_read_still_emits_ts2855_when_es2022() {
-    // Guards that TS2855 (the correct diagnostic for `super.<field>`)
-    // remains wired after removing the accessor-only TS2340 path.
     let source = r#"
 class Base {
   field: number = 0;
