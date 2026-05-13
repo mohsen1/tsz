@@ -538,33 +538,18 @@ impl<'a> InferenceContext<'a> {
                 // e.g. `{ [sym]?: true }` should not contribute `true` when inferring
                 // T from `{ [s: string]: T }`.
                 if has_implicit_index && !source_shape.properties.is_empty() {
-                    // Under `exactOptionalPropertyTypes`, the `?` modifier does NOT
-                    // implicitly add `undefined` to a property's type. So any
-                    // `undefined` in `p.type_id` must have been explicitly written
-                    // by the user (e.g. `b?: number | undefined`) and should be
-                    // preserved during index-signature inference.
-                    //
-                    // Without EOPT, `b?: number` is equivalent to `b?: number | undefined`,
-                    // and tsc strips that synthetic `undefined` when inferring T from
-                    // `{ [k: string]: T }` to match its display behavior.
-                    let strip_optional_undefined = !self.interner.exact_optional_property_types();
                     for p in &source_shape.properties {
                         // Skip symbol-keyed properties — they are not reachable via
                         // a string index and must not pollute string-index inference.
                         if p.is_symbol_named {
                             continue;
                         }
-                        // For optional properties, strip `undefined` from optionality
-                        // unless `exactOptionalPropertyTypes` preserves explicit undefined.
-                        // tsc: `{ a: string, b?: number }` infers T as `string | number`
-                        // (not `string | number | undefined`). With EOPT enabled,
-                        // `b?: number | undefined` infers T as `string | number | undefined`.
-                        let prop_type = if p.optional && strip_optional_undefined {
-                            crate::narrowing::utils::remove_undefined(self.interner, p.type_id)
-                        } else {
-                            p.type_id
-                        };
-                        implicit_parts.push(prop_type);
+                        // Optionality represents that the property may be missing;
+                        // the stored property type represents the value when present.
+                        // Use it directly so `a?: number` contributes `number`, while
+                        // an explicitly annotated `b?: number | undefined` preserves
+                        // its written `undefined` member.
+                        implicit_parts.push(p.type_id);
                     }
                 }
 
