@@ -299,6 +299,13 @@ impl<'a> DeclarationEmitter<'a> {
             if has_type_annotation {
                 self.write(": ");
                 self.emit_type(type_annotation);
+            } else if keyword == "const"
+                && has_initializer
+                && let Some(template_index_type) =
+                    self.template_index_signature_element_access_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&template_index_type);
             } else if self.inside_non_ambient_namespace
                 && !has_initializer
                 && self.get_identifier_text(decl_name).as_deref() == Some("__proto__")
@@ -458,6 +465,13 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     type_text = widened_type_text;
                 }
+                if keyword == "const"
+                    && type_text == "string"
+                    && let Some(template_index_type) =
+                        self.template_index_signature_element_access_type_text(initializer)
+                {
+                    type_text = template_index_type;
+                }
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
@@ -516,7 +530,14 @@ impl<'a> DeclarationEmitter<'a> {
                 && type_text != "any"
             {
                 self.write(": ");
-                self.write(&type_text);
+                if keyword == "const"
+                    && let Some(template_index_type) =
+                        self.template_index_signature_element_access_type_text(initializer)
+                {
+                    self.write(&template_index_type);
+                } else {
+                    self.write(&type_text);
+                }
             } else if has_initializer
                 && self
                     .arena
@@ -730,6 +751,15 @@ impl<'a> DeclarationEmitter<'a> {
                         return;
                     }
 
+                    if has_initializer
+                        && let Some(template_index_type) =
+                            self.template_index_signature_element_access_type_text(initializer)
+                    {
+                        self.write(": ");
+                        self.write(&template_index_type);
+                        return;
+                    }
+
                     if let Some(lit) =
                         Self::enum_member_literal_initializer_value(interner, type_id)
                     {
@@ -819,6 +849,14 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text = if has_initializer {
+                    self.add_initializer_object_member_comments_to_type_text(
+                        initializer,
+                        &selected_type_text,
+                    )
+                } else {
+                    selected_type_text
+                };
                 let selected_type_text =
                     Self::normalize_inferred_array_any_text(&selected_type_text);
                 let selected_type_text = if has_initializer {
@@ -838,9 +876,17 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 self.insert_import_for_unqualified_imported_type(&selected_type_text);
                 self.write(": ");
-                self.write(&Self::strip_synthetic_anonymous_object_members(
-                    &selected_type_text,
-                ));
+                if keyword == "const"
+                    && has_initializer
+                    && let Some(template_index_type) =
+                        self.template_index_signature_element_access_type_text(initializer)
+                {
+                    self.write(&template_index_type);
+                } else {
+                    self.write(&Self::strip_synthetic_anonymous_object_members(
+                        &selected_type_text,
+                    ));
+                }
             } else if let Some(typeof_text) =
                 self.typeof_prefix_for_value_entity(initializer, has_initializer, None)
             {
@@ -880,6 +926,14 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(decl_idx)
                 .map_or(init_node.end, |node| node.end);
             self.skip_comments_before_raw(skip_end);
+        }
+        if has_initializer
+            && let Some(init_node) = self.arena.get(initializer)
+            && (init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || init_node.kind == syntax_kind_ext::AS_EXPRESSION
+                || init_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+        {
+            self.skip_comments_in_node(init_node.pos, init_node.end);
         }
     }
 
@@ -1822,6 +1876,234 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn template_index_signature_element_access_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(init_node)?;
+        let receiver_annotation =
+            self.reference_declared_type_annotation_source_text(access.expression)?;
+        if !receiver_annotation.contains('`') || !receiver_annotation.contains("[") {
+            return None;
+        }
+        let key = self.element_access_key_pattern_text(access.name_or_argument)?;
+        let signatures = Self::template_index_signature_texts(&receiver_annotation);
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let mut matched_values = Vec::new();
+        for (pattern, value) in &signatures {
+            if Self::template_index_pattern_matches_key(pattern, &key) {
+                matched_values.push(value.clone());
+            }
+        }
+
+        if matched_values.is_empty() {
+            return Some("any".to_string());
+        }
+        if matched_values.len() == 1 {
+            return matched_values
+                .into_iter()
+                .next()
+                .map(|value| Self::normalize_string_literal_type_quotes(&value));
+        }
+
+        Self::intersect_string_literal_union_texts(&matched_values)
+            .or_else(|| matched_values.into_iter().next())
+            .map(|value| Self::normalize_string_literal_type_quotes(&value))
+    }
+
+    fn element_access_key_pattern_text(&self, key_idx: NodeIndex) -> Option<String> {
+        let key_node = self.arena.get(key_idx)?;
+        if key_node.kind == SyntaxKind::StringLiteral as u16
+            || key_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            if let Some(literal) = self.arena.get_literal(key_node) {
+                return Some(literal.text.clone());
+            }
+        }
+        if key_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
+            let source = self.get_source_slice(key_node.pos, key_node.end)?;
+            return Some(Self::template_expression_source_to_pattern(source.trim()));
+        }
+        None
+    }
+
+    fn template_expression_source_to_pattern(source: &str) -> String {
+        let mut result = String::new();
+        let mut rest = source.trim().trim_start_matches('`').trim_end_matches('`');
+        while let Some(start) = rest.find("${") {
+            result.push_str(&rest[..start]);
+            let after_start = &rest[start + 2..];
+            let Some(end) = after_start.find('}') else {
+                result.push_str("${string}");
+                return result;
+            };
+            result.push_str("${string}");
+            rest = &after_start[end + 1..];
+        }
+        result.push_str(rest);
+        result
+    }
+
+    fn template_index_signature_texts(type_text: &str) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        let mut rest = type_text;
+        while let Some(key_start) = rest.find("[") {
+            rest = &rest[key_start + 1..];
+            let Some(backtick_start) = rest.find('`') else {
+                break;
+            };
+            let after_tick = &rest[backtick_start + 1..];
+            let Some(backtick_end) = after_tick.find('`') else {
+                break;
+            };
+            let pattern = after_tick[..backtick_end].to_string();
+            rest = &after_tick[backtick_end + 1..];
+
+            let Some(close) = rest.find("]") else {
+                break;
+            };
+            let key_tail = rest[..close].trim();
+            let mut key_patterns = vec![pattern];
+            if key_tail.starts_with('&') {
+                key_patterns.extend(key_tail.split('&').filter_map(|part| {
+                    let part = part.trim();
+                    part.strip_prefix('`')
+                        .and_then(|part| part.strip_suffix('`'))
+                        .map(str::to_string)
+                }));
+            }
+            rest = &rest[close + 1..];
+            let Some(colon) = rest.find(':') else {
+                break;
+            };
+            rest = &rest[colon + 1..];
+            let value_end = [rest.find(';'), rest.find('}')]
+                .into_iter()
+                .flatten()
+                .min()
+                .unwrap_or(rest.len());
+            let value = rest[..value_end].trim();
+            let value = Self::normalize_string_literal_type_quotes(value);
+            result.push((key_patterns.join(" & "), value));
+            rest = &rest[value_end..];
+        }
+        result
+    }
+
+    fn template_index_pattern_matches_key(pattern: &str, key: &str) -> bool {
+        pattern
+            .split('&')
+            .map(str::trim)
+            .all(|part| Self::single_template_index_pattern_matches_key(part, key))
+    }
+
+    fn single_template_index_pattern_matches_key(pattern: &str, key: &str) -> bool {
+        let parts: Vec<&str> = pattern.split("${string}").collect();
+        if parts.len() == 1 {
+            return key == pattern;
+        }
+        let mut offset = 0usize;
+        for (idx, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            if idx == 0 {
+                if !key.starts_with(part) {
+                    return false;
+                }
+                offset = part.len();
+                continue;
+            }
+            let Some(found) = key[offset..].find(part) else {
+                return false;
+            };
+            offset += found + part.len();
+        }
+        if let Some(last) = parts.last()
+            && !last.is_empty()
+            && !key.ends_with(last)
+        {
+            return false;
+        }
+        true
+    }
+
+    fn reference_declared_type_annotation_source_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            if let Some(var_decl) = self.arena.get_variable_declaration(decl_node)
+                && var_decl.type_annotation.is_some()
+            {
+                let annotation_node = self.arena.get(var_decl.type_annotation)?;
+                return self
+                    .get_source_slice(annotation_node.pos, annotation_node.end)
+                    .map(|text| text.trim().to_string());
+            }
+            if let Some(param) = self.arena.get_parameter(decl_node)
+                && param.type_annotation.is_some()
+            {
+                let annotation_node = self.arena.get(param.type_annotation)?;
+                return self
+                    .get_source_slice(annotation_node.pos, annotation_node.end)
+                    .map(|text| text.trim().to_string());
+            }
+        }
+
+        None
+    }
+
+    fn intersect_string_literal_union_texts(values: &[String]) -> Option<String> {
+        let mut iter = values.iter();
+        let first = iter.next()?;
+        let mut common = Self::string_literal_union_members(first);
+        for value in iter {
+            let members = Self::string_literal_union_members(value);
+            common.retain(|member| members.iter().any(|candidate| candidate == member));
+        }
+        (!common.is_empty()).then(|| common.join(" | "))
+    }
+
+    fn string_literal_union_members(value: &str) -> Vec<String> {
+        value
+            .split('|')
+            .map(str::trim)
+            .filter(|part| part.starts_with('"') && part.ends_with('"'))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn normalize_string_literal_type_quotes(value: &str) -> String {
+        value
+            .split('|')
+            .map(|part| {
+                let trimmed = part.trim();
+                if let Some(inner) = trimmed
+                    .strip_prefix('\'')
+                    .and_then(|part| part.strip_suffix('\''))
+                {
+                    format!("\"{}\"", inner.replace('"', "\\\""))
+                } else {
+                    trimmed.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     pub(in crate::declaration_emitter) fn simple_type_reference_name(
