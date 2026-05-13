@@ -12085,6 +12085,50 @@ fn compile_missing_single_file_via_cli_args_returns_error() {
 }
 
 #[test]
+fn compile_directory_as_cli_root_file_returns_ts6231_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    std::fs::create_dir_all(base.join("src")).unwrap();
+    write_file(&base.join("src/index.ts"), "export const ok = 1;\n");
+
+    let mut args = default_args();
+    args.files = vec![PathBuf::from("src")];
+
+    let result = compile(&args, base);
+
+    assert!(
+        result.is_err(),
+        "Should return error when root file is a directory"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.starts_with("TS6231: "),
+        "Error should be a TS6231 marker for directory root file, got: {err}"
+    );
+}
+
+#[test]
+fn compile_dot_as_cli_root_file_returns_ts6231_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("index.ts"), "export const ok = 1;\n");
+
+    let mut args = default_args();
+    args.files = vec![PathBuf::from(".")];
+
+    let result = compile(&args, base);
+
+    assert!(result.is_err(), "Should return error when root file is '.'");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.starts_with("TS6231: "),
+        "Error should be a TS6231 marker for '.' root file, got: {err}"
+    );
+}
+
+#[test]
 fn compile_missing_multiple_files_in_files_array_returns_error() {
     // Test that multiple missing files in tsconfig.json "files" returns an error
     let temp = TempDir::new().expect("temp dir");

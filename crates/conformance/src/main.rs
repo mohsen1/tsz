@@ -10,6 +10,7 @@ mod options_convert;
 mod process_rss;
 mod runner;
 mod server_pool;
+mod test_filter;
 mod test_parser;
 mod text_decode;
 mod tsc_results;

@@ -3102,10 +3102,10 @@ fn test_number_index_signature_method_bivariant_property() {
 }
 
 #[test]
-fn test_named_class_satisfies_string_index_signature_structurally() {
-    // A named class with a method { foo(): void } is structurally assignable
-    // to { [key: string]: unknown } because the method's return type (void)
-    // is assignable to unknown (the index signature value type).
+fn test_named_class_not_assignable_to_string_indexed_without_explicit_index_sig() {
+    // Named class/interface types are nominally opaque for index-signature satisfaction:
+    // having only compatible properties is not sufficient — an explicit matching index
+    // signature must be declared.
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
@@ -3145,9 +3145,7 @@ fn test_named_class_satisfies_string_index_signature_structurally() {
     });
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
-    // Named class structurally satisfies the string index signature because
-    // all its properties (foo: () => void) have values assignable to unknown.
-    assert!(checker.is_subtype_of(source, target));
+    assert!(!checker.is_subtype_of(source, target));
 }
 
 #[test]

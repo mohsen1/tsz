@@ -472,6 +472,14 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::operations::get_iterator_info(self.ctx.types, iterable_type, true)
                 && info.yield_type != TypeId::ANY
             {
+                // get_iterator_info fast-paths Array/Tuple as sync iterators regardless of
+                // is_async, so for-await-of must additionally await their element type.
+                if matches!(
+                    classify_for_of_element_type(self.ctx.types, iterable_type),
+                    ForOfElementKind::Array(_) | ForOfElementKind::Tuple(_)
+                ) {
+                    return self.apply_awaited(info.yield_type);
+                }
                 return info.yield_type;
             }
             // Solver-level resolution can return ANY (or None) for Application
@@ -491,17 +499,7 @@ impl<'a> CheckerState<'a> {
             }
             // Fall back to sync iterator protocol + Promise unwrapping.
             let elem_type = self.for_of_element_type_classified(iterable_type, 0);
-            if let Some(unwrapped) = self.unwrap_promise_type(elem_type) {
-                return unwrapped;
-            }
-            // unwrap_promise_type can fail when the element type has been resolved to
-            // an Object shape (e.g. Promise<number> from lib files).  Fall back to the
-            // tsc approach: if the element is promise-like (has a callable `then`),
-            // extract the fulfillment type from `then`'s onfulfilled callback parameter.
-            if let Some(awaited) = self.get_awaited_type_of_promise_like(elem_type) {
-                return awaited;
-            }
-            elem_type
+            self.apply_awaited(elem_type)
         } else {
             self.for_of_element_type_classified(iterable_type, 0)
         }
@@ -548,10 +546,7 @@ impl<'a> CheckerState<'a> {
         // Step 4: Call next() to get Promise<IteratorResult<T>>, then await it
         // to get IteratorResult<T>, then extract the yield value type.
         let next_return = self.get_call_return_type(next_fn_type);
-        let awaited_next = self
-            .unwrap_promise_type(next_return)
-            .or_else(|| self.get_awaited_type_of_promise_like(next_return))
-            .unwrap_or(next_return);
+        let awaited_next = self.apply_awaited(next_return);
 
         // Extract the yield type from the IteratorResult discriminated union by
         // partitioning on `done` — naive `.value` access would conflate the
@@ -634,6 +629,16 @@ impl<'a> CheckerState<'a> {
                 self.resolve_iterator_element_type(type_id)
             }
         }
+    }
+
+    /// Unwrap `Promise<T>` → `T`; returns `ty` unchanged for non-promise types.
+    fn apply_awaited(&mut self, ty: TypeId) -> TypeId {
+        if ty.is_intrinsic() {
+            return ty;
+        }
+        self.unwrap_promise_type(ty)
+            .or_else(|| self.get_awaited_type_of_promise_like(ty))
+            .unwrap_or(ty)
     }
 
     /// Extract the fulfillment type from a promise-like type by following the
@@ -1662,10 +1667,22 @@ impl<'a> CheckerState<'a> {
             None => return true, // Can't determine - don't emit false positive
         };
 
+        // If either side is any/unknown, or the iterator accepts undefined, avoid
+        // a false positive. `yield*` commonly delegates from generators whose
+        // containing TNext is explicitly `unknown`.
+        if sent_type == TypeId::ANY || sent_type == TypeId::UNKNOWN {
+            return true;
+        }
+
         // If TNext is any, unknown, or undefined, the sent type is always compatible
         if next_type == TypeId::ANY
             || next_type == TypeId::UNKNOWN
             || next_type == TypeId::UNDEFINED
+            || crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, next_type)
+            || crate::query_boundaries::common::contains_free_type_parameters(
+                self.ctx.types,
+                next_type,
+            )
         {
             return true;
         }

@@ -2,7 +2,6 @@
 
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
@@ -24,6 +23,21 @@ impl<'a> CheckerState<'a> {
             .diagnostics
             .iter()
             .any(|d| matches!(d.code, 2314 | 2315 | 2707) && d.start >= start && d.start < end)
+    }
+
+    fn type_arg_subtree_has_value_used_as_type_error(&self, type_arg_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_arg_idx) else {
+            return false;
+        };
+        let (start, end) = (node.pos, node.end);
+        if end <= start {
+            return false;
+        }
+        let code = crate::diagnostics::diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF;
+        self.ctx
+            .diagnostics
+            .iter()
+            .any(|d| d.code == code && d.start >= start && d.start < end)
     }
 
     /// Validate each type argument against its corresponding type parameter
@@ -73,6 +87,12 @@ impl<'a> CheckerState<'a> {
                 // and the broader `extra-2344-with-2314` cluster.
                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                     && self.type_arg_subtree_has_arity_error(arg_idx)
+                {
+                    continue;
+                }
+
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self.type_arg_subtree_has_value_used_as_type_error(arg_idx)
                 {
                     continue;
                 }
@@ -342,6 +362,21 @@ impl<'a> CheckerState<'a> {
                                             self.ctx.types.as_type_database(),
                                             cond_true,
                                         );
+                                        let inst_constraint = self
+                                            .instantiate_constraint_for_type_args(
+                                                constraint_resolved,
+                                                type_params,
+                                                &type_args,
+                                            );
+                                        if self
+                                            .conditional_true_type_parameter_base_satisfies_constraint(
+                                                cond_check,
+                                                cond_true,
+                                                inst_constraint,
+                                            )
+                                        {
+                                            continue;
+                                        }
                                         // When the true branch is a bare type param AND the check
                                         // type is an indexed access containing that param as its
                                         // index, this is a key-filtering pattern, not Extract-like.
@@ -1534,110 +1569,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn constraint_check_base_type(&mut self, type_id: TypeId) -> TypeId {
-        let mut seen = FxHashSet::default();
-        self.constraint_check_base_type_inner(type_id, &mut seen)
-    }
-
-    fn constraint_check_base_type_inner(
-        &mut self,
-        type_id: TypeId,
-        seen: &mut FxHashSet<TypeId>,
-    ) -> TypeId {
-        if !seen.insert(type_id) {
-            return TypeId::UNKNOWN;
-        }
-
-        let evaluated = self.evaluate_type_for_assignability(type_id);
-        let result = if evaluated != type_id {
-            self.constraint_check_base_type_inner(evaluated, seen)
-        } else {
-            let db = self.ctx.types.as_type_database();
-            // For TypeParameter: returns constraint or UNKNOWN; for non-TypeParameter: returns type_id
-            let base = query::base_constraint_of_type(db, type_id);
-            if base == TypeId::UNKNOWN
-                && query::is_bare_type_parameter(db, type_id)
-                && let Some(name_atom) = query::type_parameter_name(db, type_id)
-            {
-                let name = self.ctx.types.resolve_atom(name_atom);
-                if let Some(&scoped_type_id) = self.ctx.type_parameter_scope.get(&name)
-                    && scoped_type_id != type_id
-                {
-                    let scoped_base = query::base_constraint_of_type(db, scoped_type_id);
-                    if scoped_base != TypeId::UNKNOWN && scoped_base != scoped_type_id {
-                        let result = self.constraint_check_base_type_inner(scoped_base, seen);
-                        seen.remove(&type_id);
-                        return result;
-                    }
-                }
-            }
-            if base != type_id {
-                let base = self.evaluate_type_for_assignability(base);
-                if let Some(keyof_operand) = query::keyof_operand(db, base) {
-                    // Only normalize `keyof X` when X is a fully concrete type. When
-                    // X is itself a (free) type parameter, `get_keyof_type` would
-                    // resolve through X's constraint and return a concrete union of
-                    // the constraint's keys (e.g., `keyof T` for `T extends unknown[]`
-                    // becomes `number | "length" | "concat" | ...`). That breaks the
-                    // upstream `contains_free_type_parameters(base)` deferral, causing
-                    // false TS2344 on patterns like `{ [K in keyof T]: F<K> }`.
-                    // Keeping `keyof X` deferred lets the caller defer the constraint
-                    // check to instantiation time, matching tsc.
-                    if !query::contains_free_type_parameters(self.ctx.types, keyof_operand) {
-                        let normalized = self.get_keyof_type(keyof_operand);
-                        if normalized != self.ctx.types.keyof(keyof_operand) {
-                            seen.remove(&type_id);
-                            return normalized;
-                        }
-                    }
-                }
-                base
-            } else if let Some((object_type, index_type)) =
-                query::index_access_components(db, type_id)
-            {
-                let constrained_object_type = if query::is_bare_type_parameter(
-                    self.ctx.types.as_type_database(),
-                    object_type,
-                ) {
-                    self.constraint_check_base_type_inner(object_type, seen)
-                } else {
-                    object_type
-                };
-                let constrained_index_type =
-                    self.constraint_check_base_type_inner(index_type, seen);
-                let resolved_object_type = if constrained_object_type == TypeId::UNKNOWN {
-                    object_type
-                } else {
-                    constrained_object_type
-                };
-                let resolved_index_type = if constrained_index_type == TypeId::UNKNOWN {
-                    index_type
-                } else {
-                    constrained_index_type
-                };
-                if let Some(indexed_value_type) = self.constraint_check_indexed_access_value_type(
-                    resolved_object_type,
-                    resolved_index_type,
-                ) {
-                    self.evaluate_type_for_assignability(indexed_value_type)
-                } else if resolved_object_type == object_type && resolved_index_type == index_type {
-                    type_id
-                } else {
-                    let constrained_access = self
-                        .ctx
-                        .types
-                        .index_access(resolved_object_type, resolved_index_type);
-                    self.evaluate_type_for_assignability(constrained_access)
-                }
-            } else {
-                type_id
-            }
-        };
-
-        seen.remove(&type_id);
-        result
-    }
-
     pub(super) fn ast_indexed_access_property_union_from_declaration(
         &mut self,
         type_arg: TypeId,
@@ -1674,7 +1605,7 @@ impl<'a> CheckerState<'a> {
         (!query::contains_free_type_parameters(self.ctx.types, value_type)).then_some(value_type)
     }
 
-    fn constraint_check_indexed_access_value_type(
+    pub(super) fn constraint_check_indexed_access_value_type(
         &mut self,
         object_type: TypeId,
         index_type: TypeId,
