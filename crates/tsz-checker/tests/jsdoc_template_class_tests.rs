@@ -10,6 +10,10 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{TypeId, TypeInterner};
 
+fn diagnostic_codes(diagnostics: &[tsz_checker::diagnostics::Diagnostic]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
 fn symbol_property_type_strings(
     source: &str,
     file_name: &str,
@@ -290,7 +294,7 @@ f.a = g.a;
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for assigning boolean to number via @template class, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -315,7 +319,7 @@ b.value;
         ts2339,
         0,
         "Expected no TS2339 for property access on @template class instance, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -347,7 +351,7 @@ p.val;
         ts2339,
         0,
         "Expected no TS2339 for multi-param @template class, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -372,7 +376,7 @@ b.value = c.value;
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for incompatible generic assignment in TS class, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 

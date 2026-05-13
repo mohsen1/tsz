@@ -446,6 +446,16 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     type_text = widened_type_text;
                 }
+                if keyword == "const"
+                    && self
+                        .const_literal_initializer_text_deep(initializer)
+                        .is_none()
+                    && self.call_contains_unannotated_function_expression(initializer)
+                    && let Some(widened_type_text) =
+                        self.widen_literal_initializer_result_type_text(initializer)
+                {
+                    type_text = widened_type_text;
+                }
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
@@ -705,6 +715,10 @@ impl<'a> DeclarationEmitter<'a> {
                 if keyword == "const"
                     && let Some(interner) = self.type_interner
                 {
+                    let has_literal_initializer_surface = !has_initializer
+                        || self
+                            .const_literal_initializer_text_deep(initializer)
+                            .is_some();
                     if has_initializer
                         && let Some(formatted) =
                             self.call_initializer_unexported_alias_literal_text(initializer)
@@ -724,7 +738,13 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
-                        let formatted = Self::format_literal_initializer(&lit, interner);
+                        let formatted = if has_literal_initializer_surface {
+                            Self::format_literal_initializer(&lit, interner)
+                        } else if let Some(kind) = Self::literal_primitive_kind_text(&lit) {
+                            kind.to_string()
+                        } else {
+                            Self::format_literal_initializer(&lit, interner)
+                        };
                         self.write(": ");
                         self.write(&formatted);
                         return;
@@ -1003,6 +1023,99 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         None
+    }
+
+    fn widen_literal_initializer_result_type_text(&self, initializer: NodeIndex) -> Option<String> {
+        let interner = self.type_interner?;
+        let type_id = self.get_node_type_or_names(&[initializer])?;
+        if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
+            return Self::literal_primitive_kind_text(&lit).map(str::to_string);
+        }
+        let union_id = tsz_solver::visitor::union_list_id(interner, type_id)?;
+        let members = interner.type_list(union_id);
+        let mut kind: Option<&'static str> = None;
+        for &member in members.iter() {
+            let member_lit = tsz_solver::visitor::literal_value(interner, member)?;
+            let member_kind = Self::literal_primitive_kind_text(&member_lit)?;
+            if let Some(existing) = kind {
+                if existing != member_kind {
+                    return None;
+                }
+            } else {
+                kind = Some(member_kind);
+            }
+        }
+        kind.map(str::to_string)
+    }
+
+    const fn literal_primitive_kind_text(
+        lit: &tsz_solver::types::LiteralValue,
+    ) -> Option<&'static str> {
+        match lit {
+            tsz_solver::types::LiteralValue::String(_) => Some("string"),
+            tsz_solver::types::LiteralValue::Number(_) => Some("number"),
+            tsz_solver::types::LiteralValue::Boolean(_) => Some("boolean"),
+            tsz_solver::types::LiteralValue::BigInt(_) => Some("bigint"),
+        }
+    }
+
+    fn call_contains_unannotated_function_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        match expr_node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.arena
+                    .get_function(expr_node)
+                    .is_some_and(|func| func.type_annotation.is_none())
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let Some(call) = self.arena.get_call_expr(expr_node) else {
+                    return false;
+                };
+                self.call_contains_unannotated_function_expression(call.expression)
+                    || call.arguments.as_ref().is_some_and(|args| {
+                        args.nodes
+                            .iter()
+                            .any(|&arg| self.call_contains_unannotated_function_expression(arg))
+                    })
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                let Some(object) = self.arena.get_literal_expr(expr_node) else {
+                    return false;
+                };
+                object.elements.nodes.iter().any(|&member_idx| {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        return false;
+                    };
+                    if let Some(prop) = self.arena.get_property_assignment(member_node) {
+                        self.call_contains_unannotated_function_expression(prop.initializer)
+                    } else if let Some(method) = self.arena.get_method_decl(member_node) {
+                        method.type_annotation.is_none()
+                    } else {
+                        false
+                    }
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(expr_node)
+                .is_some_and(|paren| {
+                    self.call_contains_unannotated_function_expression(paren.expression)
+                }),
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                self.arena
+                    .get_type_assertion(expr_node)
+                    .is_some_and(|assertion| {
+                        self.call_contains_unannotated_function_expression(assertion.expression)
+                    })
+            }
+            _ => false,
+        }
     }
 
     fn variable_declaration_has_effective_export(&self, decl_idx: NodeIndex) -> bool {

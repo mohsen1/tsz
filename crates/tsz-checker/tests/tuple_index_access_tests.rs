@@ -4,6 +4,10 @@
 
 use tsz_checker::test_utils::check_source_diagnostics;
 
+fn diagnostic_codes(diagnostics: &[tsz_checker::diagnostics::Diagnostic]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
 #[test]
 fn readonly_variadic_tuple_to_mutable_variadic_tuple_emits_ts4104() {
     let diagnostics = check_source_diagnostics(
@@ -45,7 +49,7 @@ type T12 = T1[2];
     assert!(
         diagnostics.iter().any(|d| d.code == 2493),
         "Expected TS2493 for out-of-bounds tuple index access, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -60,7 +64,7 @@ type T22 = T2[2];
     assert!(
         diagnostics.iter().any(|d| d.code == 2339),
         "Expected TS2339 for out-of-bounds union tuple index access, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -76,7 +80,7 @@ let t22 = t2[2];
     assert!(
         diagnostics.iter().any(|d| d.code == 2339),
         "Expected TS2339 for runtime union tuple out-of-bounds access, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -92,7 +96,7 @@ let [d0, d1, d2] = t2;
     assert!(
         diagnostics.iter().any(|d| d.code == 2339),
         "Expected TS2339 for destructuring union tuple out-of-bounds, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -107,7 +111,7 @@ type T21 = T2[1];
     assert!(
         diagnostics.iter().all(|d| d.code != 2339 && d.code != 2493),
         "Expected no TS2339/TS2493 for valid union tuple index, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -161,7 +165,7 @@ var t = <[A]>pair;
     assert!(
         diagnostics.iter().any(|d| d.code == 2352),
         "Expected TS2352 for tuple cast between unrelated element classes, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -185,7 +189,7 @@ var t9 = <[A, I]>classCDTuple;
     assert!(
         diagnostics.iter().any(|d| d.code == 2352),
         "Expected TS2352 for [C, D] as [A, I] (element 0 doesn't overlap), got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
