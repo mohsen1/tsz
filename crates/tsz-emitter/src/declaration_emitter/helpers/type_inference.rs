@@ -2880,6 +2880,9 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.const_literal_initializer_text(expr_idx)
             }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                self.const_asserted_template_expression_type_text(expr_idx)
+            }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.const_asserted_array_literal_type_text(expr_idx, depth)
             }
@@ -2890,6 +2893,88 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_node_type_or_names(&[expr_idx])
                 .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
                 .or_else(|| self.infer_fallback_type_text_at(expr_idx, depth)),
+        }
+    }
+
+    fn const_asserted_template_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let template = self.arena.get_template_expr(expr_node)?;
+        let mut parts = Vec::with_capacity(template.template_spans.nodes.len());
+        let mut text = self.template_literal_part_text(template.head, true)?;
+        for &span_idx in &template.template_spans.nodes {
+            let span_node = self.arena.get(span_idx)?;
+            let span = self.arena.get_template_span(span_node)?;
+            let expr_type = self
+                .template_expression_placeholder_type_text(span.expression)
+                .or_else(|| {
+                    self.get_node_type_or_names(&[span.expression])
+                        .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+                })
+                .or_else(|| self.infer_fallback_type_text_at(span.expression, 0))?;
+            parts.push(expr_type);
+            text.push_str("${");
+            text.push_str(parts.last()?);
+            text.push('}');
+            text.push_str(&self.template_literal_part_text(span.literal, false)?);
+        }
+        Some(format!("`{text}`"))
+    }
+
+    fn template_expression_placeholder_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let ident = self.get_identifier_text(expr_idx)?;
+        let mut current = expr_idx;
+        for _ in 0..32 {
+            let parent_idx = self.arena.parent_of(current)?;
+            let parent_node = self.arena.get(parent_idx)?;
+            if let Some(func) = self.arena.get_function(parent_node) {
+                for &param_idx in &func.parameters.nodes {
+                    let param_node = self.arena.get(param_idx)?;
+                    let param = self.arena.get_parameter(param_node)?;
+                    if self.get_identifier_text(param.name).as_deref() != Some(ident.as_str()) {
+                        continue;
+                    }
+                    let type_text = self
+                        .source_slice_from_arena(self.arena, param.type_annotation)
+                        .or_else(|| {
+                            self.type_annotation_text_from_arena_node(
+                                self.arena,
+                                param.type_annotation,
+                            )
+                        })?;
+                    return Some(type_text.trim().to_string());
+                }
+                return None;
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
+    fn template_literal_part_text(&self, idx: NodeIndex, is_head: bool) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        let raw = self.get_source_slice_no_semi(node.pos, node.end)?;
+        let raw = raw.as_str();
+        if is_head {
+            raw.strip_prefix('`')
+                .and_then(|text| text.strip_suffix("${"))
+                .or_else(|| {
+                    raw.strip_prefix('`')
+                        .and_then(|text| text.strip_suffix('`'))
+                })
+                .map(str::to_string)
+        } else {
+            raw.strip_prefix('}')
+                .and_then(|text| text.strip_suffix("${"))
+                .or_else(|| {
+                    raw.strip_prefix('}')
+                        .and_then(|text| text.strip_suffix('`'))
+                })
+                .map(str::to_string)
         }
     }
 
@@ -5361,12 +5446,28 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let body_node = self.arena.get(func.body)?;
         if body_node.kind == syntax_kind_ext::BLOCK {
+            if let Some(return_expr) = self.single_return_expression(func.body)
+                && let Some(type_text) = self.as_const_assertion_type_text(return_expr)
+            {
+                return Some(type_text);
+            }
             return self.function_body_preferred_return_type_text(func.body);
         }
 
         self.preferred_expression_type_text(func.body)
             .or_else(|| self.infer_fallback_type_text_at(func.body, 0))
             .filter(|text| !text.is_empty() && text != "any")
+    }
+
+    fn single_return_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        if block.statements.nodes.len() != 1 {
+            return None;
+        }
+        let stmt_node = self.arena.get(block.statements.nodes[0])?;
+        let ret = self.arena.get_return_statement(stmt_node)?;
+        self.skip_parenthesized_expression(ret.expression)
     }
 
     fn source_return_type_annotation_is_reusable(

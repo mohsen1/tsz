@@ -186,6 +186,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         type_text = Self::replace_whole_words_in_text(&type_text, &substitutions);
+        type_text = Self::simplify_string_literal_template_type_text(&type_text);
         if type_param_names
             .iter()
             .any(|name| Self::contains_whole_word_in_text(&type_text, name))
@@ -196,6 +197,68 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(type_text)
+    }
+
+    fn simplify_string_literal_template_type_text(type_text: &str) -> String {
+        let mut output = String::with_capacity(type_text.len());
+        let bytes = type_text.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i] != b'`' {
+                output.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+            if let Some((replacement, next)) = Self::try_simplify_template_literal_at(type_text, i)
+            {
+                output.push_str(&replacement);
+                i = next;
+            } else if let Some(end) = type_text.get(i + 1..).and_then(|text| text.find('`')) {
+                let end = i + 1 + end + 1;
+                output.push_str(type_text.get(i..end).unwrap_or("`"));
+                i = end;
+            } else {
+                output.push('`');
+                i += 1;
+            }
+        }
+        output
+    }
+
+    fn try_simplify_template_literal_at(type_text: &str, start: usize) -> Option<(String, usize)> {
+        let bytes = type_text.as_bytes();
+        let mut i = start + 1;
+        let mut value = String::new();
+        while i < bytes.len() {
+            match bytes[i] {
+                b'`' => return Some((format!("{value:?}"), i + 1)),
+                b'$' if bytes.get(i + 1) == Some(&b'{') => {
+                    let expr_start = i + 2;
+                    let expr_end = type_text.get(expr_start..)?.find('}')? + expr_start;
+                    let literal = type_text.get(expr_start..expr_end)?.trim();
+                    let literal = Self::unquoted_string_literal_text(literal)?;
+                    value.push_str(&literal);
+                    i = expr_end + 1;
+                }
+                b'\\' => return None,
+                byte => {
+                    value.push(byte as char);
+                    i += 1;
+                }
+            }
+        }
+        None
+    }
+
+    fn unquoted_string_literal_text(literal: &str) -> Option<String> {
+        let quote = literal.as_bytes().first().copied()?;
+        if quote != b'"' && quote != b'\'' {
+            return None;
+        }
+        if literal.as_bytes().last().copied() != Some(quote) {
+            return None;
+        }
+        Some(literal.get(1..literal.len() - 1)?.to_string())
     }
 
     pub(in crate::declaration_emitter) fn substitute_call_result_parameter_type_queries(
