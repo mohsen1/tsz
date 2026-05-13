@@ -3,7 +3,7 @@
 Status: ready
 Owner: Codex
 Date: 2026-05-14
-PR: TBD
+PR: #6701
 
 ## Intent
 
