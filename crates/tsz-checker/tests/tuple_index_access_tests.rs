@@ -2,11 +2,7 @@
 //! - TS2493: Tuple out-of-bounds on single tuple types
 //! - TS2339: Property does not exist on union-of-tuple types
 
-use tsz_checker::test_utils::check_source_diagnostics;
-
-fn diagnostic_codes(diagnostics: &[tsz_checker::diagnostics::Diagnostic]) -> Vec<u32> {
-    diagnostics.iter().map(|d| d.code).collect()
-}
+use tsz_checker::test_utils::{check_source_diagnostics, diagnostic_codes};
 
 #[test]
 fn readonly_variadic_tuple_to_mutable_variadic_tuple_emits_ts4104() {

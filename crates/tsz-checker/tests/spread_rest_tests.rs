@@ -1,6 +1,6 @@
 //! Tests for spread and rest operator type checking
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{check_source_diagnostics, diagnostic_codes};
 
 #[test]
 fn test_array_spread_with_tuple() {
@@ -1577,7 +1577,7 @@ var x: any;
         ts2698,
         0,
         "TS2698 should not be emitted for rest in destructuring assignment, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -1594,7 +1594,7 @@ for ([{ ...y }] of [[{ abc: 1 }]]) ;
         ts2698,
         0,
         "TS2698 should not be emitted for rest in for-of destructuring, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 

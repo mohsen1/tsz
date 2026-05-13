@@ -3,16 +3,12 @@
 //! Verifies that @template type parameters on JS classes are recognized
 //! and used for generic type checking, matching tsc behavior.
 
-use crate::test_utils::check_js_source_diagnostics;
+use crate::test_utils::{check_js_source_diagnostics, diagnostic_codes};
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::query_boundaries::common::PropertyAccessResult;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::{TypeId, TypeInterner};
-
-fn diagnostic_codes(diagnostics: &[tsz_checker::diagnostics::Diagnostic]) -> Vec<u32> {
-    diagnostics.iter().map(|d| d.code).collect()
-}
 
 fn symbol_property_type_strings(
     source: &str,

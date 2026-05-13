@@ -4,11 +4,7 @@
 //! object literal methods and arrow functions, and that assignability
 //! checks are correctly performed.
 
-use crate::test_utils::check_js_source_diagnostics;
-
-fn diagnostic_codes(diagnostics: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
-    diagnostics.iter().map(|d| d.code).collect()
-}
+use crate::test_utils::{check_js_source_diagnostics, diagnostic_codes};
 
 #[test]
 fn invalid_satisfies_prefix_is_not_a_jsdoc_satisfies_tag() {

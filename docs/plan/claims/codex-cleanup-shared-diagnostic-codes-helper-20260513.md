@@ -2,7 +2,7 @@
 
 Issue: https://github.com/mohsen1/tsz/issues/6327
 Branch: `codex/cleanup-shared-diagnostic-codes-helper-20260513`
-Status: WIP
+Status: Implemented
 
 ## Scope
 
@@ -10,7 +10,7 @@ Add a shared diagnostic-code projection helper to
 `crates/tsz-checker/src/test_utils.rs` and replace local/repeated projection
 helpers across checker tests.
 
-Planned touched areas:
+Touched areas:
 
 - JSDoc diagnostic assertion tests
 - Tuple index access tests
@@ -21,9 +21,14 @@ Planned touched areas:
 This is a behavior-preserving checker-test cleanup. It does not change roadmap
 metrics, compiler behavior, or implementation direction.
 
+Related narrower cleanup PRs already covered some per-file dedupe before this
+branch became implementation-ready. This branch now keeps the useful shared
+helper layer and migrates the remaining focused local helpers/direct projections
+without expanding into unrelated checker tests.
+
 ## Verification
 
-Planned:
+Run:
 
 - `cargo fmt --check`
 - focused `cargo nextest` runs for touched test modules
