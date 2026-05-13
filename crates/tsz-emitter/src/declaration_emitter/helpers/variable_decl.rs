@@ -413,10 +413,26 @@ impl<'a> DeclarationEmitter<'a> {
                     .arena
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && let Some(type_text) =
+                    self.call_expression_reused_type_text(initializer)
+                        .filter(|text| {
+                            text.contains("=>")
+                                && !text.contains("any")
+                                && !text.contains("unknown")
+                        })
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
             {
-                let type_text = self
-                    .call_expression_reused_type_text(initializer)
+                let reused_type_text = self.call_expression_reused_type_text(initializer);
+                let type_text = reused_type_text
+                    .as_ref()
                     .filter(|text| {
                         !text.contains("unknown")
                             && (text.contains("=>")
@@ -425,6 +441,7 @@ impl<'a> DeclarationEmitter<'a> {
                                 || (keyword == "const"
                                     && Self::is_literal_type_text_for_const_call(text)))
                     })
+                    .cloned()
                     .unwrap_or(type_text);
                 let has_public_import_type = Self::type_text_starts_with_import_type(&type_text)
                     && !self.import_type_uses_private_package_subpath(&type_text);
@@ -442,7 +459,11 @@ impl<'a> DeclarationEmitter<'a> {
                 let mut type_text = self
                     .expand_rest_tuple_parameters_in_function_type_text(initializer, &type_text)
                     .unwrap_or(type_text);
+                let preserves_reused_literal_call_type = reused_type_text
+                    .as_deref()
+                    .is_some_and(|reused| reused == type_text && reused.contains('"'));
                 if keyword != "const"
+                    && !preserves_reused_literal_call_type
                     && let Some(widened_type_text) =
                         self.widen_mutable_call_initializer_literal_type_text(initializer)
                 {
