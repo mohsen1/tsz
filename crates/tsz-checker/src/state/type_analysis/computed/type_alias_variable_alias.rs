@@ -359,9 +359,16 @@ impl<'a> CheckerState<'a> {
                 // return, but pre-registering avoids subtle order-of-init
                 // gaps for nested lookups (#6014).
                 self.ctx
-                    .definition_store
-                    .register_type_to_def(alias_type, def_id);
-                self.ctx.definition_store.set_body(def_id, alias_type);
+                    .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
+                // If the value declaration mentions this alias from a type
+                // position (for example `(): Alias => ...`), compute the
+                // value side after the alias body is available.
+                if (flags & symbol_flags::VALUE != 0)
+                    && !self.ctx.merged_value_types.contains_key(&sym_id)
+                    && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
+                {
+                    self.ctx.merged_value_types.insert(sym_id, val_type);
+                }
 
                 // Return the params that were used during lowering - this ensures
                 // type_env gets the same TypeIds as the type body

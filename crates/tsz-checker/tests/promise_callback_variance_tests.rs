@@ -129,6 +129,53 @@ b = a;
 }
 
 #[test]
+fn indexed_access_bivariance_hack_stays_bivariant() {
+    // Regression guard for the React-style event handler pattern:
+    // extracting a method through indexed access strips the method shape, so
+    // variance collection must leave the method parameter independent and let
+    // structural function bivariance handle assignment.
+    let codes = collect_codes(
+        r#"
+type EventHandler<E> = { bivarianceHack(event: E): void }["bivarianceHack"];
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+declare var fooHandler: EventHandler<Foo>;
+declare var barHandler: EventHandler<Bar>;
+fooHandler = barHandler;
+barHandler = fooHandler;
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "indexed-access bivarianceHack handlers should be bivariant, got {codes:?}"
+    );
+}
+
+#[test]
+fn wrapper_of_indexed_access_bivariance_hack_stays_bivariant() {
+    // The wrapper path exercises variance propagation through the extracted
+    // callable alias instead of only direct assignment of the alias itself.
+    let codes = collect_codes(
+        r#"
+type EventHandler<E> = { bivarianceHack(event: E): void }["bivarianceHack"];
+interface Props<T> { onEvent: EventHandler<T>; }
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+declare var fooProps: Props<Foo>;
+declare var barProps: Props<Bar>;
+fooProps = barProps;
+barProps = fooProps;
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "wrappers around indexed-access bivarianceHack handlers should stay bivariant, got {codes:?}"
+    );
+}
+
+#[test]
 fn callback_alias_application_is_checked_as_callable_parameter() {
     let diags = collect_relevant_diagnostics(
         r#"

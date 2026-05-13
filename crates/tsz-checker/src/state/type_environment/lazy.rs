@@ -1312,6 +1312,30 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Insert `type_id` for `def_id` into both type environments, carrying type params
+    /// when present. Safe to call during recursive resolution; failed borrows are logged.
+    fn try_insert_def_in_type_env(&mut self, def_id: tsz_solver::DefId, type_id: TypeId) {
+        // insert_def_with_params with empty params is equivalent to insert_def, so we
+        // unify both paths and avoid a conditional.
+        let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+        match self.ctx.type_env.try_borrow_mut() {
+            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params.clone()),
+            Err(e) => tracing::warn!(
+                target_env = "type_env",
+                error = ?e,
+                "try_insert_def_in_type_env: borrow failed; insert skipped"
+            ),
+        }
+        match self.ctx.type_environment.try_borrow_mut() {
+            Ok(mut env) => env.insert_def_with_params(def_id, type_id, params),
+            Err(e) => tracing::warn!(
+                target_env = "type_environment",
+                error = ?e,
+                "try_insert_def_in_type_env: borrow failed; insert skipped"
+            ),
+        }
+    }
+
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
     ///
     /// Returns the resolved type when a symbol bridge exists; returns `None` when the `DefId`
@@ -1350,19 +1374,26 @@ impl<'a> CheckerState<'a> {
             self.get_type_of_symbol(sym_id)
         };
 
-        if resolved != TypeId::ERROR
-            && resolved != TypeId::ANY
-            && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-        {
-            // Insert the type params alongside the def type so that
-            // Application evaluation via TypeEnvironment can instantiate
-            // generic types correctly, even for DefIds created in different
-            // checker contexts (e.g., PromiseLike mapped multiple times).
-            if let Some(params) = self.ctx.get_def_type_params(def_id) {
-                env.insert_def_with_params(def_id, resolved, params);
-            } else {
-                env.insert_def(def_id, resolved);
+        // If `get_type_of_symbol` returned the Lazy placeholder for this same def_id
+        // (cycle-break), inserting it into `type_env` would shadow the DefinitionStore
+        // fallback and cause the `resolved == type_id` guard in the caller to short-circuit.
+        // Prefer the concrete body from DefinitionStore when it is already available.
+        if lazy_def_id(self.ctx.types, resolved) == Some(def_id) {
+            if let Some(body) = self.ctx.definition_store.get_body(def_id)
+                && body != resolved
+                && body != TypeId::ERROR
+                && body != TypeId::ANY
+            {
+                self.try_insert_def_in_type_env(def_id, body);
+                return Some(body);
             }
+            return Some(resolved);
+        }
+
+        if resolved != TypeId::ERROR && resolved != TypeId::ANY {
+            // Carry type params so Application evaluation via TypeEnvironment can
+            // instantiate generic types correctly across checker contexts.
+            self.try_insert_def_in_type_env(def_id, resolved);
         }
         Some(resolved)
     }
