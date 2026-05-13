@@ -5,6 +5,12 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+#[derive(Clone)]
+struct ShortCircuitOrTypeText {
+    text: String,
+    widened_from_inferred_literal: bool,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(super) fn short_circuit_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
@@ -32,6 +38,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if binary.operator_token == SyntaxKind::BarBarToken as u16 {
+            if let Some(type_text) = self.short_circuit_or_literal_type_text(expr_idx) {
+                return Some(type_text.text);
+            }
+
             if !self.expression_is_always_truthy_for_decl_emit(binary.left) {
                 return None;
             }
@@ -45,6 +55,233 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn short_circuit_or_literal_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<ShortCircuitOrTypeText> {
+        let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::BarBarToken as u16 {
+            return None;
+        }
+
+        let left = self.short_circuit_or_literal_operand_type_text(binary.left)?;
+        let right = self.short_circuit_or_literal_operand_type_text(binary.right)?;
+        Self::combine_short_circuit_or_literal_types(left, right)
+    }
+
+    fn short_circuit_or_literal_operand_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<ShortCircuitOrTypeText> {
+        let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+
+        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && self
+                .arena
+                .get_binary_expr(expr_node)
+                .is_some_and(|binary| binary.operator_token == SyntaxKind::BarBarToken as u16)
+        {
+            return self.short_circuit_or_literal_type_text(expr_idx);
+        }
+
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        if let Some(type_text) = self.reference_declared_type_annotation_text(expr_idx) {
+            return Self::short_circuit_or_literal_operand_from_text(&type_text, false);
+        }
+
+        if let Some(initializer) = self.unannotated_const_literal_reference_initializer(expr_idx) {
+            let initializer = self.skip_parenthesized_expression_via_parent_node(initializer)?;
+            if let Some(type_text) = self.short_circuit_or_literal_type_text(initializer) {
+                return Some(type_text);
+            }
+            if let Some(type_text) =
+                self.short_circuit_widened_literal_initializer_type_text(initializer)
+            {
+                return Self::short_circuit_or_literal_operand_from_text(&type_text, true);
+            }
+        }
+
+        None
+    }
+
+    fn unannotated_const_literal_reference_initializer(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            let Some(var_decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if self.arena.is_const_variable_declaration(decl_idx)
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+            {
+                return Some(var_decl.initializer);
+            }
+        }
+
+        None
+    }
+
+    fn short_circuit_widened_literal_initializer_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some("string".to_string())
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+            k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
+            k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+                Some("boolean".to_string())
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && self.is_negative_literal(expr_node) =>
+            {
+                let unary = self.arena.get_unary_expr(expr_node)?;
+                let operand = self.arena.get(unary.operand)?;
+                match operand.kind {
+                    k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+                    k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn short_circuit_or_literal_operand_from_text(
+        type_text: &str,
+        widened_from_inferred_literal: bool,
+    ) -> Option<ShortCircuitOrTypeText> {
+        let parts = Self::split_top_level_union_type_parts(type_text);
+        if parts
+            .iter()
+            .all(|part| Self::short_circuit_literal_part_kind(part).is_some())
+        {
+            return Some(ShortCircuitOrTypeText {
+                text: parts.join(" | "),
+                widened_from_inferred_literal,
+            });
+        }
+        None
+    }
+
+    fn combine_short_circuit_or_literal_types(
+        left: ShortCircuitOrTypeText,
+        right: ShortCircuitOrTypeText,
+    ) -> Option<ShortCircuitOrTypeText> {
+        let left_parts = Self::split_top_level_union_type_parts(&left.text);
+        let right_parts = Self::split_top_level_union_type_parts(&right.text);
+        let mut parts = Vec::new();
+        parts.extend(left_parts);
+        parts.extend(right_parts);
+
+        if parts
+            .iter()
+            .any(|part| Self::short_circuit_literal_part_kind(part).is_none())
+        {
+            return None;
+        }
+
+        let should_widen = left.widened_from_inferred_literal
+            || right.widened_from_inferred_literal
+            || parts
+                .iter()
+                .any(|part| Self::short_circuit_literal_part_is_wide(part));
+
+        if should_widen {
+            let mut widened_parts = Vec::new();
+            for kind in ["string", "number", "boolean", "bigint"] {
+                if parts
+                    .iter()
+                    .any(|part| Self::short_circuit_literal_part_kind(part) == Some(kind))
+                {
+                    widened_parts.push(kind.to_string());
+                }
+            }
+            return Some(ShortCircuitOrTypeText {
+                text: widened_parts.join(" | "),
+                widened_from_inferred_literal: true,
+            });
+        }
+
+        let mut literal_parts = Vec::new();
+        for part in parts {
+            if !literal_parts.contains(&part) {
+                literal_parts.push(part);
+            }
+        }
+
+        Some(ShortCircuitOrTypeText {
+            text: literal_parts.join(" | "),
+            widened_from_inferred_literal: false,
+        })
+    }
+
+    fn short_circuit_literal_part_kind(part: &str) -> Option<&'static str> {
+        let part = part.trim();
+        match part {
+            "string" => return Some("string"),
+            "number" => return Some("number"),
+            "boolean" | "true" | "false" => return Some("boolean"),
+            "bigint" => return Some("bigint"),
+            _ => {}
+        }
+
+        if (part.starts_with('"') && part.ends_with('"'))
+            || (part.starts_with('\'') && part.ends_with('\''))
+        {
+            return Some("string");
+        }
+
+        if part
+            .strip_prefix('-')
+            .unwrap_or(part)
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ch == '.')
+            && part.chars().any(|ch| ch.is_ascii_digit())
+        {
+            return Some("number");
+        }
+
+        if part.ends_with('n')
+            && part[..part.len() - 1]
+                .strip_prefix('-')
+                .unwrap_or(&part[..part.len() - 1])
+                .chars()
+                .all(|ch| ch.is_ascii_digit())
+        {
+            return Some("bigint");
+        }
+
+        None
+    }
+
+    fn short_circuit_literal_part_is_wide(part: &str) -> bool {
+        matches!(part.trim(), "string" | "number" | "boolean" | "bigint")
     }
 
     fn short_circuit_operand_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
