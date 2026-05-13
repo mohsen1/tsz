@@ -1435,7 +1435,7 @@ impl<'a> DeclarationEmitter<'a> {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
-                if !self.member_is_jsdoc_overload_constructor(member_idx) {
+                if !self.member_is_jsdoc_overload_signature(member_idx) {
                     self.emit_leading_jsdoc_comments(member_node.pos);
                 }
             }
@@ -1550,7 +1550,7 @@ impl<'a> DeclarationEmitter<'a> {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
-                if !self.member_is_jsdoc_overload_constructor(member_idx) {
+                if !self.member_is_jsdoc_overload_signature(member_idx) {
                     self.emit_leading_jsdoc_comments(member_node.pos);
                 }
             }
@@ -2418,8 +2418,8 @@ impl<'a> DeclarationEmitter<'a> {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
-                if self.member_is_jsdoc_overload_constructor(member_idx) {
-                    // The constructor overload path emits one comment per overload
+                if self.member_is_jsdoc_overload_signature(member_idx) {
+                    // The JSDoc overload path emits one comment per overload
                     // signature; emitting the whole chain here would attach the
                     // implementation comment to the reconstructed signature.
                 } else if uses_reordered_js_member_comments {

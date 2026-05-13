@@ -2135,6 +2135,77 @@ export class Foo {
 }
 
 #[test]
+fn test_jsdoc_method_overload_tags_emit_method_signatures() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @template T
+ */
+class Example {
+  /**
+   * @param {T} value
+   */
+  constructor(value) {
+    this.value = value;
+  }
+
+  /**
+   * @overload
+   * @param {Example<number>} this
+   * @returns {'number'}
+   *
+   * @overload
+   * @param {Example<string>} this
+   * @returns {'string'}
+   *
+   * @returns {string}
+   */
+  getTypeName() {
+    return typeof this.value;
+  }
+
+  /**
+   * @template U
+   * @overload
+   * @param {(y: T) => U} fn
+   * @returns {U}
+   *
+   * @overload
+   * @returns {T}
+   *
+   * @param {(y: T) => unknown} [fn]
+   * @returns {unknown}
+   */
+  transform(fn) {
+    return fn ? fn(this.value) : this.value;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("getTypeName(this: Example<number>): \"number\";"),
+        "Expected number overload: {output}"
+    );
+    assert!(
+        output.contains("getTypeName(this: Example<string>): \"string\";"),
+        "Expected string overload: {output}"
+    );
+    assert!(
+        output.contains("transform<U>(fn: (y: T) => U): U;"),
+        "Expected generic transform overload: {output}"
+    );
+    assert!(
+        output.contains("transform<U>(): T;"),
+        "Expected no-argument transform overload: {output}"
+    );
+    assert!(
+        !output.contains("getTypeName(): string;") && !output.contains("transform(fn:"),
+        "Did not expect implementation method signatures: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"

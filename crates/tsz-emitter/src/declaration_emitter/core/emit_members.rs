@@ -24,6 +24,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if self.emit_jsdoc_overload_method_declarations(method_idx, method) {
+            return;
+        }
+
         // Get method name as string for overload tracking
         let method_name = self.get_function_name(method_idx);
 
@@ -768,6 +772,89 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(ctor_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    pub(in crate::declaration_emitter) fn member_is_jsdoc_overload_method(
+        &self,
+        member_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+            return false;
+        }
+
+        self.leading_jsdoc_comment_chain_for_pos(member_node.pos)
+            .iter()
+            .any(|jsdoc| Self::jsdoc_has_overload_tag(jsdoc))
+    }
+
+    pub(in crate::declaration_emitter) fn member_is_jsdoc_overload_signature(
+        &self,
+        member_idx: NodeIndex,
+    ) -> bool {
+        self.member_is_jsdoc_overload_constructor(member_idx)
+            || self.member_is_jsdoc_overload_method(member_idx)
+    }
+
+    fn emit_jsdoc_overload_method_declarations(
+        &mut self,
+        method_idx: NodeIndex,
+        method: &MethodDeclData,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(method_node) = self.arena.get(method_idx) else {
+            return false;
+        };
+
+        let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(method_node.pos);
+        let overloads = Self::jsdoc_overload_signatures_from_chain(&jsdoc_chain);
+        if overloads.is_empty() {
+            return false;
+        }
+
+        if let Some(method_name) = self.get_function_name(method_idx) {
+            self.method_names_with_overloads.insert(method_name);
+        }
+
+        for overload in overloads {
+            self.emit_jsdoc_overload_comment(&overload.comment);
+            self.write_indent();
+            self.emit_member_modifiers(&method.modifiers);
+            self.emit_node(method.name);
+            if method.question_token {
+                self.write("?");
+            }
+            self.emit_jsdoc_template_parameters(&overload.type_params);
+            self.write("(");
+            for (idx, param) in overload.params.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                if param.rest {
+                    self.write("...");
+                }
+                self.write(&param.name);
+                if param.optional && !param.rest {
+                    self.write("?");
+                }
+                self.write(": ");
+                self.write(&param.type_text);
+            }
+            self.write("): ");
+            self.write(overload.return_type.as_deref().unwrap_or("any"));
+            self.write(";");
+            self.write_line();
+        }
+
+        self.skip_comments_in_node(method_node.pos, method_node.end);
+        true
     }
 
     pub(in crate::declaration_emitter) fn class_has_jsdoc_overload_constructor(
