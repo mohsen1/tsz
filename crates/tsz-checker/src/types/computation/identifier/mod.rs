@@ -4,6 +4,7 @@
 //! the binder, checking TDZ violations, validating definite assignment,
 //! applying flow-based narrowing, and handling intrinsic/global names.
 
+mod companion_values;
 mod core;
 mod resolution;
 

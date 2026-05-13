@@ -34,6 +34,7 @@ pub(crate) mod call_finalize;
 pub(crate) mod call_helpers;
 pub(crate) mod call_inference;
 pub(crate) mod call_result;
+mod call_result_namespace;
 pub(crate) mod complex;
 pub(crate) mod complex_constructors;
 pub(crate) mod complex_js_constructor;
