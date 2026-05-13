@@ -117,7 +117,7 @@ impl TypeInternerCache {
     }
 
     #[inline(always)]
-    fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
+    const fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
         let entry = self.lookup[idx].get();
         if entry.tag == id.0 && entry.instance_id == instance_id {

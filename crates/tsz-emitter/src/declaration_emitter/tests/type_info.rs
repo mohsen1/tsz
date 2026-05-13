@@ -778,6 +778,60 @@ export class FilteredThing extends Filter(Unmixed) {
 }
 
 #[test]
+fn test_mixin_call_intersection_substitutes_nested_call_return_text() {
+    let source = r#"
+type Constructor<T> = new(...args: any[]) => T;
+
+class Base {}
+class Derived extends Base {}
+
+interface Printable {
+    print(): void;
+}
+
+const Printable = <T extends Constructor<Base>>(superClass: T): Constructor<Printable> & { message: string } & T =>
+    class extends superClass {
+        static message = "hello";
+        print() {}
+    }
+
+interface Tagged {
+    _tag: string;
+}
+
+function Tagged<T extends Constructor<{}>>(superClass: T): Constructor<Tagged> & T {
+    class C extends superClass {
+        _tag: string;
+    }
+    return C;
+}
+
+const Thing2 = Tagged(Printable(Derived));
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(
+            "declare const Thing2: Constructor<Tagged> & Constructor<Printable> & {\n    message: string;\n} & Constructor<Base>;"
+        ),
+        "Expected nested mixin call substitution to preserve source intersection order: {output}"
+    );
+    assert!(
+        !output.contains("=> {"),
+        "Did not expect recovered arrow body text in nested mixin return type: {output}"
+    );
+}
+
+#[test]
 #[ignore = "regressed after remote changes: class extends expression declaration emit loses local dependency source order"]
 fn test_named_class_extends_expression_keeps_local_dependency_in_source_order() {
     let source = r#"
