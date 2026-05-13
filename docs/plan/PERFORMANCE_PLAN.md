@@ -1200,6 +1200,17 @@ the dominant branch and providing a direct guardrail for future interface
 root-demand or lowering-cost edits. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md).
 
+**2026-05-13 `compute_type_of_symbol` simple-object outcome buckets:** a new
+named outcome array,
+`compute_type_of_symbol_interface_simple_object_outcomes`, classifies why the
+shortcut succeeded or rejected per interface call. On monorepo-006, `success`
+is `24,760 / 24,796` (`99.85%`); the active reject residue is tiny and concrete
+(`reject_out_of_arena_decl=16`, `reject_missing_interface_decl=7`,
+`reject_declaration_count=1`, `reject_heritage_extends=1`, all others zero).
+This narrows future shortcut-expansion work to those live buckets and avoids
+spending time on inactive gates. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-outcomes.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
