@@ -1166,6 +1166,57 @@ from 30 to 28 with unchanged diagnostics (`10,198`). Decision record:
 [`perf-runs/2026-05-13-delegate-actual-lib-alias-body-query.md`](perf-runs/2026-05-13-delegate-actual-lib-alias-body-query.md).
 Claim: [`claims/perf-actual-lib-alias-body-query-2026-05-13.md`](claims/perf-actual-lib-alias-body-query-2026-05-13.md).
 
+**2026-05-13 `compute_type_of_symbol` interface fast path:** for local
+single-declaration interfaces, we now skip three high-frequency costs when not
+needed: computed-name precompute maps, member type-parameter prewarm scans, and
+heritage merging when there is no local `extends` clause. On monorepo-006
+attribution mode, this preserves diagnostics (`10,198`) and call buckets
+(`total calls = 26,370`, `interface = 24,781`) while reducing warm-run check
+time from `80.69s` to `79.60s` (`-1.35%`) and total time from `82.36s` to
+`81.25s` (`-1.35%`). Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath.md).
+
+**2026-05-13 `compute_type_of_symbol` interface fast-path outcomes:** new
+interface-branch counters split which skip-combination fired per interface call.
+On monorepo-006, `skip_all_three` accounts for `24,767 / 24,796` interface
+calls (`99.88%`), with only 18 non-`skip_all_three` rows total. This says the
+current skip gates are already saturating and the next meaningful reduction
+should target interface cold-call volume / lowering cost instead of more gate
+tuning. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath-outcomes.md).
+
+**2026-05-13 `compute_type_of_symbol` interface call-site outcomes:** new
+call-site counters classify interface calls by parent symbol kind in the
+resolution stack. On monorepo-006, root calls dominate
+(`24,782 / 24,796`, `99.94%`) while nested parent-interface calls are tiny
+(`14`, `0.06%`) and all other parent-kind buckets are zero. This narrows the
+next optimization lane to reducing top-level/root interface demand, not
+interface-to-interface recursion tuning. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-callsite-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-callsite-outcomes.md).
+
+**2026-05-13 `compute_type_of_symbol` simple-local-interface shortcut:** the
+interface branch now has an early direct-lowering path for local
+single-declaration interfaces with no local `extends`, no computed property
+names, no type parameters, property-signature-only members, a non-empty member
+list, and only primitive keyword member annotations. The original broader
+shortcut measured a large monorepo-006 win (`95.75s -> 84.24s` total), but it
+also admitted empty interfaces and annotations that require hybrid type
+resolution; after targeted unit failures, the guarded branch now falls back to
+the full interface lowering path for those cases. Treat the original timing as
+historical until the narrowed guard is remeasured. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md).
+
+**2026-05-13 `compute_type_of_symbol` simple-local-interface hit counter:** a
+new checker scalar counter,
+`checker.compute_type_of_symbol_interface_simple_object_fastpath_hits`, now
+records every interface-symbol call that returns through the simple local-object
+shortcut. The original broad shortcut reported `24,760` hits against `24,796`
+interface-kind calls (`99.85%`); this is no longer the guarded-branch baseline.
+Keep the counter as the direct guardrail for future interface root-demand or
+lowering-cost edits, and refresh monorepo-006 before quoting hit-rate claims.
+Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
