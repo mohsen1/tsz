@@ -1740,13 +1740,16 @@ impl ParserState {
         // Detect `@` after the member name where `:`, `=`, `;`, `(`, or `<` is expected.
         // Only when `@` is on the SAME line — if on a new line, ASI applies and the
         // property ends normally; the `@` starts a new decorated member.
-        if self.is_token(SyntaxKind::AtToken) && !self.scanner.has_preceding_line_break() {
+        let late_property_name_decorator =
+            self.is_token(SyntaxKind::AtToken) && !self.scanner.has_preceding_line_break();
+        if late_property_name_decorator {
             self.parse_error_at_current_token(
                 "Decorators must precede the name and all keywords of property declarations.",
                 diagnostic_codes::DECORATORS_MUST_PRECEDE_THE_NAME_AND_ALL_KEYWORDS_OF_PROPERTY_DECLARATIONS,
             );
-            // Parse and consume the misplaced decorator(s) for recovery
-            let _ = self.parse_decorators();
+            // Keep the decorator token in the stream. TSC reports TS1436 for
+            // the property, then recovers by applying the decorator to the
+            // following class member.
         }
 
         let method_saved_flags = self.context_flags;
@@ -1993,6 +1996,7 @@ impl ParserState {
             // initializer." — matching tsc's parseSemicolonAfterPropertyName.
             if type_annotation != NodeIndex::NONE
                 && initializer == NodeIndex::NONE
+                && !late_property_name_decorator
                 && !self.can_parse_semicolon()
             {
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -2018,6 +2022,7 @@ impl ParserState {
             if !has_var_let_modifier
                 && type_annotation == NodeIndex::NONE
                 && initializer == NodeIndex::NONE
+                && !late_property_name_decorator
                 && !self.is_token(SyntaxKind::SemicolonToken)
                 && !self.can_parse_semicolon()
             {

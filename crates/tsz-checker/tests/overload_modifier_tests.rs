@@ -134,3 +134,29 @@ function bad(x: number): boolean {
 "#;
     assert!(has_error(source, 2394));
 }
+
+#[test]
+fn ts2394_type_predicate_overloads_with_predicate_impl_no_error() {
+    // #6177: type predicate overloads compatible with broader predicate implementation
+    let source = r#"
+function unionOverload(x: string | number): x is string;
+function unionOverload(x: object): x is object & { id: number };
+function unionOverload(x: unknown): x is unknown {
+    return typeof x === "string";
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_type_predicate_overloads_narrowing_variety() {
+    // All overload predicates compatible with broader implementation predicate.
+    let source = r#"
+function check(val: string): val is string;
+function check(val: number): val is number;
+function check(val: unknown): val is unknown {
+    return true;
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
