@@ -105,6 +105,7 @@ fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
             | "Locale"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsSignDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
     )
@@ -126,6 +127,7 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
             | "Locale"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsSignDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
             | "Object"
@@ -230,11 +232,21 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let namespace_sym_id = self.resolve_lib_namespace_export_symbol("Intl", &name)?;
-                if namespace_sym_id != sym_id {
-                    return None;
-                }
+                let resolved_sym_id = if namespace_sym_id == sym_id {
+                    sym_id
+                } else {
+                    let namespace_symbol = self.get_cross_file_symbol(namespace_sym_id)?;
+                    if !self.symbol_declarations_are_direct_actual_lib_only(
+                        namespace_sym_id,
+                        namespace_symbol,
+                        &name,
+                    ) {
+                        return None;
+                    }
+                    namespace_sym_id
+                };
                 let cache_name = format!("Intl.{name}");
-                self.resolve_lib_interface_type_by_symbol(&cache_name, namespace_sym_id)
+                self.resolve_lib_interface_type_by_symbol(&cache_name, resolved_sym_id)
             });
             if direct_type.is_some() {
                 params = self.get_type_params_for_symbol(sym_id);
@@ -741,6 +753,7 @@ mod tests {
     use crate::test_utils::load_lib_files;
     use std::sync::Arc;
     use tsz_binder::BinderState;
+    use tsz_common::perf_counters::CrossArenaSymbolMissSource;
     use tsz_parser::parser::{ParserState, syntax_kind_ext};
     use tsz_solver::{TypeId, TypeInterner};
 
@@ -973,6 +986,108 @@ mod tests {
         let ty = state
             .resolve_lib_interface_type_by_symbol("Intl.CollatorOptions", sym_id)
             .expect("Intl.CollatorOptions should lower directly");
+
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+    }
+
+    #[test]
+    fn resolves_intl_namespace_exported_sign_display_registry_directly() {
+        let lib_files = load_lib_files(&["es5.d.ts", "es2020.intl.d.ts", "es2023.intl.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+        let sym_id = state
+            .resolve_lib_namespace_export_symbol("Intl", "NumberFormatOptionsSignDisplayRegistry")
+            .expect("Intl.NumberFormatOptionsSignDisplayRegistry export should resolve");
+
+        let ty = state
+            .resolve_lib_interface_type_by_symbol(
+                "Intl.NumberFormatOptionsSignDisplayRegistry",
+                sym_id,
+            )
+            .expect("Intl.NumberFormatOptionsSignDisplayRegistry should lower directly");
+
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_sign_display_registry_symbol() {
+        let lib_files = load_lib_files(&["es5.d.ts", "es2020.intl.d.ts", "es2023.intl.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .resolve_lib_namespace_export_symbol("Intl", "NumberFormatOptionsSignDisplayRegistry")
+            .expect("Intl.NumberFormatOptionsSignDisplayRegistry export should resolve");
+        let symbol = state
+            .get_cross_file_symbol(sym_id)
+            .expect("symbol should resolve");
+        let decl_idx = *symbol
+            .declarations
+            .first()
+            .expect("symbol should have declarations");
+        let delegate_arena = state
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .and_then(|arenas| arenas.first())
+            .expect("declaration arena should exist")
+            .as_ref();
+
+        let (ty, _) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(delegate_arena),
+                false,
+            )
+            .expect("direct actual-lib lowering should succeed");
 
         assert_ne!(ty, TypeId::UNKNOWN);
         assert_ne!(ty, TypeId::ERROR);
