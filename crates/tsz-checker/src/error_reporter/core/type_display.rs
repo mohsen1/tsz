@@ -1521,6 +1521,10 @@ impl<'a> CheckerState<'a> {
                     }
                     j += 1;
                 }
+                if depth > 0 {
+                    result.extend(chars[i..].iter());
+                    break;
+                }
                 // j now points past the closing '}'
                 let inner_start = i + 1;
                 let inner_end = j - 1;
