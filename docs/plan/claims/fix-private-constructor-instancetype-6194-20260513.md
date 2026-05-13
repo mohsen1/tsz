@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `fix-private-constructor-instancetype-6194-20260513`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #6240
+- **Status**: ready
 - **Workstream**: Diagnostic conformance
 
 ## Intent
@@ -13,9 +13,16 @@ Close #6194 by making constructor accessibility participate in generic constrain
 ## Files Touched
 
 - `docs/plan/claims/fix-private-constructor-instancetype-6194-20260513.md`
-- Checker constructor/generic constraint code TBD after implementation
-- Focused TS2344 regression test TBD after implementation
+- `crates/tsz-checker/src/checkers/generic_checker/constraint_validation.rs`
+- `crates/tsz-checker/src/checkers/generic_checker/instantiation_expression_constraints.rs`
+- `crates/tsz-checker/src/classes/constructor_checker.rs`
+- `crates/tsz-checker/src/tests/dispatch_tests.rs`
+- `crates/tsz-checker/tests/ts2344_class_constructor_constraint.rs`
 
 ## Verification
 
-- Pending
+- `cargo test -p tsz-checker --lib dispatch_tests::instancetype_private_constructor_constraint_violation_emits_ts2344 -- --nocapture` (1 passed)
+- `cargo test -p tsz-checker --test ts2344_class_constructor_constraint constructor_emits_ts2344 -- --nocapture` (3 passed)
+- `cargo fmt --all -- --check`
+- `git diff --check`
+- `cargo run -p tsz-cli --bin tsz -- --noEmit <#6194 repro>` (emits TS2344)

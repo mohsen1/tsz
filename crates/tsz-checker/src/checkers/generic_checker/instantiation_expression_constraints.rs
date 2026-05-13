@@ -69,6 +69,11 @@ impl<'a> CheckerState<'a> {
         constraint: TypeId,
         arg_node: Option<tsz_parser::parser::NodeIndex>,
     ) -> bool {
+        if arg_node
+            .is_some_and(|arg_idx| self.type_query_constructor_access_level(arg_idx).is_some())
+        {
+            return false;
+        }
         if self.is_successful_typeof_instantiation_arg(type_arg)
             && self.constraint_is_callable_or_constructable(constraint)
         {

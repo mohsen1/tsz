@@ -40,6 +40,62 @@ impl<'a> CheckerState<'a> {
             .any(|d| d.code == code && d.start >= start && d.start < end)
     }
 
+    pub(crate) fn type_query_constructor_access_level(
+        &self,
+        type_arg_idx: NodeIndex,
+    ) -> Option<crate::state::MemberAccessLevel> {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let node = self.ctx.arena.get(type_arg_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_QUERY {
+            return None;
+        }
+        let type_query = self.ctx.arena.get_type_query(node)?;
+        let expr_node = self.ctx.arena.get(type_query.expr_name)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let ident = self.ctx.arena.get_identifier(expr_node)?;
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, type_query.expr_name)
+            .or_else(|| self.ctx.binder.get_node_symbol(type_query.expr_name))
+            .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text))?;
+
+        if let Some(access) = self.class_constructor_access_level(sym_id) {
+            return Some(access);
+        }
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(
+            tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE,
+        ) {
+            return None;
+        }
+        let decl_node = self.ctx.arena.get(symbol.value_declaration)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let class_expr_idx = self.class_expression_from_expr(var_decl.initializer)?;
+        let class = self.ctx.arena.get_class_at(class_expr_idx)?;
+        for &member_idx in &class.members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let ctor = self.ctx.arena.get_constructor(member_node)?;
+            if self.has_private_modifier(&ctor.modifiers) {
+                return Some(crate::state::MemberAccessLevel::Private);
+            }
+            if self.has_protected_modifier(&ctor.modifiers) {
+                return Some(crate::state::MemberAccessLevel::Protected);
+            }
+            return None;
+        }
+        None
+    }
+
     /// Validate each type argument against its corresponding type parameter
     /// constraint. Reports TS2344 when a type argument doesn't satisfy its
     /// constraint. Shared by call expressions, new expressions, and type refs.
@@ -1447,6 +1503,25 @@ impl<'a> CheckerState<'a> {
                         type_arg,
                         instantiated_constraint,
                     );
+                if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                    let has_constructor_access_mismatch = self
+                        .constructor_accessibility_mismatch(type_arg, instantiated_constraint, None)
+                        .is_some()
+                        || (self.type_query_constructor_access_level(arg_idx).is_some()
+                            && crate::query_boundaries::common::construct_signatures_for_type(
+                                self.ctx.types,
+                                instantiated_constraint,
+                            )
+                            .is_some_and(|sigs| !sigs.is_empty()));
+                    if has_constructor_access_mismatch {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            instantiated_constraint,
+                            arg_idx,
+                        );
+                        continue;
+                    }
+                }
                 let mut is_satisfied = !callable_arity_failure
                     && (primitive_satisfies_weak
                         || if constraint_is_all_optional

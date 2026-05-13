@@ -137,6 +137,75 @@ type Ccps = ConstructorParameters<typeof C>;
     );
 }
 
+/// `InstanceType<typeof C>` must emit TS2344 when `C` has a private constructor.
+/// A private constructor type is not assignable to the public `abstract new`
+/// constraint used by the standard utility type.
+#[test]
+fn test_instance_type_of_private_constructor_emits_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+
+const WithPrivateCtor = class {
+    private constructor() {}
+    static create(): InstanceType<typeof WithPrivateCtor> {
+        return new WithPrivateCtor();
+    }
+};
+        "#,
+    );
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        !ts2344_errors.is_empty(),
+        "Should emit TS2344 for InstanceType<typeof WithPrivateCtor> because private constructors do not satisfy public construct-signature constraints.\nAll diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Protected constructors also fail the public construct-signature constraint.
+#[test]
+fn test_instance_type_of_protected_constructor_emits_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+
+class WithProtectedCtor {
+    protected constructor() {}
+}
+
+type T = InstanceType<typeof WithProtectedCtor>;
+        "#,
+    );
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        !ts2344_errors.is_empty(),
+        "Should emit TS2344 for InstanceType<typeof WithProtectedCtor> because protected constructors do not satisfy public construct-signature constraints.\nAll diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// `typeof` applied to a generic class expression with type arguments remains
 /// value-space. It satisfies constructor constraints like `InstanceType`'s.
 #[test]
