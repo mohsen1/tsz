@@ -3,10 +3,10 @@
 //! Verifies that TS2322 (type mismatch) and TS2741 (missing required property)
 //! are correctly emitted for JSX component attributes.
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::CheckerState;
+use tsz_checker::test_utils::load_compiled_lib_files;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_parser::parser::ParserState;
@@ -994,47 +994,7 @@ let p2 = <TestMod.Test />;
 // =============================================================================
 
 fn load_cross_file_jsx_lib_files() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let search_roots: Vec<&Path> = {
-        let mut roots = vec![manifest_dir];
-        let mut parent = manifest_dir.parent();
-        while let Some(dir) = parent {
-            roots.push(dir);
-            parent = dir.parent();
-        }
-        roots
-    };
-    let candidates = [(
-        "lib.es5.d.ts",
-        [
-            "scripts/node_modules/typescript/lib/lib.es5.d.ts",
-            "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
-            "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
-            "crates/tsz-core/src/lib-assets-stripped/es5.d.ts",
-            "crates/tsz-core/src/lib-assets/es5.d.ts",
-            "../tsz-core/src/lib-assets-stripped/es5.d.ts",
-            "../tsz-core/src/lib-assets/es5.d.ts",
-            "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
-            "TypeScript/src/lib/es5.d.ts",
-        ],
-    )];
-
-    let mut lib_files = Vec::new();
-    for (file_name, suffixes) in candidates {
-        let maybe_path = search_roots
-            .iter()
-            .flat_map(|root| suffixes.iter().map(move |suffix| root.join(suffix)))
-            .find(|path| path.exists());
-        if let Some(path) = maybe_path
-            && let Ok(content) = std::fs::read_to_string(&path)
-        {
-            lib_files.push(Arc::new(LibFile::from_source(
-                file_name.to_string(),
-                content,
-            )));
-        }
-    }
-    lib_files
+    load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
 /// Helper to compile a multi-file JSX project and return diagnostics for the main file.
