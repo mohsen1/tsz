@@ -19,3 +19,5 @@ Investigate and fix the remaining compiler-area conformance failure for `longObj
 
 - `TSZ_LIB_DIR=/Users/mohsen/code/tsz/.worktrees/fix-export-equals-require-surface-20260509/TypeScript/lib ./scripts/conformance/conformance.sh run --filter longObjectInstantiationChain3 --test-dir /Users/mohsen/code/tsz/.worktrees/fix-export-equals-require-surface-20260509/TypeScript/tests/cases --workers 1 --verbose`
   - Result: `FINAL RESULTS: 1/1 passed (100.0%)`; skipped 0; crashed 0; timeout 0; fingerprint-only 0.
+- `cargo test -p tsz-checker ts2339_ -- --nocapture`
+  - Result: passed. Includes the #6685 CI-failing unit surfaces `ts2339_merge_function_receiver_widens_fresh_object_literals`, `test_ts2339_keeps_conditional_merge_receiver_branch_display`, and `test_ts2339_elides_long_merge_receiver_instantiation_chain`.
