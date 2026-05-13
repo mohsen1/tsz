@@ -651,15 +651,37 @@ impl<'a> DeclarationEmitter<'a> {
                 )?);
                 continue;
             }
-            let (name, ty) = part.split_once(':')?;
-            let name = name.trim().trim_start_matches("...");
-            let optional = name.ends_with('?');
-            let name = name.strip_suffix('?').unwrap_or(name).trim();
-            let ty = ty.trim();
-            if name.is_empty() || ty.is_empty() {
+            if let Some((name, ty)) = part.split_once(':') {
+                let name = name.trim().trim_start_matches("...");
+                let optional = name.ends_with('?');
+                let name = name.strip_suffix('?').unwrap_or(name).trim();
+                let ty = ty.trim();
+                if name.is_empty() || ty.is_empty() {
+                    return None;
+                }
+                elements.push((name.to_string(), ty.to_string(), optional));
+                continue;
+            }
+
+            // Unlabeled tuple elements are valid TS (`[string, number]`), but
+            // we still need stable synthetic names when expanding rest tuple
+            // aliases into positional parameters.
+            if part.starts_with("...") {
+                // Variadic unlabeled tuple rest (`...string[]`) cannot be
+                // expanded into a finite positional list.
                 return None;
             }
-            elements.push((name.to_string(), ty.to_string(), optional));
+            let optional = part.ends_with('?');
+            let ty = if optional {
+                part.strip_suffix('?').unwrap_or(part).trim()
+            } else {
+                part
+            };
+            if ty.is_empty() {
+                return None;
+            }
+            let synthesized = format!("arg{}", elements.len());
+            elements.push((synthesized, ty.to_string(), optional));
         }
         Some(elements)
     }
