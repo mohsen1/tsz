@@ -6,6 +6,10 @@
 
 use crate::test_utils::check_js_source_diagnostics;
 
+fn diagnostic_codes(diagnostics: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
 #[test]
 fn invalid_satisfies_prefix_is_not_a_jsdoc_satisfies_tag() {
     let source = r#"
@@ -15,7 +19,7 @@ const value = { a: 1, b: 2 };
 value;
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         !codes.iter().any(|code| *code == 1005 || *code == 2353),
         "Expected @satisfiesx to be ignored as an invalid tag, got: {codes:?}",
@@ -41,7 +45,7 @@ const car = /** @satisfies {Movable} */ ({
         ts7006,
         0,
         "Expected no TS7006: @satisfies should provide contextual type to method params, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -62,7 +66,7 @@ const x = /** @satisfies {{ greet(name: string): void }} */ ({
         ts7006,
         0,
         "Expected no TS7006: inline method sig should provide contextual type, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -79,7 +83,7 @@ const t1 = { f: (s) => s.toLowerCase() };
         ts7006,
         0,
         "Expected no TS7006: @satisfies on var decl should provide contextual type, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -95,7 +99,7 @@ const t2 = { g: "oops" };
     assert!(
         ts2353 >= 1,
         "Expected TS2353 for excess property 'g', got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -113,7 +117,7 @@ obj.greet("hello");
         ts2339,
         0,
         "Expected no TS2339: method 'greet' should exist on the object type, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -134,7 +138,7 @@ engine.run(42);
         ts2339,
         0,
         "Expected no TS2339: all methods should exist on Engine typedef type, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -155,7 +159,7 @@ export default /** @satisfies {Foo} */ ({});
         ts7022,
         0,
         "Expected no TS7022 for export-default @satisfies wrapper, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -176,6 +180,6 @@ export function d(a, b) { return null; }
     assert!(
         ts7006.is_empty(),
         "Expected no TS7006 for exported function with JSDoc @param types, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }

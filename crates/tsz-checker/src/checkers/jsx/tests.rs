@@ -53,6 +53,44 @@ fn check_jsx_no_strict_codes(source: &str) -> Vec<u32> {
     check_jsx_no_strict(source).iter().map(|d| d.code).collect()
 }
 
+#[test]
+fn jsx_same_name_function_component_and_props_interface_does_not_recurse() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace JSX {
+          interface Element {
+            type: string;
+            props: Record<string, unknown>;
+          }
+          interface IntrinsicElements {
+            div: { children?: unknown };
+            span: { children?: unknown };
+          }
+        }
+
+        interface Fragment {
+          children?: unknown[];
+        }
+
+        function Fragment(props: Fragment): JSX.Element {
+          return <div>{props.children}</div>;
+        }
+
+        const frag = (
+          <Fragment>
+            <span>A</span>
+            <span>B</span>
+          </Fragment>
+        );
+        "#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Same-name JSX component and props interface should check without diagnostics, got: {diagnostics:?}"
+    );
+}
+
 /// JSX shorthand boolean attribute (`<Foo bar />`) typed as `true` for assignability.
 /// When prop expects literal `true`, shorthand must be assignable (no false positive).
 #[test]
