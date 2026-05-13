@@ -689,7 +689,6 @@ impl<'a> CheckerState<'a> {
             let symbol_type_cache_scope = symbol_type_cache_from_symbol_arena
                 .then(|| self.ctx.source_file_symbol_type_cache_scope());
             let source_cache_scope = symbol_type_cache_scope.unwrap_or(0);
-            let requester_file_idx = self.ctx.current_file_idx as u32;
 
             // Gate perf counters once; disabled runs pay only predictable
             // `if let Some(p) = perf` branches.
@@ -725,11 +724,10 @@ impl<'a> CheckerState<'a> {
             // Thread-safe fast path: check the global resolved cross-file query cache.
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
                 && let Some((cached_type, cached_params)) = if symbol_type_cache_from_symbol_arena {
-                    self.ctx.cached_source_file_symbol_arena_type(
+                    self.ctx.cached_stable_source_file_symbol_arena_type(
                         sym_id,
                         cache_file_idx as u32,
                         source_cache_scope,
-                        requester_file_idx,
                     )
                 } else {
                     self.ctx
@@ -796,11 +794,10 @@ impl<'a> CheckerState<'a> {
                     && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
                 {
                     if symbol_type_cache_from_symbol_arena {
-                        self.ctx.cache_source_file_symbol_arena_type(
+                        self.ctx.cache_stable_source_file_symbol_arena_type(
                             sym_id,
                             file_idx as u32,
                             source_cache_scope,
-                            requester_file_idx,
                             direct_type,
                             direct_params.clone(),
                         );
@@ -1099,11 +1096,10 @@ impl<'a> CheckerState<'a> {
                 && (!symbol_type_cache_from_symbol_arena || result_params.is_empty())
             {
                 if symbol_type_cache_from_symbol_arena {
-                    self.ctx.cache_source_file_symbol_arena_type(
+                    self.ctx.cache_stable_source_file_symbol_arena_type(
                         sym_id,
                         target_file_idx as u32,
                         source_cache_scope,
-                        requester_file_idx,
                         result,
                         result_params.clone(),
                     );
