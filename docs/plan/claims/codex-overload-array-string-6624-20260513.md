@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `codex/overload-array-string-6624-20260513`
-- **PR**: TBD
+- **PR**: #6643
 - **Status**: ready
 - **Workstream**: conformance / overload resolution
 
