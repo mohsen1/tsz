@@ -913,6 +913,45 @@ impl<'a> LoweringPass<'a> {
         let has_tc39_decorators = !self.ctx.options.legacy_decorators
             && !target_supports_native_decorators
             && self.class_has_decorators(class);
+        let has_legacy_class_decorators = self.ctx.options.legacy_decorators
+            && class.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            });
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let has_lowered_static_field = target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member_node| {
+                    member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self
+                            .arena
+                            .get_property_decl(member_node)
+                            .is_some_and(|prop| {
+                                self.has_class_member_modifier(
+                                    &prop.modifiers,
+                                    SyntaxKind::StaticKeyword as u16,
+                                ) && !self.has_class_member_modifier(
+                                    &prop.modifiers,
+                                    SyntaxKind::AbstractKeyword as u16,
+                                ) && !self.has_class_member_modifier(
+                                    &prop.modifiers,
+                                    SyntaxKind::DeclareKeyword as u16,
+                                ) && !prop.initializer.is_none()
+                            })
+                })
+            });
+        if has_legacy_class_decorators
+            && is_default
+            && class.name.is_none()
+            && has_lowered_static_field
+        {
+            self.transforms.helpers_mut().set_function_name = true;
+        }
         if has_tc39_decorators {
             let needs_prop_key = self.class_has_computed_decorated_member(class);
             let needs_set_function_name = self.class_has_private_decorated_member(class);

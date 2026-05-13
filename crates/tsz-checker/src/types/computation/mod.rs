@@ -48,5 +48,6 @@ pub(crate) mod object_literal;
 pub(crate) mod object_literal_circularity;
 pub(crate) mod object_literal_context;
 pub(crate) mod object_literal_support;
+pub(crate) mod object_literal_widening;
 pub(crate) mod tagged_template;
 pub(crate) mod type_operators;
