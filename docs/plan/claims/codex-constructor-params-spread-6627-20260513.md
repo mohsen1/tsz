@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `codex/constructor-params-spread-6627-20260513`
-- **PR**: #TBD
+- **PR**: #6629
 - **Status**: ready
 - **Workstream**: conformance / solver spread iterability
 
