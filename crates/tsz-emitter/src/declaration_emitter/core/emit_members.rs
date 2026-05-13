@@ -2450,7 +2450,10 @@ impl<'a> DeclarationEmitter<'a> {
                             },
                         ) || self
                             .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
-                            .is_some();
+                            .is_some()
+                            || !self
+                                .leading_jsdoc_comment_chain_for_pos(stmt_node.pos)
+                                .is_empty();
                         if has_jsdoc || is_named_js_export {
                             "var"
                         } else {

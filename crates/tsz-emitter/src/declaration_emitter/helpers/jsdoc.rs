@@ -384,6 +384,26 @@ impl<'a> DeclarationEmitter<'a> {
         chain
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_comment_chain_with_source_style_for_pos(
+        &self,
+        pos: u32,
+        chain: &[String],
+    ) -> Vec<(String, bool)> {
+        let styled_chain = self.leading_jsdoc_comment_chain_for_pos_with_style(pos);
+        chain
+            .iter()
+            .map(|jsdoc| {
+                let force_multiline = styled_chain
+                    .iter()
+                    .find_map(|(styled_jsdoc, force_multiline)| {
+                        (styled_jsdoc == jsdoc).then_some(*force_multiline)
+                    })
+                    .unwrap_or(false);
+                (jsdoc.clone(), force_multiline)
+            })
+            .collect()
+    }
+
     pub(crate) fn nearest_jsdoc_comment_for_pos_relaxed(&self, pos: u32) -> Option<String> {
         let text = self.source_file_text.as_deref()?;
         let bytes = text.as_bytes();
@@ -1555,7 +1575,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn jsdoc_contains_type_tag(jsdoc: &str) -> bool {
+    pub(in crate::declaration_emitter) fn jsdoc_contains_type_tag(jsdoc: &str) -> bool {
         jsdoc.lines().any(|raw_line| {
             let line = raw_line.trim_start_matches('*').trim();
             line.strip_prefix("@type")
@@ -1565,16 +1585,6 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(in crate::declaration_emitter) fn jsdoc_contains_type_alias_tag(jsdoc: &str) -> bool {
         Self::jsdoc_has_property_tags(jsdoc) || Self::parse_jsdoc_typedef_alias(jsdoc).is_some()
-    }
-
-    pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_tags(
-        chain: &[String],
-    ) -> Vec<String> {
-        chain
-            .iter()
-            .filter(|jsdoc| !Self::jsdoc_contains_type_tag(jsdoc))
-            .cloned()
-            .collect()
     }
 
     pub(crate) fn emit_js_function_variable_declaration_if_possible(
@@ -1955,6 +1965,31 @@ impl<'a> DeclarationEmitter<'a> {
         lines
     }
 
+    fn jsdoc_typedef_inline_description_lines(jsdoc: &str) -> Vec<String> {
+        let normalized = Self::normalize_jsdoc_block(jsdoc);
+        let Some(tag_pos) = normalized.find("@typedef") else {
+            return Vec::new();
+        };
+        let rest = normalized[tag_pos + "@typedef".len()..].trim();
+        let Some((_type_expr, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest) else {
+            return Vec::new();
+        };
+        let after_name = name_rest
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| rest.trim())
+            .unwrap_or_default();
+        if after_name.is_empty() || after_name.starts_with('@') {
+            return Vec::new();
+        }
+
+        after_name
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
     pub(in crate::declaration_emitter) fn jsdoc_has_property_tags(jsdoc: &str) -> bool {
         jsdoc.lines().any(|raw_line| {
             let line = raw_line.trim_start_matches('*').trim();
@@ -2161,6 +2196,11 @@ impl<'a> DeclarationEmitter<'a> {
             if name == "default" {
                 return None;
             }
+            let description_lines = if description_lines.is_empty() {
+                Self::jsdoc_typedef_inline_description_lines(jsdoc)
+            } else {
+                description_lines
+            };
             return Some(JsdocTypeAliasDecl {
                 name,
                 type_params,
@@ -2267,9 +2307,18 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file {
             return;
         }
+        let exported = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .is_some_and(|source_file| self.source_file_has_module_syntax(source_file))
+            && self.js_export_equals_names.is_empty();
+        if !exported {
+            return;
+        }
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {
             if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                self.emit_rendered_jsdoc_type_alias(decl, true);
+                self.emit_rendered_jsdoc_type_alias(decl, exported);
             }
         }
     }

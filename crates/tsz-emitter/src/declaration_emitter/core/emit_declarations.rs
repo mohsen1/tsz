@@ -988,12 +988,18 @@ impl<'a> DeclarationEmitter<'a> {
         } else if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
-            let mut filtered =
-                Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain);
+            let styled_chain = self.jsdoc_comment_chain_with_source_style_for_pos(
+                stmt_node.pos,
+                &self.current_statement_jsdoc_chain,
+            );
+            let mut filtered = styled_chain
+                .into_iter()
+                .filter(|(jsdoc, _)| !Self::jsdoc_contains_type_tag(jsdoc))
+                .collect::<Vec<_>>();
             if suppress_jsdoc_type_alias_comments {
-                filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
+                filtered.retain(|(jsdoc, _)| !Self::jsdoc_contains_type_alias_tag(jsdoc));
             }
-            self.emit_jsdoc_comment_chain(&filtered);
+            self.emit_jsdoc_comment_chain_preserving_multiline_style(&filtered);
         } else {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
         }
@@ -1228,8 +1234,22 @@ impl<'a> DeclarationEmitter<'a> {
         if has_jsdoc_overload_tags {
             self.emit_jsdoc_comment_chain(&jsdoc_chain);
         } else if has_jsdoc_type_function_signature {
-            let filtered = Self::jsdoc_chain_without_type_tags(&jsdoc_chain);
-            self.emit_jsdoc_comment_chain(&filtered);
+            let suppress_jsdoc_type_alias_comments = self
+                .current_source_file_idx
+                .and_then(|source_file_idx| self.arena.get(source_file_idx))
+                .and_then(|node| self.arena.get_source_file(node))
+                .is_some_and(|source_file| self.source_file_has_module_syntax(source_file))
+                && self.js_export_equals_names.is_empty();
+            let styled_chain =
+                self.jsdoc_comment_chain_with_source_style_for_pos(stmt_node.pos, &jsdoc_chain);
+            let mut filtered = styled_chain
+                .into_iter()
+                .filter(|(jsdoc, _)| !Self::jsdoc_contains_type_tag(jsdoc))
+                .collect::<Vec<_>>();
+            if suppress_jsdoc_type_alias_comments {
+                filtered.retain(|(jsdoc, _)| !Self::jsdoc_contains_type_alias_tag(jsdoc));
+            }
+            self.emit_jsdoc_comment_chain_preserving_multiline_style(&filtered);
         } else if jsdoc_chain.len() == 1
             && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
             && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)

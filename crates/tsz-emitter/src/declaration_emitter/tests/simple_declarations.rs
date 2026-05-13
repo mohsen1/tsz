@@ -1291,6 +1291,64 @@ const value = 1;
 }
 
 #[test]
+fn test_js_script_typedef_before_function_is_deferred_as_local_type() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {number} N */
+/**
+ * @param {number} value {@link N}
+ */
+function plusOne(value) {
+    return value + 1;
+}
+"#,
+    );
+
+    let expected = r#"/** @typedef {number} N */
+/**
+ * @param {number} value {@link N}
+ */
+declare function plusOne(value: number): number;
+type N = number;
+"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_js_typedef_inline_description_after_name_is_preserved() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {number} Attempt {@link https://wat} {@linkcode I think lingcod is better} */
+"#,
+    );
+
+    let expected = r#"/**
+ * {@link https://wat} {@linkcode I think lingcod is better}
+ */
+type Attempt = number;
+"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_js_documented_var_keeps_var_keyword_and_widens_boolean() {
+    let output = emit_js_dts(
+        r#"
+/** {@link https://hvad} */
+var see3 = true;
+"#,
+    );
+
+    let expected = r#"/** {@link https://hvad} */
+declare var see3: boolean;
+"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_js_export_equals_class_keeps_leading_typedef_local() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
