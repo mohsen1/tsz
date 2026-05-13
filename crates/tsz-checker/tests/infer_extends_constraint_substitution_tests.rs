@@ -397,3 +397,48 @@ let c: "no_match" = r;  // should NOT error: R should be "no_match"
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_constrained_infer_preserves_tuple_head_literal() {
+    let source = r#"
+type FirstString<T> = T extends [infer F extends string, ...any[]] ? F : never;
+type FS1 = FirstString<["hello", 1, true]>;
+
+const fs1: FS1 = "hello";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained tuple-head infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_preserves_function_return_literal() {
+    let source = r#"
+type ReturnString<T> = T extends (...args: any[]) => (infer R extends string) ? R : never;
+type RS1 = ReturnString<() => "hello">;
+
+const rs1: RS1 = "hello";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained function-return infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_preserves_object_property_literal() {
+    let source = r#"
+type ExtractValue<T> = T extends { value: infer V extends string | number } ? V : never;
+type EV1 = ExtractValue<{ value: "test" }>;
+
+const ev1: EV1 = "test";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained object-property infer to preserve the literal type. Got: {diags:#?}"
+    );
+}

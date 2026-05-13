@@ -879,6 +879,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
+            if let Some(TypeData::Array(rest_elem_type)) =
+                self.interner().lookup(pattern_elems[rest_index].type_id)
+            {
+                for source_elem in &source_elems[prefix_len..rest_source_end] {
+                    if source_elem.rest {
+                        return false;
+                    }
+                    let source_type = if source_elem.optional {
+                        self.interner()
+                            .union2(source_elem.type_id, TypeId::UNDEFINED)
+                    } else {
+                        source_elem.type_id
+                    };
+                    if !self.match_infer_pattern(
+                        source_type,
+                        rest_elem_type,
+                        bindings,
+                        visited,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
             // Collect middle elements (between prefix and suffix) into the rest tuple
             let mut rest_elems = Vec::new();
             for source_elem in &source_elems[prefix_len..rest_source_end] {
