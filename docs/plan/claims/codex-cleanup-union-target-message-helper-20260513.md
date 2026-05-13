@@ -23,5 +23,6 @@ Branch: `codex/cleanup-union-target-message-helper-20260513`
 
 ## Verification
 
-- `cargo fmt --check`
-- `cargo nextest run -p tsz-checker --test union_target_literal_primitive_mismatch_tests --no-fail-fast`
+- Passed after merging current `origin/main`:
+  - `cargo fmt --check`
+  - `cargo nextest run -p tsz-checker --test union_target_literal_primitive_mismatch_tests --no-fail-fast` (8 passed)
