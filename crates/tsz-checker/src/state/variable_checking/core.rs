@@ -11,7 +11,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TupleElement, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn explicit_annotation_can_defer_implicit_any_context(
@@ -256,42 +256,6 @@ impl<'a> CheckerState<'a> {
                 property_initializer,
             );
         }
-    }
-
-    fn literal_tuple_type_from_array_initializer(
-        &mut self,
-        initializer_idx: NodeIndex,
-    ) -> Option<TypeId> {
-        let array_idx = self.ctx.arena.skip_parenthesized(initializer_idx);
-        let node = self.ctx.arena.get(array_idx)?;
-        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return None;
-        }
-        let array = self.ctx.arena.get_literal_expr(node)?;
-        let mut elements = Vec::with_capacity(array.elements.nodes.len());
-        for &elem_idx in &array.elements.nodes {
-            if elem_idx.is_none() {
-                elements.push(TupleElement {
-                    type_id: TypeId::UNDEFINED,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                });
-                continue;
-            }
-            let elem_node = self.ctx.arena.get(elem_idx)?;
-            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                return None;
-            }
-            let type_id = self.literal_type_from_initializer(elem_idx)?;
-            elements.push(TupleElement {
-                type_id,
-                name: None,
-                optional: false,
-                rest: false,
-            });
-        }
-        Some(self.ctx.types.factory().tuple(elements))
     }
 
     fn cached_inferred_variable_type(
@@ -1316,9 +1280,6 @@ impl<'a> CheckerState<'a> {
                         } else {
                             init_type_for_relation
                         };
-                        let checked_init_type = checker
-                            .literal_tuple_type_from_array_initializer(var_decl.initializer)
-                            .unwrap_or(checked_init_type);
                         if let Some((source_level, target_level)) =
                             checker.constructor_accessibility_mismatch_for_var_decl(var_decl)
                         {
