@@ -453,7 +453,36 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        true
+        let mut current = idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
+            ) {
+                return true;
+            }
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::PROPERTY_DECLARATION
+                    | syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::SOURCE_FILE
+            ) {
+                return false;
+            }
+            current = parent_idx;
+        }
     }
 
     fn computed_type_member_allows_mapped_type_suggestion(&self, idx: NodeIndex) -> bool {

@@ -360,13 +360,7 @@ impl<'a> CheckerState<'a> {
     ) {
         let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
         let is_this_tag = tag_text == "this";
-        if is_this_tag
-            && self
-                .ctx
-                .enclosing_class
-                .as_ref()
-                .is_some_and(|class_info| !class_info.in_static_member)
-        {
+        if is_this_tag {
             use crate::diagnostics::diagnostic_codes;
 
             if let Some((start, _)) = self.get_node_span(tag_name_idx)

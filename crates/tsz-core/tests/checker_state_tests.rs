@@ -12839,9 +12839,10 @@ const bad = NS["Foo"];
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    // tsc emits TS2708 ("Cannot use namespace 'NS' as a value") for this pattern.
     assert!(
-        codes.contains(&2693),
-        "Expected error 2693 for type-only namespace member element access used as value, got: {codes:?}"
+        codes.contains(&2708),
+        "Expected error 2708 for type-only namespace member element access used as value, got: {codes:?}"
     );
 }
 
