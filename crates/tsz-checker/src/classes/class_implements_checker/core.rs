@@ -426,10 +426,8 @@ impl<'a> CheckerState<'a> {
                 {
                     base_class_name = ident.escaped_text.clone();
 
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    {
-                        base_class_idx = symbol.primary_declaration();
+                    if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx) {
+                        base_class_idx = self.get_class_declaration_from_symbol(sym_id);
                     }
                 }
             }
