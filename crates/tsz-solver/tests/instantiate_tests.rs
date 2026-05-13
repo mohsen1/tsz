@@ -2037,7 +2037,8 @@ fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
 }
 
 // =============================================================================
-// Tests for template_has_lazy_application_in_composite
+// Tests for template_has_lazy_application_in_composite and
+// type_contains_lazy_application (new helper for Conditional check/extends)
 // =============================================================================
 
 #[test]
@@ -2174,6 +2175,15 @@ fn test_mapped_type_with_lazy_union_template_defers_evaluation() {
     }
 }
 
+/// Regression: mapped type with `App(LazyAlias, [T[K]]) extends true ? K : never`
+/// as the template must defer eager evaluation when instantiated with a concrete T.
+///
+/// Before the fix, `template_has_lazy_application_in_composite` only checked the
+/// Conditional's true/false branches, missing the `check_type` `App(LazyAlias, ...)`.
+/// This caused the `NoopResolver` evaluator to see an unresolvable Application,
+/// making every conditional branch collapse to `never`, so the mapped type produced
+/// `never` instead of the correct key union.
+///
 /// Homomorphic mapped type `{ [K in keyof T]: T[K] }` instantiated with T = any
 /// and T has NO constraint should NOT produce bare `any`. It should fall through
 /// to standard mapped type instantiation producing an object with index signatures.
