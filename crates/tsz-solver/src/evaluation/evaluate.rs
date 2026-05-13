@@ -1103,7 +1103,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             _ => result.0 <= display_origin.0,
                         }
                         && result_is_non_empty_structural;
-                    if !skip_type_alias_repaint {
+                    let keep_existing_conditional_branch_alias = is_type_alias_def
+                        && !prefer_application_display_alias
+                        && matches!(
+                            self.interner.lookup(display_origin),
+                            Some(TypeData::Application(_))
+                        )
+                        && self.interner.get_display_alias(result).is_some();
+                    if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
                         if prefer_application_display_alias
                             || (self.expand_application_display_alias_args
                                 && matches!(
