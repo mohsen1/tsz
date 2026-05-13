@@ -1004,6 +1004,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         expectedDtsFileName: testCase.expectedDtsFileName ?? undefined,
         expectedJsContent: testCase.expectedJs,
         expectedDtsContent: testCase.expectedDts,
+        noDtsEmitExpected: testCase.noDtsEmitExpected,
       });
       tszJs = transpileResult.js;
       tszDts = transpileResult.dts || null;
