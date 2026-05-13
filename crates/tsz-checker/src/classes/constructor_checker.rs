@@ -934,12 +934,10 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(shape) =
             crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+            && let Some(sym_id) = shape.symbol
+            && let Some(access) = self.class_constructor_access_level(sym_id)
         {
-            if let Some(sym_id) = shape.symbol
-                && let Some(access) = self.class_constructor_access_level(sym_id)
-            {
-                return Some(access);
-            }
+            return Some(access);
         }
 
         match classify_for_constructor_access(self.ctx.types, type_id) {
