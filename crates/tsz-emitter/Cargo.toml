@@ -115,6 +115,10 @@ name = "cjs_destructuring_export_inline_tests"
 path = "tests/cjs_destructuring_export_inline_tests.rs"
 
 [[test]]
+name = "destructuring_es5_array_nested_order_tests"
+path = "tests/destructuring_es5_array_nested_order_tests.rs"
+
+[[test]]
 name = "tc39_named_class_expression_set_function_name_tests"
 path = "tests/tc39_named_class_expression_set_function_name_tests.rs"
 
