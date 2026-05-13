@@ -66,6 +66,7 @@ interface CompilerFlagOptions {
   preserveConstEnums?: boolean;
   verbatimModuleSyntax?: boolean;
   rewriteRelativeImportExtensions?: boolean;
+  resolveJsonModule?: boolean;
   isolatedModules?: boolean;
   importsNotUsedAsValues?: string;
   preserveValueImports?: boolean;
@@ -118,6 +119,7 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   if (opts.preserveConstEnums) args.push('--preserveConstEnums');
   if (opts.verbatimModuleSyntax) args.push('--verbatimModuleSyntax');
   if (opts.rewriteRelativeImportExtensions) args.push('--rewriteRelativeImportExtensions');
+  if (opts.resolveJsonModule) args.push('--resolveJsonModule');
   if (opts.isolatedModules) args.push('--isolatedModules');
   if (opts.importsNotUsedAsValues) args.push('--importsNotUsedAsValues', opts.importsNotUsedAsValues);
   if (opts.preserveValueImports) args.push('--preserveValueImports');
@@ -260,6 +262,7 @@ export class CliTranspiler {
       preserveConstEnums?: boolean;
       verbatimModuleSyntax?: boolean;
       rewriteRelativeImportExtensions?: boolean;
+      resolveJsonModule?: boolean;
       isolatedModules?: boolean;
       importsNotUsedAsValues?: string;
       preserveValueImports?: boolean;
@@ -305,6 +308,7 @@ export class CliTranspiler {
       preserveConstEnums = false,
       verbatimModuleSyntax = false,
       rewriteRelativeImportExtensions = false,
+      resolveJsonModule = false,
       isolatedModules = false,
       importsNotUsedAsValues,
       preserveValueImports = false,
@@ -500,6 +504,7 @@ export class CliTranspiler {
         preserveConstEnums,
         verbatimModuleSyntax,
         rewriteRelativeImportExtensions,
+        resolveJsonModule,
         isolatedModules,
         importsNotUsedAsValues,
         preserveValueImports,
@@ -605,6 +610,7 @@ export class CliTranspiler {
             preserveConstEnums,
             verbatimModuleSyntax,
             rewriteRelativeImportExtensions,
+            resolveJsonModule,
             isolatedModules,
             importsNotUsedAsValues,
             preserveValueImports,

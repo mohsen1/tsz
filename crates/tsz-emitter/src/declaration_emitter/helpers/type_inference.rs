@@ -2656,6 +2656,17 @@ impl<'a> DeclarationEmitter<'a> {
             return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
+        if self
+            .namespace_import_module_specifier_from_syntax(initializer)
+            .or_else(|| self.imported_value_module_specifier_from_syntax(initializer))
+            .is_some_and(|module_specifier| module_specifier.ends_with(".json"))
+        {
+            let type_text = self.print_type_id_expanded_for_inferred_declaration(type_id);
+            if type_text != "any" && !type_text.starts_with("typeof ") {
+                return self.rewrite_exported_import_equals_type_text(type_text);
+            }
+        }
+
         if let Some(typeof_text) =
             self.typeof_prefix_for_value_entity(initializer, true, Some(type_id))
         {

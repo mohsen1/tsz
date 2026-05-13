@@ -163,7 +163,10 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         if let Some(sym_ref) = visitor::module_namespace_symbol_ref(self.type_interner, type_id) {
-            Self::add_symbol_usage(usages, SymbolId(sym_ref.0), UsageKind::TYPE);
+            let sym_id = SymbolId(sym_ref.0);
+            if !self.symbol_is_json_namespace_import(sym_id) {
+                Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
+            }
         }
 
         if let Some(shape_id) = visitor::object_shape_id(self.type_interner, type_id)
@@ -186,6 +189,17 @@ impl<'a> UsageAnalyzer<'a> {
                 Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
             }
         }
+    }
+
+    fn symbol_is_json_namespace_import(&self, sym_id: SymbolId) -> bool {
+        self.binder.symbols.get(sym_id).is_some_and(|symbol| {
+            symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                && symbol
+                    .import_module
+                    .as_deref()
+                    .is_some_and(|module| module.ends_with(".json"))
+                && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"))
+        })
     }
 
     fn unique_symbol_property_name_symbol(

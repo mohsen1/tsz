@@ -1255,6 +1255,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(import_module) = symbol.import_module.as_deref() else {
             return false;
         };
+        if import_module.ends_with(".json")
+            && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"))
+        {
+            return false;
+        }
         let local_name = symbol.escaped_name.as_str();
         let import_name = symbol
             .import_name
@@ -1350,7 +1355,13 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                 {
                     if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
-                        if self.imported_name_is_used(binder, used, bindings.name)
+                        let is_json_namespace_import = self
+                            .arena
+                            .get(import.module_specifier)
+                            .and_then(|node| self.arena.get_literal(node))
+                            .is_some_and(|literal| literal.text.ends_with(".json"));
+                        if !is_json_namespace_import
+                            && self.imported_name_is_used(binder, used, bindings.name)
                             || self.namespace_import_needed_for_shadowed_self_type(
                                 bindings.name,
                                 import.module_specifier,

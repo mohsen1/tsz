@@ -976,12 +976,71 @@ impl<'a> DeclarationEmitter<'a> {
         if !needs_typeof {
             return None;
         }
+        if self.namespace_import_alias_targets_json_module(expr_idx, sym_id, binder) {
+            return None;
+        }
 
         let reference_text = self
             .nameable_constructor_expression_text(expr_idx)
             .or_else(|| self.get_identifier_text(expr_idx))?;
         let reference_text = self.relative_value_reference_text(&reference_text);
         Some(format!("typeof {reference_text}"))
+    }
+
+    fn namespace_import_alias_targets_json_module(
+        &self,
+        expr_idx: NodeIndex,
+        sym_id: SymbolId,
+        binder: &tsz_binder::BinderState,
+    ) -> bool {
+        let module_specifier = self
+            .namespace_import_module_specifier_from_syntax(expr_idx)
+            .or_else(|| self.imported_value_module_specifier_from_syntax(expr_idx))
+            .or_else(|| {
+                self.is_namespace_import_alias_symbol(sym_id)
+                    .then(|| self.imported_value_module_specifier(sym_id, binder))
+                    .flatten()
+            });
+
+        module_specifier.is_some_and(|module_specifier| module_specifier.ends_with(".json"))
+    }
+
+    pub(in crate::declaration_emitter) fn namespace_import_module_specifier_from_syntax(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let local_name = self.get_identifier_text(expr_idx)?;
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            let import = self.arena.get_import_decl(stmt_node)?;
+            let module_lit = self
+                .arena
+                .get(import.module_specifier)
+                .and_then(|node| self.arena.get_literal(node))?;
+            let clause = self
+                .arena
+                .get(import.import_clause)
+                .and_then(|node| self.arena.get_import_clause(node))?;
+            let bindings = self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|node| self.arena.get_named_imports(node))?;
+
+            if bindings.name.is_some()
+                && bindings.elements.nodes.is_empty()
+                && self.get_identifier_text(bindings.name).as_deref() == Some(local_name.as_str())
+            {
+                return Some(module_lit.text.clone());
+            }
+        }
+
+        None
     }
 
     pub(in crate::declaration_emitter) fn relative_value_reference_text(

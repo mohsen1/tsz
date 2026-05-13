@@ -36,6 +36,16 @@ impl UsageAnalyzer<'_> {
         let Some(source_symbol) = self.binder.symbols.get(sym_id) else {
             return false;
         };
+        if source_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            && source_symbol
+                .import_module
+                .as_deref()
+                .is_some_and(|module| module.ends_with(".json"))
+            && (source_symbol.import_name.is_none()
+                || source_symbol.import_name.as_deref() == Some("*"))
+        {
+            return false;
+        }
         let resolved_sym_id = if source_symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
             && source_symbol.import_module.is_some()
         {

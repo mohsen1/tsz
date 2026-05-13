@@ -85,6 +85,7 @@ interface TestCase {
   preserveConstEnums: boolean;
   verbatimModuleSyntax: boolean;
   rewriteRelativeImportExtensions: boolean;
+  resolveJsonModule: boolean;
   isolatedModules: boolean;
   importsNotUsedAsValues?: string;
   preserveValueImports: boolean;
@@ -185,6 +186,7 @@ function getCacheKey(
   preserveConstEnums: boolean = false,
   verbatimModuleSyntax: boolean = false,
   rewriteRelativeImportExtensions: boolean = false,
+  resolveJsonModule: boolean = false,
   isolatedModules: boolean = false,
   importsNotUsedAsValues: string = '',
   preserveValueImports: boolean = false,
@@ -241,6 +243,7 @@ function getCacheKey(
     preserveConstEnums,
     verbatimModuleSyntax,
     rewriteRelativeImportExtensions,
+    resolveJsonModule,
     isolatedModules,
     importsNotUsedAsValues,
     preserveValueImports,
@@ -672,6 +675,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const rewriteRelativeImportExtensions = variant.rewriterelativeimportextensions !== undefined
       ? variant.rewriterelativeimportextensions === 'true'
       : directives.rewriterelativeimportextensions === true;
+    const resolveJsonModule =
+      directives.resolvejsonmodule === true || tsconfigOptions.resolveJsonModule === true;
     const isolatedModules = variant.isolatedmodules !== undefined
       ? variant.isolatedmodules === 'true'
       : directives.isolatedmodules === true
@@ -790,6 +795,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       preserveConstEnums,
       verbatimModuleSyntax,
       rewriteRelativeImportExtensions,
+      resolveJsonModule,
       isolatedModules,
       importsNotUsedAsValues,
       preserveValueImports,
@@ -940,6 +946,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.preserveConstEnums,
       testCase.verbatimModuleSyntax,
       testCase.rewriteRelativeImportExtensions,
+      testCase.resolveJsonModule,
       testCase.isolatedModules,
       testCase.importsNotUsedAsValues ?? '',
       testCase.preserveValueImports,
@@ -987,6 +994,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         preserveConstEnums: testCase.preserveConstEnums,
         verbatimModuleSyntax: testCase.verbatimModuleSyntax,
         rewriteRelativeImportExtensions: testCase.rewriteRelativeImportExtensions,
+        resolveJsonModule: testCase.resolveJsonModule,
         isolatedModules: testCase.isolatedModules,
         importsNotUsedAsValues: testCase.importsNotUsedAsValues,
         preserveValueImports: testCase.preserveValueImports,
