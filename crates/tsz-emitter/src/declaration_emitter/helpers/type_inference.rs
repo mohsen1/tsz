@@ -314,6 +314,7 @@ impl<'a> DeclarationEmitter<'a> {
                 class_idx,
                 Some(&base_type_text),
                 arrow_form,
+                self.function_base_parameter_instance_type_is_any(func, base_param_index),
             );
         }
 
@@ -437,13 +438,15 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let class = self.arena.get_class(stmt_node)?;
             (self.get_identifier_text(class.name).as_deref() == Some(returned_name.as_str()))
-                .then(|| self.local_class_constructor_type_text_from_ast(stmt_idx, None, false))
+                .then(|| {
+                    self.local_class_constructor_type_text_from_ast(stmt_idx, None, false, false)
+                })
                 .flatten()
         })
     }
 
     fn class_constructor_object_type_text_from_ast(&self, class_idx: NodeIndex) -> Option<String> {
-        self.local_class_constructor_type_text_from_ast(class_idx, None, false)
+        self.local_class_constructor_type_text_from_ast(class_idx, None, false, false)
     }
 
     fn local_class_constructor_type_text_from_ast(
@@ -451,6 +454,7 @@ impl<'a> DeclarationEmitter<'a> {
         class_idx: NodeIndex,
         base_type_text: Option<&str>,
         arrow_form: bool,
+        include_any_index_signature: bool,
     ) -> Option<String> {
         let class_node = self.arena.get(class_idx)?;
         let class = self.arena.get_class(class_node)?;
@@ -479,12 +483,16 @@ impl<'a> DeclarationEmitter<'a> {
             params_text = "...args: any[]".to_string();
         }
 
-        let mut member_scratch = self.scratch_declaration_emitter();
-        member_scratch.indent_level = if arrow_form {
+        let instance_indent_level = if arrow_form {
             self.indent_level + 1
         } else {
             self.indent_level + 2
         };
+        let static_indent_level = self.indent_level + 1;
+        let mut member_scratch = self.scratch_declaration_emitter();
+        member_scratch.indent_level = instance_indent_level;
+        let mut static_member_scratch = self.scratch_declaration_emitter();
+        static_member_scratch.indent_level = static_indent_level;
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -492,24 +500,50 @@ impl<'a> DeclarationEmitter<'a> {
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
                 continue;
             }
-            member_scratch.emit_class_member(member_idx);
+            if self.class_member_is_static(member_idx) {
+                static_member_scratch.emit_class_member(member_idx);
+            } else {
+                member_scratch.emit_class_member(member_idx);
+            }
         }
         let members = member_scratch.writer.take_output();
         let members = Self::strip_abstract_member_modifiers(members.trim_end());
         let members = Self::expand_structural_auto_accessor_members(&members);
+        let members = Self::prepend_any_index_signature_if_needed(
+            &members,
+            instance_indent_level,
+            include_any_index_signature,
+        );
         let members = members.as_str();
+
+        let static_members = static_member_scratch.writer.take_output();
+        let static_members = Self::strip_abstract_member_modifiers(static_members.trim_end());
+        let static_members = Self::strip_static_member_modifiers(&static_members);
+        let static_members = Self::expand_structural_auto_accessor_members(&static_members);
+        let static_members = static_members.as_str();
 
         let constructor_type = if arrow_form {
             let prefix = if is_abstract { "abstract new " } else { "new " };
-            if members.is_empty() {
+            let constructor_type = if members.is_empty() {
                 format!("{prefix}({params_text}) => {{}}")
             } else {
                 format!("{prefix}({params_text}) => {{\n{members}\n}}")
+            };
+            if static_members.is_empty() {
+                constructor_type
+            } else {
+                format!("({constructor_type}) & {{\n{static_members}\n}}")
             }
         } else if members.is_empty() {
-            format!("{{\n    new ({params_text}): {{}};\n}}")
-        } else {
+            if static_members.is_empty() {
+                format!("{{\n    new ({params_text}): {{}};\n}}")
+            } else {
+                format!("{{\n    new ({params_text}): {{}};\n{static_members}\n}}")
+            }
+        } else if static_members.is_empty() {
             format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
+        } else {
+            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n{static_members}\n}}")
         };
 
         if let Some(base_type_text) = base_type_text {
@@ -539,6 +573,42 @@ impl<'a> DeclarationEmitter<'a> {
             .join("\n")
     }
 
+    fn strip_static_member_modifiers(members: &str) -> String {
+        members
+            .lines()
+            .map(|line| {
+                let trimmed = line.trim_start();
+                if let Some(rest) = trimmed.strip_prefix("static ") {
+                    let indent_len = line.len() - trimmed.len();
+                    format!("{}{}", &line[..indent_len], rest)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn prepend_any_index_signature_if_needed(
+        members: &str,
+        indent_level: u32,
+        include: bool,
+    ) -> String {
+        if !include
+            || members
+                .lines()
+                .any(|line| line.trim() == "[x: string]: any;")
+        {
+            return members.to_string();
+        }
+        let indent = "    ".repeat(indent_level as usize);
+        if members.is_empty() {
+            format!("{indent}[x: string]: any;")
+        } else {
+            format!("{indent}[x: string]: any;\n{members}")
+        }
+    }
+
     fn expand_structural_auto_accessor_members(members: &str) -> String {
         let mut expanded = Vec::new();
         for line in members.lines() {
@@ -564,6 +634,84 @@ impl<'a> DeclarationEmitter<'a> {
             expanded.push(line.to_string());
         }
         expanded.join("\n")
+    }
+
+    fn class_member_is_static(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        if let Some(prop) = self.arena.get_property_decl(member_node) {
+            return self.arena.is_static(&prop.modifiers);
+        }
+        if let Some(method) = self.arena.get_method_decl(member_node) {
+            return self.arena.is_static(&method.modifiers);
+        }
+        if let Some(accessor) = self.arena.get_accessor(member_node) {
+            return self.arena.is_static(&accessor.modifiers);
+        }
+        false
+    }
+
+    pub(in crate::declaration_emitter) fn function_returned_local_class_constructor_type_text_for_declaration(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let (class_idx, base_param_index) =
+            self.function_returned_local_class_extends_parameter(func)?;
+        let param_idx = func.parameters.nodes.get(base_param_index).copied()?;
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        let base_type_text =
+            self.type_annotation_text_from_arena_node(self.arena, param.type_annotation)?;
+        self.local_class_constructor_type_text_from_ast(
+            class_idx,
+            Some(&base_type_text),
+            false,
+            self.function_base_parameter_instance_type_is_any(func, base_param_index),
+        )
+    }
+
+    fn function_base_parameter_instance_type_is_any(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        base_param_index: usize,
+    ) -> bool {
+        let Some(param_idx) = func.parameters.nodes.get(base_param_index).copied() else {
+            return false;
+        };
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        let Some(base_type_text) =
+            self.type_annotation_text_from_arena_node(self.arena, param.type_annotation)
+        else {
+            return false;
+        };
+        if base_type_text == "any" {
+            return true;
+        }
+        let Some(type_params) = func.type_parameters.as_ref() else {
+            return false;
+        };
+        type_params.nodes.iter().copied().any(|type_param_idx| {
+            let Some(type_param_node) = self.arena.get(type_param_idx) else {
+                return false;
+            };
+            let Some(type_param) = self.arena.get_type_parameter(type_param_node) else {
+                return false;
+            };
+            self.get_identifier_text(type_param.name)
+                .as_deref()
+                .is_some_and(|name| name == base_type_text)
+                && self
+                    .type_annotation_text_from_arena_node(self.arena, type_param.constraint)
+                    .is_some_and(|constraint| {
+                        constraint.contains("=> any") || constraint.contains("): any")
+                    })
+        })
     }
 
     pub(in crate::declaration_emitter) fn type_annotation_text_from_arena_node(
@@ -7122,6 +7270,11 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         return_type_id: tsz_solver::types::TypeId,
     ) -> String {
+        if let Some(type_text) =
+            self.function_returned_local_class_constructor_type_text_for_declaration(func)
+        {
+            return type_text;
+        }
         let text = if let Some(ref type_params) = func.type_parameters
             && !type_params.nodes.is_empty()
         {

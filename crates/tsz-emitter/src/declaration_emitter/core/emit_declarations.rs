@@ -1567,6 +1567,11 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(": ");
                     self.write(type_text);
+                } else if let Some(type_text) =
+                    self.function_returned_local_class_constructor_type_text_for_declaration(func)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if self.emit_single_nameable_new_return_type_if_solver_any(
                     func,
                     func_body,
