@@ -1423,3 +1423,143 @@ const bad: P = [3, 1];
             .collect::<Vec<_>>()
     );
 }
+
+// Rule: when `infer R` matches a generic function's return type, free type parameters
+// must be erased to their upper bounds (constraint or `unknown`) before `R` is bound.
+
+const GET_RET_DEF: &str = "type GetRet<F> = F extends (...args: any[]) => infer R ? R : never;\n";
+
+#[test]
+fn return_type_of_unconstrained_generic_fn_erases_to_unknown() {
+    let source = format!(
+        r#"{GET_RET_DEF}
+function generic<T>(x: T): T[] {{
+    return [x];
+}}
+type GR = GetRet<typeof generic>;
+const gr: GR = ["test"];
+"#
+    );
+    let diags = tsz_checker::test_utils::check_source_diagnostics(&source);
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "GetRet of generic<T>: T[] should erase T to unknown, making string[] assignable. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn return_type_of_unconstrained_generic_fn_different_param_name() {
+    // Same rule, different type-parameter name (U instead of T) — proves the fix
+    // is not hardcoded to any specific name.
+    let source = format!(
+        r#"{GET_RET_DEF}
+function wrap<U>(val: U): U[] {{
+    return [val];
+}}
+type WR = GetRet<typeof wrap>;
+const wr: WR = [42];
+"#
+    );
+    let diags = tsz_checker::test_utils::check_source_diagnostics(&source);
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "GetRet of wrap<U>: U[] should erase U to unknown. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn return_type_of_constrained_generic_fn_erases_to_constraint() {
+    let source = format!(
+        r#"{GET_RET_DEF}
+function constrained<T extends string>(x: T): T[] {{
+    return [x];
+}}
+type CR = GetRet<typeof constrained>;
+const cr: CR = ["hello"];
+"#
+    );
+    let diags = tsz_checker::test_utils::check_source_diagnostics(&source);
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "GetRet of constrained<T extends string> erases T to string. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn return_infer_only_pattern_erases_single_type_param() {
+    let source = format!(
+        r#"{GET_RET_DEF}
+function identity<K>(x: K): K {{
+    return x;
+}}
+type IR = GetRet<typeof identity>;
+const accepted: IR = "any value";
+const accepted2: IR = 42;
+"#
+    );
+    let diags = tsz_checker::test_utils::check_source_diagnostics(&source);
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "GetRet of identity<K>: K should produce unknown. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn return_type_of_multi_param_generic_fn_erases_all_type_params() {
+    let source = format!(
+        r#"{GET_RET_DEF}
+function pair<A, B>(a: A, b: B): [A, B] {{
+    return [a, b];
+}}
+type PR = GetRet<typeof pair>;
+const pr: PR = ["x", 1];
+"#
+    );
+    let diags = tsz_checker::test_utils::check_source_diagnostics(&source);
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "GetRet of pair<A,B> should erase both to unknown. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn return_type_of_non_generic_fn_still_precise() {
+    let source = format!(
+        r#"{GET_RET_DEF}
+function nums(): number[] {{
+    return [1, 2, 3];
+}}
+type NR = GetRet<typeof nums>;
+const bad: NR = ["oops"];
+"#
+    );
+    let diags = tsz_checker::test_utils::check_source_diagnostics(&source);
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "GetRet of non-generic nums(): number[] should stay number[]. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
