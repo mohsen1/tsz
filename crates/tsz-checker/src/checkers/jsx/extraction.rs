@@ -497,27 +497,21 @@ impl<'a> CheckerState<'a> {
     ) {
         let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
         let is_this_tag = tag_text == "this";
-        if !is_this_tag
-            && tag_text
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_lowercase())
-        {
-            return;
-        }
-        // Keep `<this />` strict regardless of the apparent `this` type.
-        // tsc reports TS2604 here even if flow/context annotation gives
-        // `this` a callable/constructable shape.
         if is_this_tag {
-            use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 tag_name_idx,
-                diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,
+                crate::diagnostics::diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,
                 &[&tag_text],
             );
             return;
         }
-        // Skip for types that are inherently allowed in JSX position
+        if tag_text
+            .as_bytes()
+            .first()
+            .is_some_and(|ch| ch.is_ascii_lowercase())
+        {
+            return;
+        }
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
             || component_type == TypeId::UNKNOWN
@@ -525,11 +519,9 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        // Skip type parameters — they may resolve to callable types
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type) {
             return;
         }
-        // Skip string-like tag values without going through full assignability.
         // Dynamic tag names like `<Tag>` where `Tag` is `string` or a union of
         // string literals are valid JSX and should be treated like intrinsic
         // element lookups. A structural relation check here is unnecessarily
@@ -584,7 +576,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
             }
-            if !is_this_tag && saw_component_union && all_component_unions {
+            if saw_component_union && all_component_unions {
                 return;
             }
         }
