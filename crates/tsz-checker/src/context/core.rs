@@ -99,12 +99,14 @@ impl TypeCache {
 impl<'a> CheckerContext<'a> {
     /// Resolve a `SymbolId` to its owning file index.
     ///
-    /// Checks the shared `global_symbol_file_index` first (pre-built, read-only,
-    /// no `RefCell` overhead), then falls back to the layered
-    /// `cross_file_symbol_targets` overlay for dynamically-discovered mappings.
+    /// Checks the layered `cross_file_symbol_targets` overlay first for
+    /// dynamically-discovered or delegate-specific mappings, then falls back to
+    /// the shared `global_symbol_file_index`.
     /// Returns `None` if the symbol has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
-        // Check shared base map first (covers all pre-computed entries, no RefCell cost)
+        if let Some(idx) = self.cross_file_symbol_targets.borrow().get(sym_id) {
+            return Some(idx);
+        }
         if let Some(&idx) = self
             .global_symbol_file_index
             .as_ref()
@@ -112,7 +114,7 @@ impl<'a> CheckerContext<'a> {
         {
             return Some(idx);
         }
-        self.cross_file_symbol_targets.borrow().get(sym_id)
+        None
     }
 
     /// Check whether a `SymbolId` has a known cross-file owner.

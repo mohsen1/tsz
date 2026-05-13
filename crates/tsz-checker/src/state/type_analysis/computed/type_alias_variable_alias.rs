@@ -116,11 +116,14 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .get_binder_for_arena(decl_arena)
                     .unwrap_or(self.ctx.binder);
+                // Program metadata can exist for symbols declared in the active
+                // arena. Only route through cross-arena lowering when the alias
+                // declaration itself actually belongs to another arena.
                 let has_cross_arena_metadata = !std::ptr::eq(decl_arena, self.ctx.arena)
-                    || decl_binder.symbol_arenas.contains_key(&sym_id)
-                    || decl_binder
-                        .declaration_arenas
-                        .contains_key(&(sym_id, decl_idx));
+                    && (decl_binder.symbol_arenas.contains_key(&sym_id)
+                        || decl_binder
+                            .declaration_arenas
+                            .contains_key(&(sym_id, decl_idx)));
 
                 if (flags & symbol_flags::VALUE != 0)
                     && !self.ctx.merged_value_types.contains_key(&sym_id)
