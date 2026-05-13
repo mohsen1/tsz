@@ -46,6 +46,13 @@ impl<'a> TypePrinter<'a> {
             return false;
         };
 
+        if self.node_arena.is_some()
+            && symbol.value_declaration.is_some()
+            && !self.declaration_is_nameable(symbol.value_declaration)
+        {
+            return false;
+        }
+
         if symbol.declarations.is_empty() {
             return !symbol.parent.is_some();
         }
@@ -112,6 +119,7 @@ impl<'a> TypePrinter<'a> {
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => return false,
                 k if k == syntax_kind_ext::FUNCTION_EXPRESSION => return false,
                 k if k == syntax_kind_ext::ARROW_FUNCTION => return false,
+                k if k == syntax_kind_ext::CLASS_EXPRESSION => return false,
                 k if k == syntax_kind_ext::METHOD_DECLARATION => return false,
                 k if k == syntax_kind_ext::GET_ACCESSOR => return false,
                 k if k == syntax_kind_ext::SET_ACCESSOR => return false,
@@ -427,7 +435,11 @@ impl<'a> TypePrinter<'a> {
         needs_typeof: bool,
     ) -> Option<String> {
         if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
-            && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
+            && (self.can_reference_symbol_by_name(sym_id)
+                || self.is_global_symbol(sym_id)
+                || (!needs_typeof
+                    && self.type_param_scope_contains_name(&name)
+                    && self.global_class_symbol_can_use_global_this(sym_id)))
         {
             if !needs_typeof
                 && self.type_param_scope_contains_name(&name)
@@ -519,7 +531,7 @@ impl<'a> TypePrinter<'a> {
             .map(|module_path| format!("typeof import(\"{module_path}\")"))
     }
 
-    fn global_class_symbol_can_use_global_this(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn global_class_symbol_can_use_global_this(&self, sym_id: SymbolId) -> bool {
         let Some(arena) = self.symbol_arena else {
             return false;
         };
@@ -527,7 +539,17 @@ impl<'a> TypePrinter<'a> {
             return false;
         };
         symbol.parent == SymbolId::NONE
-            && symbol.has_any_flags(symbol_flags::CLASS)
+            && (symbol.has_any_flags(symbol_flags::CLASS)
+                || (symbol.value_declaration.is_some()
+                    && self
+                        .node_arena
+                        .and_then(|node_arena| node_arena.get(symbol.value_declaration))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION))
+                || symbol.declarations.iter().copied().any(|decl_idx| {
+                    self.node_arena
+                        .and_then(|node_arena| node_arena.get(decl_idx))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION)
+                }))
             && self.resolve_symbol_module_path(sym_id).is_none()
             && Self::is_valid_identifier(&symbol.escaped_name)
     }
