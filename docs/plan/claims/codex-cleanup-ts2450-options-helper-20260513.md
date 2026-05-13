@@ -1,6 +1,6 @@
 # Claim: reuse TS2450 option-aware diagnostic helper
 
-Status: WIP
+Status: ready for review
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6200
 Branch: `codex/cleanup-ts2450-options-helper-20260513`
@@ -14,6 +14,11 @@ Branch: `codex/cleanup-ts2450-options-helper-20260513`
   cleanup.
 
 ## Verification Plan
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(ts2450_const_enum_tests::)' --no-fail-fast`
+
+## Verification
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(ts2450_const_enum_tests::)' --no-fail-fast`
