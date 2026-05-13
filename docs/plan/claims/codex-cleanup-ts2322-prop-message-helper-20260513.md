@@ -1,6 +1,6 @@
 # Claim: reuse TS2322 property diagnostic message helper
 
-Status: WIP
+Status: ready for review
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6197
 Branch: `codex/cleanup-ts2322-prop-message-helper-20260513`
@@ -16,4 +16,9 @@ Branch: `codex/cleanup-ts2322-prop-message-helper-20260513`
 ## Verification Plan
 
 - `cargo fmt --check`
-- `cargo nextest run -p tsz-checker --lib -E 'test(ts2322_property_decl_annotation_tests::)' --no-fail-fast`
+- `cargo nextest run -p tsz-checker --test ts2322_property_decl_annotation_tests --no-fail-fast`
+
+## Verification
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --test ts2322_property_decl_annotation_tests --no-fail-fast`
