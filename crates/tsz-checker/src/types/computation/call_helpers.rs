@@ -664,6 +664,11 @@ impl<'a> CheckerState<'a> {
             }
             if var_decl.initializer.is_some() {
                 let mut init_type = self.get_type_of_node(var_decl.initializer);
+                if self.is_const_variable_declaration(decl_idx)
+                    && self.is_bare_object_literal_expression(var_decl.initializer)
+                {
+                    init_type = self.widen_mutable_object_literal_property_types(init_type);
+                }
                 if self.ctx.is_js_file()
                     && let Some(root_name) = root_name.as_deref()
                 {
