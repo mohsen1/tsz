@@ -41453,6 +41453,78 @@ fn test_nested_conditional_template_literal_infer() {
     assert_eq!(result, expected);
 }
 
+#[test]
+fn test_recursive_template_literal_application_with_string_intrinsics() {
+    use crate::StringIntrinsicKind;
+    use crate::def::DefKind;
+    use crate::relations::subtype::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    let camel_def = DefId(6312);
+    let camel_base = interner.intern(TypeData::Lazy(camel_def));
+
+    let s_name = interner.intern_string("S");
+    let s_param_info = TypeParamInfo {
+        name: s_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let s_param = interner.intern(TypeData::TypeParameter(s_param_info));
+
+    let l_name = interner.intern_string("L");
+    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: l_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let r_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: r_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(infer_l),
+        TemplateSpan::Text(interner.intern_string("_")),
+        TemplateSpan::Type(infer_r),
+    ]);
+    let lower_l = interner.string_intrinsic(StringIntrinsicKind::Lowercase, infer_l);
+    let cap_r = interner.string_intrinsic(StringIntrinsicKind::Capitalize, infer_r);
+    let recursive = interner.application(camel_base, vec![cap_r]);
+    let true_type = interner.template_literal(vec![
+        TemplateSpan::Type(lower_l),
+        TemplateSpan::Type(recursive),
+    ]);
+    let false_type = interner.string_intrinsic(StringIntrinsicKind::Lowercase, s_param);
+    let body = interner.conditional(ConditionalType {
+        check_type: s_param,
+        extends_type: pattern,
+        true_type,
+        false_type,
+        is_distributive: true,
+    });
+
+    env.insert_def_with_params(camel_def, body, vec![s_param_info]);
+    env.insert_def_kind(camel_def, DefKind::TypeAlias);
+
+    let input = interner.literal_string("hello_world");
+    let app = interner.application(camel_base, vec![input]);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(
+        result,
+        interner.literal_string("helloworld"),
+        "got {:?}",
+        interner.lookup(result)
+    );
+}
+
 /// Test template literal in conditional extends clause
 /// `prefix${string}` extends `prefix${infer R}` ? R : never
 #[test]

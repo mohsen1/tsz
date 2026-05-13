@@ -1341,6 +1341,37 @@ type T4 = AppendArgument<(value: string) => number, boolean>;
 }
 
 #[test]
+fn recursive_template_literal_intrinsics_evaluate_to_specific_literal() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("recursive_template_literal_intrinsics").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"
+type CamelCase<S extends string> = S extends `${infer L}_${infer R}`
+  ? `${Lowercase<L>}${CamelCase<Capitalize<R>>}`
+  : Lowercase<S>;
+
+type CC1 = CamelCase<"hello_world">;
+
+const x: CC1 = "anything";
+"#,
+    );
+
+    let output = assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+        "recursive template literal intrinsics",
+    );
+    assert!(
+        output.contains("TS2322") && output.contains("\"helloworld\""),
+        "expected assignment to fail against the concrete literal, got:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics() {
     let Some(_) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
