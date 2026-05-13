@@ -267,6 +267,14 @@ impl<'a> InferSubstitutor<'a> {
                     self.interner.no_infer(new_inner)
                 }
             }
+            TypeData::StringIntrinsic { kind, type_arg } => {
+                let new_type_arg = self.substitute(type_arg);
+                if new_type_arg == type_arg {
+                    type_id
+                } else {
+                    self.interner.string_intrinsic(kind, new_type_arg)
+                }
+            }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 let mut changed = false;

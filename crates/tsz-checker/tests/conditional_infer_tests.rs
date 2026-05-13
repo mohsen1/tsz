@@ -44,6 +44,30 @@ const z: TestSynthetic = '3'; // Should error TS2322: string not assignable to n
 }
 
 #[test]
+fn recursive_template_literal_with_string_intrinsics_resolves_to_literal() {
+    let source = r#"
+type CamelCase<S extends string> = S extends `${infer L}_${infer R}`
+  ? `${Lowercase<L>}${CamelCase<Capitalize<R>>}`
+  : Lowercase<S>;
+
+type CC1 = CamelCase<"hello_world">;
+const rejected: CC1 = "anything";
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "recursive CamelCase should resolve to the literal \"helloworld\" and reject arbitrary strings. Actual diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn keyof_mapped_application_uses_instantiated_constraint() {
     let source = r#"
 type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
