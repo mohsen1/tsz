@@ -1208,7 +1208,7 @@ shortcut measured a large monorepo-006 win (`95.75s -> 84.24s` total), but it
 also admitted empty interfaces and annotations that require hybrid type
 resolution; after targeted unit failures, the guarded branch now falls back to
 the full interface lowering path for those cases. Treat the original timing as
-historical until the narrowed guard is remeasured. Decision record:
+historical broad-shortcut evidence. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md).
 
 **2026-05-13 `compute_type_of_symbol` simple-local-interface hit counter:** a
@@ -1218,7 +1218,7 @@ records every interface-symbol call that returns through the simple local-object
 shortcut. The original broad shortcut reported `24,760` hits against `24,796`
 interface-kind calls (`99.85%`); this is no longer the guarded-branch baseline.
 Keep the counter as the direct guardrail for future interface root-demand or
-lowering-cost edits, and refresh monorepo-006 before quoting hit-rate claims.
+lowering-cost edits.
 Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md).
 
@@ -1232,6 +1232,19 @@ is `24,760 / 24,796` (`99.85%`); the active reject residue is tiny and concrete
 This narrows future shortcut-expansion work to those live buckets and avoids
 spending time on inactive gates. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-outcomes.md).
+
+**2026-05-13 guarded simple-local-object rerun:** monorepo-006 has now been
+remeasured on the guarded branch
+([`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md)).
+The counter signal is stable across two runs: `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits = 0` and
+`compute_type_of_symbol_interface_simple_object_outcomes.success = 0`.
+The active residue remains `reject_out_of_arena_decl=16`,
+`reject_missing_interface_decl=7`, `reject_declaration_count=1`,
+`reject_heritage_extends=1`. Timing varied under shared-runner contention
+(`78.12s/76.36s` then `103.68s/100.79s` total/check), so treat this rerun as a
+counter-baseline refresh, not a timing claim. Next step: either conformance-
+proven guard relaxation that restores meaningful `success`, or dead-path
+simplification if the shortcut remains inactive.
 
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
 any more aliases, add `direct_actual_lib_alias_body_outcomes` to the perf

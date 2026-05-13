@@ -50,3 +50,15 @@ Simple-object outcomes:
    concrete set of structural/heritage cases.
 2. Target any next shortcut-expansion work at the active reject buckets only;
    avoid spending time on currently zero buckets until workloads show demand.
+
+## Guarded rerun update
+
+After guard narrowing, the active monorepo-006 rerun is tracked in
+`2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md`.
+The guarded branch reports:
+
+- `success = 0`
+- `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits = 0`
+
+So the broad-run `99.85%` success ratio here is historical context only, not
+the current guarded baseline.

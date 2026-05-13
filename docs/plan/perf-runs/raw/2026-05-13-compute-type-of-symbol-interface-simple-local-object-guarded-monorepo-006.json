@@ -1,0 +1,79 @@
+{
+  "fixture": "monorepo-006",
+  "mode": "attribution",
+  "timings": {
+    "total_s": 78.12,
+    "check_s": 76.36,
+    "parse_bind_s": 1.25,
+    "io_read_s": 0.31
+  },
+  "diagnostics": 10198,
+  "compute_type_of_symbol": {
+    "total_calls": 26377,
+    "cache_hits": 252043,
+    "interface_simple_object_fastpath_hits": 0,
+    "source_outcomes": {
+      "global_symbol": 25402,
+      "cross_file_symbol": 0,
+      "missing_symbol": 0
+    },
+    "kind_outcomes": {
+      "alias": 148,
+      "type_alias": 311,
+      "interface": 24796,
+      "class": 0,
+      "function": 0,
+      "variable": 0,
+      "module": 0,
+      "property": 0,
+      "method": 0,
+      "accessor": 0,
+      "enum": 0,
+      "type_parameter": 147,
+      "type_literal": 0,
+      "object_literal": 0,
+      "signature": 0,
+      "other": 0
+    },
+    "interface_fastpath_outcomes": {
+      "full_path": 1,
+      "skip_computed_name_map": 1,
+      "skip_prewarm": 0,
+      "skip_local_heritage_merge": 0,
+      "skip_computed_name_map_and_prewarm": 0,
+      "skip_computed_name_map_and_local_heritage_merge": 16,
+      "skip_prewarm_and_local_heritage_merge": 0,
+      "skip_all_three": 24767
+    },
+    "interface_callsite_outcomes": {
+      "root": 24782,
+      "parent_interface": 14,
+      "parent_type_alias": 0,
+      "parent_alias": 0,
+      "parent_other": 0,
+      "parent_missing": 0
+    },
+    "interface_simple_object_outcomes": {
+      "success": 0,
+      "reject_out_of_arena_decl": 16,
+      "reject_cross_file_same_index": 0,
+      "reject_declaration_count": 1,
+      "reject_missing_interface_decl": 7,
+      "reject_type_parameters": 0,
+      "reject_heritage_extends": 1,
+      "reject_non_property_member": 0,
+      "reject_computed_name": 0,
+      "reject_unresolved_property_name": 0
+    }
+  },
+  "rerun_validation": {
+    "timings": {
+      "total_s": 103.68,
+      "check_s": 100.79,
+      "parse_bind_s": 2.29,
+      "io_read_s": 0.38
+    },
+    "interface_simple_object_fastpath_hits": 0,
+    "interface_simple_object_success_outcomes": 0
+  }
+}
