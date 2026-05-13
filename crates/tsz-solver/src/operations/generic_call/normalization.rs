@@ -146,7 +146,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             inferred_ty
         };
         if let Some(constraint) = constraint
-            && !self.checker.is_assignable_to(effective_arg_ty, constraint)
+            && !self.arg_satisfies_type_parameter_constraint(effective_arg_ty, constraint)
             && !self.is_function_union_compat(effective_arg_ty, constraint)
             && !self.callable_satisfies_top_rest_any_constraint(effective_arg_ty, constraint)
         {
