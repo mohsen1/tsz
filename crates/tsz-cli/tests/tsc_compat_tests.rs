@@ -1269,6 +1269,41 @@ const rw2: RW2 = "hello";
 }
 
 #[test]
+fn required_mapped_keyof_index_access_does_not_report_ts2536() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("required_mapped_keyof_index_access").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"
+type Test<T> = {
+  [K in keyof T]: Required<T>[K];
+};
+
+type Obj = { a: number; b?: string };
+type T1 = Test<Obj>;
+const t1: T1 = { a: 1, b: "x" };
+"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "Required<T>[K] where K extends keyof T should type-check:\n{output}"
+    );
+    assert!(
+        !output.contains("TS2536"),
+        "unexpected TS2536 diagnostic:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics() {
     let Some(_) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
