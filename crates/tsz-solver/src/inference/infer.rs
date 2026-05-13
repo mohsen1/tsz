@@ -1355,6 +1355,14 @@ impl<'a> InferenceContext<'a> {
         let info = self.table.probe_value(root);
         !info.candidates.is_empty() && info.candidates.iter().all(|c| c.is_fresh_literal)
     }
+
+    /// Returns `true` if any covariant candidate came from a type assertion (`expr as T`).
+    /// Asserted types are non-fresh and must not be widened.
+    pub fn has_type_annotation_candidates(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates.iter().any(|c| c.source_is_type_annotation)
+    }
 }
 
 // DISABLED: Tests use deprecated add_candidate / resolve_with_constraints API

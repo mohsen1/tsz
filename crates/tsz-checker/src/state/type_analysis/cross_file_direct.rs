@@ -217,7 +217,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         self.ctx.symbol_types.insert(sym_id, direct_type);
-        self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
+        self.ctx
+            .lib_delegation_cache
+            .insert(sym_id, (direct_type, params.clone()));
         Some((direct_type, params))
     }
 
@@ -713,6 +715,7 @@ mod tests {
     use crate::test_utils::load_lib_files;
     use std::sync::Arc;
     use tsz_binder::BinderState;
+    use tsz_common::perf_counters::CrossArenaSymbolMissSource;
     use tsz_parser::parser::{ParserState, syntax_kind_ext};
     use tsz_solver::{TypeId, TypeInterner};
 
@@ -948,5 +951,72 @@ mod tests {
 
         assert_ne!(ty, TypeId::UNKNOWN);
         assert_ne!(ty, TypeId::ERROR);
+    }
+
+    #[test]
+    fn direct_actual_lib_delegation_cache_preserves_type_params() {
+        let lib_files = load_lib_files(&["es2015.iterable.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("ArrayIterator")
+            .expect("ArrayIterator should resolve to a lib symbol");
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref);
+
+        let (ty, params) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                delegate_arena,
+                false,
+            )
+            .expect("ArrayIterator should lower through the direct lib path");
+
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+        assert_eq!(params.len(), 1, "ArrayIterator should expose T");
+
+        let (cached_ty, cached_params) = state
+            .ctx
+            .lib_delegation_cache
+            .get(&sym_id)
+            .expect("direct lib path should populate the delegation cache");
+        assert_eq!(*cached_ty, ty);
+        assert_eq!(
+            cached_params.len(),
+            params.len(),
+            "cache hits must preserve generic application metadata",
+        );
     }
 }
