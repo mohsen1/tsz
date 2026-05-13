@@ -2,8 +2,8 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `fix-readonly-accessor-ts1243-20260513`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #6235
+- **Status**: ready
 - **Workstream**: Diagnostic conformance
 
 ## Intent
@@ -13,9 +13,10 @@ Close #6188 by emitting TS1243 when a class auto-accessor combines `readonly` wi
 ## Files Touched
 
 - `docs/plan/claims/fix-readonly-accessor-ts1243-20260513.md`
-- Parser/checker diagnostic files TBD after inspection
-- Focused regression test TBD after inspection
+- `crates/tsz-parser/tests/modifier_ordering_tests.rs`
 
 ## Verification
 
-- Pending
+- `cargo test -p tsz-parser ts1243_without_ts1029 -- --nocapture` (2 passed)
+- `cargo fmt --all -- --check`
+- `git diff --check`
