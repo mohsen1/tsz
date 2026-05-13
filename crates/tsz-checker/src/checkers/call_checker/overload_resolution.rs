@@ -12,8 +12,7 @@ use crate::query_boundaries::common::{
     CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
 };
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::{CallableContext, OverloadResolution, SelectedTypePredicate};
@@ -1973,7 +1972,11 @@ impl<'a> CheckerState<'a> {
             .copied()
             .enumerate()
             .find_map(|(index, actual)| {
-                if !self.type_is_string_like_for_overload_applicability(actual) {
+                if actual != TypeId::STRING
+                    && !crate::query_boundaries::common::is_string_type(self.ctx.types, actual)
+                    && crate::query_boundaries::common::string_literal_value(self.ctx.types, actual)
+                        .is_none()
+                {
                     return None;
                 }
                 let expected = sig
@@ -1993,12 +1996,5 @@ impl<'a> CheckerState<'a> {
                         fallback_return: sig.return_type,
                     })
             })
-    }
-
-    fn type_is_string_like_for_overload_applicability(&self, type_id: TypeId) -> bool {
-        type_id == TypeId::STRING
-            || crate::query_boundaries::common::is_string_type(self.ctx.types, type_id)
-            || crate::query_boundaries::common::string_literal_value(self.ctx.types, type_id)
-                .is_some()
     }
 }
