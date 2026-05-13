@@ -2214,10 +2214,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// We intentionally limit this to Intersection types. Other compound types like
     /// `keyof T`, `T[K]`, or `Lowercase<T>` are evaluated eagerly by TSC through
     /// constraint resolution and should NOT be deferred at this stage.
-    ///
-    /// Type parameters inside generic function bodies are represented as `Lazy(DefId)`
-    /// references. The standard `contains_type_parameters` visitor doesn't walk through
-    /// `Lazy` refs, so this helper checks for Lazy members directly.
     fn type_is_compound_generic(&self, type_id: TypeId) -> bool {
         // Check for compound types containing unresolved type parameter references.
         // We intentionally skip the `contains_type_parameters` visitor here because
@@ -2238,17 +2234,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 members.iter().any(|&m| {
                     matches!(
                         self.interner().lookup(m),
-                        Some(
-                            TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::TypeParameter(_)
-                        )
+                        Some(TypeData::Recursive(_) | TypeData::TypeParameter(_))
                     )
                 })
             }
             Some(TypeData::IndexAccess(obj, idx)) => {
-                // IndexAccess types like T[K] where T or K contains unresolved
-                // type parameters (Lazy/TypeParameter) are genuinely indeterminate.
-                // Example: Extract<M[K], ArrayLike<any>> must stay deferred because
+                // IndexAccess types like T[K] where T or K is an unresolved type
+                // parameter are genuinely indeterminate and must be deferred.
+                // Example: Extract<M[K], ArrayLike<any>> stays deferred because
                 // M[K] could resolve to anything once M and K are instantiated.
+                // Named concrete types (Lazy(DefId)) resolve eagerly and do NOT
+                // trigger deferral — Interface["prop"] is always evaluatable.
                 Self::is_generic_ref(self.interner(), obj)
                     || Self::is_generic_ref(self.interner(), idx)
             }
@@ -2306,12 +2302,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return false;
         }
         match db.lookup(type_id) {
-            Some(
-                TypeData::Lazy(_)
-                | TypeData::TypeParameter(_)
-                | TypeData::Infer(_)
-                | TypeData::Recursive(_),
-            ) => true,
+            // Lazy(DefId) is a reference to a concrete named type (interface, class, type
+            // alias). It is always resolvable — evaluate(Lazy(D)) yields the body of D,
+            // which is structural and concrete. Only true unknowns (TypeParameter, Infer)
+            // and self-recursive placeholders (Recursive) should trigger deferral.
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_) | TypeData::Recursive(_)) => true,
             Some(TypeData::IndexAccess(obj, idx)) => {
                 Self::is_generic_ref(db, obj) || Self::is_generic_ref(db, idx)
             }
@@ -2421,5 +2416,120 @@ mod tests {
                 non_fn
             )
         );
+    }
+
+    /// `Lazy(DefId)` is a reference to a concrete named type (interface, class, type alias).
+    /// It must NOT be treated as a generic ref — it is always resolvable and not an
+    /// unresolved type parameter.
+    #[test]
+    fn test_is_generic_ref_lazy_is_not_generic() {
+        let interner = TypeInterner::new();
+        let lazy_a = interner.lazy(crate::def::DefId(100));
+        let lazy_b = interner.lazy(crate::def::DefId(200));
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner, lazy_a
+            ),
+            "Lazy(DefId) should not be a generic ref"
+        );
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner, lazy_b
+            ),
+            "Lazy(DefId) with different DefId should not be a generic ref"
+        );
+    }
+
+    /// `TypeParameter` is a genuine unknown and must still trigger deferral.
+    /// Tests two different parameter names to prove name-independence.
+    #[test]
+    fn test_is_generic_ref_type_parameter_is_generic() {
+        let interner = TypeInterner::new();
+        let atom_t = interner.intern_string("T");
+        let atom_k = interner.intern_string("K");
+        let make_tp = |name| {
+            interner.type_param(crate::types::TypeParamInfo {
+                name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            })
+        };
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner,
+                make_tp(atom_t)
+            ),
+            "TypeParameter T should be a generic ref"
+        );
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner,
+                make_tp(atom_k)
+            ),
+            "TypeParameter K (renamed) should be a generic ref"
+        );
+    }
+
+    /// `IndexAccess(Lazy(DefId), string)` — property access on a named interface — must NOT
+    /// trigger deferral. This was the root cause of issue #6256 where
+    /// `Interface["prop"] extends Record<string, any>` was incorrectly deferred.
+    #[test]
+    fn test_is_generic_ref_index_access_lazy_is_not_generic() {
+        let interner = TypeInterner::new();
+        let lazy = interner.lazy(crate::def::DefId(42));
+        let idx_access = interner.index_access(lazy, TypeId::STRING);
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner, idx_access
+            ),
+            "IndexAccess(Lazy(DefId), string) should not be a generic ref"
+        );
+    }
+
+    /// `IndexAccess(TypeParam, K)` must remain a generic ref — `T[K]` is indeterminate
+    /// until T and K are substituted.
+    #[test]
+    fn test_is_generic_ref_index_access_type_param_remains_generic() {
+        let interner = TypeInterner::new();
+        let atom_m = interner.intern_string("M");
+        let tp_m = interner.type_param(crate::types::TypeParamInfo {
+            name: atom_m,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let idx_access = interner.index_access(tp_m, TypeId::STRING);
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner, idx_access
+            ),
+            "IndexAccess(TypeParam, string) should be a generic ref"
+        );
+    }
+
+    /// Intrinsic `TypeId`s (like `TypeId::STRING`) are never generic regardless of
+    /// what internal data they might map to.
+    #[test]
+    fn test_is_generic_ref_intrinsics_are_never_generic() {
+        let interner = TypeInterner::new();
+        for id in [
+            TypeId::STRING,
+            TypeId::NUMBER,
+            TypeId::BOOLEAN,
+            TypeId::ANY,
+            TypeId::UNKNOWN,
+            TypeId::NEVER,
+            TypeId::VOID,
+            TypeId::UNDEFINED,
+            TypeId::NULL,
+        ] {
+            assert!(
+                !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                    &interner, id
+                ),
+                "intrinsic {id:?} should not be a generic ref"
+            );
+        }
     }
 }
