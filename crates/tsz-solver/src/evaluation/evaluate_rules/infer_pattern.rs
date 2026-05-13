@@ -1304,6 +1304,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Algorithm: Match source members against non-infer pattern members,
             // then bind the infer to the remaining source members
             TypeData::Union(pattern_members) => {
+                let members = self.interner().type_list(pattern_members);
+                if members.iter().any(|&member| {
+                    !matches!(self.interner().lookup(member), Some(TypeData::Infer(_)))
+                        && self.type_contains_infer(member)
+                }) {
+                    for &member in members.iter() {
+                        let mut local_bindings = bindings.clone();
+                        let mut local_visited = FxHashSet::default();
+                        if self.match_infer_pattern(
+                            source,
+                            member,
+                            &mut local_bindings,
+                            &mut local_visited,
+                            checker,
+                        ) {
+                            *bindings = local_bindings;
+                            return true;
+                        }
+                    }
+                    return false;
+                }
                 self.match_infer_union_pattern(source, pattern_members, pattern, bindings, checker)
             }
             _ => checker.is_subtype_of(source, pattern),

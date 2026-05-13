@@ -1237,6 +1237,38 @@ if ("a" in x) {
 }
 
 #[test]
+fn template_literal_union_prefix_pattern_matches_before_infer() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("template_literal_union_prefix_pattern").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"
+type RemoveWhitespace<S extends string> =
+  S extends `${" " | "\t"}${infer Rest}` ? Rest : S;
+
+type RW1 = RemoveWhitespace<" hello">;
+type RW2 = RemoveWhitespace<"\thello">;
+
+const rw1: RW1 = "hello";
+const rw2: RW2 = "hello";
+"#,
+    );
+
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+    )
+    .expect("tsz should run");
+    assert_eq!(
+        code, 0,
+        "union-prefix template literal pattern should type-check:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics() {
     let Some(_) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");
