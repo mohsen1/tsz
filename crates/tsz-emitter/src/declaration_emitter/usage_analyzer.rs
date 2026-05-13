@@ -1354,9 +1354,11 @@ impl<'a> UsageAnalyzer<'a> {
             for &param_idx in &func.parameters.nodes {
                 if let Some(param_node) = self.arena.get(param_idx)
                     && let Some(param) = self.arena.get_parameter(param_node)
-                    && param.type_annotation.is_some()
                 {
-                    self.analyze_type_node(param.type_annotation);
+                    self.analyze_binding_pattern_property_names(param.name);
+                    if param.type_annotation.is_some() {
+                        self.analyze_type_node(param.type_annotation);
+                    }
                 }
             }
         }
@@ -1491,12 +1493,42 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(param) = self.arena.get_parameter(param_node) else {
             return;
         };
+        self.analyze_binding_pattern_property_names(param.name);
 
         // Walk type annotation
         if param.type_annotation.is_some() {
             self.analyze_type_node(param.type_annotation);
         } else {
             self.walk_inferred_type_or_related(&[param_idx, param.name, param.initializer]);
+        }
+    }
+
+    fn analyze_binding_pattern_property_names(&mut self, pattern_idx: NodeIndex) {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+            && pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+        for &elem_idx in &pattern.elements.nodes {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.property_name.is_some() {
+                self.analyze_computed_property_name(elem.property_name);
+            }
+            self.analyze_binding_pattern_property_names(elem.name);
         }
     }
 
@@ -1809,7 +1841,15 @@ impl<'a> UsageAnalyzer<'a> {
         let expr_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(computed.expression);
-        if self.source_is_js_file && self.computed_property_name_resolves_to_literal_key(expr_idx) {
+        let computed_is_binding_element_name = self
+            .arena
+            .parent_of(name_idx)
+            .and_then(|parent_idx| self.arena.get(parent_idx))
+            .is_some_and(|parent| parent.kind == syntax_kind_ext::BINDING_ELEMENT);
+        if self.source_is_js_file
+            && !computed_is_binding_element_name
+            && self.computed_property_name_resolves_to_literal_key(expr_idx)
+        {
             return;
         }
         // The expression inside [] may be an identifier, property access, etc.

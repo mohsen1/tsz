@@ -2391,6 +2391,9 @@ impl<'a> DeclarationEmitter<'a> {
                 if !has_export_modifier && !has_js_named_export {
                     regular_decls.retain(|(_is_exported, _decl_idx, _decl_node, decl)| {
                         self.should_emit_public_api_dependency(decl.name)
+                            && !self.js_const_used_as_computed_binding_name_in_exported_function(
+                                decl.name,
+                            )
                             && !self
                                 .public_api_dependency_is_type_only_exported_type_side(decl.name)
                             && !self.default_import_alias_dependency_is_type_only(

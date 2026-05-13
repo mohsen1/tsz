@@ -1026,7 +1026,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn variable_declaration_has_effective_export(&self, decl_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn variable_declaration_has_effective_export(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> bool {
         let mut current = decl_idx;
         for _ in 0..4 {
             if self.statement_has_effective_export(current) {

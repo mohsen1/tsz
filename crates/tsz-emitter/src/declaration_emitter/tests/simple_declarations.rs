@@ -6680,3 +6680,60 @@ const propValue = c.prop;
         "Expected property access to recover the paired setter type: {output}"
     );
 }
+
+#[test]
+fn test_jsx_exported_arrow_destructured_literal_keys_emit_function_signature() {
+    let source = r#"
+import * as React from "react";
+const dynPropName = "data-dyn";
+export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynPropName]: dynProp }) => (
+    <>Hello</>
+);
+"#;
+    let mut parser = ParserState::new("test.jsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let computed_expr = parser
+        .arena
+        .nodes
+        .iter()
+        .find_map(|node| {
+            (node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                .then(|| parser.arena.get_computed_property(node))
+                .flatten()
+                .map(|computed| computed.expression)
+        })
+        .expect("missing computed property name");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(computed_expr.0, interner.literal_string("data-dyn"));
+
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.jsx".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export function ExampleFunctionalComponent"),
+        "Expected exported JS arrow component to emit as a function declaration: {output}"
+    );
+    assert!(
+        output.contains("\"data-testid\": any;") && output.contains("\"data-dyn\": any;"),
+        "Expected destructured string and computed literal keys in synthesized param type: {output}"
+    );
+    assert!(
+        output.contains("): JSX.Element;"),
+        "Expected JSX expression body to emit JSX.Element return type: {output}"
+    );
+    assert!(
+        output.contains("declare const dynPropName: \"data-dyn\";"),
+        "Expected computed binding property name dependency to be retained: {output}"
+    );
+}

@@ -1643,7 +1643,7 @@ impl<'a> DeclarationEmitter<'a> {
             .as_deref()
             .is_some_and(Self::jsdoc_has_function_signature_tags);
         let has_any_jsdoc = jsdoc.is_some();
-        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc {
+        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc && !is_exported {
             return false;
         }
 
@@ -1740,6 +1740,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_js_computed_binding_name_dependencies_for_function(&func.parameters);
         self.emit_js_function_like_class_if_needed(
             decl_name,
             &func.parameters,
@@ -1749,6 +1750,172 @@ impl<'a> DeclarationEmitter<'a> {
         );
         self.emit_js_namespace_export_aliases_for_name(decl_name, is_exported);
         true
+    }
+
+    pub(in crate::declaration_emitter) fn js_const_used_as_computed_binding_name_in_exported_function(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let target_symbol = binder.node_symbols.get(&name_idx.0).copied().or_else(|| {
+            self.get_identifier_text(name_idx)
+                .and_then(|name| binder.file_locals.get(&name))
+        });
+        let Some(target_symbol) = target_symbol else {
+            return false;
+        };
+
+        self.arena.nodes.iter().enumerate().any(|(idx, node)| {
+            let decl_idx = NodeIndex(idx as u32);
+            let Some(decl) = self.arena.get_variable_declaration(node) else {
+                return false;
+            };
+            if !self.variable_declaration_has_effective_export(decl_idx) {
+                return false;
+            }
+            let Some(init_node) = self.arena.get(decl.initializer) else {
+                return false;
+            };
+            if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return false;
+            }
+            let Some(func) = self.arena.get_function(init_node) else {
+                return false;
+            };
+            let mut symbols = Vec::new();
+            let mut seen = FxHashSet::default();
+            self.collect_computed_binding_name_symbols(&func.parameters, &mut symbols, &mut seen);
+            symbols.contains(&target_symbol)
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_computed_binding_name_dependencies_for_function(
+        &mut self,
+        params: &NodeList,
+    ) {
+        if !self.source_is_js_file {
+            return;
+        }
+        let mut symbols = Vec::new();
+        let mut seen = FxHashSet::default();
+        self.collect_computed_binding_name_symbols(params, &mut symbols, &mut seen);
+        for symbol_id in symbols {
+            self.emit_js_const_symbol_dependency(symbol_id);
+        }
+    }
+
+    fn collect_computed_binding_name_symbols(
+        &self,
+        params: &NodeList,
+        symbols: &mut Vec<SymbolId>,
+        seen: &mut FxHashSet<SymbolId>,
+    ) {
+        for &param_idx in &params.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.collect_computed_binding_name_symbols_from_pattern(param.name, symbols, seen);
+        }
+    }
+
+    fn collect_computed_binding_name_symbols_from_pattern(
+        &self,
+        pattern_idx: NodeIndex,
+        symbols: &mut Vec<SymbolId>,
+        seen: &mut FxHashSet<SymbolId>,
+    ) {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+            && pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+        for &elem_idx in &pattern.elements.nodes {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.property_name.is_some()
+                && let Some(prop_node) = self.arena.get(elem.property_name)
+                && prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.arena.get_computed_property(prop_node)
+            {
+                let expr_idx = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(computed.expression);
+                if let Some(sym_id) = self.value_reference_symbol(expr_idx)
+                    && seen.insert(sym_id)
+                {
+                    symbols.push(sym_id);
+                }
+            }
+            self.collect_computed_binding_name_symbols_from_pattern(elem.name, symbols, seen);
+        }
+    }
+
+    fn emit_js_const_symbol_dependency(&mut self, symbol_id: SymbolId) -> bool {
+        if !self.emitted_synthetic_dependency_symbols.insert(symbol_id) {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            self.emitted_synthetic_dependency_symbols.remove(&symbol_id);
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(symbol_id) else {
+            self.emitted_synthetic_dependency_symbols.remove(&symbol_id);
+            return false;
+        };
+        for decl_idx in symbol.all_declarations() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if !self.arena.is_const_variable_declaration(decl_idx) {
+                continue;
+            }
+            let Some(name) = self.get_identifier_text(decl.name) else {
+                continue;
+            };
+            let Some(type_text) = self.const_literal_initializer_text_deep(decl.initializer) else {
+                continue;
+            };
+            self.write_indent();
+            if self.should_emit_declare_keyword(false) {
+                self.write("declare ");
+            }
+            self.write("const ");
+            self.write(&name);
+            self.write(": ");
+            self.write(&type_text);
+            self.write(";");
+            self.write_line();
+            self.emitted_non_exported_declaration = true;
+            return true;
+        }
+        self.emitted_synthetic_dependency_symbols.remove(&symbol_id);
+        false
     }
 
     pub(in crate::declaration_emitter) fn parse_jsdoc_callback_alias(
