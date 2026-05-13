@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-13
 - **Branch**: `fix-mixin-heritage-diagnostics-6249`
-- **PR**: TBD
+- **PR**: #6258
 - **Status**: claim
 - **Workstream**: checker correctness / public issue #6249
 
