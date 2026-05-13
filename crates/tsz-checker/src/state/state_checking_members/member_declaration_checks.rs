@@ -295,7 +295,8 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         if param_name == name {
-                            return match self.member_access_level_from_modifiers(&param.modifiers) {
+                            let level = self.member_access_level_from_modifiers(&param.modifiers);
+                            return match level {
                                 Some(level) => MemberLookup::Restricted(level),
                                 None => MemberLookup::Public,
                             };
