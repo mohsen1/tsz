@@ -6644,3 +6644,168 @@ fn test_ts2322_constrained_to_object_optional_generic_no_false_positive() {
         "Expected no TS2322 for `(D extends object | undefined) || {{}}`, got: {diags:?}"
     );
 }
+
+#[test]
+fn test_ts2322_generic_alias_chain_reduces_to_application_for_infer() {
+    // Structural rule: when matching `Application(B, args)` against
+    // pattern `Application(B_pat, [infer V])` and `B` is a generic type
+    // alias whose body is itself an `Application(B_pat, [X])`, peel one
+    // alias step so bases align and `V` binds to the substituted `X`.
+    let source = r#"
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+        type ToPromise<X> = Promise<X>;
+
+        type R = Cond<ToPromise<{ id: number }>>;
+        const ok: R = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for Cond<ToPromise<{{id}}>>: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_renamed_infer_var() {
+    // Anti-hardcoding: the rule must hold regardless of the infer variable
+    // name (`T` vs `P`) and the alias parameter name (`X` vs `Y`).
+    let source = r#"
+        type Cond<Q> = Q extends Promise<infer P> ? P : never;
+        type Wrap<Y> = Promise<Y>;
+
+        type R = Cond<Wrap<string>>;
+        const ok: R = "hello";
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for renamed-infer Cond<Wrap<string>>: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_multi_layer_generic_alias_chain() {
+    // Two layers of generic aliasing must all peel back to Promise.
+    let source = r#"
+        type Inner<X> = Promise<X>;
+        type Outer<Y> = Inner<Y>;
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+
+        type R = Cond<Outer<{ id: number }>>;
+        const ok: R = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for two-layer alias chain: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_async_return_via_return_type_promise_infer() {
+    // Reported repro from issue #6581: when the alias body is a Conditional
+    // (ReturnType's body) that yields `Application(Promise, ...)` via infer,
+    // the outer conditional must still recover the Application form for
+    // `Promise<infer T>` to bind `T`.
+    let source = r#"
+        type AsyncReturn<F extends (...args: any) => any> =
+            ReturnType<F> extends Promise<infer T> ? T : never;
+
+        declare function fetchUser(): Promise<{ id: number }>;
+
+        type FU = AsyncReturn<typeof fetchUser>;
+        const fu: FU = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for AsyncReturn<typeof fetchUser>: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_unwrap_over_return_type_alias() {
+    // Variant: the source is `Unwrap<R>` where `R` is a non-generic alias
+    // for `ReturnType<typeof f>`. Same conditional-body reduction must apply.
+    let source = r#"
+        type Unwrap<P> = P extends Promise<infer X> ? X : never;
+        declare function getUser(): Promise<{ id: number }>;
+
+        type R = ReturnType<typeof getUser>;
+        type U = Unwrap<R>;
+        const u: U = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for Unwrap<R> via ReturnType alias: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_inline_vs_alias_parity() {
+    // Generalization gate: peeling must not regress the no-alias path.
+    // `Cond<Promise<X>>` (inline) and `Cond<ToPromise<X>>` (aliased) must
+    // both bind `T` to `X`.
+    let source = r#"
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+        type ToPromise<X> = Promise<X>;
+
+        type Inline = Cond<Promise<{ id: number }>>;
+        type Aliased = Cond<ToPromise<{ id: number }>>;
+        const inline: Inline = { id: 1 };
+        const aliased: Aliased = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected inline and aliased Cond to behave identically: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_negative_non_promise_takes_false_branch() {
+    // Negative: ensure peeling does NOT cause a false positive in the
+    // false branch. When the source is not Promise-shaped at all, the
+    // conditional must take the false branch and the result type must
+    // reject Promise-shape assignments.
+    let source = r#"
+        type Unwrap<P> = P extends Promise<infer X> ? X : "fallback";
+        type NotPromise = { x: number };
+        type U = Unwrap<NotPromise>;
+        const ok: U = "fallback";
+        const bad: U = { x: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected the `bad` line to error (U is 'fallback'), got {ts2322} TS2322 diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_async_return_via_return_type_negative_sync_function() {
+    // Negative: a synchronous function should take the `never` branch.
+    // Assigning a value-shape to `never` must still error.
+    let source = r#"
+        type AsyncReturn<F extends (...args: any) => any> =
+            ReturnType<F> extends Promise<infer T> ? T : never;
+        declare function syncFn(): { id: number };
+        type FU = AsyncReturn<typeof syncFn>;
+        const bad: FU = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 when assigning to AsyncReturn of a sync function: {diags:?}"
+    );
+}
