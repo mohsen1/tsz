@@ -9,6 +9,9 @@ use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
 
+type CommonJsClosureExpando = (NodeIndex, NodeIndex, NodeIndex);
+type CommonJsExportAssignmentClosure = (NodeIndex, NodeIndex, Vec<CommonJsClosureExpando>);
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_js_class_define_property_accessors_for_name(
         &mut self,
@@ -802,7 +805,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn js_commonjs_export_assignment_closure(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> Option<(NodeIndex, NodeIndex, Vec<(NodeIndex, NodeIndex, NodeIndex)>)> {
+    ) -> Option<CommonJsExportAssignmentClosure> {
         if !self.source_file_is_js(source_file) {
             return None;
         }
