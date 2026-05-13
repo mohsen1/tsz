@@ -1412,6 +1412,9 @@ impl<'a> CheckerState<'a> {
             }
             result
         };
+        let inherited_constructor_return_type = self
+            .generic_class_instance_application(current_sym, &class_type_params)
+            .unwrap_or(instance_type);
 
         // Class constructor values always expose an implicit `prototype` property
         // whose type is the class instance type.
@@ -1559,13 +1562,13 @@ impl<'a> CheckerState<'a> {
                                     base_constructor_type,
                                     subst,
                                     &class_type_params,
-                                    instance_type,
+                                    inherited_constructor_return_type,
                                 )
                             } else {
                                 self.remap_inherited_construct_signatures(
                                     base_constructor_type,
                                     &class_type_params,
-                                    instance_type,
+                                    inherited_constructor_return_type,
                                     None,
                                 )
                             };
@@ -1670,13 +1673,13 @@ impl<'a> CheckerState<'a> {
                                 base_constructor_type,
                                 subst,
                                 &class_type_params,
-                                instance_type,
+                                inherited_constructor_return_type,
                             )
                         } else {
                             self.remap_inherited_construct_signatures(
                                 base_constructor_type,
                                 &class_type_params,
-                                instance_type,
+                                inherited_constructor_return_type,
                                 None,
                             )
                         };
@@ -1768,13 +1771,13 @@ impl<'a> CheckerState<'a> {
                                 base_constructor_type,
                                 substitution,
                                 &class_type_params,
-                                instance_type,
+                                inherited_constructor_return_type,
                             )
                         } else {
                             self.remap_inherited_construct_signatures(
                                 base_constructor_type,
                                 &class_type_params,
-                                instance_type,
+                                inherited_constructor_return_type,
                                 None,
                             )
                         };
@@ -2187,6 +2190,23 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect(),
         )
+    }
+
+    fn generic_class_instance_application(
+        &mut self,
+        class_symbol: Option<tsz_binder::SymbolId>,
+        class_type_params: &[TypeParamInfo],
+    ) -> Option<TypeId> {
+        if class_type_params.is_empty() {
+            return None;
+        }
+        let class_symbol = class_symbol?;
+        let base = self.ctx.create_lazy_type_ref(class_symbol);
+        let args = class_type_params
+            .iter()
+            .map(|param| self.ctx.types.factory().type_param(*param))
+            .collect();
+        Some(self.ctx.types.factory().application(base, args))
     }
 
     fn remap_inherited_construct_signatures_with_substitution(

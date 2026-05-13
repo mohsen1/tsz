@@ -23,6 +23,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if func.type_params.len() != 1 || func.params.len() != 1 || arg_types.len() != 1 {
             return None;
         }
+        if let Some(result) = self.resolve_single_type_param_projected_call(func, arg_types) {
+            return Some(result);
+        }
         if func.params[0].rest || func.params[0].optional {
             return None;
         }
@@ -164,6 +167,98 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         Some(CallResult::Success(effective_arg_ty))
+    }
+
+    fn resolve_single_type_param_projected_call(
+        &mut self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+    ) -> Option<CallResult> {
+        debug_assert_eq!(func.type_params.len(), 1);
+        debug_assert_eq!(func.params.len(), 1);
+        debug_assert_eq!(arg_types.len(), 1);
+
+        if !func.is_constructor
+            || !func.params[0].optional
+            || func.params[0].rest
+            || func.this_type.is_some()
+            || func.type_predicate.is_some()
+        {
+            return None;
+        }
+
+        let tp = &func.type_params[0];
+        if tp.constraint.is_some() {
+            return None;
+        }
+        let param_ty = func.params[0].type_id;
+        if !self.is_type_param_or_optional_type_param(param_ty, tp) {
+            return None;
+        }
+        if !crate::visitor::contains_type_parameter_named(
+            self.interner.as_type_database(),
+            func.return_type,
+            tp.name,
+        ) {
+            return None;
+        }
+
+        let arg_ty = arg_types[0];
+        let inferred_ty = if tp.is_const {
+            crate::operations::widening::apply_const_assertion(
+                self.interner.as_type_database(),
+                arg_ty,
+            )
+        } else {
+            arg_ty
+        };
+        let effective_arg_ty = if inferred_ty == TypeId::ANY || inferred_ty == TypeId::UNKNOWN {
+            arg_ty
+        } else {
+            inferred_ty
+        };
+
+        let substitution = TypeSubstitution::single(tp.name, effective_arg_ty);
+        let expected_param = instantiate_type(self.interner, param_ty, &substitution);
+        if !self.checker.is_assignable_to(arg_ty, expected_param) {
+            return Some(CallResult::ArgumentTypeMismatch {
+                index: 0,
+                expected: expected_param,
+                actual: arg_ty,
+                fallback_return: instantiate_type(self.interner, func.return_type, &substitution),
+            });
+        }
+
+        Some(CallResult::Success(instantiate_type(
+            self.interner,
+            func.return_type,
+            &substitution,
+        )))
+    }
+
+    fn is_type_param_or_optional_type_param(&self, ty: TypeId, tp: &TypeParamInfo) -> bool {
+        let is_matching_type_param = |ty: TypeId| {
+            matches!(
+                self.interner.lookup(ty),
+                Some(TypeData::TypeParameter(info)) if info.name == tp.name
+            )
+        };
+        if is_matching_type_param(ty) {
+            return true;
+        }
+        let Some(TypeData::Union(list_id)) = self.interner.lookup(ty) else {
+            return false;
+        };
+        let members = self.interner.type_list(list_id);
+        let mut saw_type_param = false;
+        for &member in members.iter() {
+            if is_matching_type_param(member) {
+                saw_type_param = true;
+            } else if member != TypeId::UNDEFINED && member != TypeId::VOID {
+                return false;
+            }
+        }
+        saw_type_param
     }
 
     /// Collapse transient inference placeholders (like `__infer_src_*`) to stable types.
