@@ -154,6 +154,49 @@ fn accessor_modifier_below_es2015_reports_ts18045() {
 }
 
 #[test]
+fn bigint_and_symbol_availability_follow_target_and_lib() {
+    let temp = TempDir::new("bigint_symbol_target_lib").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"const big = 123n;
+const sym = Symbol("unique");
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es5",
+            "--ignoreDeprecations",
+            "6.0",
+            "--lib",
+            "es5",
+            "--pretty",
+            "false",
+            "test.ts",
+        ],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(code, 0, "ES5 BigInt/Symbol availability should fail");
+    assert!(
+        output.contains(
+            "error TS2737: BigInt literals are not available when targeting lower than ES2020."
+        ),
+        "expected TS2737 for BigInt literal below ES2020, got:\n{output}"
+    );
+    assert!(
+        output.contains("error TS2585: 'Symbol' only refers to a type, but is being used as a value here. Do you need to change your target library?"),
+        "expected TS2585 for Symbol value without es2015 lib, got:\n{output}"
+    );
+}
+
+#[test]
 fn tsconfig_output_only_flags_accept_jsonc_trailing_commas() {
     let temp = TempDir::new("output_only_flags_jsonc").expect("temp dir");
     write_file(
