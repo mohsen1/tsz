@@ -113,6 +113,43 @@ impl<'a> DeclarationEmitter<'a> {
             && Self::is_late_bound_reserved_binding_name(property_name_text)
     }
 
+    fn is_late_bound_contextual_keyword_property_name(text: &str) -> bool {
+        matches!(
+            text,
+            "abstract"
+                | "as"
+                | "asserts"
+                | "any"
+                | "async"
+                | "await"
+                | "boolean"
+                | "constructor"
+                | "declare"
+                | "get"
+                | "infer"
+                | "is"
+                | "keyof"
+                | "module"
+                | "namespace"
+                | "never"
+                | "readonly"
+                | "require"
+                | "number"
+                | "object"
+                | "set"
+                | "string"
+                | "symbol"
+                | "type"
+                | "undefined"
+                | "unique"
+                | "unknown"
+                | "from"
+                | "global"
+                | "bigint"
+                | "of"
+        )
+    }
+
     fn late_bound_synthetic_member_name(index: usize) -> String {
         let mut counter = index;
         if counter >= 8 {
@@ -873,12 +910,19 @@ impl<'a> DeclarationEmitter<'a> {
             .filter_map(|member| member.namespace_member_name.clone())
             .collect();
         let mut synthetic_member_count = 0usize;
+        let mut emitted_export_alias = false;
         for member in namespace_members {
             let mut export_alias = None;
             let namespace_member_name = if let Some(namespace_member_name) =
                 member.namespace_member_name.as_deref()
             {
-                if self.source_is_js_file && self.reserved_names.contains(namespace_member_name) {
+                if self.source_is_js_file
+                    && (self.reserved_names.contains(namespace_member_name)
+                        || emitted_export_alias
+                            && !Self::is_late_bound_contextual_keyword_property_name(
+                                namespace_member_name,
+                            ))
+                {
                     let synthetic_name = self.generate_unique_namespace_member_name(
                         namespace_member_name,
                         &reserved_member_names,
@@ -938,6 +982,7 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     export_aliases.push((local_name, exported_name));
                 }
+                emitted_export_alias = true;
             }
         }
         if !export_aliases.is_empty() {
