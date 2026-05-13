@@ -442,6 +442,27 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            self.infer_intersection_parameter_substitutions(
+                param_type_text.trim(),
+                arg_idx,
+                type_param_names,
+                &mut substitutions,
+            );
+        }
+
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
             if !type_param_names
                 .iter()
                 .any(|name| Self::contains_whole_word_in_text(&param_type_text, name))
@@ -479,6 +500,115 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         substitutions
+    }
+
+    fn infer_intersection_parameter_substitutions(
+        &self,
+        param_type_text: &str,
+        arg_idx: NodeIndex,
+        type_param_names: &[String],
+        substitutions: &mut Vec<(String, String)>,
+    ) {
+        if !param_type_text.contains(" & ") {
+            return;
+        }
+        let param_parts = Self::split_top_level_intersection_parts(param_type_text);
+        if param_parts.len() < 2 {
+            return;
+        }
+
+        let bare_type_params = param_parts
+            .iter()
+            .filter(|part| type_param_names.iter().any(|name| name == *part))
+            .cloned()
+            .collect::<Vec<_>>();
+        let [bare_type_param] = bare_type_params.as_slice() else {
+            return;
+        };
+
+        let wrapper_parts = param_parts
+            .iter()
+            .filter_map(|part| {
+                let (wrapper, inner) = Self::single_generic_type_argument_text(part)?;
+                type_param_names
+                    .iter()
+                    .any(|name| name == inner)
+                    .then_some((wrapper.to_string(), inner.to_string()))
+            })
+            .collect::<Vec<_>>();
+        if wrapper_parts.is_empty() {
+            return;
+        }
+
+        let Some(arg_type_text) = self
+            .get_node_type_or_names(&[arg_idx])
+            .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+            .filter(|type_text| {
+                type_text != "any"
+                    && type_text != "unknown"
+                    && !type_text.contains("any")
+                    && !type_text.contains("unknown")
+            })
+            .or_else(|| self.call_argument_type_text_for_substitution(arg_idx, None))
+        else {
+            return;
+        };
+        let arg_parts = Self::split_top_level_intersection_parts(&arg_type_text);
+        if arg_parts.len() < 2 {
+            return;
+        }
+
+        let mut consumed_args = vec![false; arg_parts.len()];
+        let mut matched_arg_indices = Vec::with_capacity(wrapper_parts.len());
+        let mut inferred: Vec<(String, String)> = Vec::new();
+        for (wrapper, inner_name) in &wrapper_parts {
+            let Some((arg_idx, arg_inner)) =
+                arg_parts
+                    .iter()
+                    .enumerate()
+                    .find_map(|(arg_part_idx, arg_part)| {
+                        if consumed_args[arg_part_idx] {
+                            return None;
+                        }
+                        let (arg_wrapper, arg_inner) =
+                            Self::single_generic_type_argument_text(arg_part)?;
+                        (arg_wrapper == wrapper).then_some((arg_part_idx, arg_inner.to_string()))
+                    })
+            else {
+                return;
+            };
+            consumed_args[arg_idx] = true;
+            matched_arg_indices.push(arg_idx);
+            if !substitutions
+                .iter()
+                .chain(inferred.iter())
+                .any(|(name, _)| name == inner_name)
+            {
+                inferred.push((
+                    inner_name.clone(),
+                    Self::parenthesize_generic_function_type_argument(&arg_inner),
+                ));
+            }
+        }
+
+        if !substitutions
+            .iter()
+            .chain(inferred.iter())
+            .any(|(name, _)| name == bare_type_param)
+        {
+            let mut reordered_arg_parts = Vec::with_capacity(arg_parts.len());
+            for &matched_idx in &matched_arg_indices {
+                reordered_arg_parts.push(arg_parts[matched_idx].clone());
+            }
+            for (arg_idx, arg_part) in arg_parts.iter().enumerate() {
+                if !matched_arg_indices.contains(&arg_idx) {
+                    reordered_arg_parts.push(arg_part.clone());
+                }
+            }
+            inferred.push((bare_type_param.clone(), reordered_arg_parts.join(" & ")));
+        }
+
+        substitutions.extend(inferred);
     }
 
     pub(super) fn infer_constrained_identity_callback_substitution(
@@ -530,7 +660,9 @@ impl<'a> DeclarationEmitter<'a> {
         Some((param_type.to_string(), constraint.to_string()))
     }
 
-    fn single_generic_type_argument_text(type_text: &str) -> Option<(&str, &str)> {
+    pub(in crate::declaration_emitter) fn single_generic_type_argument_text(
+        type_text: &str,
+    ) -> Option<(&str, &str)> {
         let type_text = type_text.trim();
         let open = type_text.find('<')?;
         if !type_text.ends_with('>') {

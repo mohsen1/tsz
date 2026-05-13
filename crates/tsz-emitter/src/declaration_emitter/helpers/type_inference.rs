@@ -5829,11 +5829,17 @@ impl<'a> DeclarationEmitter<'a> {
                         .trim_end_matches(';')
                         .trim_end()
                         .to_string();
-                    if call.type_arguments.is_none()
+                    let return_mentions_inferred_type_parameter = call.type_arguments.is_none()
                         && self.source_return_type_mentions_type_parameter(
                             source_arena,
                             func,
                             &type_text,
+                        );
+                    if return_mentions_inferred_type_parameter
+                        && !self.source_call_return_reuse_allows_inferred_type_parameters(
+                            source_arena,
+                            func,
+                            call,
                         )
                     {
                         continue;

@@ -179,6 +179,100 @@ impl<'a> DeclarationEmitter<'a> {
         Some(type_text)
     }
 
+    pub(in crate::declaration_emitter) fn source_call_return_reuse_allows_inferred_type_parameters(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        call: &tsz_parser::parser::node::CallExprData,
+    ) -> bool {
+        let (Some(type_params), Some(args)) =
+            (func.type_parameters.as_ref(), call.arguments.as_ref())
+        else {
+            return false;
+        };
+        let type_param_names = type_params
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param_node = source_arena.get(param_idx)?;
+                let param = source_arena.get_type_parameter(param_node)?;
+                self.identifier_text_from_arena(source_arena, param.name)
+            })
+            .collect::<Vec<_>>();
+        if type_param_names.is_empty() {
+            return false;
+        }
+
+        for (&param_idx, &arg_idx) in func.parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
+            let param_parts = Self::split_top_level_intersection_parts(param_type_text.trim());
+            if param_parts.len() < 2 {
+                continue;
+            }
+
+            let bare_type_param_count = param_parts
+                .iter()
+                .filter(|part| type_param_names.iter().any(|name| name == *part))
+                .count();
+            if bare_type_param_count != 1 {
+                continue;
+            }
+
+            let wrapper_parts = param_parts
+                .iter()
+                .filter_map(|part| {
+                    let (wrapper, inner) = Self::single_generic_type_argument_text(part)?;
+                    type_param_names
+                        .iter()
+                        .any(|name| name == inner)
+                        .then_some(wrapper.to_string())
+                })
+                .collect::<Vec<_>>();
+            if wrapper_parts.is_empty() {
+                continue;
+            }
+
+            let Some(arg_type_text) = self
+                .get_node_type_or_names(&[arg_idx])
+                .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+                .filter(|type_text| {
+                    type_text != "any"
+                        && type_text != "unknown"
+                        && !type_text.contains("any")
+                        && !type_text.contains("unknown")
+                })
+                .or_else(|| self.call_argument_type_text_for_substitution(arg_idx, None))
+            else {
+                continue;
+            };
+            let arg_parts = Self::split_top_level_intersection_parts(&arg_type_text);
+            if arg_parts.len() < 2 {
+                continue;
+            }
+            if wrapper_parts.iter().all(|wrapper| {
+                arg_parts.iter().any(|arg_part| {
+                    Self::single_generic_type_argument_text(arg_part)
+                        .is_some_and(|(arg_wrapper, _)| arg_wrapper == wrapper)
+                })
+            }) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub(in crate::declaration_emitter) fn substitute_call_result_parameter_type_queries(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
