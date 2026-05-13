@@ -1207,6 +1207,11 @@ parameters. `direct_actual_lib_symbol_type` still returns only
 which remaining aliases are generic proof successes instead of collapsing them
 all into `name_not_admitted`. Claim:
 [`claims/perf-actual-lib-alias-proof-admission-split-2026-05-13.md`](claims/perf-actual-lib-alias-proof-admission-split-2026-05-13.md).
+Branch-local monorepo-006 attribution on this slice keeps the behavior counters
+unchanged while moving alias-body outcomes to
+`{ success: 2, generic_alias: 8, missing_resolver_type: 5, name_not_admitted: 1 }`;
+see
+[`perf-runs/2026-05-13-actual-lib-alias-proof-admission-attribution.md`](perf-runs/2026-05-13-actual-lib-alias-proof-admission-attribution.md).
 
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
