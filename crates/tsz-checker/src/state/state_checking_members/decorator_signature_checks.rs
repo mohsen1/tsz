@@ -47,19 +47,19 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1329: Check if a method/accessor decorator accepts too few arguments.
-    ///
-    /// For experimental decorators, method/accessor decorators are called as
-    /// `decorator(target, propertyKey, descriptor)` - 3 arguments.
-    /// If the decorator expression has call signatures but none can accept 3 args,
-    /// emit TS1329 suggesting to call it first: `@dec()` instead of `@dec`.
-    pub(crate) fn check_method_decorator_arity(
+    /// TS1241 / TS1329 for experimental method and accessor decorators: the runtime invokes
+    /// the decorator as `decorator(target, propertyKey, descriptor)` with 3 arguments.
+    /// When the resolved signature is incompatible, TS1329 is preferred when all call
+    /// signatures have zero parameters (the decorator looks like an un-invoked factory —
+    /// suggest `@dec()` over `@dec`); TS1241 covers all other incompatibilities.
+    pub(crate) fn check_method_or_accessor_decorator_signature(
         &mut self,
         decorator_expr: NodeIndex,
         decorator_type: TypeId,
         decorator_node: NodeIndex,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::query_boundaries::common::CallResult;
 
         if decorator_type == TypeId::ERROR
             || decorator_type == TypeId::ANY
@@ -68,14 +68,34 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let has_too_few_args = if let Some(shape) =
-            crate::query_boundaries::class_type::function_shape(self.ctx.types, decorator_type)
+        self.ensure_relation_input_ready(decorator_type);
+        let resolved = self.evaluate_type_for_assignability(decorator_type);
+        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
+            return;
+        }
+
+        // `string` for propertyKey catches decorators whose key type is incompatible (e.g.
+        // `number`); `any` for target and descriptor avoids false positives on those slots.
+        let (result, _, _) = self.resolve_call_with_checker_adapter(
+            resolved,
+            &[TypeId::ANY, TypeId::STRING, TypeId::ANY],
+            false,
+            None,
+            None,
+        );
+
+        if matches!(result, CallResult::Success(_)) {
+            return;
+        }
+
+        // TS1329 takes priority when all signatures have zero params (un-invoked factory hint).
+        let is_zero_param_callable = if let Some(shape) =
+            crate::query_boundaries::class_type::function_shape(self.ctx.types, resolved)
         {
             shape.params.is_empty()
-        } else if let Some(callable) = crate::query_boundaries::class_type::callable_shape_for_type(
-            self.ctx.types,
-            decorator_type,
-        ) {
+        } else if let Some(callable) =
+            crate::query_boundaries::class_type::callable_shape_for_type(self.ctx.types, resolved)
+        {
             !callable.call_signatures.is_empty()
                 && callable
                     .call_signatures
@@ -85,7 +105,7 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        if has_too_few_args {
+        if is_zero_param_callable {
             let name = self.get_decorator_expression_name(decorator_expr);
             let msg = diagnostic_messages::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT
                 .replace("{0}", &name);
@@ -93,6 +113,12 @@ impl<'a> CheckerState<'a> {
                 decorator_node,
                 &msg,
                 diagnostic_codes::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT,
+            );
+        } else {
+            self.error_at_node(
+                decorator_node,
+                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             );
         }
     }

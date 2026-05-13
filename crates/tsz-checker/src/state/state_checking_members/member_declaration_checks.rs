@@ -1592,11 +1592,10 @@ impl<'a> CheckerState<'a> {
                     self.check_es_property_decorator_call_signature(modifier_idx, decorator_type);
                 }
 
-                // TS1329: Check if the decorator accepts too few arguments for this position.
-                // For experimental decorators on methods/accessors, the decorator is called
-                // with 3 arguments (target, propertyKey, descriptor). If the decorator has
-                // call signatures but none can accept 3 args, it's likely a factory that
-                // should be called first: @dec() instead of @dec.
+                // TS1241 / TS1329: Validate the decorator's call signature against the
+                // method/accessor decorator runtime convention (target, propertyKey, descriptor).
+                // TS1329 fires for zero-param decorators that look like un-invoked factories;
+                // TS1241 fires for any other signature incompatibility.
                 if self.ctx.compiler_options.experimental_decorators
                     && !is_abstract
                     && !legacy_decorator_not_valid
@@ -1604,7 +1603,7 @@ impl<'a> CheckerState<'a> {
                         || node.kind == syntax_kind_ext::GET_ACCESSOR
                         || node.kind == syntax_kind_ext::SET_ACCESSOR)
                 {
-                    self.check_method_decorator_arity(
+                    self.check_method_or_accessor_decorator_signature(
                         decorator.expression,
                         decorator_type,
                         modifier_idx,

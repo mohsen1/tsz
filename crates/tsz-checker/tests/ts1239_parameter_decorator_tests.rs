@@ -122,3 +122,19 @@ fn no_ts1239_without_experimental_decorators() {
         "TS1239 must not fire without --experimentalDecorators; got: {diags:?}",
     );
 }
+
+/// A decorator with 2 non-optional parameters cannot accept the 3-arg runtime
+/// calling convention for constructor parameters — the extra arg causes TS1239.
+#[test]
+fn two_param_decorator_on_constructor_param_emits_ts1239() {
+    let diags = check(
+        "function Log(target: any, propertyKey: string) {}\n\
+         class Test {\n\
+             constructor(@Log public value: number) {}\n\
+         }\n",
+    );
+    assert!(
+        diags.contains(&1239),
+        "A 2-param decorator on a constructor param must emit TS1239 (runtime passes 3 args); got: {diags:?}",
+    );
+}
