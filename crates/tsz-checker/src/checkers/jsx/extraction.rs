@@ -505,6 +505,18 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        // Keep `<this />` strict regardless of the apparent `this` type.
+        // tsc reports TS2604 here even if flow/context annotation gives
+        // `this` a callable/constructable shape.
+        if is_this_tag {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                tag_name_idx,
+                diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,
+                &[&tag_text],
+            );
+            return;
+        }
         // Skip for types that are inherently allowed in JSX position
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
@@ -572,7 +584,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
             }
-            if saw_component_union && all_component_unions {
+            if !is_this_tag && saw_component_union && all_component_unions {
                 return;
             }
         }
