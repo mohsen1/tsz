@@ -147,3 +147,4 @@ crates/tsz-website/data/*
 .local-target-main/
 __pycache__
 dist/
+.cargo-local/
