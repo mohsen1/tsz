@@ -5497,6 +5497,11 @@ impl<'a> DeclarationEmitter<'a> {
         let base_text = self.rewrite_exported_import_equals_type_text(base_text);
         let type_args = self.type_argument_list_source_text(new_expr.type_arguments.as_ref());
         if type_args.is_empty() {
+            if let Some(inferred) =
+                self.inherited_generic_class_new_expression_type_text(new_expr, &base_text)
+            {
+                return Some(inferred);
+            }
             if let Some(type_id) = self.get_node_type_or_names(&[expr_idx]) {
                 let inferred = self.print_type_id_for_inferred_declaration(type_id);
                 if inferred.starts_with(&format!("{base_text}<")) {
@@ -5545,6 +5550,127 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(format!("{base_text}<{}>", type_args.join(", ")))
         }
+    }
+
+    fn inherited_generic_class_new_expression_type_text(
+        &self,
+        new_expr: &tsz_parser::parser::node::CallExprData,
+        base_text: &str,
+    ) -> Option<String> {
+        let args = new_expr.arguments.as_ref()?;
+        if args.nodes.is_empty() {
+            return None;
+        }
+        let ident = self.get_identifier_text(new_expr.expression)?;
+        let sym_id = self.resolve_identifier_symbol(new_expr.expression, &ident)?;
+        let symbol = self.binder.and_then(|binder| binder.symbols.get(sym_id))?;
+        if symbol.flags & symbol_flags::CLASS == 0 {
+            return None;
+        }
+
+        for &decl_idx in &symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            let class_data = self.arena.get_class(decl_node)?;
+            let type_parameters = class_data.type_parameters.as_ref()?;
+            if type_parameters.nodes.is_empty()
+                || class_data.members.nodes.iter().copied().any(|member_idx| {
+                    self.arena
+                        .get(member_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
+                })
+            {
+                continue;
+            }
+            let own_type_param_names = self.collect_type_param_names(type_parameters);
+            let inherited_type_param_names =
+                self.inherited_base_type_argument_names(class_data, &own_type_param_names)?;
+            let mut inferred_args = Vec::with_capacity(own_type_param_names.len());
+            for type_param_name in &own_type_param_names {
+                if inherited_type_param_names
+                    .first()
+                    .is_some_and(|name| name == type_param_name)
+                {
+                    let first_arg_type = self
+                        .preferred_expression_type_text(args.nodes[0])
+                        .or_else(|| self.infer_fallback_type_text_at(args.nodes[0], 0))?;
+                    inferred_args.push(first_arg_type);
+                    continue;
+                }
+                inferred_args.push(
+                    self.class_type_parameter_default_text(type_param_name, type_parameters)
+                        .unwrap_or_else(|| "unknown".to_string()),
+                );
+            }
+            if inferred_args
+                .iter()
+                .any(|arg| arg == "any" || arg.is_empty())
+            {
+                return None;
+            }
+            return Some(format!("{base_text}<{}>", inferred_args.join(", ")));
+        }
+
+        None
+    }
+
+    fn inherited_base_type_argument_names(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        own_type_param_names: &[String],
+    ) -> Option<Vec<String>> {
+        let heritage = class_data.heritage_clauses.as_ref()?;
+        for clause_idx in heritage.nodes.iter().copied() {
+            let clause_node = self.arena.get(clause_idx)?;
+            let clause = self.arena.get_heritage_clause(clause_node)?;
+            for type_idx in clause.types.nodes.iter().copied() {
+                let type_node = self.arena.get(type_idx)?;
+                let expr_with_type_args = self.arena.get_expr_type_args(type_node)?;
+                let type_args = expr_with_type_args.type_arguments.as_ref()?;
+                let names = type_args
+                    .nodes
+                    .iter()
+                    .copied()
+                    .map(|arg_idx| self.simple_type_argument_source_text(arg_idx))
+                    .collect::<Option<Vec<_>>>()?;
+                if names
+                    .iter()
+                    .any(|name| own_type_param_names.iter().any(|own| own == name))
+                {
+                    return Some(names);
+                }
+            }
+        }
+        None
+    }
+
+    fn simple_type_argument_source_text(&self, arg_idx: NodeIndex) -> Option<String> {
+        if let Some(identifier) = self.get_identifier_text(arg_idx)
+            && Self::is_simple_identifier_text(&identifier)
+        {
+            return Some(identifier);
+        }
+        let node = self.arena.get(arg_idx)?;
+        let mut text = self.get_source_slice_no_semi(node.pos, node.end)?;
+        Self::strip_type_argument_overshoot(&mut text);
+        let text = text.trim().to_string();
+        Self::is_simple_identifier_text(&text).then_some(text)
+    }
+
+    fn class_type_parameter_default_text(
+        &self,
+        type_param_name: &str,
+        type_parameters: &NodeList,
+    ) -> Option<String> {
+        for &param_idx in &type_parameters.nodes {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_type_parameter(param_node)?;
+            if self.get_identifier_text(param.name).as_deref() != Some(type_param_name) {
+                continue;
+            }
+            let default_node = self.arena.get(param.default)?;
+            return self.get_source_slice_no_semi(default_node.pos, default_node.end);
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn type_argument_list_source_text(
