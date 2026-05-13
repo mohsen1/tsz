@@ -61,6 +61,13 @@ fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
     })
 }
 
+fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
+    arena
+        .source_files
+        .first()
+        .is_some_and(|source_file| !source_file.is_declaration_file)
+}
+
 impl<'a> CheckerState<'a> {
     fn cross_file_interface_declarations<'b>(
         &self,
@@ -141,12 +148,140 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn source_file_type_node_is_scope_independent(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+        if node_idx.is_none() {
+            return false;
+        }
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == tsz_scanner::SyntaxKind::AnyKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::UnknownKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::NeverKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::VoidKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::UndefinedKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::NullKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::BooleanKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::NumberKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::StringKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::BigIntKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::SymbolKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::ObjectKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::TrueKeyword as u16 => true,
+            k if k == tsz_scanner::SyntaxKind::FalseKeyword as u16 => true,
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                arena.get_type_ref(node).is_some_and(|type_ref| {
+                    let Some(name) = arena
+                        .get(type_ref.type_name)
+                        .and_then(|name_node| arena.get_identifier(name_node))
+                        .map(|ident| ident.escaped_text.as_str())
+                    else {
+                        return false;
+                    };
+                    match name {
+                        "any" | "unknown" | "never" | "void" | "undefined" | "null" | "boolean"
+                        | "number" | "string" | "bigint" | "symbol" | "object" => type_ref
+                            .type_arguments
+                            .as_ref()
+                            .is_none_or(|args| args.nodes.is_empty()),
+                        "Array" | "ReadonlyArray" => {
+                            type_ref.type_arguments.as_ref().is_some_and(|args| {
+                                args.nodes.len() == 1
+                                    && Self::source_file_type_node_is_scope_independent(
+                                        arena,
+                                        args.nodes[0],
+                                    )
+                            })
+                        }
+                        _ => false,
+                    }
+                })
+            }
+            k if k == syntax_kind_ext::LITERAL_TYPE => arena.get_literal_type(node).is_some(),
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                arena.get_composite_type(node).is_some_and(|composite| {
+                    composite.types.nodes.iter().copied().all(|member| {
+                        Self::source_file_type_node_is_scope_independent(arena, member)
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                arena.get_array_type(node).is_some_and(|array| {
+                    Self::source_file_type_node_is_scope_independent(arena, array.element_type)
+                })
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                arena.get_tuple_type(node).is_some_and(|tuple| {
+                    tuple.elements.nodes.iter().copied().all(|element| {
+                        Self::source_file_type_node_is_scope_independent(arena, element)
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
+                arena.get_wrapped_type(node).is_some_and(|wrapped| {
+                    Self::source_file_type_node_is_scope_independent(arena, wrapped.type_node)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn source_file_interface_declarations_are_direct_lowerable(
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> bool {
+        declarations.iter().all(|(decl_idx, arena)| {
+            let Some(node) = arena.get(*decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
+            if interface
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| !params.nodes.is_empty())
+            {
+                return false;
+            }
+
+            interface.members.nodes.iter().copied().all(|member_idx| {
+                let Some(member_node) = arena.get(member_idx) else {
+                    return false;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                    return false;
+                }
+                let Some(signature) = arena.get_signature(member_node) else {
+                    return false;
+                };
+                signature
+                    .parameters
+                    .as_ref()
+                    .is_none_or(|params| params.nodes.is_empty())
+                    && signature
+                        .type_parameters
+                        .as_ref()
+                        .is_none_or(|params| params.nodes.is_empty())
+                    && Self::source_file_type_node_is_scope_independent(
+                        arena,
+                        signature.type_annotation,
+                    )
+            })
+        })
+    }
+
     pub(super) fn direct_cross_file_interface_lowering(
         &self,
         sym_id: SymbolId,
         delegate_binder: &BinderState,
         symbol_arena: &NodeArena,
         allow_complex_declarations: bool,
+        allow_source_file_arena: bool,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let record = |outcome: DirectCrossFileInterfaceLoweringOutcome| {
             tsz_common::perf_counters::record_direct_cross_file_interface_lowering_outcome(outcome);
@@ -156,7 +291,10 @@ impl<'a> CheckerState<'a> {
         // resolution for diagnostics. Built-in libs depend on merged declarations
         // across many lib files and special canonical DefId handling. Keep both
         // on the mature checker path.
-        if !is_direct_lowering_declaration_arena(symbol_arena) {
+        let direct_declaration_arena = is_direct_lowering_declaration_arena(symbol_arena);
+        let direct_source_file_arena =
+            allow_source_file_arena && is_direct_lowering_source_file_arena(symbol_arena);
+        if !direct_declaration_arena && !direct_source_file_arena {
             record(DirectCrossFileInterfaceLoweringOutcome::RejectedNonDirectArena);
             return None;
         }
@@ -184,7 +322,14 @@ impl<'a> CheckerState<'a> {
             record(DirectCrossFileInterfaceLoweringOutcome::MissingDeclarations);
             return None;
         };
-        if !allow_complex_declarations
+        if direct_source_file_arena {
+            if Self::interface_declarations_have_heritage_or_computed_names(&declarations)
+                || !Self::source_file_interface_declarations_are_direct_lowerable(&declarations)
+            {
+                record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                return None;
+            }
+        } else if !allow_complex_declarations
             && Self::interface_declarations_have_heritage_or_computed_names(&declarations)
         {
             record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
@@ -251,6 +396,7 @@ impl<'a> CheckerState<'a> {
             delegate_binder,
             interface_arena,
             true,
+            false,
         )?;
 
         let substitution = type_args
@@ -315,6 +461,34 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
+    use crate::state::CheckerState;
+    use tsz_parser::parser::{ParserState, syntax_kind_ext};
+
+    fn parse_interface_declarations(
+        source: &str,
+    ) -> (
+        tsz_parser::parser::node::NodeArena,
+        Vec<tsz_parser::NodeIndex>,
+    ) {
+        let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena().clone();
+        let source_file = arena
+            .get_source_file_at(root)
+            .expect("source file should parse");
+        let declarations = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|idx| {
+                arena
+                    .get(*idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
+            })
+            .collect();
+        (arena, declarations)
+    }
 
     #[test]
     fn detects_npm_and_source_tree_builtin_lib_names() {
@@ -358,5 +532,38 @@ mod tests {
         assert!(!is_external_package_declaration_file_name(
             "/repo/fixtures/node-modules-like/types.d.ts"
         ));
+    }
+
+    #[test]
+    fn source_file_direct_interface_lowering_accepts_scope_independent_members() {
+        let (arena, declarations) = parse_interface_declarations(
+            r#"
+                interface Leaf {
+                    value: number;
+                    tag: "leaf";
+                    flags: true | false;
+                }
+            "#,
+        );
+        let declarations = vec![(declarations[0], &arena)];
+
+        assert!(
+            CheckerState::source_file_interface_declarations_are_direct_lowerable(&declarations,)
+        );
+    }
+
+    #[test]
+    fn source_file_direct_interface_lowering_rejects_scope_dependent_members() {
+        let (arena, declarations) = parse_interface_declarations(
+            r#"
+                interface Local { value: number; }
+                interface UsesLocal { value: Local; }
+            "#,
+        );
+        let declarations = vec![(declarations[1], &arena)];
+
+        assert!(
+            !CheckerState::source_file_interface_declarations_are_direct_lowerable(&declarations,)
+        );
     }
 }
