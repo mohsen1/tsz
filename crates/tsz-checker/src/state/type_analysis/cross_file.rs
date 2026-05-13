@@ -847,14 +847,27 @@ impl<'a> CheckerState<'a> {
             } else {
                 delegate_arena
             };
-            let miss_target_is_declaration_file = miss_target_arena
-                .and_then(|arena| arena.source_files.first())
-                .is_some_and(|source_file| source_file.is_declaration_file);
+            let miss_target_source_file =
+                miss_target_arena.and_then(|arena| arena.source_files.first());
+            let miss_target_is_declaration_file =
+                miss_target_source_file.is_some_and(|source_file| source_file.is_declaration_file);
+            let miss_kind = self.cross_arena_symbol_miss_kind(sym_id);
             tsz_common::perf_counters::record_cross_arena_symbol_miss(
                 miss_source,
-                self.cross_arena_symbol_miss_kind(sym_id),
+                miss_kind,
                 miss_target_is_declaration_file,
             );
+            if miss_target_is_declaration_file
+                && tsz_common::perf_counters::enabled_fast()
+                && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            {
+                tsz_common::perf_counters::record_cross_arena_declaration_file_miss_residue(
+                    miss_source,
+                    miss_kind,
+                    symbol.escaped_name.as_str(),
+                    miss_target_source_file.map(|source_file| source_file.file_name.as_str()),
+                );
+            }
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
