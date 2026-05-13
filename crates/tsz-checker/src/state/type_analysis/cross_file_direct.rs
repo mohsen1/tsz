@@ -10,8 +10,14 @@ use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
-use tsz_solver::def::DefKind;
+use tsz_solver::def::{DefId, DefKind};
+use tsz_solver::{TypeId, TypeParamInfo};
+
+struct DirectActualLibAliasBodyProof {
+    body: TypeId,
+    type_params: Vec<TypeParamInfo>,
+    def_id: DefId,
+}
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
     let basename = std::path::Path::new(file_name)
@@ -215,7 +221,7 @@ impl<'a> CheckerState<'a> {
         symbol: &tsz_binder::Symbol,
         name: &str,
         delegate_arena: &NodeArena,
-    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    ) -> Option<DirectActualLibAliasBodyProof> {
         if !matches!(name, "DecoratorMetadata" | "DecoratorMetadataObject") {
             record_direct_actual_lib_alias_body_outcome(
                 DirectActualLibAliasBodyOutcome::NameNotAdmitted,
@@ -286,7 +292,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         record_direct_actual_lib_alias_body_outcome(DirectActualLibAliasBodyOutcome::Success);
-        Some((body, params))
+        Some(DirectActualLibAliasBodyProof {
+            body,
+            type_params: params,
+            def_id,
+        })
     }
 
     pub(super) fn direct_actual_lib_symbol_type(
@@ -295,7 +305,7 @@ impl<'a> CheckerState<'a> {
         delegate_arena_source: CrossArenaSymbolMissSource,
         delegate_arena: Option<&NodeArena>,
         needs_cross_file_delegation: bool,
-    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
         if needs_cross_file_delegation
             || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
             || !delegate_arena.is_some_and(is_direct_actual_lib_declaration_arena)
@@ -315,8 +325,11 @@ impl<'a> CheckerState<'a> {
         // Generic lib utility aliases stay on fallback so application/indexed-access
         // behavior sees the declared alias shape with type parameters in scope.
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
-            let (alias_type, params) =
-                self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
+            let DirectActualLibAliasBodyProof {
+                body: alias_type,
+                type_params: params,
+                def_id: _def_id,
+            } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
             self.ctx.symbol_types.insert(sym_id, alias_type);
             self.ctx
                 .lib_delegation_cache
