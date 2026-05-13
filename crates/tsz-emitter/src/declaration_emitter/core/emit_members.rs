@@ -993,6 +993,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
         } else if !is_getter
             && !is_private
+            && let Some(type_text) = self.js_setter_param_declared_type_text(&accessor.parameters)
+        {
+            self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
+        } else if !is_getter
+            && !is_private
             && let Some(type_text) =
                 self.paired_getter_type_predicate_text(accessor_idx, &accessor.parameters)
         {
@@ -1015,6 +1020,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_type(accessor.type_annotation);
         } else if is_getter && !is_private {
             if let Some(type_text) = self.jsdoc_return_type_text_for_node(accessor_idx) {
+                self.write(": ");
+                self.write(&type_text);
+            } else if let Some(type_text) = self.jsdoc_type_text_for_node(accessor_idx) {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_text) = self.matching_setter_parameter_type_text(accessor_idx) {
@@ -1482,6 +1490,23 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.write(type_text);
         }
+    }
+
+    fn js_setter_param_declared_type_text(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+    ) -> Option<String> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let param_idx = *params.nodes.first()?;
+        let decl = self.jsdoc_param_decl_for_parameter(param_idx, 0)?;
+        let mut type_text = decl.type_text;
+        if decl.optional && !Self::type_text_has_undefined_branch(&type_text) {
+            type_text.push_str(" | undefined");
+        }
+        Some(type_text)
     }
 
     pub(in crate::declaration_emitter) fn emit_index_signature(&mut self, sig_idx: NodeIndex) {
