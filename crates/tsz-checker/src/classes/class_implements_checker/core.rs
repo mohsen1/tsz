@@ -120,17 +120,15 @@ impl<'a> CheckerState<'a> {
             interface_name.to_string()
         };
 
+        let mut properties = Vec::new();
+        let mut has_index_signature = false;
+
         if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
         {
-            let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
-            if !shape.properties.is_empty() {
-                return (shape.properties.to_vec(), has_index_signature, display_name);
-            }
+            has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
+            properties.extend(shape.properties.iter().cloned());
         }
-
-        let mut properties = Vec::new();
-        let mut has_index_signature = false;
 
         for &decl_idx in interface_declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
@@ -160,6 +158,10 @@ impl<'a> CheckerState<'a> {
                 let Some(name) = self.get_property_name(sig.name) else {
                     continue;
                 };
+                let member_atom = self.ctx.types.intern_string(&name);
+                if properties.iter().any(|p| p.name == member_atom) {
+                    continue;
+                }
 
                 // For method signatures, always build the full function type
                 // (including parameters and method-level type parameters) via
@@ -193,7 +195,7 @@ impl<'a> CheckerState<'a> {
                 };
 
                 properties.push(PropertyInfo {
-                    name: self.ctx.types.intern_string(&name),
+                    name: member_atom,
                     type_id: member_type,
                     write_type: member_type,
                     optional: sig.question_token,
@@ -1151,6 +1153,26 @@ impl<'a> CheckerState<'a> {
                                 class_member_types.insert(class_member_idx, computed);
                                 computed
                             };
+                            if matches!(
+                                class_member_type,
+                                tsz_solver::TypeId::ANY | tsz_solver::TypeId::ERROR
+                            ) {
+                                let class_instance_type =
+                                    self.get_class_instance_type(class_idx, class_data);
+                                if let Some(shape) =
+                                    crate::query_boundaries::common::object_shape_for_type(
+                                        self.ctx.types,
+                                        class_instance_type,
+                                    )
+                                {
+                                    let member_atom = self.ctx.types.intern_string(&member_name);
+                                    if let Some(prop) =
+                                        shape.properties.iter().find(|p| p.name == member_atom)
+                                    {
+                                        class_member_type = prop.type_id;
+                                    }
+                                }
+                            }
                             // Substitute `this` type in class members too — the class method
                             // may return `this` (polymorphic), which must be replaced with the
                             // concrete class instance type for a fair comparison against the
@@ -1428,7 +1450,7 @@ impl<'a> CheckerState<'a> {
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
                     let check_whole_type = extends_same_base
-                        || ((is_class || interface_has_index_signature)
+                        || ((!is_class && interface_has_index_signature)
                             && missing_members.is_empty()
                             && incompatible_members.is_empty());
                     if check_whole_type {

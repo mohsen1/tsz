@@ -2198,14 +2198,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 rest: p.rest,
             })
             .collect();
+        let needs_regular_candidate = tuple_elements.iter().any(|elem| {
+            elem.optional
+                || elem.rest
+                || self.rest_tuple_element_needs_regular_candidate(elem.type_id)
+        });
         let source_tuple = self.interner.tuple(tuple_elements);
-        // Function parameters are contravariant, so the rest-tuple candidate
-        // must always go to contra-candidates regardless of in_contra_mode.
-        ctx.add_contra_candidate(
-            var,
-            source_tuple,
-            crate::types::InferencePriority::NakedTypeVariable,
-        );
+        if needs_regular_candidate {
+            // Preserve the regular tuple candidate for optional/generic/union
+            // rest inference paths that rely on the pre-existing covariant
+            // candidate behavior.
+            ctx.add_candidate(
+                var,
+                source_tuple,
+                crate::types::InferencePriority::NakedTypeVariable,
+            );
+        } else {
+            // Simple fixed parameter lists should not also become covariant
+            // candidates, or an array-literal argument can erase tuple arity.
+            ctx.add_contra_candidate(
+                var,
+                source_tuple,
+                crate::types::InferencePriority::NakedTypeVariable,
+            );
+        }
+    }
+
+    fn rest_tuple_element_needs_regular_candidate(&self, ty: TypeId) -> bool {
+        if crate::visitor::contains_type_parameters(self.interner.as_type_database(), ty)
+            || crate::type_queries::contains_infer_types_db(self.interner.as_type_database(), ty)
+        {
+            return true;
+        }
+
+        matches!(
+            self.interner.lookup(ty),
+            Some(TypeData::Union(_) | TypeData::Intersection(_))
+        )
     }
 
     /// For each source property, instantiate the mapped type's template by
