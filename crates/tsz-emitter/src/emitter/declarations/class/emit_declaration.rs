@@ -555,7 +555,10 @@ impl<'a> Printer<'a> {
         class_node: NodeIndex,
         display_name: &str,
     ) -> bool {
-        if self.ctx.options.legacy_decorators || self.ctx.options.target == ScriptTarget::ESNext {
+        if self.ctx.options.legacy_decorators
+            || (self.ctx.options.target == ScriptTarget::ESNext
+                && self.ctx.options.use_define_for_class_fields)
+        {
             return false;
         }
 
