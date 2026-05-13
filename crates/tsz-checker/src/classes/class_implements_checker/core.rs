@@ -1427,8 +1427,14 @@ impl<'a> CheckerState<'a> {
                     // incompatibilities that member-by-member misses).
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
+                    let class_target_has_public_dynamic_names = is_class
+                        && interface_properties.iter().any(|member| {
+                            member.visibility == Visibility::Public
+                                && (member.is_string_named || member.is_symbol_named)
+                        });
                     let check_whole_type = extends_same_base
-                        || (interface_has_index_signature
+                        || (((is_class && !class_target_has_public_dynamic_names)
+                            || interface_has_index_signature)
                             && missing_members.is_empty()
                             && incompatible_members.is_empty());
                     if check_whole_type {
