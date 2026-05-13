@@ -14,11 +14,13 @@ After pulling latest `main`, the repro already exits cleanly. This PR records th
 
 ## Files Touched
 
+- `crates/tsz-checker/tests/parameter_initializer_identifier_context_tests.rs`
 - `crates/tsz-cli/tests/tsc_compat_tests.rs`
 - `docs/plan/claims/fix-default-param-contextual-function-7006-6298-20260513.md`
 
 ## Verification
 
 - `cargo run -p tsz-cli --bin tsz -- --noEmit --strict --pretty false /tmp/issue6298.ts`
+- `cargo test -p tsz-checker --test parameter_initializer_identifier_context_tests`
 - `cargo test -p tsz-cli --test tsc_compat_tests default_parameter_function_initializer_gets_contextual_type -- --nocapture`
 - `cargo fmt --all -- --check`
