@@ -1467,8 +1467,8 @@ impl<'a> InferenceContext<'a> {
             | (TypeData::Callable(_), TypeData::Callable(_))
             | (TypeData::Function(_), TypeData::Function(_))
             | (TypeData::Tuple(_), TypeData::Tuple(_))
-            | (TypeData::Array(_), TypeData::Array(_)) => true,
-            (TypeData::Literal(LiteralValue::String(_)), TypeData::TemplateLiteral(_))
+            | (TypeData::Array(_), TypeData::Array(_))
+            | (TypeData::Literal(LiteralValue::String(_)), TypeData::TemplateLiteral(_))
             | (TypeData::TemplateLiteral(_), TypeData::TemplateLiteral(_)) => true,
             _ => false,
         }
