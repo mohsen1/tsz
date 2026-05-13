@@ -780,6 +780,94 @@ fn test_conditional_infer_array_element_with_constraint() {
 }
 
 #[test]
+fn test_conditional_infer_array_element_with_object_constraint() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends (infer R extends object)[] ? R : never, with T = { name: string }[].
+    let extends_array = interner.array(infer_r);
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_array,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.array(object_member));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    assert_eq!(result, object_member);
+}
+
+#[test]
+fn test_conditional_infer_array_element_rejects_non_array_application() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_array = interner.array(infer_r);
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_array,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let object_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
+    let non_array_application = interner.application(TypeId::OBJECT, vec![object_member]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, non_array_application);
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    assert_eq!(result, TypeId::NEVER);
+}
+
+#[test]
 fn test_conditional_infer_array_element_non_distributive() {
     let interner = TypeInterner::new();
 

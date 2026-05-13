@@ -1852,6 +1852,16 @@ impl<'a> CheckerState<'a> {
                         );
                         return TypeId::ERROR;
                     }
+                    if self.report_loop_widened_receiver_property_error(
+                        idx,
+                        access,
+                        property_name,
+                        object_type,
+                        prop_type,
+                        skip_flow_narrowing,
+                    ) {
+                        return TypeId::ERROR;
+                    }
                     // When in a write context (assignment target), use the setter
                     // type if the property has divergent getter/setter types.
                     let effective_type = effective_write_result(prop_type, write_type);
@@ -2617,44 +2627,6 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
-    }
-
-    /// Handles import.meta property access.
-    /// Returns Some(type) if this is an import.meta access, None otherwise.
-    fn try_resolve_import_meta_access(
-        &mut self,
-        idx: NodeIndex,
-        expression: NodeIndex,
-        name_or_argument: NodeIndex,
-    ) -> Option<TypeId> {
-        let expr_node = self.ctx.arena.get(expression)?;
-        if expr_node.kind != SyntaxKind::ImportKeyword as u16 {
-            return None;
-        }
-
-        let is_meta = self
-            .ctx
-            .arena
-            .get(name_or_argument)
-            .and_then(|n| self.ctx.arena.get_identifier(n))
-            .is_some_and(|ident| ident.escaped_text == "meta");
-
-        if is_meta {
-            self.check_import_meta_in_cjs(idx);
-            // import.meta resolves to the global `ImportMeta` interface
-            // (declared in lib.es2020.full.d.ts). Returning that type
-            // enables TS2339 on unknown properties (`import.meta.blah`)
-            // and merges `declare global { interface ImportMeta { ... } }`
-            // augmentations through lib-heritage merging.
-            if let Some(import_meta_ty) = self.resolve_lib_type_by_name("ImportMeta") {
-                return Some(import_meta_ty);
-            }
-        }
-        // Fallback (ImportMeta not in lib scope, or non-`meta` meta-property
-        // like `import.metal`): return ANY so downstream access doesn't
-        // cascade misleading TS2339s. A separate grammar check is expected
-        // to emit TS17012 for the invalid meta-property name.
-        Some(TypeId::ANY)
     }
 
     /// Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).

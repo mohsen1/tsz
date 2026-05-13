@@ -28,7 +28,9 @@ pub(crate) struct ClassInitializationSummary {
     pub(crate) constructor_body: Option<NodeIndex>,
     pub(crate) has_super_call_position_sensitive_members: bool,
     pub(crate) all_instance_field_keys: FxHashSet<PropertyKey>,
-    pub(crate) required_instance_field_keys: FxHashSet<PropertyKey>,
+    /// Fields to check for TS2565 "used before assigned". Includes ES-decorated fields that
+    /// are excluded from TS2564 strict-init tracking in `required_instance_fields`.
+    pub(crate) ts2565_field_keys: FxHashSet<PropertyKey>,
     pub(crate) parameter_property_names: FxHashSet<String>,
     pub(crate) field_initializer_keys: FxHashSet<PropertyKey>,
     pub(crate) constructor_assigned_fields: FxHashSet<PropertyKey>,
@@ -368,6 +370,17 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            let needs_strict = self.property_needs_strict_check(member_idx, prop);
+            let has_es_decorator = !self.ctx.compiler_options.experimental_decorators
+                && prop.modifiers.as_ref().is_some_and(|mods| {
+                    mods.nodes.iter().any(|&mod_idx| {
+                        self.ctx
+                            .arena
+                            .get(mod_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                });
+
             let info = ClassPropertyInitializationInfo {
                 name_idx: prop.name,
                 key,
@@ -376,11 +389,7 @@ impl<'a> CheckerState<'a> {
                 position,
                 has_no_initializer: prop.initializer.is_none() && !prop.exclamation_token,
                 is_abstract: self.has_abstract_modifier(&prop.modifiers),
-                requires_initialization: self.property_requires_initialization(
-                    member_idx,
-                    prop,
-                    requires_super,
-                ),
+                requires_initialization: needs_strict && !has_es_decorator,
             };
 
             if let Some(ref name) = info.lookup_name {
@@ -392,16 +401,14 @@ impl<'a> CheckerState<'a> {
             }
 
             if info.requires_initialization {
-                if let Some(ref key) = info.key {
-                    summary
-                        .initialization
-                        .required_instance_field_keys
-                        .insert(key.clone());
-                }
                 summary
                     .initialization
                     .required_instance_fields
                     .push(info.clone());
+            }
+
+            if needs_strict && let Some(ref key) = info.key {
+                summary.initialization.ts2565_field_keys.insert(key.clone());
             }
 
             summary
