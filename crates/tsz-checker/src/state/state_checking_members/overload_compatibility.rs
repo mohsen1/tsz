@@ -9,7 +9,7 @@
 
 use crate::query_boundaries::assignability::{
     erase_function_type_params_to_any, get_function_return_type, replace_function_return_type,
-    rewrite_function_error_slots_to_any,
+    rewrite_function_error_slots_to_any, strip_function_type_predicate,
 };
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -870,13 +870,16 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
 
-                // Now check parameter-only compatibility by creating versions
-                // with ANY return types. Use bivariant check to match tsc's
-                // non-strict function types for overload compatibility.
+                // Parameter-only check via bivariant comparison (tsc's non-strict overload
+                // rule). Strip predicates first: return compatibility was already checked
+                // above, so predicates must not re-participate in the param comparison.
+                let impl_stripped = strip_function_type_predicate(self.ctx.types, impl_type);
+                let overload_stripped =
+                    strip_function_type_predicate(self.ctx.types, overload_type);
                 let impl_with_any_ret =
-                    self.replace_return_type(impl_type, tsz_solver::TypeId::ANY);
+                    self.replace_return_type(impl_stripped, tsz_solver::TypeId::ANY);
                 let overload_with_any_ret =
-                    self.replace_return_type(overload_type, tsz_solver::TypeId::ANY);
+                    self.replace_return_type(overload_stripped, tsz_solver::TypeId::ANY);
                 self.is_assignable_to_bivariant(impl_with_any_ret, overload_with_any_ret)
             }
             _ => {
