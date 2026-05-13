@@ -668,8 +668,6 @@ impl<'a> CheckerState<'a> {
             cross_file_idx = Some(file_idx);
         }
 
-        // Check if we have a valid delegate arena (either from symbol_arenas/declaration_arenas
-        // or from resolve_symbol_file_index).
         let should_delegate = if needs_cross_file_delegation {
             true
         } else {
@@ -690,8 +688,6 @@ impl<'a> CheckerState<'a> {
                 .then(|| self.ctx.source_file_symbol_type_cache_scope());
             let source_cache_scope = symbol_type_cache_scope.unwrap_or(0);
 
-            // Gate perf counters once; disabled runs pay only predictable
-            // `if let Some(p) = perf` branches.
             let perf = if tsz_common::perf_counters::enabled_fast() {
                 Some(tsz_common::perf_counters::counters())
             } else {
@@ -701,14 +697,8 @@ impl<'a> CheckerState<'a> {
                 p.delegate_cross_arena_calls
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
-            // Track the running peak recursion depth via an RAII guard. Drop
-            // decrements when this call returns / unwinds. Per
-            // PERFORMANCE_PLAN.md §4.1.1 site #11.
             let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
-            // Fast path: check lib delegation cache by SymbolId.
-            // Each lib SymbolId is delegated at most once; subsequent lookups
-            // return the cached result directly.
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
                 && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
@@ -721,7 +711,6 @@ impl<'a> CheckerState<'a> {
                 return Some((cached_type, Vec::new()));
             }
 
-            // Thread-safe fast path: check the global resolved cross-file query cache.
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
                 && let Some((cached_type, cached_params)) = if symbol_type_cache_from_symbol_arena {
                     self.ctx.cached_stable_source_file_symbol_arena_type(
@@ -817,14 +806,11 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, direct_params));
             }
 
-            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
-                && let Some(direct_type) = self.direct_source_file_variable_annotation_type(
-                    sym_id,
-                    delegate_binder,
-                    symbol_arena,
-                    symbol_type_cache_from_symbol_arena,
-                )
-            {
+            if let Some(direct_type) = self.direct_source_file_variable_annotation_result(
+                sym_id,
+                direct_target,
+                symbol_type_cache_from_symbol_arena,
+            ) {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
                     self.ctx.cache_stable_source_file_symbol_arena_type(
@@ -838,8 +824,6 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, Vec::new()));
             }
 
-            // Both caches and the alias shortcut missed → about to do real work
-            // (boxed child checker construction + recursion).
             if let Some(p) = perf {
                 p.delegate_cross_arena_misses
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

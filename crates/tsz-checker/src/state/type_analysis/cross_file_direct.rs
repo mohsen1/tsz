@@ -355,6 +355,21 @@ impl<'a> CheckerState<'a> {
         self.direct_lower_source_file_annotation_type(annotation, delegate_binder, symbol_arena)
     }
 
+    pub(super) fn direct_source_file_variable_annotation_result(
+        &self,
+        sym_id: SymbolId,
+        direct_target: Option<(&NodeArena, &BinderState, Option<usize>)>,
+        allow_source_file_arena: bool,
+    ) -> Option<TypeId> {
+        let (symbol_arena, delegate_binder, _) = direct_target?;
+        self.direct_source_file_variable_annotation_type(
+            sym_id,
+            delegate_binder,
+            symbol_arena,
+            allow_source_file_arena,
+        )
+    }
+
     pub(super) fn direct_cross_file_interface_lowering(
         &self,
         sym_id: SymbolId,
