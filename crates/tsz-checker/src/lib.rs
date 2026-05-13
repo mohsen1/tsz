@@ -568,6 +568,9 @@ mod property_alias_display_tests;
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
 #[cfg(test)]
+#[path = "../tests/recursive_mapped_tuple_stack_overflow_tests.rs"]
+mod recursive_mapped_tuple_stack_overflow_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
