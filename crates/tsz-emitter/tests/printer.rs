@@ -1087,6 +1087,50 @@ fn legacy_decorated_anonymous_default_class_static_field_sets_default_name() {
 }
 
 #[test]
+fn legacy_constructor_param_decorator_static_self_reference_uses_alias() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare const IFoo: any;\nclass BulkEditPreviewProvider {\n    static readonly Schema = 'vscode-bulkeditpreview';\n    static emptyPreview = { scheme: BulkEditPreviewProvider.Schema };\n    constructor(@IFoo private readonly _modeService: IFoo) { }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2018,
+        legacy_decorators: true,
+        no_emit_helpers: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var BulkEditPreviewProvider_1;"),
+        "Constructor parameter decorators that reassign the class need a stable alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "let BulkEditPreviewProvider = BulkEditPreviewProvider_1 = class BulkEditPreviewProvider"
+        ),
+        "The class expression should initialize both the public binding and the stable alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "BulkEditPreviewProvider.emptyPreview = { scheme: BulkEditPreviewProvider_1.Schema };"
+        ),
+        "Static self-references must read from the pre-decoration class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("BulkEditPreviewProvider = BulkEditPreviewProvider_1 = __decorate(["),
+        "The class decorator assignment must keep the alias tracking the decorated class value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_exported_object_binding_non_identifier_property_uses_destructuring_path() {
     let source = r#"declare const obj: any;
 export let { "foo": bar } = obj;

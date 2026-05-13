@@ -465,3 +465,134 @@ const a: A = c.clone();
         "Multi-level polymorphic-this subtype assignment must not emit TS2322: {diagnostics:?}"
     );
 }
+
+/// Single-signature callable interface whose call signature returns `this`.
+/// Calling a value of that interface type must return the interface type, not the
+/// unresolved polymorphic `this`.
+#[test]
+fn test_callable_interface_this_return_single_sig() {
+    let source = r#"
+interface Builder {
+    (): this;
+    name: string;
+}
+declare const b: Builder;
+const result = b();
+const _: string = result.name;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Calling callable interface with `this` return should resolve `.name` without TS2339: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Assigning result.name to string must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Callable type alias (not an interface) with a `this` return signature.
+/// Ensures the fix covers type aliases, not only declared interfaces.
+#[test]
+fn test_callable_type_alias_this_return() {
+    let source = r#"
+type Factory = {
+    (): this;
+    tag: number;
+};
+declare const f: Factory;
+const r = f();
+const _: number = r.tag;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Callable type alias with `this` return must resolve `.tag` after call: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Assigning r.tag to number must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Multi-signature callable interface where the first overload returns `this`
+/// and the second returns a concrete type.  Only the `this`-returning overload
+/// is called here; the result must have the callee type.
+#[test]
+fn test_callable_interface_this_return_multi_sig() {
+    let source = r#"
+interface MultiBuilder {
+    (x: number): this;
+    (x: string): string;
+    prop: boolean;
+}
+declare const mb: MultiBuilder;
+// Call the number overload → returns this (= MultiBuilder).
+const r = mb(42);
+const _: boolean = r.prop;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Multi-sig callable: `this`-returning overload result must expose `.prop`: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Multi-sig callable: r.prop assigned to boolean must not emit TS2322: {diagnostics:?}"
+    );
+}
+
+/// Regression guard: a callable interface whose call signature returns a
+/// concrete type (not `this`) must not be affected by the substitution.
+#[test]
+fn test_callable_interface_concrete_return_unaffected() {
+    let source = r#"
+interface Maker {
+    (): string;
+    tag: number;
+}
+declare const m: Maker;
+const r = m();
+const _s: string = r;
+const _t: number = m.tag;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Concrete-return callable must not be affected by this-substitution: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Concrete-return callable: `.tag` property must still be accessible on callee: {diagnostics:?}"
+    );
+}
+
+/// Regression guard: method calls on classes already work via property-access
+/// substitution. They must not be broken by the new call-result substitution.
+#[test]
+fn test_class_method_this_return_still_works_after_fix() {
+    let source = r#"
+class Node {
+    value: number = 0;
+    setVal(v: number): this {
+        this.value = v;
+        return this;
+    }
+}
+class SpecialNode extends Node {
+    extra: string = "";
+}
+declare const sn: SpecialNode;
+const r = sn.setVal(1);
+const _: string = r.extra;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Class method returning `this` must still expose subclass properties: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "r.extra assigned to string must not emit TS2322: {diagnostics:?}"
+    );
+}
