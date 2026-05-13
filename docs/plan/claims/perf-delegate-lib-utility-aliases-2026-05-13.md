@@ -1,12 +1,13 @@
-# Claim: Actual-lib FlatArray avoids one declaration-file child checker
+# Claim: Actual-lib indexed utility aliases avoid one declaration-file child checker
 
 Date: 2026-05-13
 
 ## Claim
 
-A tightly guarded direct path for the actual-lib `FlatArray` type alias reduces
-monorepo-006 `DelegateCrossArenaSymbol` child-checker constructions from 28 to
-27 while keeping diagnostics stable at 10,198.
+A tightly guarded direct path for actual-lib utility aliases with an indexed
+type-literal body and conditional index reduces monorepo-006
+`DelegateCrossArenaSymbol` child-checker constructions from 28 to 27 while
+keeping diagnostics stable at 10,198.
 
 ## Evidence
 
@@ -21,6 +22,7 @@ monorepo-006 `DelegateCrossArenaSymbol` child-checker constructions from 28 to
 
 This is a conservative proof slice, not a general lib-alias solution.
 `IteratorResult` and `Record` were rejected after hosted conformance regressed
-on the broader exploratory branch. The larger fix should be a dedicated
-actual-lib type-alias body query or prepopulated canonical `DefinitionStore`
-entry, not a larger name allowlist.
+on the broader exploratory branch. The admitted path is shape-gated on the
+actual lib alias body rather than on the symbol name. The larger fix should be
+a broader canonical actual-lib type-alias body query or prepopulated canonical
+`DefinitionStore` entry.
