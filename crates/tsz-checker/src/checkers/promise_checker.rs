@@ -1830,6 +1830,23 @@ impl<'a> CheckerState<'a> {
             {
                 return evaluated;
             }
+            if let Some((base, args)) =
+                crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            {
+                let mut changed = false;
+                let evaluated_args: Vec<_> = args
+                    .into_iter()
+                    .map(|arg| {
+                        let evaluated = self
+                            .evaluate_awaited_application_for_assignability_inner(arg, depth + 1);
+                        changed |= evaluated != arg;
+                        evaluated
+                    })
+                    .collect();
+                if changed {
+                    return self.ctx.types.factory().application(base, evaluated_args);
+                }
+            }
             return type_id;
         }
 

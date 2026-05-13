@@ -2189,6 +2189,12 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        let awaited_source = self.evaluate_awaited_application_for_assignability(source);
+        let awaited_target = self.evaluate_awaited_application_for_assignability(target);
+        if awaited_source != source || awaited_target != target {
+            return self.is_assignable_to(awaited_source, awaited_target);
+        }
+
         // Variance-aware fast path: when both source and target are Application
         // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
         // type arguments using computed variance BEFORE structural expansion.
