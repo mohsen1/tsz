@@ -2078,6 +2078,63 @@ export function convert(value) {
 }
 
 #[test]
+fn test_jsdoc_constructor_overload_tags_emit_constructor_signatures() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export class Foo {
+    #a = true ? 1 : "1"
+    #b
+
+    /**
+     * @constructor
+     * @overload
+     * @param {string} a
+     * @param {number} b
+     */
+    /**
+     * @constructor
+     * @overload
+     * @param {number} a
+     */
+    /**
+     * @constructor
+     * @overload
+     * @param {string} a
+     *//**
+     * @constructor
+     * @param {number | string} a
+     */
+    constructor(a, b) {
+        this.#a = a
+        this.#b = b
+    }
+}
+"#,
+    );
+
+    let first = output
+        .find("constructor(a: string, b: number);")
+        .expect("expected two-parameter constructor overload");
+    let second = output
+        .find("constructor(a: number);")
+        .expect("expected number constructor overload");
+    let third = output
+        .find("constructor(a: string);")
+        .expect("expected string constructor overload");
+    let private_marker = output
+        .find("#private;")
+        .expect("expected private marker for private fields");
+    assert!(
+        first < second && second < third && third < private_marker,
+        "Expected constructor overloads before #private marker: {output}"
+    );
+    assert!(
+        !output.contains("constructor(a: string, b: any);"),
+        "Did not expect implementation constructor signature: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"

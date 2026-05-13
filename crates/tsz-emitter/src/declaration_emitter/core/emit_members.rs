@@ -686,6 +686,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if self.emit_jsdoc_overload_constructor_declarations(ctor_idx) {
+            return;
+        }
+
         // Check if this is an overload (no body) or implementation (has body)
         let is_overload = ctor.body.is_none();
         let is_implementation = !is_overload;
@@ -764,6 +768,96 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(ctor_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    pub(in crate::declaration_emitter) fn class_has_jsdoc_overload_constructor(
+        &self,
+        members: &NodeList,
+    ) -> bool {
+        self.source_is_js_file
+            && members
+                .nodes
+                .iter()
+                .copied()
+                .any(|member_idx| self.member_is_jsdoc_overload_constructor(member_idx))
+    }
+
+    pub(in crate::declaration_emitter) fn member_is_jsdoc_overload_constructor(
+        &self,
+        member_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+            return false;
+        }
+
+        self.leading_jsdoc_comment_chain_for_pos(member_node.pos)
+            .iter()
+            .any(|jsdoc| Self::jsdoc_has_overload_tag(jsdoc))
+    }
+
+    fn emit_jsdoc_overload_constructor_declarations(&mut self, ctor_idx: NodeIndex) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(ctor_node) = self.arena.get(ctor_idx) else {
+            return false;
+        };
+        let Some(ctor) = self.arena.get_constructor(ctor_node) else {
+            return false;
+        };
+
+        let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(ctor_node.pos);
+        let overloads = Self::jsdoc_overload_signatures_from_chain(&jsdoc_chain);
+        if overloads.is_empty() {
+            return false;
+        }
+
+        self.class_has_constructor_overloads = true;
+        for overload in overloads {
+            self.emit_jsdoc_overload_comment(&overload.comment);
+            self.write_indent();
+
+            if let Some(ref mods) = ctor.modifiers {
+                for &mod_idx in &mods.nodes {
+                    if let Some(mod_node) = self.arena.get(mod_idx) {
+                        match mod_node.kind {
+                            k if k == SyntaxKind::PrivateKeyword as u16 => self.write("private "),
+                            k if k == SyntaxKind::ProtectedKeyword as u16 => {
+                                self.write("protected ");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            self.write("constructor(");
+            for (idx, param) in overload.params.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                if param.rest {
+                    self.write("...");
+                }
+                self.write(&param.name);
+                if param.optional && !param.rest {
+                    self.write("?");
+                }
+                self.write(": ");
+                self.write(&param.type_text);
+            }
+            self.write(");");
+            self.write_line();
+        }
+
+        self.skip_comments_in_node(ctor_node.pos, ctor_node.end);
+        true
     }
 
     pub(in crate::declaration_emitter) fn emit_js_array_subclass_constructor_overloads_if_needed(

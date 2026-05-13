@@ -1102,8 +1102,12 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
-        // Emit `#private;` if any member has a private identifier name
-        if self.class_has_private_identifier_member(&class.members) {
+        // Emit `#private;` if any member has a private identifier name.
+        // JS constructor overload declarations are reconstructed before the
+        // private marker, so that path defers to the ordered member pass.
+        if self.class_has_private_identifier_member(&class.members)
+            && !self.class_has_jsdoc_overload_constructor(&class.members)
+        {
             self.write_indent();
             self.write("#private;");
             self.write_line();
@@ -1558,8 +1562,12 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
-        // Emit `#private;` if any member has a private identifier name (e.g., #foo)
-        if self.class_has_private_identifier_member(&class.members) {
+        // Emit `#private;` if any member has a private identifier name (e.g., #foo).
+        // JS constructor overload declarations are reconstructed before the
+        // private marker, so that path defers to the ordered member pass.
+        if self.class_has_private_identifier_member(&class.members)
+            && !self.class_has_jsdoc_overload_constructor(&class.members)
+        {
             self.write_indent();
             self.write("#private;");
             self.write_line();

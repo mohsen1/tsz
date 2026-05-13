@@ -1415,7 +1415,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.method_names_with_overloads = FxHashSet::default();
 
         self.emit_parameter_properties(&class.members);
-        if self.class_has_private_identifier_member(&class.members) {
+        let mut emitted_deferred_private_marker = false;
+        let emit_private_marker_after_jsdoc_constructor = self
+            .class_has_private_identifier_member(&class.members)
+            && self.class_has_jsdoc_overload_constructor(&class.members);
+        if self.class_has_private_identifier_member(&class.members)
+            && !emit_private_marker_after_jsdoc_constructor
+        {
             self.write_indent();
             self.write("#private;");
             self.write_line();
@@ -1429,7 +1435,9 @@ impl<'a> DeclarationEmitter<'a> {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
-                self.emit_leading_jsdoc_comments(member_node.pos);
+                if !self.member_is_jsdoc_overload_constructor(member_idx) {
+                    self.emit_leading_jsdoc_comments(member_node.pos);
+                }
             }
             let before_member_len = self.writer.len();
             self.emit_class_member(member_idx);
@@ -1439,6 +1447,18 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(member_node) = self.arena.get(member_idx) {
                     self.skip_comments_in_node(member_node.pos, member_node.end);
                 }
+            }
+            if emit_private_marker_after_jsdoc_constructor
+                && !emitted_deferred_private_marker
+                && self
+                    .arena
+                    .get(member_idx)
+                    .is_some_and(|member_node| member_node.kind == syntax_kind_ext::CONSTRUCTOR)
+            {
+                self.write_indent();
+                self.write("#private;");
+                self.write_line();
+                emitted_deferred_private_marker = true;
             }
         }
         self.emit_js_inferred_constructor_assignment_properties(&class.members);
@@ -1510,7 +1530,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.method_names_with_overloads = FxHashSet::default();
 
         self.emit_parameter_properties(&class.members);
-        if self.class_has_private_identifier_member(&class.members) {
+        let mut emitted_deferred_private_marker = false;
+        let emit_private_marker_after_jsdoc_constructor = self
+            .class_has_private_identifier_member(&class.members)
+            && self.class_has_jsdoc_overload_constructor(&class.members);
+        if self.class_has_private_identifier_member(&class.members)
+            && !emit_private_marker_after_jsdoc_constructor
+        {
             self.write_indent();
             self.write("#private;");
             self.write_line();
@@ -1524,7 +1550,9 @@ impl<'a> DeclarationEmitter<'a> {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
-                self.emit_leading_jsdoc_comments(member_node.pos);
+                if !self.member_is_jsdoc_overload_constructor(member_idx) {
+                    self.emit_leading_jsdoc_comments(member_node.pos);
+                }
             }
             let before_member_len = self.writer.len();
             self.emit_class_member(member_idx);
@@ -1534,6 +1562,18 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(member_node) = self.arena.get(member_idx) {
                     self.skip_comments_in_node(member_node.pos, member_node.end);
                 }
+            }
+            if emit_private_marker_after_jsdoc_constructor
+                && !emitted_deferred_private_marker
+                && self
+                    .arena
+                    .get(member_idx)
+                    .is_some_and(|member_node| member_node.kind == syntax_kind_ext::CONSTRUCTOR)
+            {
+                self.write_indent();
+                self.write("#private;");
+                self.write_line();
+                emitted_deferred_private_marker = true;
             }
         }
         self.emit_js_inferred_constructor_assignment_properties(&class.members);
@@ -2367,6 +2407,10 @@ impl<'a> DeclarationEmitter<'a> {
         members: &NodeList,
     ) {
         let mut emitted_js_constructor_assignment_properties = false;
+        let mut emitted_deferred_private_marker = false;
+        let emit_private_marker_after_jsdoc_constructor = self
+            .class_has_private_identifier_member(members)
+            && self.class_has_jsdoc_overload_constructor(members);
         let member_order = self.class_member_emit_order(members);
         let uses_reordered_js_member_comments =
             self.source_is_js_file && member_order != members.nodes;
@@ -2374,7 +2418,11 @@ impl<'a> DeclarationEmitter<'a> {
             let before_jsdoc_len = self.writer.len();
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
-                if uses_reordered_js_member_comments {
+                if self.member_is_jsdoc_overload_constructor(member_idx) {
+                    // The constructor overload path emits one comment per overload
+                    // signature; emitting the whole chain here would attach the
+                    // implementation comment to the reconstructed signature.
+                } else if uses_reordered_js_member_comments {
                     let jsdoc_chain =
                         self.leading_jsdoc_comment_chain_for_pos_with_style(member_node.pos);
                     self.emit_jsdoc_comment_chain_preserving_multiline_style(&jsdoc_chain);
@@ -2394,6 +2442,18 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(member_node) = self.arena.get(member_idx)
             {
                 self.skip_comments_in_node(member_node.pos, member_node.end);
+            }
+            if emit_private_marker_after_jsdoc_constructor
+                && !emitted_deferred_private_marker
+                && self
+                    .arena
+                    .get(member_idx)
+                    .is_some_and(|member_node| member_node.kind == syntax_kind_ext::CONSTRUCTOR)
+            {
+                self.write_indent();
+                self.write("#private;");
+                self.write_line();
+                emitted_deferred_private_marker = true;
             }
             if !emitted_js_constructor_assignment_properties
                 && self.source_is_js_file

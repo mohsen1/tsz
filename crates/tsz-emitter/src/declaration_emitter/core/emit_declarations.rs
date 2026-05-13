@@ -719,7 +719,7 @@ impl<'a> DeclarationEmitter<'a> {
             || text.contains(&format!("export async function {name}"))
     }
 
-    fn emit_jsdoc_overload_comment(&mut self, jsdoc: &str) {
+    pub(in crate::declaration_emitter) fn emit_jsdoc_overload_comment(&mut self, jsdoc: &str) {
         self.write_indent();
         self.write("/**");
         self.write_line();
@@ -1873,8 +1873,12 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
-        // Emit `#private;` if any member has a private identifier name (e.g., #foo)
-        if self.class_has_private_identifier_member(&class.members) {
+        // Emit `#private;` if any member has a private identifier name (e.g., #foo).
+        // JSDoc constructor overloads in JS are emitted before the private marker,
+        // so that path defers this marker into the ordered member pass.
+        if self.class_has_private_identifier_member(&class.members)
+            && !self.class_has_jsdoc_overload_constructor(&class.members)
+        {
             self.write_indent();
             self.write("#private;");
             self.write_line();
