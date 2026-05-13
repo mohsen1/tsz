@@ -1157,6 +1157,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         // PERF: Single lookup for type parameter check + inferred extraction
         let check_key = self.interner().lookup(check_unwrapped);
+        let allow_readonly_array = matches!(
+            self.interner().lookup(cond.extends_type),
+            Some(TypeData::ReadonlyType(_))
+        );
         if matches!(
             check_key,
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
@@ -1211,6 +1215,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.interner().union_from_slice(&parts))
                 }
             }
+            Some(TypeData::Application(app_id)) => {
+                if let Some(element) = self.application_array_element(app_id, allow_readonly_array)
+                {
+                    Some(element)
+                } else {
+                    let app = self.interner().type_application(app_id);
+                    if self.application_base_is_unresolved(app.base) {
+                        return self.interner().conditional(*cond);
+                    }
+                    None
+                }
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                self.expanded_array_object_element(shape_id, allow_readonly_array)
+            }
             _ => None,
         };
 
@@ -1249,6 +1268,187 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return true_inst;
         }
         self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
+    }
+
+    fn expanded_array_object_element(
+        &self,
+        shape_id: ObjectShapeId,
+        allow_readonly_array: bool,
+    ) -> Option<TypeId> {
+        let shape = self.interner().object_shape(shape_id);
+        let number_index = shape.number_index.as_ref()?;
+        self.expanded_array_object_matches(shape_id, allow_readonly_array)
+            .then_some(number_index.value_type)
+    }
+
+    fn expanded_array_object_matches(
+        &self,
+        shape_id: ObjectShapeId,
+        allow_readonly_array: bool,
+    ) -> bool {
+        let shape = self.interner().object_shape(shape_id);
+        if shape.number_index.is_none() {
+            return false;
+        }
+        self.object_shape_has_array_markers(shape_id)
+            || (allow_readonly_array && self.object_shape_has_readonly_array_markers(shape_id))
+    }
+
+    fn object_shape_has_array_markers(&self, shape_id: ObjectShapeId) -> bool {
+        self.object_shape_has_property(shape_id, "push")
+            && self.object_shape_has_property(shape_id, "shift")
+    }
+
+    fn object_shape_has_readonly_array_markers(&self, shape_id: ObjectShapeId) -> bool {
+        self.object_shape_has_property(shape_id, "slice")
+            && self.object_shape_has_property(shape_id, "concat")
+    }
+
+    fn object_shape_has_property(&self, shape_id: ObjectShapeId, expected: &str) -> bool {
+        self.interner()
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .any(|prop| self.interner().resolve_atom_ref(prop.name).as_ref() == expected)
+    }
+
+    fn application_array_element(
+        &self,
+        app_id: crate::types::TypeApplicationId,
+        allow_readonly_array: bool,
+    ) -> Option<TypeId> {
+        let app = self.interner().type_application(app_id);
+        if app.args.len() != 1 {
+            return None;
+        }
+        let is_array_application = self.application_base_name_is(app.base, "Array")
+            || self.application_base_has_array_shape(app.base, false);
+        let is_readonly_array_application = allow_readonly_array
+            && (self.application_base_name_is(app.base, "ReadonlyArray")
+                || self.application_base_has_array_shape(app.base, true));
+
+        (is_array_application || is_readonly_array_application).then_some(app.args[0])
+    }
+
+    fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
+        if expected == "Array" && self.application_base_is_registered_array(base) {
+            return true;
+        }
+
+        match self.interner().lookup(base) {
+            Some(TypeData::Lazy(def_id)) => {
+                if expected == "ReadonlyArray"
+                    && self.resolver().is_builtin_readonly_array_def(def_id)
+                {
+                    return true;
+                }
+                self.resolver()
+                    .get_def_name(def_id)
+                    .is_some_and(|name| self.interner().resolve_atom_ref(name).as_ref() == expected)
+            }
+            Some(TypeData::TypeQuery(sym_ref)) => self
+                .resolver()
+                .symbol_to_def_id(sym_ref)
+                .and_then(|def_id| self.resolver().get_def_name(def_id))
+                .is_some_and(|name| self.interner().resolve_atom_ref(name).as_ref() == expected),
+            Some(TypeData::UnresolvedTypeName(name)) => {
+                self.interner().resolve_atom_ref(name).as_ref() == expected
+            }
+            _ => self
+                .interner()
+                .get_display_alias(base)
+                .is_some_and(|alias| self.application_base_name_is(alias, expected)),
+        }
+    }
+
+    fn application_base_is_registered_array(&self, base: TypeId) -> bool {
+        self.interner()
+            .get_array_base_type()
+            .is_some_and(|array_base| self.application_bases_are_equivalent(base, array_base))
+            || self
+                .interner()
+                .get_array_display_base_type()
+                .is_some_and(|array_base| self.application_bases_are_equivalent(base, array_base))
+    }
+
+    fn application_bases_are_equivalent(&self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+        match (self.interner().lookup(left), self.interner().lookup(right)) {
+            (Some(TypeData::Lazy(left_def)), Some(TypeData::Lazy(right_def))) => {
+                self.resolver().defs_are_equivalent(left_def, right_def)
+            }
+            _ => false,
+        }
+    }
+
+    fn application_base_has_array_shape(&self, base: TypeId, allow_readonly_array: bool) -> bool {
+        match self.interner().lookup(base) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver()
+                .resolve_lazy(def_id, self.interner())
+                .is_some_and(|resolved| {
+                    self.resolved_application_base_has_array_shape(resolved, allow_readonly_array)
+                }),
+            Some(TypeData::TypeQuery(sym_ref)) => self
+                .resolver()
+                .symbol_to_def_id(sym_ref)
+                .and_then(|def_id| self.resolver().resolve_lazy(def_id, self.interner()))
+                .is_some_and(|resolved| {
+                    self.resolved_application_base_has_array_shape(resolved, allow_readonly_array)
+                }),
+            _ => self
+                .interner()
+                .get_display_alias(base)
+                .is_some_and(|alias| {
+                    self.application_base_has_array_shape(alias, allow_readonly_array)
+                }),
+        }
+    }
+
+    fn application_base_is_unresolved(&self, base: TypeId) -> bool {
+        match self.interner().lookup(base) {
+            Some(TypeData::Lazy(def_id)) => {
+                self.resolver().get_def_name(def_id).is_none()
+                    && self
+                        .resolver()
+                        .resolve_lazy(def_id, self.interner())
+                        .is_none()
+            }
+            Some(TypeData::TypeQuery(sym_ref)) => self
+                .resolver()
+                .symbol_to_def_id(sym_ref)
+                .is_none_or(|def_id| {
+                    self.resolver().get_def_name(def_id).is_none()
+                        && self
+                            .resolver()
+                            .resolve_lazy(def_id, self.interner())
+                            .is_none()
+                }),
+            _ => self
+                .interner()
+                .get_display_alias(base)
+                .is_some_and(|alias| self.application_base_is_unresolved(alias)),
+        }
+    }
+
+    fn resolved_application_base_has_array_shape(
+        &self,
+        type_id: TypeId,
+        allow_readonly_array: bool,
+    ) -> bool {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Array(_)) => true,
+            Some(TypeData::ReadonlyType(inner)) => {
+                allow_readonly_array
+                    && matches!(self.interner().lookup(inner), Some(TypeData::Array(_)))
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                self.expanded_array_object_matches(shape_id, allow_readonly_array)
+            }
+            _ => false,
+        }
     }
 
     /// Handle tuple extends pattern: T extends [infer U] ? ...
