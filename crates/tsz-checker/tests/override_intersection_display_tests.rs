@@ -6,17 +6,13 @@
 //! object type (e.g., "{ m1: () => void; m2: () => void }").
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source(
+    tsz_checker::test_utils::check_with_options_code_messages(
         source,
-        "test.ts",
         tsz_checker::context::CheckerOptions {
             no_implicit_override: true,
             ..Default::default()
         },
     )
-    .into_iter()
-    .map(|d| (d.code, d.message_text))
-    .collect()
 }
 
 /// Intersection of two constructor interfaces: instance type display should
