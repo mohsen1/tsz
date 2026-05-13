@@ -118,7 +118,7 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
     )
 }
 
-fn is_direct_actual_lib_alias_name(name: &str) -> bool {
+fn is_direct_actual_intl_alias_name(name: &str) -> bool {
     matches!(
         name,
         "LocalesArgument"
@@ -128,6 +128,21 @@ fn is_direct_actual_lib_alias_name(name: &str) -> bool {
             | "NumberFormatOptionsUseGrouping"
             | "UnicodeBCP47LocaleIdentifier"
     )
+}
+
+fn is_direct_actual_lib_alias_name(name: &str) -> bool {
+    is_direct_actual_intl_alias_name(name)
+        || matches!(
+            name,
+            "DecoratorMetadata"
+                | "DecoratorMetadataObject"
+                | "FlatArray"
+                | "IteratorResult"
+                | "Partial"
+                | "PropertyKey"
+                | "Readonly"
+                | "Record"
+        )
 }
 
 fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
@@ -265,9 +280,21 @@ impl<'a> CheckerState<'a> {
                     .declaration_arenas
                     .contains_key(&(sym_id, decl_idx))
             });
+        let declarations_alias_mapped_builtin = is_direct_actual_lib_alias_name(&name)
+            && self.symbol_mapped_declarations_are_builtin_lib_only(sym_id, symbol, &name);
+        let declarations_alias_has_unmapped = is_direct_actual_lib_alias_name(&name)
+            && symbol.declarations.iter().any(|&decl_idx| {
+                !self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .contains_key(&(sym_id, decl_idx))
+            });
         if !declarations_are_direct
             && !declarations_iterator_mapped_builtin
             && !declarations_iterator_has_unmapped
+            && !declarations_alias_mapped_builtin
+            && !declarations_alias_has_unmapped
         {
             return None;
         }
@@ -283,10 +310,18 @@ impl<'a> CheckerState<'a> {
         if direct_type.is_none() {
             direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
                 if is_direct_actual_lib_alias_name(&name) {
-                    let namespace_sym_id =
-                        self.resolve_lib_namespace_export_symbol("Intl", &name)?;
-                    let cache_name = format!("Intl.{name}");
-                    return self.resolve_lib_alias_type_by_symbol(&cache_name, namespace_sym_id);
+                    if is_direct_actual_intl_alias_name(&name)
+                        && let Some(namespace_sym_id) =
+                            self.resolve_lib_namespace_export_symbol("Intl", &name)
+                    {
+                        let cache_name = format!("Intl.{name}");
+                        if let Some(alias_type) =
+                            self.resolve_lib_alias_type_by_symbol(&cache_name, namespace_sym_id)
+                        {
+                            return Some(alias_type);
+                        }
+                    }
+                    return self.resolve_lib_alias_type_by_symbol(&name, sym_id);
                 }
                 if !is_direct_actual_intl_lib_interface_name(&name) {
                     return None;
@@ -875,6 +910,70 @@ mod tests {
         )
     }
 
+    fn assert_direct_actual_lib_global_alias_symbol(alias_name: &str) {
+        let lib_files = load_lib_files(&[
+            "es5.d.ts",
+            "es2015.iterable.d.ts",
+            "es2019.array.d.ts",
+            "decorators.d.ts",
+        ]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .resolve_lib_symbol_by_name(alias_name)
+            .unwrap_or_else(|| panic!("{alias_name} should resolve"));
+        let symbol = state
+            .get_cross_file_symbol(sym_id)
+            .expect("symbol should resolve");
+        let decl_idx = *symbol
+            .declarations
+            .first()
+            .expect("symbol should have declarations");
+        let delegate_arena = state
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .and_then(|arenas| arenas.first())
+            .expect("declaration arena should exist")
+            .as_ref();
+
+        let (ty, _) = state
+            .direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                Some(delegate_arena),
+                false,
+            )
+            .unwrap_or_else(|| panic!("{alias_name} direct actual-lib lowering should succeed"));
+
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+    }
+
     #[test]
     fn detects_npm_and_source_tree_builtin_lib_names() {
         assert!(is_builtin_lib_file_name("lib.es2024.d.ts"));
@@ -1445,5 +1544,45 @@ mod tests {
 
         assert_ne!(ty, TypeId::UNKNOWN);
         assert_ne!(ty, TypeId::ERROR);
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_record_alias_symbol() {
+        assert_direct_actual_lib_global_alias_symbol("Record");
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_iterator_result_alias_symbol() {
+        assert_direct_actual_lib_global_alias_symbol("IteratorResult");
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_flat_array_alias_symbol() {
+        assert_direct_actual_lib_global_alias_symbol("FlatArray");
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_readonly_alias_symbol() {
+        assert_direct_actual_lib_global_alias_symbol("Readonly");
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_property_key_alias_symbol() {
+        assert_direct_actual_lib_global_alias_symbol("PropertyKey");
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_partial_alias_symbol() {
+        assert_direct_actual_lib_global_alias_symbol("Partial");
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_decorator_metadata_object_alias_symbol() {
+        assert_direct_actual_lib_global_alias_symbol("DecoratorMetadataObject");
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_decorator_metadata_alias_symbol() {
+        assert_direct_actual_lib_global_alias_symbol("DecoratorMetadata");
     }
 }
