@@ -28,6 +28,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &type_text)
                     .unwrap_or(type_text)
             })
+            .map(|type_text| {
+                Self::expand_parameters_utility_tuple_type_text(&type_text).unwrap_or(type_text)
+            })
     }
 
     fn call_expression_local_overload_return_type_text(

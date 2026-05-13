@@ -1982,7 +1982,9 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     return Some(printed);
                 }
-                reused_type_text
+                reused_type_text.map(|type_text| {
+                    Self::expand_parameters_utility_tuple_type_text(&type_text).unwrap_or(type_text)
+                })
             }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 self.tagged_template_declared_return_type_text(expr_idx)
