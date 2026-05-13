@@ -158,6 +158,10 @@ name = "ts1240_tests"
 path = "tests/ts1240_tests.rs"
 
 [[test]]
+name = "ts1240_accessor_decorator_tests"
+path = "tests/ts1240_accessor_decorator_tests.rs"
+
+[[test]]
 name = "ts2802_downlevel_iteration_tests"
 path = "tests/ts2802_downlevel_iteration_tests.rs"
 
