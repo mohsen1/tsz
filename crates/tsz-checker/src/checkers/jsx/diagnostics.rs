@@ -431,6 +431,18 @@ impl<'a> CheckerState<'a> {
         decl_idx: NodeIndex,
         prop_name: &str,
     ) -> Option<String> {
+        let mut seen = rustc_hash::FxHashSet::default();
+        self.get_jsx_component_prop_annotation_text_from_declaration_with_seen(
+            decl_idx, prop_name, &mut seen,
+        )
+    }
+
+    fn get_jsx_component_prop_annotation_text_from_declaration_with_seen(
+        &mut self,
+        decl_idx: NodeIndex,
+        prop_name: &str,
+        seen: &mut rustc_hash::FxHashSet<NodeIndex>,
+    ) -> Option<String> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
@@ -439,6 +451,9 @@ impl<'a> CheckerState<'a> {
         {
             decl_idx = parent;
             decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if !seen.insert(decl_idx) {
+            return None;
         }
 
         match decl_node.kind {
@@ -453,17 +468,19 @@ impl<'a> CheckerState<'a> {
                 if param.type_annotation.is_none() {
                     return None;
                 }
-                self.get_object_prop_annotation_text_from_type_node(
+                self.get_object_prop_annotation_text_from_type_node_with_seen(
                     param.type_annotation,
                     prop_name,
+                    seen,
                 )
             }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
                 if decl.type_annotation.is_some() {
-                    return self.get_object_prop_annotation_text_from_type_node(
+                    return self.get_object_prop_annotation_text_from_type_node_with_seen(
                         decl.type_annotation,
                         prop_name,
+                        seen,
                     );
                 }
                 self.get_object_prop_annotation_text_from_function_initializer(
@@ -477,7 +494,11 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 let alias = self.ctx.arena.get_type_alias(decl_node)?;
-                self.get_object_prop_annotation_text_from_type_node(alias.type_node, prop_name)
+                self.get_object_prop_annotation_text_from_type_node_with_seen(
+                    alias.type_node,
+                    prop_name,
+                    seen,
+                )
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::CLASS_EXPRESSION =>
@@ -490,9 +511,10 @@ impl<'a> CheckerState<'a> {
                 if first_param.constraint == NodeIndex(0) {
                     return None;
                 }
-                self.get_object_prop_annotation_text_from_type_node(
+                self.get_object_prop_annotation_text_from_type_node_with_seen(
                     first_param.constraint,
                     prop_name,
+                    seen,
                 )
             }
             _ => None,
@@ -571,7 +593,24 @@ impl<'a> CheckerState<'a> {
         type_node_idx: NodeIndex,
         prop_name: &str,
     ) -> Option<String> {
+        let mut seen = rustc_hash::FxHashSet::default();
+        self.get_object_prop_annotation_text_from_type_node_with_seen(
+            type_node_idx,
+            prop_name,
+            &mut seen,
+        )
+    }
+
+    fn get_object_prop_annotation_text_from_type_node_with_seen(
+        &mut self,
+        type_node_idx: NodeIndex,
+        prop_name: &str,
+        seen: &mut rustc_hash::FxHashSet<NodeIndex>,
+    ) -> Option<String> {
         let type_node = self.ctx.arena.get(type_node_idx)?;
+        if !seen.insert(type_node_idx) {
+            return None;
+        }
         match type_node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 let type_ref = self.ctx.arena.get_type_ref(type_node)?;
@@ -583,8 +622,8 @@ impl<'a> CheckerState<'a> {
                 let symbol = self.ctx.binder.get_symbol(target_sym_id)?;
                 for decl_idx in symbol.all_declarations() {
                     if let Some(text) = self
-                        .get_jsx_component_prop_annotation_text_from_declaration(
-                            decl_idx, prop_name,
+                        .get_jsx_component_prop_annotation_text_from_declaration_with_seen(
+                            decl_idx, prop_name, seen,
                         )
                     {
                         return Some(text);
