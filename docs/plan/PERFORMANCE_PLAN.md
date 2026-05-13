@@ -1239,3 +1239,19 @@ numbers move frequently; prefer symbol search over stale line references.
 
 - `crates/tsz-core/src/parallel/lib_snapshot.rs` - existing lib snapshot cache.
 - `crates/tsz-solver/src/types.rs` - `TypeId`, `TypeData`, and layout-sensitive type definitions.
+
+---
+
+## 16. Focused PR Update Contract
+
+Use this contract for changes that update measured claims in this document.
+
+1. One measurable hypothesis per PR.
+2. Update one status-row trajectory at a time unless a second row is directly
+   coupled to the same measurement.
+3. Include a decision record under `docs/plan/perf-runs/` and link it from the
+   updated row or section.
+4. Include raw attribution/diagnostics JSON paths for any new quoted numbers.
+5. When another open PR already edits the same status-row counters, land an
+   additive/non-overlapping docs slice first and rebase the counter edits after
+   that PR merges.
