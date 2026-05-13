@@ -526,7 +526,7 @@ impl<'a> TypePrinter<'a> {
             .map(|module_path| format!("typeof import(\"{module_path}\")"))
     }
 
-    fn global_class_symbol_can_use_global_this(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn global_class_symbol_can_use_global_this(&self, sym_id: SymbolId) -> bool {
         let Some(arena) = self.symbol_arena else {
             return false;
         };
@@ -534,7 +534,17 @@ impl<'a> TypePrinter<'a> {
             return false;
         };
         symbol.parent == SymbolId::NONE
-            && symbol.has_any_flags(symbol_flags::CLASS)
+            && (symbol.has_any_flags(symbol_flags::CLASS)
+                || (symbol.value_declaration.is_some()
+                    && self
+                        .node_arena
+                        .and_then(|node_arena| node_arena.get(symbol.value_declaration))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION))
+                || symbol.declarations.iter().copied().any(|decl_idx| {
+                    self.node_arena
+                        .and_then(|node_arena| node_arena.get(decl_idx))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION)
+                }))
             && self.resolve_symbol_module_path(sym_id).is_none()
             && Self::is_valid_identifier(&symbol.escaped_name)
     }
