@@ -5539,6 +5539,15 @@ impl<'a> DeclarationEmitter<'a> {
                         .trim_end_matches(';')
                         .trim_end()
                         .to_string();
+                    if call.type_arguments.is_none()
+                        && self.source_return_type_mentions_type_parameter(
+                            source_arena,
+                            func,
+                            &type_text,
+                        )
+                    {
+                        continue;
+                    }
                     return self.substitute_source_call_type_parameters(
                         source_arena,
                         func,
@@ -5575,13 +5584,17 @@ impl<'a> DeclarationEmitter<'a> {
                     scratch.current_arena = self.current_arena.clone();
                     scratch.arena_to_path = self.arena_to_path.clone();
                     scratch.indent_level = self.indent_level;
+                    let generic_source_func = func
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| !params.nodes.is_empty());
                     let mut type_text = scratch.source_function_return_type_text(func)?;
-                    if type_text.contains("unknown")
-                        && let Some(source_return_text) = scratch
-                            .function_body_returned_parameter_call_return_type_text(
-                                source_arena,
-                                func,
-                            )
+                    let source_return_text = scratch
+                        .function_body_returned_parameter_call_return_type_text(source_arena, func);
+                    if generic_source_func {
+                        type_text = source_return_text?;
+                    } else if type_text.contains("unknown")
+                        && let Some(source_return_text) = source_return_text
                     {
                         type_text = source_return_text;
                     }

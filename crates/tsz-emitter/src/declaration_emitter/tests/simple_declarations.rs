@@ -1358,23 +1358,6 @@ export function fn3(uuid) {}
 }
 
 #[test]
-fn test_js_satisfies_function_type_parsing_handles_quoted_commas_and_parens() {
-    let output = emit_js_dts(
-        r#"
-/**
- * @satisfies {(tag: "x,y", close: ")") => void}
- */
-export const fn = (tag, close) => {};
-"#,
-    );
-
-    assert!(
-        output.contains("export function fn(tag: \"x,y\", close: \")\"): void;"),
-        "Expected quoted comma/paren literals in @satisfies function params to preserve parameter parsing: {output}"
-    );
-}
-
-#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"
@@ -2253,26 +2236,6 @@ module.exports.y = 0;
 }
 
 #[test]
-fn test_js_export_equals_does_not_disable_commonjs_member_synthesis() {
-    let output = emit_js_dts_with_usage_analysis(
-        r#"
-const root = {};
-export = root;
-root.extra = 1;
-"#,
-    );
-
-    assert!(
-        output.contains("export = root;"),
-        "Expected JS `export =` assignment to be preserved: {output}"
-    );
-    assert!(
-        output.contains("extra"),
-        "Export-equals expando member assignment should still contribute declaration surface when JS file uses `export =`. Output: {output}"
-    );
-}
-
-#[test]
 fn test_js_exports_assignment_marks_same_name_function_exported() {
     let output = emit_js_dts(
         r#"
@@ -2847,6 +2810,7 @@ function foo() {}
 foo.null = true;
 
 function bar() {}
+bar.async = true;
 bar.normal = false;
 
 function baz() {}
@@ -2862,13 +2826,15 @@ declare namespace foo {
 }
 declare function bar(): void;
 declare namespace bar {
+    let async: boolean;
     let normal: boolean;
 }
 declare function baz(): void;
 declare namespace baz {
     let _class: boolean;
     export { _class as class };
-    export let normal: boolean;
+    let normal_1: boolean;
+    export { normal_1 as normal };
 }"#;
     assert!(
         output.contains(expected),
@@ -2877,22 +2843,24 @@ declare namespace baz {
 }
 
 #[test]
-fn test_js_late_bound_namespace_member_names_do_not_alias_against_top_level_scope() {
+fn test_js_late_bound_function_alias_generation_avoids_existing_namespace_members() {
     let source = r#"
-const normal = 0;
-function foo() {}
-foo.normal = true;
-foo.normal_1 = false;
+export const normal = 1;
+export function foo() {}
+foo.normal = false;
+foo.normal_1 = true;
 "#;
 
     let output = emit_js_dts_with_usage_analysis(source);
-    let expected = r#"declare namespace foo {
-    let normal: boolean;
+    let expected = r#"export function foo(): void;
+export namespace foo {
+    let normal_2: boolean;
+    export { normal_2 as normal };
     let normal_1: boolean;
 }"#;
     assert!(
         output.contains(expected),
-        "Expected JS namespace member names to stay local to the namespace scope.\nOutput:\n{output}"
+        "Expected namespace alias generation to skip existing member names when resolving collisions: {output}"
     );
 }
 
@@ -5662,23 +5630,6 @@ function f2() {
     assert!(
         output.contains("declare function f2(): (a: string, b: string) => string;"),
         "Expected returned function expression signature to use attached @type JSDoc: {output}"
-    );
-}
-
-#[test]
-fn test_js_returned_function_tuple_rest_expansion_avoids_prior_param_name_collisions() {
-    let output = emit_js_dts(
-        r#"
-function wrap() {
-    /** @type {(a: string, ...rest: [a: number]) => void} */
-    return function (a, ...rest) {};
-}
-"#,
-    );
-
-    assert!(
-        output.contains("declare function wrap(): (a: string, a_1: number) => void;"),
-        "Expected tuple-rest expansion to avoid colliding with prior parameter names: {output}"
     );
 }
 

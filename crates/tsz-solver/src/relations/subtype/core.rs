@@ -691,9 +691,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
+    pub(crate) fn readonly_application_or_display_alias_inner(
+        &self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let app_id = application_id(self.interner, type_id).or_else(|| {
+            self.interner
+                .get_display_alias(type_id)
+                .and_then(|alias| application_id(self.interner, alias))
+        })?;
+        let app = self.interner.type_application(app_id);
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            Some(TypeData::TypeQuery(symbol_ref)) => {
+                let def_id = self.resolver.symbol_to_def_id(symbol_ref)?;
+                matches!(
+                    self.resolver.get_def_kind(def_id),
+                    Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
+                )
+                .then_some(def_id)
+            }
+            _ => None,
+        }?;
+        let name = self.resolver.get_def_name(def_id)?;
+        let inner = app.args.first().copied()?;
+        (self.interner.resolve_atom_ref(name).as_ref() == "Readonly").then_some(inner)
+    }
+
     /// Actual structural comparison -- separated so `stacker::maybe_grow` can wrap it.
     fn check_subtype_inner_impl(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
         // Types are already evaluated in check_subtype, so no need to re-evaluate here
+
+        if let Some(inner) = self.readonly_application_or_display_alias_inner(source)
+            && array_element_type(self.interner, target).is_none()
+            && tuple_list_id(self.interner, target).is_none()
+            && self.check_subtype(inner, target).is_true()
+        {
+            return SubtypeResult::True;
+        }
 
         // Without strictNullChecks, null/undefined are assignable to all types
         // including type parameters. Exception: `null` is not assignable to

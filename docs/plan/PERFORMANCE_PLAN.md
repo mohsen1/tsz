@@ -65,7 +65,7 @@ measurement once available.
 | Fresh phase split | Done (refreshed 2026-05-13) | See `docs/plan/perf-runs/2026-05-13-post-5863-attribution.md`. Post-#5863 attribution keeps the cliff checker-dominated (monorepo-003..006: check ≈ 98 % in attribution mode). `large-ts-repo` remains deferred (previous OOM / stack-overflow blocker); re-measure after the first T2.2 code PR removes a measured child-checker path. |
 | Resolver/source-discovery fast path | **Deferred** | Resolver lookups ~1/file, package.json reads ~1/package on cliff. Not on the hot path. Revisit only after T2.2 lands. |
 | Checker lifetime split | **Promoted** | T0.4 measured `with_parent_cache_constructed = 1.28 × files` on monorepo-006. The 2026-05-11 attribution run, post-#5090 (`reset_for_next_file` boundary), measures 1.22 × files — a ~5 % drop from the same fixture. **T2.1.A** scaffolding (inventory + shells + reset boundary) is on `perf/master`. **T2.1.B** sequential session-reuse path behind `TSZ_FILE_SESSION_REUSE` shipped at `32d1c20bfe`; the `CheckerContext::switch_to_file` boundary in `crates/tsz-checker/src/context/file_session_reset.rs` clears file-local state while preserving the shared `QueryCache` and program-stable caches. **T2.1.C** parallel session reuse (#5842, merged `ee20f50f0e`) extends the same boundary to the rayon-chunked parallel driver path. **T2.1.D** ("replace the hottest child-checker path with an explicit session lease or typed query") is the next concrete code PR; the data driving the target choice should come from the refreshed attribution run that consumes the #5843/#5863 classification + miss-cause buckets. Decision record: [`perf-runs/2026-05-11-attribution-lock-wait.md`](perf-runs/2026-05-11-attribution-lock-wait.md). |
-| Typed cross-file query migration | **Promoted — highest Tier 2 priority** | 2026-05-13 post-#5863 attribution confirms `delegate.cache_hits_cross_file = 0` remains load-bearing, but the new `cross_file_cache_miss_causes` buckets are all zero because the hot path does not reach those readers. On monorepo-006, `DelegateCrossArenaSymbol` constructs 924 child checkers; all 924 misses come from `symbol_arenas`, with 883 targeting source files, and all 924 direct-interface attempts reject as `rejected_non_direct_arena`. Next concrete PR: make symbol-arena-sourced source-file delegations use the canonical cross-file query bucket (or add one smaller counter if review needs a preparatory slice) before changing cache keys or `TypeId` validation. Decision record: [`perf-runs/2026-05-13-post-5863-attribution.md`](perf-runs/2026-05-13-post-5863-attribution.md). |
+| Typed cross-file query migration | **Promoted — highest Tier 2 priority** | 2026-05-13 post-#5863 attribution confirmed `delegate.cache_hits_cross_file = 0` was load-bearing because the hot `DelegateCrossArenaSymbol` path did not reach the canonical readers. On monorepo-006, `DelegateCrossArenaSymbol` constructed 924 child checkers; all 924 misses came from `symbol_arenas`, with 883 targeting source files. **Current PR in flight:** route proven single-declaration, non-generic class/interface `symbol_arenas` source-file targets through the `SymbolType` bucket when the program has no module augmentations, using a program-local scope key for source-file cache entries. The guarded/scoped version moves `delegate.cache_hits_cross_file` to 96 and drops `DelegateCrossArenaSymbol` construction to 828 on monorepo-006. Decision record: [`perf-runs/2026-05-13-post-5863-attribution.md`](perf-runs/2026-05-13-post-5863-attribution.md). |
 | Lib snapshot Phase 2/3 | Demoted | Revive only if lib construction/merge is measured as non-trivial. |
 | Interner redesign | **De-prioritised — not contention-bound** | 2026-05-11 attribution run with `--features perf-tools` (transitively enabling `tsz-common/perf-counters-timing`) measured the lock-wait histogram across monorepo-001..006. At the cliff (monorepo-006, 2.4 M intern calls): 97.5 % of waits land in `<100ns`, only 4 observations exceeded `100µs`, and zero exceeded `10ms`. The interner is not contention-bound on the current single-threaded checking workload. Revisit only if a future change introduces parallel checking, multi-worker interning, or a workload that materially shifts the histogram tail. Decision record: [`perf-runs/2026-05-11-attribution-lock-wait.md`](perf-runs/2026-05-11-attribution-lock-wait.md). |
 
@@ -1044,6 +1044,20 @@ smaller counter if review needs a preparatory slice. Only use the
 miss-cause table to choose between `gate_off`, `bucket_empty`, and
 `type_id_not_interned` after the hot path actually reaches those
 reader helpers.
+
+**2026-05-13 in-flight update:** the symbol-arena source-file slice now
+routes proven single-declaration, non-generic class/interface declarations
+through the `SymbolType` bucket when the program has no module augmentations.
+Source-file symbol-arena entries add requester-file and program-local scope
+key slots because answers can depend on caller context and bare
+`(file_idx, SymbolId)` values can be reused by unrelated virtual programs in
+the same process. A broader prototype moved `delegate.cache_hits_cross_file`
+from 0 to 632 and reduced `DelegateCrossArenaSymbol` child checkers from
+924 to 292 on monorepo-006, but it regressed conformance by caching
+module-augmentation programs and merged, augmented, or generic payloads. The
+guarded/scoped version moves `delegate.cache_hits_cross_file` from 0 to 96 and
+reduces `DelegateCrossArenaSymbol` child checkers from 924 to 828 on
+monorepo-006.
 
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 

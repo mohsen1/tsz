@@ -58,6 +58,74 @@ function f(): number | undefined {
     );
 }
 
+#[test]
+fn ts7030_suppressed_for_top_level_undefined_return() {
+    let source = r#"
+declare const cond: boolean;
+function f(): undefined {
+    if (cond) {
+        return undefined;
+    }
+}
+"#;
+    let codes = check_with_no_implicit_returns(source);
+    assert!(
+        !codes.contains(&7030),
+        "TS7030 must not be emitted when return type is undefined; got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts7030_suppressed_for_void_return() {
+    let source = r#"
+declare const cond: boolean;
+function f(): void {
+    if (cond) {
+        return undefined;
+    }
+}
+"#;
+    let codes = check_with_no_implicit_returns(source);
+    assert!(
+        !codes.contains(&7030),
+        "TS7030 must not be emitted when return type is void; got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts7030_suppressed_for_any_return() {
+    let source = r#"
+declare const cond: boolean;
+function f(): any {
+    if (cond) {
+        return undefined;
+    }
+}
+"#;
+    let codes = check_with_no_implicit_returns(source);
+    assert!(
+        !codes.contains(&7030),
+        "TS7030 must not be emitted when return type is any; got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts7030_suppressed_for_union_with_void_return() {
+    let source = r#"
+declare const cond: boolean;
+function f(): string | void {
+    if (cond) {
+        return undefined;
+    }
+}
+"#;
+    let codes = check_with_no_implicit_returns(source);
+    assert!(
+        !codes.contains(&7030),
+        "TS7030 must not be emitted when return type includes void; got: {codes:?}"
+    );
+}
+
 /// Unannotated function with partial returns: TS7030 must still be emitted.
 /// (TS7030 fires for unannotated functions; TS2366 fires for annotated ones.)
 #[test]
@@ -93,5 +161,22 @@ const f = (): string | undefined => {
     assert!(
         codes.contains(&7030),
         "TS7030 must be emitted for arrow with string | undefined return; got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts7030_suppressed_for_unannotated_any_return() {
+    let source = r#"
+declare const cond: boolean;
+function f() {
+    if (cond) {
+        return undefined as any;
+    }
+}
+"#;
+    let codes = check_with_no_implicit_returns(source);
+    assert!(
+        !codes.contains(&7030),
+        "TS7030 must not be emitted for unannotated function inferred as any; got: {codes:?}"
     );
 }
