@@ -11,6 +11,39 @@ fn codes(source: &str) -> Vec<u32> {
     get_diagnostics(source).iter().map(|(c, _)| *c).collect()
 }
 
+#[test]
+fn fbounded_implements_not_corrupted_by_recursive_alias_context() {
+    // Regression for issue #6557: recursive interface and recursive alias
+    // context must not corrupt the F-bounded Comparable<T> member lookup.
+    let source = r#"
+interface TreeNode2 {
+  value: number;
+  left?: TreeNode2;
+  right?: TreeNode2;
+}
+
+const tree: TreeNode2 = { value: 1, left: { value: 2 }, right: { value: 3, left: { value: 4 } } };
+
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+
+const json: Json = { name: "test", values: [1, 2, { nested: true }], active: true };
+
+interface Comparable<T extends Comparable<T>> {
+  compareTo(other: T): number;
+}
+
+class MyNumber implements Comparable<MyNumber> {
+  constructor(public value: number) {}
+  compareTo(other: MyNumber): number { return this.value - other.value; }
+}
+"#;
+    let cs = codes(source);
+    assert!(
+        !cs.contains(&2420),
+        "expected no TS2420 for valid F-bounded implements; got codes: {cs:?}"
+    );
+}
+
 // ── Regression: issue #6370 ──────────────────────────────────────────────
 
 #[test]
