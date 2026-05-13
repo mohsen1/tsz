@@ -361,6 +361,15 @@ impl<'a> CheckerState<'a> {
         let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
         let is_this_tag = tag_text == "this";
         if is_this_tag {
+            if let Some((start, _)) = self.get_node_span(tag_name_idx)
+                && self.ctx.diagnostics.iter().any(|diag| {
+                    diag.code
+                        == crate::diagnostics::diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT
+                        && diag.start == start
+                })
+            {
+                return;
+            }
             self.error_at_node_msg(
                 tag_name_idx,
                 crate::diagnostics::diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,

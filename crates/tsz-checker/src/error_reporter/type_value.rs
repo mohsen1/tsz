@@ -286,8 +286,9 @@ impl<'a> CheckerState<'a> {
                     ),
                 ),
             }
-        } else if self.is_computed_property_in_type_member(idx)
-            || self.source_span_looks_like_computed_type_member_key(idx)
+        } else if (self.is_computed_property_in_type_member(idx)
+            || self.source_span_looks_like_computed_type_member_key(idx))
+            && self.computed_type_member_allows_mapped_type_suggestion(idx)
         {
             // TS2690: Type used as computed property key in type literal.
             // Suggest mapped type syntax: "Did you mean to use 'P in K'?"
@@ -453,6 +454,38 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    fn computed_type_member_allows_mapped_type_suggestion(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return true;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return true;
+            };
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
+            ) {
+                return match parent.kind {
+                    syntax_kind_ext::TYPE_LITERAL => self
+                        .ctx
+                        .arena
+                        .get_type_literal(parent)
+                        .is_none_or(|type_lit| type_lit.members.nodes.len() == 1),
+                    syntax_kind_ext::INTERFACE_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_interface(parent)
+                        .is_none_or(|interface| interface.members.nodes.len() == 1),
+                    _ => true,
+                };
+            }
+            current = parent_idx;
+        }
     }
 
     /// Generate a suggested variable name for a mapped type suggestion.
