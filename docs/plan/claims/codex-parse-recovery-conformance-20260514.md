@@ -1,9 +1,9 @@
 # Claim: parse-recovery conformance cleanup
 
-Status: implemented
+Status: PR
 Owner: Codex
 Date: 2026-05-14
-PR: TBD
+PR: #6685
 
 ## Intent
 
