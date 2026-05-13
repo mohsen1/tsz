@@ -933,15 +933,34 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if !self.is_assignable_to(predicate_type, param_type)
-            && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
-        {
-            self.ctx.error(
-                type_node.pos,
-                type_node.end - type_node.pos,
-                "A type predicate's type must be assignable to its parameter's type.".to_string(),
-                2677,
-            );
+        if !self.is_assignable_to(predicate_type, param_type) {
+            // Structural escape for intersection predicates that include the
+            // parameter type as one of their members. The intersection
+            // `A & B <: A` is trivially true (an intersection is at least as
+            // specific as each of its members), but tsz's assignability check
+            // sometimes fails for `Data & { ... }` against `Data` when the
+            // reduced object form drops the alias linkage. Accept the
+            // assertion whenever the parameter type already appears as an
+            // intersection member of the predicate, or when at least one
+            // member is assignable to the parameter type (#6082).
+            let mut accept = false;
+            if let Some(members) = crate::query_boundaries::common::intersection_members(
+                self.ctx.types,
+                predicate_type,
+            ) {
+                accept = members
+                    .iter()
+                    .any(|&m| m == param_type || self.is_assignable_to(m, param_type));
+            }
+            if !accept && let Some(type_node) = self.ctx.arena.get(pred_data.type_node) {
+                self.ctx.error(
+                    type_node.pos,
+                    type_node.end - type_node.pos,
+                    "A type predicate's type must be assignable to its parameter's type."
+                        .to_string(),
+                    2677,
+                );
+            }
         }
     }
 
