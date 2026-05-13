@@ -2,7 +2,7 @@
 
 Status: ready
 Branch: codex/narrowing-recursive-resolution-20260514
-PR: pending
+PR: #6713
 
 ## Scope
 - Prevent stack overflow in narrowing-time type resolution for recursive `keyof` / indexed-access / conditional graphs.
