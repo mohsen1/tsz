@@ -170,6 +170,17 @@ pub fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnost
     check_source(source, "test.ts", options)
 }
 
+/// `(code, message_text)` projection of [`check_with_options`].
+pub fn check_with_options_code_messages(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    check_with_options(source, options)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 /// Canonical "strict" `CheckerOptions` for tests that opt into the
 /// `strict` + `strictNullChecks` + `noImplicitAny` combo.
 ///
@@ -203,10 +214,7 @@ pub fn check_source_strict_codes(source: &str) -> Vec<u32> {
 
 /// `(code, message_text)` projection of [`check_source_strict`].
 pub fn check_source_strict_messages(source: &str) -> Vec<(u32, String)> {
-    check_source_strict(source)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    check_with_options_code_messages(source, strict_checker_options())
 }
 
 /// Strict `(code, message_text)` diagnostics excluding TS2318 missing-default-lib noise.
@@ -757,6 +765,28 @@ class C {}
         let lhs_codes: Vec<u32> = lhs.iter().map(|d| d.code).collect();
         let rhs_codes: Vec<u32> = rhs.iter().map(|d| d.code).collect();
         assert_eq!(lhs_codes, rhs_codes);
+    }
+
+    #[test]
+    fn check_with_options_code_messages_projects_custom_option_diagnostics() {
+        let source = "function f() { return this; }";
+        let opts = CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_this: true,
+            ..CheckerOptions::default()
+        };
+        let pairs = check_with_options_code_messages(source, opts.clone());
+        let diags = check_with_options(source, opts);
+        assert_eq!(pairs.len(), diags.len());
+        assert!(
+            pairs.iter().any(|(code, _)| *code == 2683),
+            "expected custom noImplicitThis options to report TS2683, got {pairs:?}"
+        );
+        for (i, pair) in pairs.iter().enumerate() {
+            assert_eq!(pair.0, diags[i].code);
+            assert_eq!(pair.1, diags[i].message_text);
+        }
     }
 
     #[test]

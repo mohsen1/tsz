@@ -5,51 +5,12 @@ use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn validate_jsx_intrinsic_type_arguments(&mut self, type_args: &NodeList) {
-        if type_args.has_trailing_comma
-            && let Some(comma_pos) = self.jsx_type_argument_trailing_comma_pos(type_args)
-        {
-            self.error_at_position(
-                comma_pos,
-                1,
-                crate::diagnostics::diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
-                crate::diagnostics::diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
-            );
-        }
-
-        for &arg_idx in &type_args.nodes {
-            self.check_type_node(arg_idx);
-            self.get_type_from_type_node(arg_idx);
-        }
-
-        let Some(&first_arg_idx) = type_args.nodes.first() else {
-            return;
-        };
-        let got = type_args.nodes.len();
-        self.error_at_node_msg(
-            first_arg_idx,
-            crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-            &["0", &got.to_string()],
-        );
-    }
-
-    fn jsx_type_argument_trailing_comma_pos(&self, type_args: &NodeList) -> Option<u32> {
-        let last_arg = self.ctx.arena.get(*type_args.nodes.last()?)?;
-        let source = self.current_jsx_source_text()?;
-        let start = last_arg.end as usize;
-        let tail = source.get(start..source.len().min(start + 32))?;
-        let before_close = tail.split('>').next().unwrap_or(tail);
-        before_close
-            .find(',')
-            .map(|offset| last_arg.end + offset as u32)
-    }
-
     pub(in crate::checkers_domain::jsx) fn file_has_jsx_unicode_escape_parse_error(&self) -> bool {
         let Some(source) = self.current_jsx_source_text() else {
             return false;
@@ -756,6 +717,12 @@ impl<'a> CheckerState<'a> {
                     request,
                 )
             };
+            // Keep `<this/>` strict even when props recovery succeeds: JSX
+            // component-shape recovery for callable/constructable unions must
+            // not suppress TS2604 for the `this` keyword tag form.
+            if self.get_jsx_tag_name_text(tag_name_idx) == "this" {
+                self.check_jsx_element_has_signatures(resolved_component_type, tag_name_idx);
+            }
             // Class components with multiple construct signatures (e.g. React.Component
             // in react16.d.ts has 2 constructors) must go through overload resolution
             // even when props extraction succeeds. tsc treats JSX elements as calls to
@@ -818,9 +785,19 @@ impl<'a> CheckerState<'a> {
                     // TS2786: component return type must be valid JSX element
                     let class_props_from_construct =
                         self.get_class_component_props_from_construct_return(component_type);
+                    let has_readonly_construct_props = self
+                        .jsx_component_type_has_readonly_construct_props(resolved_component_type);
+                    let is_component_type_union = crate::query_boundaries::common::union_members(
+                        self.ctx.types,
+                        component_type,
+                    )
+                    .is_some()
+                        && self.format_type(component_type).contains("ComponentType<");
                     let skip_react_class_return_check = class_props_from_construct
                         .as_ref()
-                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
+                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"))
+                        || has_readonly_construct_props
+                        || is_component_type_union;
                     if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                     }

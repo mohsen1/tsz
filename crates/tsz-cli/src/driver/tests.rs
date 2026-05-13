@@ -1985,7 +1985,7 @@ fn isolated_declaration_codes_block_declaration_emit() {
     // Issue #3709 follow-up: TS9007/TS9011/etc. must suppress `.d.ts`
     // emission for the affected source file. tsc refuses to write a
     // declaration file when isolated-declaration constraints are violated.
-    for code in [9007, 9008, 9010, 9011, 9012, 9013, 9015, 9019, 9039] {
+    for code in [6232, 9007, 9008, 9010, 9011, 9012, 9013, 9015, 9019, 9039] {
         assert!(
             is_declaration_emit_blocking_diagnostic_code(code),
             "TS{code} (isolated-declarations family) should block declaration emit"
@@ -2004,4 +2004,62 @@ fn non_isolated_declaration_codes_do_not_block_declaration_emit() {
             "TS{code} should not block declaration emit"
         );
     }
+}
+
+#[test]
+fn cross_file_commonjs_merge_blocks_all_declaration_outputs() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("index.js"),
+        r#"const m = require("./exporter");
+
+module.exports = m.default;
+module.exports.memberName = "thing";
+"#,
+    )
+    .expect("write index");
+    fs::write(
+        dir.path().join("exporter.js"),
+        r#"function validate() {}
+
+export default validate;
+"#,
+    )
+    .expect("write exporter");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--declaration",
+        "--allowJs",
+        "--checkJs",
+        "--lib",
+        "es6",
+        "--outDir",
+        "out",
+        "--target",
+        "es2015",
+        "--module",
+        "commonjs",
+        "index.js",
+        "exporter.js",
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED
+        }),
+        "expected TS6232, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !dir.path().join("out/index.d.ts").exists(),
+        "index.d.ts should not be emitted after TS6232"
+    );
+    assert!(
+        !dir.path().join("out/exporter.d.ts").exists(),
+        "exporter.d.ts should not be emitted after TS6232"
+    );
 }

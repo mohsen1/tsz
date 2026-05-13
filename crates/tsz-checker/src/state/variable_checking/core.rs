@@ -1183,24 +1183,23 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get(var_decl.initializer)
                             .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION);
-                    let contextual_init_type =
-                        (!request.is_empty() && init_type != TypeId::ERROR).then_some(init_type);
                     if jsdoc_new_expression_relation {
                         let raw_init_snap = checker.ctx.snapshot_diagnostics();
+                        // Preserve the contextual cache entry. The raw probe below
+                        // runs with TypingRequest::NONE and repopulates node_types
+                        // with a non-contextual initializer type.
+                        let saved_initializer_node_type =
+                            checker.ctx.node_types.get(&var_decl.initializer.0).copied();
                         checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
                         let raw_init_type = checker.get_type_of_node_with_request(
                             var_decl.initializer,
                             &TypingRequest::NONE,
                         );
                         checker.ctx.rollback_diagnostics(&raw_init_snap);
-                        // Preserve the contextual initializer cache entry. The raw
-                        // re-check is only for relation decisions; downstream lookups
-                        // should keep using the contextually inferred initializer type.
-                        if let Some(contextual_init_type) = contextual_init_type {
-                            checker
-                                .ctx
-                                .node_types
-                                .insert(var_decl.initializer.0, contextual_init_type);
+                        if let Some(saved) = saved_initializer_node_type {
+                            checker.ctx.node_types.insert(var_decl.initializer.0, saved);
+                        } else {
+                            checker.ctx.node_types.remove(&var_decl.initializer.0);
                         }
                         init_type_for_relation = checker.resolve_lazy_type(raw_init_type);
                     }
