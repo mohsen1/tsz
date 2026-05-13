@@ -1009,6 +1009,10 @@ export const x = () => 1;
         "Expected JS @type alias reference to be preserved: {output}"
     );
     assert!(
+        output.contains("@callback Foo") && output.contains("@type {Foo}"),
+        "Expected callback and variable JSDoc comments to remain in declaration output: {output}"
+    );
+    assert!(
         output.contains("export type Foo = (...args: string[]) => number;"),
         "Expected JS @callback alias to be synthesized after the exported value: {output}"
     );
@@ -3666,6 +3670,36 @@ export const h = null;
     assert!(output.contains("export const f: (arg0: string, arg1: number) => object;"));
     assert!(output.contains("export const g: new (arg1: string, arg2: number) => object;"));
     assert!(output.contains("export const h: {\n    [x: string]: number;\n};"));
+}
+
+#[test]
+fn test_jsdoc_typedef_comment_before_namespace_object_is_not_duplicated() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @template T
+ * @template {keyof T} K
+ * @typedef {T[K]} Foo
+ */
+const x = { a: 1 };
+
+/** @type {Foo<typeof x, "a">} */
+const y = "a";
+"#,
+    );
+
+    assert!(
+        output.starts_with("declare namespace x {\n    let a: number;\n}"),
+        "Expected namespace object emit without leaking implementation-only typedef JSDoc: {output}"
+    );
+    assert!(
+        output.contains("type Foo<T, K extends keyof T> = T[K];"),
+        "Expected typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@typedef"),
+        "Did not expect the source typedef comment to be duplicated in the DTS: {output}"
+    );
 }
 
 #[test]

@@ -1362,6 +1362,10 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_contains_type_alias_tag(jsdoc: &str) -> bool {
+        Self::jsdoc_has_property_tags(jsdoc) || Self::parse_jsdoc_typedef_alias(jsdoc).is_some()
+    }
+
     pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_tags(
         chain: &[String],
     ) -> Vec<String> {
