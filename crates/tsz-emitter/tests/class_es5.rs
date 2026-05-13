@@ -3,6 +3,14 @@ use tsz_parser::parser::ParserState;
 use tsz_parser::parser::syntax_kind_ext;
 
 fn emit_class(source: &str) -> String {
+    emit_class_with(source, false, false)
+}
+
+fn emit_class_with(
+    source: &str,
+    tc39_decorators: bool,
+    use_define_for_class_fields: bool,
+) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -15,6 +23,8 @@ fn emit_class(source: &str) -> String {
             {
                 let mut emitter = ClassES5Emitter::new(&parser.arena);
                 emitter.set_source_text(source);
+                emitter.set_tc39_decorators(tc39_decorators);
+                emitter.set_use_define_for_class_fields(use_define_for_class_fields);
                 return emitter.emit_class(stmt_idx);
             }
         }
@@ -52,6 +62,58 @@ fn test_class_with_constructor() {
     assert!(
         output.contains("function Point(x, y)"),
         "Should have constructor with params: {output}"
+    );
+}
+
+#[test]
+fn test_tc39_method_decorator_wraps_es5_class_and_initializes_parameter_property() {
+    let output = emit_class_with(
+        r#"class C {
+            constructor(private message: string) {}
+            @bound speak() {}
+        }"#,
+        true,
+        false,
+    );
+
+    assert!(
+        output.contains("var C = function () {"),
+        "Expected TC39 decorator wrapper around ES5 class.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _instanceExtraInitializers = [];"),
+        "Expected instance extra initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "this.message = (__runInitializers(this, _instanceExtraInitializers), message);"
+        ),
+        "Expected parameter property assignment to consume instance initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__esDecorate(_a, null, _speak_decorators, { kind: \"method\", name: \"speak\", static: false, private: false"),
+        "Expected TC39 method decorator application.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_tc39_method_decorator_define_parameter_property_uses_initializer_value() {
+    let output = emit_class_with(
+        r#"class C {
+            constructor(private message: string) {}
+            @bound speak() {}
+        }"#,
+        true,
+        true,
+    );
+
+    assert!(
+        output.contains("Object.defineProperty(this, \"message\""),
+        "Expected parameter property to use defineProperty mode.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("value: (__runInitializers(this, _instanceExtraInitializers), message)"),
+        "Expected defineProperty value to consume instance initializers.\nOutput:\n{output}"
     );
 }
 

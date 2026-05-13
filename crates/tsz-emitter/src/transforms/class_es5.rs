@@ -70,6 +70,8 @@ pub struct ClassES5Emitter<'a> {
     transformer: ES5ClassTransformer<'a>,
     /// Transform directives for `ASTRef` nodes
     transforms: Option<TransformContext>,
+    /// When true, emit TC39 decorator application around the ES5 class IIFE.
+    tc39_decorators: bool,
     /// Leading comment text to place after `WeakMap` decls and before the class IIFE.
     leading_comment: Option<String>,
     /// When true, suppress `/** @class */` annotation and leading comments.
@@ -92,6 +94,7 @@ impl<'a> ClassES5Emitter<'a> {
             mappings: Vec::new(),
             transformer: ES5ClassTransformer::new(arena),
             transforms: None,
+            tc39_decorators: false,
             leading_comment: None,
             remove_comments: false,
             tslib_prefix: false,
@@ -129,6 +132,11 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
         self.transformer.set_use_define_for_class_fields(enable);
+    }
+
+    pub const fn set_tc39_decorators(&mut self, enabled: bool) {
+        self.tc39_decorators = enabled;
+        self.transformer.set_tc39_decorators(enabled);
     }
 
     pub const fn set_skip_static_members(&mut self, skip: bool) {
@@ -273,6 +281,13 @@ impl<'a> ClassES5Emitter<'a> {
             printer.set_base_printer_options(opts.clone());
         }
         let mut output = printer.emit(&ir).to_string();
+        if self.tc39_decorators
+            && let Some(wrapped) =
+                self.transformer
+                    .wrap_tc39_es5_output(class_idx, override_name, &output)
+        {
+            output = wrapped;
+        }
         if let Some(recovery_emit) = self.emit_var_function_recovery(class_idx) {
             output.push('\n');
             output.push_str(&recovery_emit);
