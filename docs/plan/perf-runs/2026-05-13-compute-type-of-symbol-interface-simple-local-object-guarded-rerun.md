@@ -5,6 +5,7 @@ Follow-up to:
 - `2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md`
 - `2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md`
 - `2026-05-13-compute-type-of-symbol-interface-simple-object-outcomes.md`
+- `2026-05-13-compute-type-of-symbol-interface-simple-object-type-reference-reject-outcomes.md`
 
 Goal: refresh the monorepo-006 attribution baseline after the guard narrowing
 that rejects empty interfaces and non-primitive member annotations.
@@ -24,7 +25,7 @@ that rejects empty interfaces and non-primitive member annotations.
 Primary attribution run (`timings` in raw JSON):
 
 - diagnostics: `10,198`
-- total/check: `102.01s / 98.43s`
+- total/check: `92.19s / 90.43s`
 - `compute_type_of_symbol.total_calls`: `26,377`
 - `compute_type_of_symbol.kind.interface`: `24,796`
 - `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits`: `0`
@@ -41,6 +42,9 @@ Stable counter signal:
 - non-primitive annotation split (new):
   - `type_reference=24,760`
   - all other annotation-kind buckets `=0`
+- `type_reference` reject-outcome split (new):
+  - `identifier_unresolved_symbol=24,760`
+  - all other reject-outcome buckets `=0`
 
 Interpretation:
 
@@ -53,6 +57,6 @@ Interpretation:
 1. Treat the earlier broad-shortcut hit/success ratios as historical only.
 2. Use this guarded rerun as the active baseline for future interface-demand work.
 3. Next shortcut work should be either:
-   - a conformance-proven `type_reference` guard relaxation that restores
-     meaningful `success`, or
+   - a conformance-proven path that can resolve these `identifier_unresolved_symbol`
+     annotations without introducing new diagnostics, or
    - deletion/simplification of dead shortcut branches if they remain inactive.
