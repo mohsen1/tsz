@@ -1448,9 +1448,11 @@ impl<'a> DeclarationEmitter<'a> {
         let type_text = self.print_synthetic_class_extends_alias_type(type_id);
         let source_type_text = self.synthetic_class_extends_alias_source_type_text(heritage);
         let prefer_source_text = type_text == "never"
-            || source_type_text
-                .as_ref()
-                .is_some_and(|source_text| source_text.contains(" & "));
+            || source_type_text.as_ref().is_some_and(|source_text| {
+                source_text.contains(" & ")
+                    || (Self::is_constructor_object_type_text(source_text)
+                        && Self::type_text_has_conditional_infer_surface(&type_text))
+            });
         let type_text = if prefer_source_text {
             source_type_text.unwrap_or(type_text)
         } else {
@@ -1462,6 +1464,15 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_non_exported_declaration = true;
 
         Some(alias_name)
+    }
+
+    fn is_constructor_object_type_text(type_text: &str) -> bool {
+        let trimmed = type_text.trim_start();
+        trimmed.starts_with("{") && trimmed.contains("new (") && trimmed.contains("):")
+    }
+
+    fn type_text_has_conditional_infer_surface(type_text: &str) -> bool {
+        type_text.contains(" extends ") && type_text.contains("infer ")
     }
 
     pub(in crate::declaration_emitter) fn emit_function_initializer_type_annotation(
