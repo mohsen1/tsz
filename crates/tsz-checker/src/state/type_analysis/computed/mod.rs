@@ -1814,40 +1814,100 @@ impl<'a> CheckerState<'a> {
         has_local_interface_heritage_extends: bool,
         has_local_computed_property_name: bool,
     ) -> Option<TypeId> {
+        use tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceSimpleObjectOutcome as Outcome;
         use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
 
-        if has_out_of_arena_decl
-            || has_cross_file_same_index
-            || !has_local_interface_decl
-            || has_local_interface_heritage_extends
-            || has_local_computed_property_name
-            || declarations.len() != 1
-        {
+        if has_out_of_arena_decl {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectOutOfArenaDecl,
+            );
+            return None;
+        }
+        if has_cross_file_same_index {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectCrossFileSameIndex,
+            );
+            return None;
+        }
+        if !has_local_interface_decl {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectMissingInterfaceDecl,
+            );
+            return None;
+        }
+        if has_local_interface_heritage_extends {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectHeritageExtends,
+            );
+            return None;
+        }
+        if has_local_computed_property_name {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectComputedName,
+            );
+            return None;
+        }
+        if declarations.len() != 1 {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectDeclarationCount,
+            );
             return None;
         }
 
         let decl_idx = declarations[0];
-        let node = self.ctx.arena.get(decl_idx)?;
-        let interface = self.ctx.arena.get_interface(node)?;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectMissingInterfaceDecl,
+            );
+            return None;
+        };
+        let Some(interface) = self.ctx.arena.get_interface(node) else {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectMissingInterfaceDecl,
+            );
+            return None;
+        };
         if interface
             .type_parameters
             .as_ref()
             .is_some_and(|params| !params.nodes.is_empty())
             || interface.members.nodes.is_empty()
         {
+            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                Outcome::RejectTypeParameters,
+            );
             return None;
         }
 
         let mut properties = Vec::with_capacity(interface.members.nodes.len());
         for (member_order, &member_idx) in interface.members.nodes.iter().enumerate() {
-            let member_node = self.ctx.arena.get(member_idx)?;
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                    Outcome::RejectNonPropertyMember,
+                );
+                return None;
+            };
             if member_node.kind != PROPERTY_SIGNATURE {
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                    Outcome::RejectNonPropertyMember,
+                );
                 return None;
             }
-            let sig = self.ctx.arena.get_signature(member_node)?;
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                    Outcome::RejectNonPropertyMember,
+                );
+                return None;
+            };
             let name_atom = self
                 .get_property_name_resolved(sig.name)
-                .map(|name| self.ctx.types.intern_string(&name))?;
+                .map(|name| self.ctx.types.intern_string(&name));
+            let Some(name_atom) = name_atom else {
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+                    Outcome::RejectUnresolvedPropertyName,
+                );
+                return None;
+            };
             let type_id = if sig.type_annotation.is_some() {
                 if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
                     return None;
@@ -1875,6 +1935,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
+        tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
+            Outcome::Success,
+        );
         if properties.is_empty() {
             Some(TypeId::ANY)
         } else {

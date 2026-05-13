@@ -552,6 +552,46 @@ impl DirectActualLibAliasBodyOutcome {
     }
 }
 
+/// Outcome buckets for the simple local-interface object shortcut in
+/// `compute_type_of_symbol`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum ComputeTypeOfSymbolInterfaceSimpleObjectOutcome {
+    Success = 0,
+    RejectOutOfArenaDecl = 1,
+    RejectCrossFileSameIndex = 2,
+    RejectDeclarationCount = 3,
+    RejectMissingInterfaceDecl = 4,
+    RejectTypeParameters = 5,
+    RejectHeritageExtends = 6,
+    RejectNonPropertyMember = 7,
+    RejectComputedName = 8,
+    RejectUnresolvedPropertyName = 9,
+}
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT: usize = 10;
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES: [&str;
+    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT] = [
+    "success",
+    "reject_out_of_arena_decl",
+    "reject_cross_file_same_index",
+    "reject_declaration_count",
+    "reject_missing_interface_decl",
+    "reject_type_parameters",
+    "reject_heritage_extends",
+    "reject_non_property_member",
+    "reject_computed_name",
+    "reject_unresolved_property_name",
+];
+
+impl ComputeTypeOfSymbolInterfaceSimpleObjectOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Why a cross-file cache reader (`cached_cross_file_*` in
 /// `tsz-checker/src/context/cross_file_query.rs`) returned `None`.
 ///
@@ -802,6 +842,8 @@ pub struct PerfCounters {
         [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT],
     pub compute_type_of_symbol_interface_callsite_outcome:
         [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT],
+    pub compute_type_of_symbol_interface_simple_object_outcome:
+        [AtomicU64; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT],
 
     // ─── resolver / VFS ──────────────────────────────────────────────────
     pub resolver_lookup_calls: AtomicU64,
@@ -882,6 +924,8 @@ impl PerfCounters {
                 COMPUTE_TYPE_OF_SYMBOL_INTERFACE_FASTPATH_OUTCOME_COUNT],
             compute_type_of_symbol_interface_callsite_outcome: [const { AtomicU64::new(0) };
                 COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_COUNT],
+            compute_type_of_symbol_interface_simple_object_outcome: [const { AtomicU64::new(0) };
+                COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT],
             resolver_lookup_calls: AtomicU64::new(0),
             resolver_is_file_calls: AtomicU64::new(0),
             resolver_is_dir_calls: AtomicU64::new(0),
@@ -1423,6 +1467,19 @@ pub fn record_compute_type_of_symbol_interface_callsite_outcome(
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record success/reject outcomes for the simple local-interface object
+/// shortcut in `compute_type_of_symbol`.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_simple_object_outcome(
+    outcome: ComputeTypeOfSymbolInterfaceSimpleObjectOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    counters().compute_type_of_symbol_interface_simple_object_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record a `TypeInterner::intern_string` call. Mirrors the existing
 /// `record_compute_type_of_symbol_*` shape: gate once, one `counters()`
 /// lookup, increment exactly the named field.
@@ -1791,10 +1848,16 @@ impl PerfCounters {
             .iter()
             .map(load)
             .sum();
+        let interface_simple_object_total: u64 = c
+            .compute_type_of_symbol_interface_simple_object_outcome
+            .iter()
+            .map(load)
+            .sum();
         if source_total == 0
             && kind_total == 0
             && interface_fastpath_total == 0
             && interface_callsite_total == 0
+            && interface_simple_object_total == 0
         {
             return String::new();
         }
@@ -1840,6 +1903,18 @@ impl PerfCounters {
                 .enumerate()
             {
                 let count = load(&c.compute_type_of_symbol_interface_callsite_outcome[idx]);
+                if count > 0 {
+                    out.push_str(&format!("  {name:<28} {count:>12}\n"));
+                }
+            }
+        }
+        if interface_simple_object_total > 0 {
+            out.push_str("\ncompute_type_of_symbol interface simple-object outcomes:\n");
+            for (idx, name) in COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES
+                .iter()
+                .enumerate()
+            {
+                let count = load(&c.compute_type_of_symbol_interface_simple_object_outcome[idx]);
                 if count > 0 {
                     out.push_str(&format!("  {name:<28} {count:>12}\n"));
                 }
@@ -2136,6 +2211,13 @@ pub struct PerfCounterSnapshot {
     /// long, in
     /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_CALLSITE_OUTCOME_NAMES` order.
     pub compute_type_of_symbol_interface_callsite_outcomes: Vec<NamedCount>,
+    /// Success/reject outcomes for the simple local-interface object shortcut
+    /// inside `compute_type_of_symbol`.
+    ///
+    /// Always `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT`
+    /// long, in
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES` order.
+    pub compute_type_of_symbol_interface_simple_object_outcomes: Vec<NamedCount>,
     /// Outcome buckets for direct cross-file interface lowering attempts.
     ///
     /// JSON counterpart of
@@ -2224,7 +2306,8 @@ pub struct CheckerCounters {
 /// Used for the `alias_shortcut_outcomes`,
 /// `compute_type_of_symbol_*_outcomes`,
 /// `compute_type_of_symbol_interface_fastpath_outcomes`, and
-/// `compute_type_of_symbol_interface_callsite_outcomes`, and
+/// `compute_type_of_symbol_interface_callsite_outcomes`,
+/// `compute_type_of_symbol_interface_simple_object_outcomes`, and
 /// `direct_interface_lowering_outcomes` arrays on
 /// [`PerfCounterSnapshot`]. Each array is always emitted at its full
 /// declared length, with zero counts for inactive buckets, so the JSON
@@ -2488,6 +2571,13 @@ impl PerfCounters {
                     count: load(&c.compute_type_of_symbol_interface_callsite_outcome[i]),
                 })
                 .collect(),
+            compute_type_of_symbol_interface_simple_object_outcomes: (0
+                ..COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES[i],
+                    count: load(&c.compute_type_of_symbol_interface_simple_object_outcome[i]),
+                })
+                .collect(),
             direct_interface_lowering_outcomes: (0
                 ..DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -2582,6 +2672,7 @@ mod json_tests {
             "compute_type_of_symbol_kind_outcomes",
             "compute_type_of_symbol_interface_fastpath_outcomes",
             "compute_type_of_symbol_interface_callsite_outcomes",
+            "compute_type_of_symbol_interface_simple_object_outcomes",
             "direct_interface_lowering_outcomes",
             "direct_actual_lib_alias_body_outcomes",
             "cross_file_cache_miss_causes",
@@ -3084,6 +3175,31 @@ mod json_tests {
     }
 
     #[test]
+    fn compute_type_of_symbol_interface_simple_object_outcomes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["compute_type_of_symbol_interface_simple_object_outcomes"]
+            .as_array()
+            .expect("compute_type_of_symbol_interface_simple_object_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT,
+            "compute_type_of_symbol_interface_simple_object_outcomes length must match \
+             COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES[i],
+                "compute_type_of_symbol_interface_simple_object_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "compute_type_of_symbol_interface_simple_object_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
     fn direct_interface_lowering_outcomes_locks_to_names_array() {
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -3341,6 +3457,8 @@ mod json_tests {
         let ctos_fastpath_idx =
             ComputeTypeOfSymbolInterfaceFastPathOutcome::SkipAllThree.as_index();
         let ctos_callsite_idx = ComputeTypeOfSymbolInterfaceCallsiteOutcome::Root.as_index();
+        let ctos_simple_object_outcome_idx =
+            ComputeTypeOfSymbolInterfaceSimpleObjectOutcome::Success.as_index();
 
         let before_source =
             c.delegate_cross_arena_symbol_miss_by_source[source_idx].load(Ordering::Relaxed);
@@ -3367,6 +3485,9 @@ mod json_tests {
         let before_ctos_callsite = c.compute_type_of_symbol_interface_callsite_outcome
             [ctos_callsite_idx]
             .load(Ordering::Relaxed);
+        let before_ctos_simple_object_outcome = c
+            .compute_type_of_symbol_interface_simple_object_outcome[ctos_simple_object_outcome_idx]
+            .load(Ordering::Relaxed);
         let before_ctos_simple_object_hits = c
             .compute_type_of_symbol_interface_simple_object_fastpath_hits
             .load(Ordering::Relaxed);
@@ -3385,6 +3506,8 @@ mod json_tests {
         c.compute_type_of_symbol_interface_fastpath_outcome[ctos_fastpath_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_callsite_outcome[ctos_callsite_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        c.compute_type_of_symbol_interface_simple_object_outcome[ctos_simple_object_outcome_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_simple_object_fastpath_hits
             .fetch_add(1, Ordering::Relaxed);
@@ -3498,6 +3621,17 @@ mod json_tests {
         assert!(
             ctos_callsite_row["count"].as_u64().unwrap_or(0) > before_ctos_callsite,
             "compute_type_of_symbol_interface_callsite_outcomes[root] did not reflect the bump",
+        );
+
+        let ctos_simple_object = json["compute_type_of_symbol_interface_simple_object_outcomes"]
+            .as_array()
+            .expect("compute_type_of_symbol_interface_simple_object_outcomes is array");
+        let ctos_simple_object_row = &ctos_simple_object[ctos_simple_object_outcome_idx];
+        assert_eq!(ctos_simple_object_row["name"], "success");
+        assert!(
+            ctos_simple_object_row["count"].as_u64().unwrap_or(0)
+                > before_ctos_simple_object_outcome,
+            "compute_type_of_symbol_interface_simple_object_outcomes[success] did not reflect the bump",
         );
 
         assert!(
