@@ -6,6 +6,10 @@
 
 use crate::test_utils::check_js_source_diagnostics;
 
+fn diagnostic_codes(diagnostics: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
 /// @private on class property → TS2341 when accessed externally
 #[test]
 fn test_jsdoc_private_property_emits_ts2341_on_external_access() {
@@ -21,7 +25,7 @@ new A().priv
     assert!(
         ts2341 >= 1,
         "Expected TS2341 for external access to @private property, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -40,7 +44,7 @@ new A().prot
     assert!(
         ts2445 >= 1,
         "Expected TS2445 for external access to @protected property, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -63,7 +67,7 @@ new A().pub
         access_errors,
         0,
         "Expected no access errors for @public property, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -84,7 +88,7 @@ new C().priv2
     assert!(
         ts2341 >= 1,
         "Expected TS2341 for external access to @private ctor property, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -108,7 +112,7 @@ class B extends A {
         ts2445,
         0,
         "Expected no TS2445 for subclass accessing @protected property, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -131,6 +135,6 @@ class B extends A {
     assert!(
         ts2341 >= 1,
         "Expected TS2341 for subclass accessing @private property, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
