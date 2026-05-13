@@ -996,13 +996,8 @@ impl<'a> CheckerState<'a> {
                     // there are no accessible ones from other merged declarations.
                     // When both exist, the interface itself has TS2320 (conflicting
                     // base types) which already covers the error.
-                    if any_inaccessible_privates && !any_accessible_privates {
-                        self.error_at_node(
-                            class_error_idx,
-                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
-                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                        );
-                    }
+                    let emit_inaccessible_private_implements_error =
+                        any_inaccessible_privates && !any_accessible_privates;
 
                     if has_private_members {
                         let message = format!(
@@ -1194,6 +1189,26 @@ impl<'a> CheckerState<'a> {
                                 class_member_types.insert(class_member_idx, computed);
                                 computed
                             };
+                            if matches!(
+                                class_member_type,
+                                tsz_solver::TypeId::ANY | tsz_solver::TypeId::ERROR
+                            ) {
+                                let class_instance_type =
+                                    self.get_class_instance_type(class_idx, class_data);
+                                if let Some(shape) =
+                                    crate::query_boundaries::common::object_shape_for_type(
+                                        self.ctx.types,
+                                        class_instance_type,
+                                    )
+                                {
+                                    let member_atom = self.ctx.types.intern_string(&member_name);
+                                    if let Some(prop) =
+                                        shape.properties.iter().find(|p| p.name == member_atom)
+                                    {
+                                        class_member_type = prop.type_id;
+                                    }
+                                }
+                            }
                             // Substitute `this` type in class members too — the class method
                             // may return `this` (polymorphic), which must be replaced with the
                             // concrete class instance type for a fair comparison against the
@@ -1550,6 +1565,17 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
+                    }
+
+                    if emit_inaccessible_private_implements_error
+                        && missing_members.is_empty()
+                        && incompatible_members.is_empty()
+                    {
+                        self.error_at_node(
+                            class_error_idx,
+                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                        );
                     }
 
                     // Report error for missing members

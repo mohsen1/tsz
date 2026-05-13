@@ -274,6 +274,132 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_module_exports_assignment_initializer(stmt_idx)
     }
 
+    pub(in crate::declaration_emitter) fn emit_js_cross_file_commonjs_merge_diagnostic(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        if !self.source_file_is_js(source_file)
+            || self.source_file_has_native_esm_syntax(source_file)
+        {
+            return false;
+        }
+
+        let mut require_aliases = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            self.collect_js_require_aliases_for_statement(stmt_idx, &mut require_aliases);
+        }
+
+        let mut has_active_cross_file_export = false;
+        let mut augmenting_export = None;
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(initializer) = self.js_module_exports_assignment_initializer(stmt_idx) {
+                has_active_cross_file_export = self
+                    .js_initializer_references_required_module_export(
+                        initializer,
+                        &require_aliases,
+                    );
+                continue;
+            }
+
+            if has_active_cross_file_export
+                && self
+                    .js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
+                    .is_some()
+            {
+                augmenting_export = Some(stmt_idx);
+                break;
+            }
+        }
+
+        if !has_active_cross_file_export {
+            return false;
+        }
+        let Some(augmenting_export) = augmenting_export else {
+            return false;
+        };
+        let Some(stmt_node) = self.arena.get(augmenting_export) else {
+            return false;
+        };
+
+        self.diagnostics.push(tsz_common::diagnostics::Diagnostic::from_code(
+            tsz_common::diagnostics::diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED,
+            &source_file.file_name,
+            stmt_node.pos,
+            stmt_node.end.saturating_sub(stmt_node.pos),
+            &[],
+        ));
+        true
+    }
+
+    fn collect_js_require_aliases_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        aliases: &mut FxHashSet<String>,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if self.initializer_is_bare_require_call(decl.initializer)
+                    && let Some(name) = self.get_identifier_text(decl.name)
+                {
+                    aliases.insert(name);
+                }
+            }
+        }
+    }
+
+    fn js_initializer_references_required_module_export(
+        &self,
+        initializer: NodeIndex,
+        require_aliases: &FxHashSet<String>,
+    ) -> bool {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && init_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(init_node) else {
+            return false;
+        };
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        if self.initializer_is_bare_require_call(receiver) {
+            return true;
+        }
+
+        self.get_identifier_text(receiver)
+            .is_some_and(|name| require_aliases.contains(&name))
+    }
+
     pub(in crate::declaration_emitter) fn js_anonymous_export_equals_class_expression_initializer(
         &self,
         stmt_idx: NodeIndex,

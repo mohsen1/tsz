@@ -4,3 +4,4 @@
 
 mod component_props;
 mod resolution;
+mod resolution_type_arguments;
