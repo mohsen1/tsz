@@ -70,16 +70,23 @@ impl<'a> DeclarationEmitter<'a> {
                             .iter()
                             .any(|(name, _)| name.as_str() == source_param.type_text)
                     {
-                        let tuple_items = argument
+                        let remaining_params = argument
                             .parameters
                             .iter()
                             .skip(source_param_index)
-                            .map(Self::tuple_item_text_for_function_param)
                             .collect::<Vec<_>>();
-                        substitutions.push((
-                            source_param.type_text.clone(),
-                            format!("[{}]", tuple_items.join(", ")),
-                        ));
+                        let value_text = if let [argument_param] = remaining_params.as_slice()
+                            && argument_param.rest
+                        {
+                            argument_param.type_text.trim().to_string()
+                        } else {
+                            let tuple_items = remaining_params
+                                .into_iter()
+                                .map(Self::tuple_item_text_for_function_param)
+                                .collect::<Vec<_>>();
+                            format!("[{}]", tuple_items.join(", "))
+                        };
+                        substitutions.push((source_param.type_text.clone(), value_text));
                     }
                     continue;
                 };
@@ -427,5 +434,33 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             trimmed.to_string()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rest_type_param_infers_rest_array_from_rest_callback() {
+        let source = DeclarationEmitter::parse_function_type_text("(...args: A) => B").unwrap();
+        let argument =
+            DeclarationEmitter::parse_function_type_text("(...args: any[]) => boolean").unwrap();
+        let mut substitutions = Vec::new();
+
+        DeclarationEmitter::infer_function_type_substitutions(
+            &source,
+            &argument,
+            &["A".to_string(), "B".to_string()],
+            &mut substitutions,
+        );
+
+        assert_eq!(
+            substitutions,
+            vec![
+                ("A".to_string(), "any[]".to_string()),
+                ("B".to_string(), "boolean".to_string()),
+            ]
+        );
     }
 }
