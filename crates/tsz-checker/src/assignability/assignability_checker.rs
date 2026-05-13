@@ -2179,10 +2179,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         self.ensure_relation_inputs_ready(&[source, target]);
-        let source = self.substitute_this_type_if_needed(source);
-        let target = self.substitute_this_type_if_needed(target);
+        let mut source = self.substitute_this_type_if_needed(source);
+        let mut target = self.substitute_this_type_if_needed(target);
         let raw_source = source;
         let raw_target = target;
+
+        source = self.normalize_awaited_application_args_for_variance(source);
+        target = self.normalize_awaited_application_args_for_variance(target);
 
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
@@ -2429,6 +2432,31 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn normalize_awaited_application_args_for_variance(&mut self, ty: TypeId) -> TypeId {
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, ty)
+        else {
+            return ty;
+        };
+
+        let mut changed = false;
+        let normalized_args: Vec<_> = args
+            .iter()
+            .copied()
+            .map(|arg| {
+                let normalized = self.evaluate_awaited_application_for_assignability(arg);
+                changed |= normalized != arg;
+                normalized
+            })
+            .collect();
+
+        if changed {
+            self.ctx.types.factory().application(base, normalized_args)
+        } else {
+            ty
+        }
     }
 
     pub(crate) fn type_predicate_type_assignable_to_parameter(

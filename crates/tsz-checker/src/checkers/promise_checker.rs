@@ -1789,14 +1789,29 @@ impl<'a> CheckerState<'a> {
             if let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, type_id)
             {
+                let raw_awaited_distribution = members
+                    .iter()
+                    .copied()
+                    .any(|member| self.is_raw_awaited_conditional_for_assignability(member));
                 let mut changed = false;
                 let evaluated_members: Vec<_> = members
                     .into_iter()
                     .map(|member| {
-                        let evaluated = self.evaluate_awaited_application_for_assignability_inner(
-                            member,
-                            depth + 1,
-                        );
+                        let mut evaluated = self
+                            .evaluate_awaited_application_for_assignability_inner(
+                                member,
+                                depth + 1,
+                            );
+                        if raw_awaited_distribution
+                            && let Some(awaited) = self
+                                .unwrap_promise_type(evaluated)
+                                .or_else(|| self.extract_awaited_type_from_thenable(evaluated))
+                        {
+                            evaluated = self.evaluate_awaited_application_for_assignability_inner(
+                                awaited,
+                                depth + 1,
+                            );
+                        }
                         changed |= evaluated != member;
                         evaluated
                     })
@@ -1825,8 +1840,31 @@ impl<'a> CheckerState<'a> {
                     return self.ctx.types.factory().tuple(evaluated_elems);
                 }
             }
+            if let Some((base, args)) =
+                crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            {
+                let mut changed = false;
+                let evaluated_args: Vec<_> = args
+                    .iter()
+                    .copied()
+                    .map(|arg| {
+                        let evaluated = self
+                            .evaluate_awaited_application_for_assignability_inner(arg, depth + 1);
+                        changed |= evaluated != arg;
+                        evaluated
+                    })
+                    .collect();
+                if changed {
+                    return self.ctx.types.factory().application(base, evaluated_args);
+                }
+            }
             if let Some(evaluated) =
                 self.evaluate_awaited_object_properties_for_assignability(type_id, depth)
+            {
+                return evaluated;
+            }
+            if let Some(evaluated) =
+                self.evaluate_raw_awaited_conditional_for_assignability(type_id, depth)
             {
                 return evaluated;
             }
@@ -1846,6 +1884,26 @@ impl<'a> CheckerState<'a> {
         };
         let arg = self.evaluate_type_for_assignability(arg);
 
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, arg) {
+            let awaited_members = members
+                .into_iter()
+                .map(|member| {
+                    if let Some(awaited) = self
+                        .unwrap_promise_type(member)
+                        .or_else(|| self.extract_awaited_type_from_thenable(member))
+                    {
+                        self.evaluate_awaited_application_for_assignability_inner(
+                            awaited,
+                            depth + 1,
+                        )
+                    } else {
+                        member
+                    }
+                })
+                .collect();
+            return self.ctx.types.factory().union(awaited_members);
+        }
+
         if let Some(awaited) = self
             .unwrap_promise_type(arg)
             .or_else(|| self.extract_awaited_type_from_thenable(arg))
@@ -1858,6 +1916,61 @@ impl<'a> CheckerState<'a> {
         // step with tsc's getAwaitedType without incorrectly treating
         // Awaited<Promise<T>> as Promise<T>.
         arg
+    }
+
+    fn evaluate_raw_awaited_conditional_for_assignability(
+        &mut self,
+        type_id: TypeId,
+        depth: u8,
+    ) -> Option<TypeId> {
+        let cond_id =
+            crate::query_boundaries::common::get_conditional_type_id(self.ctx.types, type_id)?;
+        let cond = self.ctx.types.conditional_type(cond_id);
+        // Awaited<T> expands to `T extends thenable ? ... : T`. After
+        // distribution over a union, assignability can see the raw conditional
+        // branches instead of the `Awaited<T>` application. Only fold that
+        // canonical false-branch shape; other conditional aliases must stay
+        // deferred.
+        if !self.is_raw_awaited_conditional_for_assignability(type_id) {
+            return None;
+        }
+
+        let check_type = self.evaluate_type_for_assignability(cond.check_type);
+        if let Some(awaited) = self
+            .unwrap_promise_type(check_type)
+            .or_else(|| self.extract_awaited_type_from_thenable(check_type))
+        {
+            return Some(
+                self.evaluate_awaited_application_for_assignability_inner(awaited, depth + 1),
+            );
+        }
+
+        if !crate::query_boundaries::common::has_property_by_str(self.ctx.types, check_type, "then")
+        {
+            return Some(
+                self.evaluate_awaited_application_for_assignability_inner(
+                    cond.false_type,
+                    depth + 1,
+                ),
+            );
+        }
+
+        None
+    }
+
+    fn is_raw_awaited_conditional_for_assignability(&mut self, type_id: TypeId) -> bool {
+        let Some(cond_id) =
+            crate::query_boundaries::common::get_conditional_type_id(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        let cond = self.ctx.types.conditional_type(cond_id);
+        if cond.false_type != cond.check_type {
+            return false;
+        }
+
+        let extends_type = self.evaluate_type_for_assignability(cond.extends_type);
+        crate::query_boundaries::common::has_property_by_str(self.ctx.types, extends_type, "then")
     }
 
     /// Check that `Generator<TYield, any, any>` (or `AsyncGenerator`) is assignable
