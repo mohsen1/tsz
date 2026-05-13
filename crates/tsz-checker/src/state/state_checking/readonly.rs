@@ -604,13 +604,25 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Object must be a type parameter (e.g., T in `function f<T extends ...>(target: T)`)
-        if !crate::query_boundaries::state::checking::is_type_parameter(self.ctx.types, object_type)
+        let object_is_type_parameter = crate::query_boundaries::state::checking::is_type_parameter(
+            self.ctx.types,
+            object_type,
+        );
+        if !object_is_type_parameter
+            && !common_query::contains_type_parameters(self.ctx.types, object_type)
         {
-            if !common_query::contains_type_parameters(self.ctx.types, object_type) {
-                return false;
-            }
+            return false;
+        }
 
+        // Mutable arrays and tuples are writable through numeric indexes even
+        // when their element type is generic. TS2862 is for broad writes through
+        // generic object/index-signature shapes, not Array<T>'s number index.
+        if self.is_mutable_array_like_indexed_write_target(object_type) {
+            return false;
+        }
+
+        // Object must be a type parameter (e.g., T in `function f<T extends ...>(target: T)`)
+        if !object_is_type_parameter {
             let evaluated_object = self.evaluate_type_with_env(object_type);
             let resolver = IndexSignatureResolver::new(self.ctx.types);
 
@@ -638,6 +650,24 @@ impl<'a> CheckerState<'a> {
         }
 
         self.constraint_has_index_signature(object_type, index_type)
+    }
+
+    fn is_mutable_array_like_indexed_write_target(&mut self, type_id: TypeId) -> bool {
+        if self.is_mutable_array_like_type(type_id) {
+            return true;
+        }
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        evaluated != type_id && self.is_mutable_array_like_type(evaluated)
+    }
+
+    fn is_mutable_array_like_type(&self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::checkers::generic::{ArrayLikeKind, classify_array_like};
+
+        matches!(
+            classify_array_like(self.ctx.types, type_id),
+            ArrayLikeKind::Array(_) | ArrayLikeKind::Tuple
+        )
     }
 
     /// Returns true when the index references the receiver's own key space.

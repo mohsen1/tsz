@@ -42777,3 +42777,85 @@ fn test_index_access_with_keyof_type_as_index() {
         interner.lookup(result)
     );
 }
+
+#[test]
+fn intermediate_application_alias_skips_preexisting_application_occurrence() {
+    let interner = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Inner"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let outer_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Outer"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let one = interner.literal_number(1.0);
+
+    // Simulate a user-authored Inner<1> that predates evaluating Outer<1>.
+    let inner_app = interner.application(interner.lazy(inner_def), vec![one]);
+    let outer_app = interner.application(interner.lazy(outer_def), vec![one]);
+    let evaluated = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(inner_app, outer_app, evaluated, &[one]);
+
+    assert_eq!(
+        interner.get_display_alias(inner_app),
+        None,
+        "Pre-existing instantiated applications should not be globally repainted"
+    );
+}
+
+#[test]
+fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
+    let interner = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let type_param = |name: &str| TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let inner_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Inner"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let outer_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        interner.intern_string("Outer"),
+        vec![type_param("T")],
+        TypeId::UNKNOWN,
+    ));
+    let one = interner.literal_number(1.0);
+
+    // Outer exists first; Inner<1> is introduced later as an intermediate.
+    let outer_app = interner.application(interner.lazy(outer_def), vec![one]);
+    let inner_app = interner.application(interner.lazy(inner_def), vec![one]);
+    let evaluated = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(inner_app, outer_app, evaluated, &[one]);
+
+    assert_eq!(
+        interner.get_display_alias(inner_app),
+        Some(outer_app),
+        "Fresh intermediate applications should still carry the forward alias"
+    );
+}

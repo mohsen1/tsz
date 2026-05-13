@@ -426,10 +426,8 @@ impl<'a> CheckerState<'a> {
                 {
                     base_class_name = ident.escaped_text.clone();
 
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    {
-                        base_class_idx = symbol.primary_declaration();
+                    if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx) {
+                        base_class_idx = self.get_class_declaration_from_symbol(sym_id);
                     }
                 }
             }
@@ -881,14 +879,26 @@ impl<'a> CheckerState<'a> {
 
                 // Resolve interface/class symbols through canonical heritage resolution so
                 // qualified names (e.g. `Promise.Thenable`) are handled correctly.
-                if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                {
+                if let Some(raw_sym_id) = self.resolve_heritage_symbol(expr_idx) {
+                    let mut visited_aliases =
+                        crate::symbols_domain::alias_cycle::AliasCycleTracker::new();
+                    let sym_id = self
+                        .resolve_alias_symbol(raw_sym_id, &mut visited_aliases)
+                        .unwrap_or(raw_sym_id);
+                    let Some(symbol) = self
+                        .get_cross_file_symbol(sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    else {
+                        continue;
+                    };
+                    let symbol_name = symbol.escaped_name.clone();
+                    let symbol_flags = symbol.flags;
+                    let symbol_declarations = symbol.declarations.clone();
                     let interface_name = self
                         .heritage_name_text(expr_idx)
-                        .unwrap_or_else(|| symbol.escaped_name.clone());
+                        .unwrap_or_else(|| symbol_name.clone());
 
-                    let is_class = (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
+                    let is_class = (symbol_flags & tsz_binder::symbol_flags::CLASS) != 0;
 
                     let mut interface_type_params = None;
                     let mut has_private_members = false;
@@ -900,7 +910,7 @@ impl<'a> CheckerState<'a> {
                     let mut any_inaccessible_privates = false;
                     let mut any_accessible_privates = false;
 
-                    for &decl_idx in &symbol.declarations {
+                    for &decl_idx in &symbol_declarations {
                         if let Some(node) = self.ctx.arena.get(decl_idx) {
                             if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
                                 if let Some(base_class_data) = self.ctx.arena.get_class(node) {
@@ -1014,7 +1024,7 @@ impl<'a> CheckerState<'a> {
 
                     let raw_interface_type = if is_class {
                         let mut instance_type = None;
-                        for &decl_idx in &symbol.declarations {
+                        for &decl_idx in &symbol_declarations {
                             if let Some(node) = self.ctx.arena.get(decl_idx)
                                 && node.kind == syntax_kind_ext::CLASS_DECLARATION
                                 && let Some(target_class_data) = self.ctx.arena.get_class(node)
@@ -1026,7 +1036,8 @@ impl<'a> CheckerState<'a> {
                         }
                         instance_type.unwrap_or_else(|| self.get_type_of_symbol(sym_id))
                     } else {
-                        self.get_type_of_symbol(sym_id)
+                        self.delegate_cross_arena_interface_type(sym_id)
+                            .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
                     };
                     let interface_type = crate::query_boundaries::common::instantiate_type(
                         self.ctx.types,
@@ -1049,7 +1060,7 @@ impl<'a> CheckerState<'a> {
                         &interface_name,
                         interface_type,
                         &type_args,
-                        &symbol.declarations,
+                        &symbol_declarations,
                         &substitution,
                         use_global_array_implements_path,
                     );
@@ -1067,7 +1078,7 @@ impl<'a> CheckerState<'a> {
                     // formatter resolves back to the alias name.
                     let interface_display_name = {
                         let mut intersection_text = None;
-                        for &decl_idx in &symbol.declarations {
+                        for &decl_idx in &symbol_declarations {
                             if let Some(node) = self.ctx.arena.get(decl_idx)
                                 && node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                                 && let Some(ta) = self.ctx.arena.get_type_alias(node)

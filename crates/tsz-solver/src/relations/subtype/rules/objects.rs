@@ -1441,6 +1441,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        // Named class/interface types require an explicit string index signature to
+        // satisfy a string-indexed target — compatible properties alone are not enough.
+        // Symbol-keyed indices and any-value targets are exempted (same shortcircuits
+        // as check_string_index_compatibility).
+        if target.string_index.as_ref().is_some_and(|idx| {
+            idx.key_type != TypeId::SYMBOL
+                && (self.disable_method_bivariance || !idx.value_type.is_any())
+        }) && self.requires_explicit_declared_index_signature(&source_shape)
+        {
+            return SubtypeResult::False;
+        }
+
         // A target number index signature requires the source to provide
         // number-compatible indexing via a number or string index signature.
         // A plain object with only named properties cannot satisfy arbitrary

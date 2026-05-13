@@ -373,6 +373,9 @@ mod array_isarray_mutual_subtype_narrowing_tests;
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
 mod assertion_type_predicate_diagnostics_tests;
 #[cfg(test)]
+#[path = "../tests/bigint_target_ts2737_tests.rs"]
+mod bigint_target_ts2737_tests;
+#[cfg(test)]
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]

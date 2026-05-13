@@ -1425,6 +1425,31 @@ function test(x: Dog | Cat) {
     );
 }
 
+/// Issue #6054: negative `instanceof` narrowing should not transitively exclude
+/// subclasses after a superclass guard exits. Tsc intentionally accepts this
+/// defensive pattern even though the subclass branch is unreachable at runtime.
+#[test]
+fn test_instanceof_negative_superclass_keeps_subclass_check_usable() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r"
+function checkError(e: unknown): string {
+    if (e instanceof Error) {
+        return e.message;
+    }
+    if (e instanceof TypeError) {
+        return e.message;
+    }
+    return String(e);
+}
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Subclass instanceof branch after superclass exclusion should not narrow to never.\n\
+         Actual errors: {diagnostics:?}"
+    );
+}
+
 /// TS18013 should report the declaring class name, not the object type's class name.
 /// When `#prop` is declared in `Base` and accessed via `Derived`, the error message
 /// should say "outside class 'Base'", not "outside class 'Derived'".
