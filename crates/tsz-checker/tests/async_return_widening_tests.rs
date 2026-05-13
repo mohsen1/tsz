@@ -157,6 +157,29 @@ fn async_return_object_property_awaited_type_assigns_to_generic_interface() {
     );
 }
 
+#[test]
+fn promise_resolve_awaited_arg_assigns_to_same_generic_promise_return() {
+    let source = format!(
+        "{AWAITED_AND_ASYNC_GEN_PRELUDE}\n\
+         interface QueryResult<O> {{\n\
+           rows: O[]\n\
+         }}\n\
+         interface DatabaseConnection {{\n\
+           executeQuery<O>(): Promise<QueryResult<O>>\n\
+         }}\n\
+         class SqliteConnection implements DatabaseConnection {{\n\
+           executeQuery<O>(): Promise<QueryResult<O>> {{\n\
+             return Promise.resolve({{ rows: [] as O[] }})\n\
+           }}\n\
+         }}\n"
+    );
+    let diags = get_diagnostics(&source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "Promise<Awaited<QueryResult<O>>> should be assignable to Promise<QueryResult<O>>, got: {diags:#?}"
+    );
+}
+
 /// Same invariant as above, but with `AsyncIterator` and a different
 /// property/literal name choice — the unwrap path is shared, and the test
 /// guarantees the fix is not specific to one type-alias spelling or to
