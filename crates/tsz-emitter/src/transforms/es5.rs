@@ -170,6 +170,8 @@ impl<'a> ES5ClassTransformer<'a> {
             super_param: has_extends.then(|| "_super".into()),
             body,
             weakmap_decls,
+            computed_prop_temp_decls: Vec::new(),
+            computed_prop_temp_inits: Vec::new(),
             weakmap_inits,
             leading_comment: None,
             deferred_static_blocks: Vec::new(),
