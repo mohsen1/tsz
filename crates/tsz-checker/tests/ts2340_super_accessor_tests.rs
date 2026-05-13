@@ -17,12 +17,9 @@ use tsz_checker::test_utils::{check_source_code_messages, has_diagnostic_code};
 const TS2340: u32 = 2340;
 const TS2855: u32 = 2855;
 
-fn assert_no_ts2340(source: &str, label: &str) {
+fn assert_no_ts2340(source: &str) {
     let d = check_source_code_messages(source);
-    assert!(
-        !has_diagnostic_code(&d, TS2340),
-        "{label}: must not emit TS2340, got: {d:?}",
-    );
+    assert!(!has_diagnostic_code(&d, TS2340), "got: {d:?}");
 }
 
 #[test]
@@ -41,13 +38,13 @@ class Derived extends Base {
   }
 }
 "#,
-        "public super.<getter> read in override",
     );
 }
 
 #[test]
 fn super_public_get_accessor_read_renamed_no_ts2340() {
-    // Anti-hardcoding: same rule under a different property name.
+    // Anti-hardcoding: paired with the previous test to prove the rule is
+    // not keyed on the property name.
     assert_no_ts2340(
         r#"
 class A {
@@ -62,7 +59,6 @@ class B extends A {
   }
 }
 "#,
-        "public super.<getter> (renamed property)",
     );
 }
 
@@ -82,7 +78,6 @@ class Derived extends Base {
   }
 }
 "#,
-        "protected super.<getter> read in override",
     );
 }
 
@@ -100,15 +95,11 @@ class Derived extends Base {
   }
 }
 "#,
-        "super.<setter> write in override",
     );
 }
 
 #[test]
 fn super_get_accessor_read_inside_method_no_ts2340() {
-    // The receiver context is a regular method, not an accessor body. The
-    // previous gate required an accessor body to fire; this guards against
-    // the gate accidentally returning under a different shape.
     assert_no_ts2340(
         r#"
 class Base {
@@ -123,14 +114,12 @@ class Derived extends Base {
   }
 }
 "#,
-        "super.<getter> read inside method",
     );
 }
 
 #[test]
 fn super_get_accessor_inherited_from_grandparent_no_ts2340() {
-    // The accessor is on a transitively-inherited class; the chain walk must
-    // still treat it as a valid super target.
+    // Transitive inheritance: the chain walk must reach grandparent accessors.
     assert_no_ts2340(
         r#"
 class Grand {
@@ -145,7 +134,6 @@ class Leaf extends Mid {
   }
 }
 "#,
-        "inherited super.<getter>",
     );
 }
 
@@ -168,7 +156,6 @@ class Derived extends Base {
   }
 }
 "#,
-        "super.<getter> in arrow inside accessor",
     );
 }
 
@@ -188,7 +175,6 @@ class Derived extends Base {
   }
 }
 "#,
-        "static super.<getter>",
     );
 }
 
@@ -208,14 +194,13 @@ class Derived extends Base {
   }
 }
 "#,
-        "super.method() call",
     );
 }
 
 #[test]
 fn super_field_read_still_emits_ts2855_when_es2022() {
-    // TS2855 lives in `checkers/property_checker.rs` and is unaffected by
-    // removing the accessor gate; this proves the field path is still wired.
+    // Guards that TS2855 (the correct diagnostic for `super.<field>`)
+    // remains wired after removing the accessor-only TS2340 path.
     let source = r#"
 class Base {
   field: number = 0;
@@ -229,7 +214,7 @@ class Derived extends Base {
     let d = check_source_code_messages(source);
     assert!(
         !has_diagnostic_code(&d, TS2340),
-        "super.<field> must not emit TS2340 (TS2855 is its diagnostic), got: {d:?}",
+        "super.<field> must not emit TS2340, got: {d:?}",
     );
     assert!(
         has_diagnostic_code(&d, TS2855),
