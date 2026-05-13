@@ -415,6 +415,15 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
             {
+                let type_text = self
+                    .call_expression_reused_type_text(initializer)
+                    .filter(|text| {
+                        !text.contains("unknown")
+                            && (text.contains("=>")
+                                || text.starts_with('[')
+                                || type_text.contains("unknown"))
+                    })
+                    .unwrap_or(type_text);
                 let has_public_import_type = Self::type_text_starts_with_import_type(&type_text)
                     && !self.import_type_uses_private_package_subpath(&type_text);
                 let type_text = self.qualify_current_namespace_self_type_text(&type_text);
@@ -428,6 +437,9 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = Self::expand_tuple_item_lookup_mapped_type_text(&type_text)
                     .unwrap_or(type_text);
                 let type_text = Self::normalize_inferred_array_any_text(&type_text);
+                let type_text = self
+                    .expand_rest_tuple_parameters_in_function_type_text(initializer, &type_text)
+                    .unwrap_or(type_text);
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
@@ -770,6 +782,15 @@ impl<'a> DeclarationEmitter<'a> {
                 };
                 let selected_type_text =
                     Self::normalize_inferred_array_any_text(&selected_type_text);
+                let selected_type_text = if has_initializer {
+                    self.expand_rest_tuple_parameters_in_function_type_text(
+                        initializer,
+                        &selected_type_text,
+                    )
+                    .unwrap_or(selected_type_text)
+                } else {
+                    selected_type_text
+                };
                 if has_initializer {
                     self.insert_import_for_reused_static_call_type(
                         initializer,

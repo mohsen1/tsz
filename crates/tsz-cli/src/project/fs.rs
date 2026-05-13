@@ -411,7 +411,15 @@ fn ensure_file_exists(path: &Path, original: &Path) -> Result<()> {
     }
 
     if !path.is_file() {
-        bail!("TS6231: {}", original.display());
+        // The CLI layer formats this marker into tsc's full TS6231 diagnostic.
+        // tsc normalizes a bare `.` to an empty display path.
+        let display = original.display().to_string();
+        let normalized = if display == "." {
+            String::new()
+        } else {
+            display
+        };
+        bail!("TS6231: {normalized}");
     }
 
     Ok(())
@@ -686,7 +694,17 @@ mod tests {
     fn test_ensure_file_exists_rejects_directory_paths() {
         let dir = unique_temp_dir("directory");
         let err = ensure_file_exists(&dir, Path::new("directory")).unwrap_err();
-        assert!(err.to_string().starts_with("TS6231: "));
+        let msg = err.to_string();
+        assert_eq!(msg, "TS6231: directory");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_ensure_file_exists_normalizes_current_dir_to_empty() {
+        let dir = unique_temp_dir("dot");
+        let err = ensure_file_exists(&dir, Path::new(".")).unwrap_err();
+        let msg = err.to_string();
+        assert_eq!(msg, "TS6231: ");
         let _ = fs::remove_dir_all(&dir);
     }
 

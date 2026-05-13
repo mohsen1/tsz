@@ -560,6 +560,26 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
     })
 }
 
+/// Return a copy of a function type with the `type_predicate` field cleared.
+/// Returns `type_id` unchanged when it is not a function type or already has no predicate.
+pub fn strip_function_type_predicate(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(shape) = get_function_shape(db, type_id) else {
+        return type_id;
+    };
+    if shape.type_predicate.is_none() {
+        return type_id;
+    }
+    db.function(crate::types::FunctionShape {
+        type_params: shape.type_params.clone(),
+        params: shape.params.clone(),
+        this_type: shape.this_type,
+        return_type: shape.return_type,
+        type_predicate: None,
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    })
+}
+
 /// Return a function type with the same signature but a replaced return type.
 ///
 /// Returns the original `type_id` when:

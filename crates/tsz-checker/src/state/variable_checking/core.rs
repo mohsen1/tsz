@@ -1183,6 +1183,8 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get(var_decl.initializer)
                             .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION);
+                    let contextual_init_type =
+                        (!request.is_empty() && init_type != TypeId::ERROR).then_some(init_type);
                     if jsdoc_new_expression_relation {
                         let raw_init_snap = checker.ctx.snapshot_diagnostics();
                         checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
@@ -1191,6 +1193,15 @@ impl<'a> CheckerState<'a> {
                             &TypingRequest::NONE,
                         );
                         checker.ctx.rollback_diagnostics(&raw_init_snap);
+                        // Preserve the contextual initializer cache entry. The raw
+                        // re-check is only for relation decisions; downstream lookups
+                        // should keep using the contextually inferred initializer type.
+                        if let Some(contextual_init_type) = contextual_init_type {
+                            checker
+                                .ctx
+                                .node_types
+                                .insert(var_decl.initializer.0, contextual_init_type);
+                        }
                         init_type_for_relation = checker.resolve_lazy_type(raw_init_type);
                     }
                     if let Some(branch_ranges) = conditional_branch_ranges {

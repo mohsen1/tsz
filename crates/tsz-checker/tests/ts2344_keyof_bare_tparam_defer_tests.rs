@@ -421,3 +421,30 @@ declare function pickFrom<T, K extends string | number>(
         "expected no TS2344 — `string | number` base satisfies the constraint without needing SYMBOL membership, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_mapped_symbol_keys_satisfy_pick_keyof_constraint() {
+    let diagnostics = compile_and_get_diagnostic_codes(
+        r#"
+declare const sym1: unique symbol;
+
+type SymbolKeys<T> = {
+  [K in keyof T]: K extends symbol ? K : never;
+}[keyof T];
+
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type OnlySymbolKeys<T> = Pick<T, SymbolKeys<T>>;
+
+interface Example {
+  [sym1]: number;
+  name: string;
+}
+
+type Result = OnlySymbolKeys<Example>;
+"#,
+    );
+    assert!(
+        !diagnostics.contains(&2344),
+        "expected no TS2344 for mapped symbol key extraction satisfying Pick's keyof constraint, got: {diagnostics:?}"
+    );
+}

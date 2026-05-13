@@ -4224,7 +4224,11 @@ impl<'a> DeclarationEmitter<'a> {
                     Self::rewrite_relative_import_type_specifiers(&type_text, module_specifier);
             }
             type_text = Self::ensure_single_line_type_literal_member_semicolon(&type_text);
-            Some(self.format_reused_call_structural_return_type_text(&type_text))
+            let formatted = self.format_reused_call_structural_return_type_text(&type_text);
+            Some(
+                self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &formatted)
+                    .unwrap_or(formatted),
+            )
         })
     }
 
@@ -5511,16 +5515,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut function_decl_count = 0usize;
         for decl_idx in symbol.declarations.iter().copied() {
-            let Some(func) = self.callable_function_from_symbol_decl(source_arena, decl_idx) else {
+            let Some(_func) = self.callable_function_from_symbol_decl(source_arena, decl_idx)
+            else {
                 continue;
             };
-            if func
-                .type_parameters
-                .as_ref()
-                .is_some_and(|params| !params.nodes.is_empty())
-            {
-                continue;
-            }
             function_decl_count += 1;
             if function_decl_count > 1 {
                 return None;
@@ -5531,13 +5529,6 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(func) = self.callable_function_from_symbol_decl(source_arena, decl_idx) else {
                 continue;
             };
-            if func
-                .type_parameters
-                .as_ref()
-                .is_some_and(|params| !params.nodes.is_empty())
-            {
-                continue;
-            }
             if func.type_annotation.is_some() {
                 if let Some(type_text) =
                     self.source_slice_from_arena(source_arena, func.type_annotation)
@@ -5546,15 +5537,24 @@ impl<'a> DeclarationEmitter<'a> {
                         func.type_annotation,
                     )
                 {
-                    return Some(
-                        type_text
-                            .trim_end()
-                            .trim_end_matches(';')
-                            .trim_end()
-                            .to_string(),
+                    let type_text = type_text
+                        .trim_end()
+                        .trim_end_matches(';')
+                        .trim_end()
+                        .to_string();
+                    return self.substitute_source_call_type_parameters(
+                        source_arena,
+                        func,
+                        call,
+                        type_text,
                     );
                 }
             } else if func.body.is_some()
+                && !self.source_function_body_contains_direct_call_to_name(
+                    source_arena,
+                    func,
+                    &symbol.escaped_name,
+                )
                 && let Some(type_text) = {
                     let mut scratch = if std::ptr::eq(source_arena, self.arena)
                         && let (Some(type_cache), Some(type_interner), Some(binder)) =
@@ -5578,12 +5578,26 @@ impl<'a> DeclarationEmitter<'a> {
                     scratch.current_arena = self.current_arena.clone();
                     scratch.arena_to_path = self.arena_to_path.clone();
                     scratch.indent_level = self.indent_level;
-                    let type_text = scratch.source_function_return_type_text(func)?;
+                    let mut type_text = scratch.source_function_return_type_text(func)?;
+                    if type_text.contains("unknown")
+                        && let Some(source_return_text) = scratch
+                            .function_body_returned_parameter_call_return_type_text(
+                                source_arena,
+                                func,
+                            )
+                    {
+                        type_text = source_return_text;
+                    }
                     let type_text =
                         scratch.substitute_call_result_parameter_type_queries(func, &type_text);
                     let (type_text, _) =
                         scratch.function_return_type_text_for_declaration_scope(func, &type_text);
-                    Some(type_text)
+                    scratch.substitute_source_call_type_parameters(
+                        source_arena,
+                        func,
+                        call,
+                        type_text,
+                    )
                 }
             {
                 return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
@@ -5591,56 +5605,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
-    }
-
-    fn substitute_call_result_parameter_type_queries(
-        &self,
-        func: &tsz_parser::parser::node::FunctionData,
-        source_type_text: &str,
-    ) -> String {
-        if !source_type_text.contains("typeof ") {
-            return source_type_text.to_string();
-        }
-
-        let mut text = source_type_text.to_string();
-        for param_idx in func.parameters.nodes.iter().copied() {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                continue;
-            };
-            let Some(param_name) = self.get_identifier_text(param.name) else {
-                continue;
-            };
-            let Some(param_type_text) = self.function_parameter_type_text(func, param.name) else {
-                continue;
-            };
-            if !Self::type_text_can_substitute_type_query_parameter(&param_type_text) {
-                continue;
-            }
-            text = Self::replace_typeof_identifier(&text, &param_name, &param_type_text).0;
-        }
-        text
-    }
-
-    fn type_text_can_substitute_type_query_parameter(type_text: &str) -> bool {
-        let trimmed = type_text.trim();
-        if Self::simple_type_reference_name(trimmed).is_some() {
-            return true;
-        }
-        if matches!(trimmed, "true" | "false" | "null" | "undefined") {
-            return true;
-        }
-        if trimmed.parse::<f64>().is_ok() {
-            return true;
-        }
-        if trimmed.len() >= 2 {
-            let bytes = trimmed.as_bytes();
-            return (bytes[0] == b'"' && bytes[trimmed.len() - 1] == b'"')
-                || (bytes[0] == b'\'' && bytes[trimmed.len() - 1] == b'\'');
-        }
-        false
     }
 
     fn callable_function_from_symbol_decl<'b>(
@@ -7092,7 +7056,7 @@ impl<'a> DeclarationEmitter<'a> {
         (text, replaced_any)
     }
 
-    fn replace_typeof_identifier(
+    pub(in crate::declaration_emitter) fn replace_typeof_identifier(
         text: &str,
         identifier: &str,
         replacement: &str,
@@ -7278,12 +7242,30 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if let Some(type_text) = self
-                .preferred_expression_type_text(var_decl.initializer)
+                .call_expression_reused_type_text(var_decl.initializer)
                 .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+                .or_else(|| {
+                    self.call_expression_declared_return_type_text(var_decl.initializer)
+                        .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+                })
+                .or_else(|| {
+                    self.function_expression_type_text_from_ast(var_decl.initializer)
+                        .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+                })
+                .or_else(|| {
+                    self.preferred_expression_type_text(var_decl.initializer)
+                        .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
+                })
                 .or_else(|| self.as_const_assertion_type_text(var_decl.initializer))
                 .or_else(|| self.infer_fallback_type_text_at(var_decl.initializer, 0))
             {
-                return Some(type_text);
+                return Some(
+                    self.expand_rest_tuple_parameters_in_function_type_text(
+                        var_decl.initializer,
+                        &type_text,
+                    )
+                    .unwrap_or(type_text),
+                );
             }
         }
         None

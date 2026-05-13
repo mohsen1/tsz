@@ -1019,9 +1019,12 @@ impl<'a> IRPrinter<'a> {
                 self.write(";");
             }
             IRNode::ExpressionStatement(expr) => {
-                // Wrap function expressions in parens when in statement position
-                // to prevent ambiguity with function declarations.
-                let needs_paren = matches!(expr.as_ref(), IRNode::FunctionExpr { .. });
+                // Wrap function/object expressions in parens when in statement
+                // position to prevent declaration/block ambiguity.
+                let needs_paren = matches!(
+                    expr.as_ref(),
+                    IRNode::FunctionExpr { .. } | IRNode::ObjectLiteral { .. }
+                );
                 if needs_paren {
                     self.write("(");
                 }

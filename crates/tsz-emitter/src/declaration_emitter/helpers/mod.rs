@@ -225,6 +225,7 @@ mod type_inference_imported_indexed_access;
 mod type_inference_instantiation;
 mod type_inference_package_matching;
 mod type_inference_return_unions;
+mod type_inference_source_call;
 mod type_inference_type_nodes;
 mod type_param_rewrite;
 mod type_printing;
