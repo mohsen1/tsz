@@ -113,6 +113,30 @@ const value: string = x.value
 }
 
 #[test]
+fn import_type_alias_survives_local_value_with_same_name() {
+    let diagnostics = check(
+        &[
+            ("a.ts", r#"export type A = "a";"#),
+            (
+                "b.ts",
+                r#"
+import type { A } from "./a"
+
+const A: A = "a"
+A.toUpperCase()
+"#,
+            ),
+        ],
+        "b.ts",
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "type-only import should provide the annotation while local const provides the value, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn conflicted_reexport_keeps_local_namespace_surface() {
     let diagnostics = check(
         &[

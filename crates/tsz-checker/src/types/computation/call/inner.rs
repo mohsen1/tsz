@@ -13,6 +13,7 @@ use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tracing::trace;
+use tsz_binder::symbol_flags;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -339,6 +340,44 @@ impl<'a> CheckerState<'a> {
             None => &[],
         };
 
+        if let Some(callee_ident) = self.ctx.arena.get_identifier_at(call.expression)
+            && self
+                .ctx
+                .import_conflict_names
+                .contains(callee_ident.escaped_text.as_str())
+            && self
+                .ctx
+                .binder
+                .get_symbols()
+                .find_all_by_name(&callee_ident.escaped_text)
+                .iter()
+                .copied()
+                .any(|candidate_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(candidate_id)
+                        .is_some_and(|candidate| {
+                            candidate.has_any_flags(symbol_flags::MODULE)
+                                && candidate.declarations.iter().copied().any(|decl_idx| {
+                                    self.ctx.arena.get(decl_idx).is_some_and(|node| {
+                                        node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                    })
+                                })
+                        })
+                })
+        {
+            self.error_not_callable_at(callee_type, call.expression);
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| Some(TypeId::ANY),
+                check_excess_properties,
+                None,
+                CallableContext::none(),
+            );
+            return TypeId::ERROR;
+        }
+
         // Check if callee is any/error (don't report for those)
         if callee_type == TypeId::ANY {
             if let Some(ref type_args_list) = call.type_arguments
@@ -439,6 +478,44 @@ impl<'a> CheckerState<'a> {
             self.error_not_callable_at(callee_type, call.expression);
             // Still evaluate arguments so downstream definite-assignment /
             // unresolved-name diagnostics still fire on argument sites.
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| Some(TypeId::ANY),
+                check_excess_properties,
+                None,
+                CallableContext::none(),
+            );
+            return TypeId::ERROR;
+        }
+
+        if let Some(callee_ident) = self.ctx.arena.get_identifier_at(call.expression)
+            && self
+                .ctx
+                .import_conflict_names
+                .contains(callee_ident.escaped_text.as_str())
+            && self
+                .ctx
+                .binder
+                .get_symbols()
+                .find_all_by_name(&callee_ident.escaped_text)
+                .iter()
+                .copied()
+                .any(|candidate_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(candidate_id)
+                        .is_some_and(|candidate| {
+                            candidate.has_any_flags(symbol_flags::MODULE)
+                                && candidate.declarations.iter().copied().any(|decl_idx| {
+                                    self.ctx.arena.get(decl_idx).is_some_and(|node| {
+                                        node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                    })
+                                })
+                        })
+                })
+        {
+            self.error_not_callable_at(callee_type, call.expression);
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,

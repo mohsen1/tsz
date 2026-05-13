@@ -657,6 +657,66 @@ function test(value: string) {
     }
 }
 
+/// Top-level `let` declarations without initializers still receive the
+/// predicate's narrowed type in guarded branches, even though TS2454 is also
+/// reported for the unassigned read in the guard expression.
+#[test]
+fn test_top_level_type_predicate_narrows_string_to_literal() {
+    let source = r#"
+declare function isFoo(value: string): value is "foo";
+declare function doThis(value: "foo"): void;
+declare function doThat(value: string): void;
+
+let value: string;
+if (isFoo(value)) {
+    doThis(value);
+} else {
+    doThat(value);
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        no_implicit_returns: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2454),
+        "top-level unassigned guard read should still report TS2454, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        "type predicate narrowing should prevent TS2345 in guarded branch, got: {diagnostics:?}"
+    );
+}
+
 /// Regression test: type guard narrowing during return type inference.
 ///
 /// When a function body uses a type guard in an if-condition and then returns

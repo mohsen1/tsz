@@ -302,7 +302,22 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::FUNCTION
             | symbol_flags::CLASS
             | symbol_flags::ENUM;
-        if symbol.has_any_flags(value_flags) {
+        if symbol.has_any_flags(value_flags)
+            && symbol.value_declaration.is_some()
+            && self
+                .ctx
+                .arena
+                .get(symbol.value_declaration)
+                .is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        syntax_kind_ext::VARIABLE_DECLARATION
+                            | syntax_kind_ext::FUNCTION_DECLARATION
+                            | syntax_kind_ext::CLASS_DECLARATION
+                            | syntax_kind_ext::ENUM_DECLARATION
+                    )
+                })
+        {
             return false;
         }
 
@@ -448,6 +463,60 @@ impl<'a> CheckerState<'a> {
         }
 
         self.symbol_member_is_type_only(resolved_export_equals, Some("export="))
+    }
+
+    pub(crate) fn identifier_is_type_only_module_exports_import_projection(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) else {
+            return false;
+        };
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
+            return false;
+        }
+
+        if let Some(module_specifier) = symbol.import_module.as_deref() {
+            let is_namespace_binding =
+                symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*");
+            if is_namespace_binding
+                && self
+                    .classify_cross_file_type_only_kind(module_specifier, "module.exports")
+                    .is_some()
+            {
+                return true;
+            }
+        }
+
+        let Some(decl_idx) = symbol.primary_declaration() else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return false;
+        }
+        let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node) else {
+            return false;
+        };
+        let module_specifier = if let Some(module_node) =
+            self.ctx.arena.get(import_decl.module_specifier)
+            && module_node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(literal) = self.ctx.arena.get_literal(module_node)
+        {
+            Some(literal.text.clone())
+        } else {
+            self.get_require_module_specifier(import_decl.module_specifier)
+        };
+        module_specifier.as_deref().is_some_and(|module| {
+            self.classify_cross_file_type_only_kind(module, "module.exports")
+                .is_some()
+        })
     }
 
     /// Check if a namespace member is transitively type-only through import chains.
@@ -793,7 +862,22 @@ impl<'a> CheckerState<'a> {
         // `const X = 42`), the value binding provides a runtime value and the
         // identifier should not be treated as type-only — regardless of whether
         // the import target is type-only.
-        if symbol.has_any_flags(symbol_flags::VALUE) {
+        if symbol.has_any_flags(symbol_flags::VALUE)
+            && symbol.value_declaration.is_some()
+            && self
+                .ctx
+                .arena
+                .get(symbol.value_declaration)
+                .is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        syntax_kind_ext::VARIABLE_DECLARATION
+                            | syntax_kind_ext::FUNCTION_DECLARATION
+                            | syntax_kind_ext::CLASS_DECLARATION
+                            | syntax_kind_ext::ENUM_DECLARATION
+                    )
+                })
+        {
             return false;
         }
         if symbol.is_type_only {
@@ -1787,194 +1871,6 @@ impl<'a> CheckerState<'a> {
                 }
                 // Non-type-only wildcard: check for transitive type-only chains
                 if self.is_export_type_only_in_file(
-                    target_file_idx,
-                    source_module,
-                    export_name,
-                    visited,
-                ) {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Like `is_export_type_only_in_file` but only returns true when the export
-    /// uses explicit `export type { ... }` syntax (`is_type_only` flag) or goes
-    /// through a chain of type-only re-exports. Does NOT return true for plain
-    /// type declarations like `export type T = number` or `export interface I`.
-    fn is_export_type_only_syntax_in_file(
-        &self,
-        source_file_idx: usize,
-        module_specifier: &str,
-        export_name: &str,
-        visited: &mut rustc_hash::FxHashSet<(usize, String)>,
-    ) -> bool {
-        let Some(target_file_idx) = self
-            .ctx
-            .resolve_import_target_from_file(source_file_idx, module_specifier)
-        else {
-            return false;
-        };
-
-        let key = (target_file_idx, export_name.to_string());
-        if !visited.insert(key) {
-            return false;
-        }
-
-        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
-            return false;
-        };
-
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let Some(target_file_name) = target_arena
-            .source_files
-            .first()
-            .map(|sf| sf.file_name.clone())
-        else {
-            return false;
-        };
-
-        if let Some(exports_table) = self
-            .ctx
-            .module_exports_for_module(target_binder, &target_file_name)
-            && let Some(sym_id) = exports_table.get(export_name)
-        {
-            let sym_opt = target_binder
-                .get_symbol(sym_id)
-                .or_else(|| self.ctx.binder.get_symbol(sym_id));
-            if let Some(sym) = sym_opt {
-                if sym.is_type_only {
-                    let has_value_flags = sym.has_any_flags(symbol_flags::ALIAS)
-                        && sym.has_any_flags(symbol_flags::VALUE);
-                    let has_value_partner =
-                        self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
-                    if !has_value_flags && !has_value_partner {
-                        return true;
-                    }
-                }
-
-                if sym.has_any_flags(symbol_flags::ALIAS)
-                    && let Some(ref import_module) = sym.import_module
-                {
-                    let import_name = sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
-                    if self.is_export_type_only_syntax_in_file(
-                        target_file_idx,
-                        import_module,
-                        import_name,
-                        visited,
-                    ) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-        }
-
-        if let Some(file_reexports) = self
-            .ctx
-            .reexports_for_file(target_binder, &target_file_name)
-            && let Some((source_module, original_name)) = file_reexports.get(export_name)
-        {
-            let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
-            return self.is_export_type_only_syntax_in_file(
-                target_file_idx,
-                source_module,
-                name_to_lookup,
-                visited,
-            );
-        }
-
-        if let Some(source_modules) = self
-            .ctx
-            .wildcard_reexports_for_file(target_binder, &target_file_name)
-        {
-            let source_type_only_flags = self
-                .ctx
-                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name);
-
-            for (i, source_module) in source_modules.iter().enumerate() {
-                let source_is_type_only = source_type_only_flags
-                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
-                    .unwrap_or(false);
-                if source_is_type_only
-                    && self.name_exists_in_module_exports(
-                        target_file_idx,
-                        source_module,
-                        export_name,
-                        visited,
-                    )
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if a name exists as an export in a module (regardless of type-only status).
-    ///
-    /// Used to verify that a specific name is actually re-exported through a
-    /// wildcard `export type *` before marking it as type-only.
-    fn name_exists_in_module_exports(
-        &self,
-        source_file_idx: usize,
-        module_specifier: &str,
-        export_name: &str,
-        visited: &mut rustc_hash::FxHashSet<(usize, String)>,
-    ) -> bool {
-        let Some(target_file_idx) = self
-            .ctx
-            .resolve_import_target_from_file(source_file_idx, module_specifier)
-        else {
-            return false;
-        };
-
-        let key = (target_file_idx, format!("exists:{export_name}"));
-        if !visited.insert(key) {
-            return false; // cycle
-        }
-
-        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
-            return false;
-        };
-
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let Some(target_file_name) = target_arena
-            .source_files
-            .first()
-            .map(|sf| sf.file_name.clone())
-        else {
-            return false;
-        };
-
-        // Check direct exports
-        if let Some(exports_table) = self
-            .ctx
-            .module_exports_for_module(target_binder, &target_file_name)
-            && exports_table.get(export_name).is_some()
-        {
-            return true;
-        }
-
-        // Check named re-exports
-        if let Some(file_reexports) = self
-            .ctx
-            .reexports_for_file(target_binder, &target_file_name)
-            && file_reexports.get(export_name).is_some()
-        {
-            return true;
-        }
-
-        // Check wildcard re-exports recursively
-        if let Some(source_modules) = self
-            .ctx
-            .wildcard_reexports_for_file(target_binder, &target_file_name)
-        {
-            for source_module in source_modules.iter() {
-                if self.name_exists_in_module_exports(
                     target_file_idx,
                     source_module,
                     export_name,

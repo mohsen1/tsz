@@ -382,7 +382,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if (literal_type == TypeId::NULL || literal_type == TypeId::UNDEFINED)
                     && let Some(annotation_type) =
                         self.annotation_type_from_assignment_node(assignment_node, target)
-                    && !self.is_assignable_to_strict_null(literal_type, annotation_type)
+                    && !self.annotation_type_allows_nullish(annotation_type, literal_type)
                 {
                     return None;
                 }
@@ -437,7 +437,7 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
                 if let Some(annotation_type) =
                     self.annotation_type_from_assignment_node(assignment_node, target)
-                    && !self.is_assignable_to_strict_null(nullish_type, annotation_type)
+                    && !self.annotation_type_allows_nullish(annotation_type, nullish_type)
                 {
                     return None;
                 }
@@ -574,6 +574,30 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    fn annotation_type_allows_nullish(
+        &self,
+        annotation_type: TypeId,
+        nullish_type: TypeId,
+    ) -> bool {
+        if matches!(
+            annotation_type,
+            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+        ) {
+            return true;
+        }
+        if annotation_type == nullish_type {
+            return true;
+        }
+        if nullish_type == TypeId::UNDEFINED && annotation_type == TypeId::VOID {
+            return true;
+        }
+        union_members_for_type(self.interner, annotation_type).is_some_and(|members| {
+            members
+                .iter()
+                .any(|&member| self.annotation_type_allows_nullish(member, nullish_type))
+        })
     }
 
     fn get_destructuring_assigned_type_for_reference(

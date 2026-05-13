@@ -288,9 +288,15 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            // Route through wrong-meaning boundary: primitive keyword is type-only
-            use crate::query_boundaries::name_resolution::NameLookupKind;
-            self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    &[name],
+                ),
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            );
             return TypeId::ERROR;
         }
 
@@ -388,9 +394,15 @@ impl<'a> CheckerState<'a> {
                 | "object"
                 | "bigint"
         ) {
-            // Route through wrong-meaning boundary: primitive keyword is type-only
-            use crate::query_boundaries::name_resolution::NameLookupKind;
-            self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    &[name],
+                ),
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            );
             return TypeId::ERROR;
         }
         // Suppress in single-file mode to prevent cascading false positives
