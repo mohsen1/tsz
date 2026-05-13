@@ -16,7 +16,7 @@ use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_
 use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
 use crate::visitor::{
     application_id, array_element_type, conditional_type_id, contains_this_type, enum_components,
-    lazy_def_id, literal_value, union_list_id,
+    is_type_parameter, lazy_def_id, literal_value, union_list_id,
 };
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
@@ -837,7 +837,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Meta-type evaluation (after cycle detection is set up)
         // =========================================================================
         let result = if self.bypass_evaluation {
-            if target == TypeId::NEVER {
+            // Type parameters must reach check_subtype_inner so that
+            // check_type_parameter_subtype can resolve their constraint chain
+            // (e.g. T extends never is the bottom type, assignable to `never`).
+            if target == TypeId::NEVER && !is_type_parameter(self.interner, source) {
                 SubtypeResult::False
             } else {
                 // Even with bypass_evaluation (used by the evaluator to prevent
@@ -890,7 +893,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.check_subtype(source_eval, target_eval)
-            } else if target == TypeId::NEVER {
+            // Same type-parameter carve-out as the bypass_evaluation branch above.
+            } else if target == TypeId::NEVER && !is_type_parameter(self.interner, source) {
                 SubtypeResult::False
             } else {
                 self.check_subtype_inner(source, target)

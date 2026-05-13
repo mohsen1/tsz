@@ -858,3 +858,136 @@ fn unrelated_bare_type_parameters_are_not_subtypes() {
     assert!(!is_subtype_of(&interner, t, u), "T is not assignable to U");
     assert!(is_subtype_of(&interner, t, t), "T is reflexively a subtype");
 }
+
+// =============================================================================
+// T extends never assignability tests (issue #6224)
+//
+// Rule: A type parameter T with constraint `never` is equivalent to `never`.
+// Since `never` is the bottom type, T extends never is assignable to any type.
+// =============================================================================
+
+fn make_type_param(interner: &TypeInterner, name: &str, constraint: Option<TypeId>) -> TypeId {
+    interner.type_param(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint,
+        default: None,
+        is_const: false,
+    })
+}
+
+/// `T extends never` is assignable to `never` and to concrete types like `string`, `number`.
+/// Structural rule: only `never` satisfies `extends never`, so T ≡ never — the bottom type,
+/// assignable to any type. Four distinct names verify the rule is name-independent.
+#[test]
+fn never_constrained_type_param_assignable_to_any_concrete_type() {
+    use crate::relations::subtype::core::is_subtype_of;
+    use std::collections::HashSet;
+
+    let interner = TypeInterner::new();
+    let params: Vec<(TypeId, &str)> = ["T", "K", "MyParam", "X"]
+        .iter()
+        .map(|&name| (make_type_param(&interner, name, Some(TypeId::NEVER)), name))
+        .collect();
+
+    // All TypeIds must be distinct — aliasing would make the name-independence loop vacuous.
+    let ids: HashSet<TypeId> = params.iter().map(|(id, _)| *id).collect();
+    assert_eq!(
+        ids.len(),
+        params.len(),
+        "all params must have distinct TypeIds"
+    );
+
+    for (param, name) in &params {
+        assert!(
+            is_subtype_of(&interner, *param, TypeId::STRING),
+            "{name} extends never must be assignable to string"
+        );
+        assert!(
+            is_subtype_of(&interner, *param, TypeId::NUMBER),
+            "{name} extends never must be assignable to number"
+        );
+        assert!(
+            is_subtype_of(&interner, *param, TypeId::UNKNOWN),
+            "{name} extends never must be assignable to unknown"
+        );
+        assert!(
+            is_subtype_of(&interner, *param, TypeId::NEVER),
+            "{name} extends never must be assignable to never"
+        );
+    }
+}
+
+/// Unconstrained `T` must NOT be assignable to `never`.
+/// Locking the negative: only never-constrained params get this bottom-type behavior.
+#[test]
+fn unconstrained_type_param_not_assignable_to_never() {
+    use crate::relations::subtype::core::is_subtype_of;
+
+    let interner = TypeInterner::new();
+    let t = make_type_param(&interner, "T", None);
+
+    assert!(
+        !is_subtype_of(&interner, t, TypeId::NEVER),
+        "unconstrained T must NOT be assignable to never"
+    );
+}
+
+/// `T extends string` must NOT be assignable to `never`.
+/// Locking: only the bottom type (never) or its equivalents are assignable to never.
+#[test]
+fn string_constrained_type_param_not_assignable_to_never() {
+    use crate::relations::subtype::core::is_subtype_of;
+
+    let interner = TypeInterner::new();
+    let t = make_type_param(&interner, "T", Some(TypeId::STRING));
+
+    assert!(
+        !is_subtype_of(&interner, t, TypeId::NEVER),
+        "T extends string must NOT be assignable to never"
+    );
+}
+
+/// Two-level chain: `T extends U` where `U extends never`.
+/// U ≡ never, so T ≡ never, so T is assignable to never.
+#[test]
+fn indirect_never_constraint_chain_assignable_to_never() {
+    use crate::relations::subtype::core::is_subtype_of;
+
+    let interner = TypeInterner::new();
+    let u = make_type_param(&interner, "U", Some(TypeId::NEVER));
+    let t = make_type_param(&interner, "T", Some(u));
+
+    assert!(
+        is_subtype_of(&interner, t, TypeId::NEVER),
+        "T extends U extends never must be assignable to never"
+    );
+    assert!(
+        is_subtype_of(&interner, u, TypeId::NEVER),
+        "U extends never must be assignable to never"
+    );
+}
+
+/// Three-level chain: `T extends U`, `U extends V`, `V extends never`.
+/// Verifies the constraint chain is resolved recursively, not just one level deep.
+#[test]
+fn three_level_never_constraint_chain_assignable_to_never() {
+    use crate::relations::subtype::core::is_subtype_of;
+
+    let interner = TypeInterner::new();
+    let v = make_type_param(&interner, "V", Some(TypeId::NEVER));
+    let u = make_type_param(&interner, "U", Some(v));
+    let t = make_type_param(&interner, "T", Some(u));
+
+    assert!(
+        is_subtype_of(&interner, v, TypeId::NEVER),
+        "V extends never must be assignable to never"
+    );
+    assert!(
+        is_subtype_of(&interner, u, TypeId::NEVER),
+        "U extends V extends never must be assignable to never"
+    );
+    assert!(
+        is_subtype_of(&interner, t, TypeId::NEVER),
+        "T extends U extends V extends never must be assignable to never"
+    );
+}
