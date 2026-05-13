@@ -6572,17 +6572,43 @@ export function validateTransactionSettings(settings: TransactionSettings): void
   }
 }
 "#;
+    let type_error = r#"
+export type KyselyTypeError<E extends string> = { __error__: E } & never;
+"#;
     let config = r#"
-export type Tedious = {
-  ISOLATION_LEVEL: Record<string, number>;
-};
+import type { KyselyTypeError } from '../../util/type-error.js';
+
+export interface Tedious {
+  connectionFactory: () => TediousConnection | Promise<TediousConnection>;
+  ISOLATION_LEVEL: TediousIsolationLevel;
+  Request: TediousRequestClass;
+  resetConnectionOnRelease?: KyselyTypeError<'deprecated'>;
+  TYPES: TediousTypes;
+}
+export type TediousIsolationLevel = Record<string, number>;
 export type TediousConnection = {
   beginTransaction(
     callback: (err: Error | null | undefined) => void,
     name?: string | undefined,
     isolationLevel?: number | undefined,
   ): void;
+  connect(connectListener: (err?: Error) => void): void;
+  on(event: 'error', listener: (error: unknown) => void): this;
+  on(event: string, listener: (...args: any[]) => void): this;
 };
+export interface TediousRequestClass {
+  new (
+    sqlTextOrProcedure: string | undefined,
+    callback: (error?: Error | null, rowCount?: number, rows?: any) => void,
+    options?: { statementColumnEncryptionSetting?: any },
+  ): TediousRequest;
+}
+export declare class TediousRequest {}
+export interface TediousTypes {
+  NVarChar: TediousDataType;
+  [x: string]: TediousDataType;
+}
+export interface TediousDataType {}
 "#;
     let database_connection = r#"
 import type { TransactionSettings } from './driver.js';
@@ -6656,6 +6682,7 @@ const badNumber: IsolationLevel = 1;
 "#;
     let driver_diags = tsz_checker::test_utils::check_multi_file(
         &[
+            ("./src/util/type-error.ts", type_error),
             ("./src/util/type-utils.ts", type_utils.as_str()),
             ("./src/driver/driver.ts", driver),
         ],
@@ -6673,6 +6700,7 @@ const badNumber: IsolationLevel = 1;
 
     let diags = tsz_checker::test_utils::check_multi_file(
         &[
+            ("./src/util/type-error.ts", type_error),
             ("./src/util/type-utils.ts", type_utils.as_str()),
             ("./src/driver/driver.ts", driver),
             ("./src/driver/database-connection.ts", database_connection),
