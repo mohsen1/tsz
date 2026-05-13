@@ -2567,12 +2567,12 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
 
-                        if self.known_declared_receiver_has_property(
+                        if let Some(type_id) = self.declared_receiver_property_type(
                             access.expression,
                             display_object_type,
                             property_name,
                         ) {
-                            return TypeId::ANY;
+                            return type_id;
                         }
 
                         if enum_instance_like_access {
