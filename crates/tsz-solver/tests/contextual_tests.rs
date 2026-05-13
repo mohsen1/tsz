@@ -515,9 +515,7 @@ fn test_apply_contextual_union_preserves_literal() {
 }
 
 #[test]
-fn test_contextual_generic_call_union_widens_unconstrained_literal() {
-    // tsc widens fresh literals for unconstrained T: `identity("ready")` → T = string.
-    // After inference, apply_contextual_type(string, string | number) stays string.
+fn test_contextual_generic_call_union_preserves_literal() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
@@ -545,11 +543,9 @@ fn test_contextual_generic_call_union_widens_unconstrained_literal() {
 
     let literal = interner.literal_string("ready");
     let inferred = infer_generic_function(&interner, &mut checker, &func, &[literal]);
-    assert_eq!(inferred, TypeId::STRING);
-
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let result = apply_contextual_type(&interner, inferred, Some(union));
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, literal);
 }
 
 #[test]

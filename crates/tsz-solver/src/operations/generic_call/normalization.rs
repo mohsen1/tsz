@@ -135,7 +135,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && !self.checker.is_assignable_to(widened_for_check, ctx_type)
                         && self.checker.is_assignable_to(arg_ty, ctx_type)
                 });
-                if should_preserve_literal {
+                if should_preserve_literal
+                    || crate::visitor::is_literal_type(self.interner.as_type_database(), arg_ty)
+                {
                     arg_ty
                 } else {
                     crate::operations::widening::widen_type_for_inference(

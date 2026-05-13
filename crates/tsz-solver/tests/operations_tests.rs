@@ -3360,9 +3360,7 @@ fn test_generic_call_resets_fixed_union_member_cache() {
 }
 
 #[test]
-fn test_infer_generic_function_identity_widens_unconstrained_literal() {
-    // tsc widens fresh literals for unconstrained T: `identity("hello")` → T = string.
-    // The fast path and normal inference path must agree.
+fn test_infer_generic_function_identity_preserves_unconstrained_scalar_literal() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -3373,7 +3371,7 @@ fn test_infer_generic_function_identity_widens_unconstrained_literal() {
         &make_identity_shape(&interner, "T", "x"),
         &[hello],
     );
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, hello);
 
     // Different param name proves the rule is structural, not name-specific.
     let world = interner.literal_string("world");
@@ -3383,7 +3381,7 @@ fn test_infer_generic_function_identity_widens_unconstrained_literal() {
         &make_identity_shape(&interner, "U", "value"),
         &[world],
     );
-    assert_eq!(result2, TypeId::STRING);
+    assert_eq!(result2, world);
 }
 
 /// When a fresh object literal `{ x: 1 }` is passed to `identity<T>(x: T): T` with
@@ -3478,9 +3476,9 @@ fn test_identity_widens_fresh_object_literal_properties_for_unconstrained_t() {
     );
 }
 
-/// Scalar literals also widen for unconstrained T (tsc: `identity(1)` → T = number).
+/// Scalar literals stay literal for unconstrained T (tsc: `identity(1)` -> T = 1).
 #[test]
-fn test_identity_widens_scalar_literals_for_unconstrained_t() {
+fn test_identity_preserves_scalar_literals_for_unconstrained_t() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
@@ -3489,9 +3487,8 @@ fn test_identity_widens_scalar_literals_for_unconstrained_t() {
         let n = interner.literal_number(5.0);
         let result = infer_generic_function(&interner, &mut checker, &func, &[n]);
         assert_eq!(
-            result,
-            TypeId::NUMBER,
-            "{param_name}: literal number 5 should widen to number"
+            result, n,
+            "{param_name}: literal number 5 should stay literal"
         );
     }
 }
@@ -12048,10 +12045,10 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
     }
 }
 
-/// Tests that without a contextual type, the identity fast path widens fresh literal
-/// arguments: `identity('ELSE')` should infer T = string (matching tsc behavior).
+/// Tests that without a contextual type, the identity fast path still preserves
+/// scalar literal arguments: `identity('ELSE')` should infer T = "ELSE".
 #[test]
-fn test_trivial_identity_widens_unconstrained_literal_without_contextual_type() {
+fn test_trivial_identity_preserves_unconstrained_literal_without_contextual_type() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
@@ -12062,7 +12059,7 @@ fn test_trivial_identity_widens_unconstrained_literal_without_contextual_type() 
         &make_identity_shape(&interner, "T", "x"),
         &[lit_else],
     );
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, lit_else);
 }
 
 /// Test that a union of a single-overload function and a multi-overload callable
