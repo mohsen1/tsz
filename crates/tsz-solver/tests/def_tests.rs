@@ -56,7 +56,7 @@ fn semantic_def_entry(
 }
 
 #[test]
-fn test_definition_store_semantic_def_overlays_override_base_without_losing_base_only_defs() {
+fn test_semantic_def_overlays_override_same_file_base() {
     let interner = create_test_interner();
     let mut base = rustc_hash::FxHashMap::default();
     base.insert(
@@ -71,7 +71,7 @@ fn test_definition_store_semantic_def_overlays_override_base_without_losing_base
     let mut overlay = rustc_hash::FxHashMap::default();
     overlay.insert(
         tsz_binder::SymbolId(2),
-        semantic_def_entry("OverlayWins", 2, tsz_binder::SemanticDefKind::Class),
+        semantic_def_entry("OverlayWins", 1, tsz_binder::SemanticDefKind::Class),
     );
 
     let store = DefinitionStore::from_semantic_defs_with_overlays(&base, [&overlay], |s| {
@@ -91,7 +91,7 @@ fn test_definition_store_semantic_def_overlays_override_base_without_losing_base
         .and_then(|def_id| store.get(def_id))
         .expect("overlay semantic def should be registered");
     assert_eq!(overlay_def.name, interner.intern_string("OverlayWins"));
-    assert_eq!(overlay_def.file_id, Some(2));
+    assert_eq!(overlay_def.file_id, Some(1));
     assert_eq!(overlay_def.kind, DefKind::Class);
     assert!(
         store
@@ -99,6 +99,40 @@ fn test_definition_store_semantic_def_overlays_override_base_without_losing_base
             .is_none(),
         "shadowed base entry must not also register a stale definition"
     );
+}
+
+#[test]
+fn test_semantic_def_overlays_keep_same_raw_symbol_in_distinct_files() {
+    let interner = create_test_interner();
+    let mut base = rustc_hash::FxHashMap::default();
+    base.insert(
+        tsz_binder::SymbolId(2),
+        semantic_def_entry("BaseFile", 1, tsz_binder::SemanticDefKind::Interface),
+    );
+
+    let mut overlay = rustc_hash::FxHashMap::default();
+    overlay.insert(
+        tsz_binder::SymbolId(2),
+        semantic_def_entry("OverlayFile", 2, tsz_binder::SemanticDefKind::Class),
+    );
+
+    let store = DefinitionStore::from_semantic_defs_with_overlays(&base, [&overlay], |s| {
+        interner.intern_string(s)
+    });
+
+    let base_def = store
+        .lookup_by_symbol(2, 1)
+        .and_then(|def_id| store.get(def_id))
+        .expect("base file semantic def should be registered");
+    assert_eq!(base_def.name, interner.intern_string("BaseFile"));
+    assert_eq!(base_def.kind, DefKind::Interface);
+
+    let overlay_def = store
+        .lookup_by_symbol(2, 2)
+        .and_then(|def_id| store.get(def_id))
+        .expect("overlay file semantic def should be registered");
+    assert_eq!(overlay_def.name, interner.intern_string("OverlayFile"));
+    assert_eq!(overlay_def.kind, DefKind::Class);
 }
 
 #[test]
