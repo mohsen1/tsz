@@ -83,12 +83,15 @@ impl<'a> CheckerState<'a> {
         // reports TS2339 for `foo`, while `let s: string | null; s.length`
         // reports TS18047 because `length` exists on `string`.
         let (non_nullish_base, _) = self.split_nullish_type(object_type_for_access);
+        let initialized_to_declared_nullish =
+            self.explicit_nullish_initializer_matches_annotation(expression, cause);
         if property_type.is_none()
             && let Some(non_nullish_base) = non_nullish_base
             && !matches!(
                 non_nullish_base,
                 TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
             )
+            && !initialized_to_declared_nullish
             && let PropertyAccessResult::PropertyNotFound { .. } =
                 self.resolve_property_access_with_env(non_nullish_base, property_name)
         {
@@ -111,6 +114,7 @@ impl<'a> CheckerState<'a> {
         if property_type.is_none()
             && let Some(declared_receiver) =
                 self.explicit_variable_annotation_type_for_nullish_receiver(expression)
+            && !initialized_to_declared_nullish
         {
             let (declared_non_nullish, declared_nullish) =
                 self.split_nullish_type(declared_receiver);
@@ -255,6 +259,37 @@ impl<'a> CheckerState<'a> {
         &mut self,
         expression: NodeIndex,
     ) -> Option<TypeId> {
+        self.explicit_variable_annotation_and_initializer_for_nullish_receiver(expression)
+            .map(|(annotation, _)| annotation)
+    }
+
+    fn explicit_nullish_initializer_matches_annotation(
+        &mut self,
+        expression: NodeIndex,
+        cause: TypeId,
+    ) -> bool {
+        let Some((declared_receiver, initializer)) =
+            self.explicit_variable_annotation_and_initializer_for_nullish_receiver(expression)
+        else {
+            return false;
+        };
+        if initializer.is_none() {
+            return false;
+        }
+        let Some(initializer_nullish) = self
+            .literal_type_from_initializer(initializer)
+            .filter(|ty| matches!(*ty, TypeId::NULL | TypeId::UNDEFINED))
+        else {
+            return false;
+        };
+        self.type_contains_nullish_kind(cause, initializer_nullish)
+            && self.type_contains_nullish_kind(declared_receiver, initializer_nullish)
+    }
+
+    fn explicit_variable_annotation_and_initializer_for_nullish_receiver(
+        &mut self,
+        expression: NodeIndex,
+    ) -> Option<(TypeId, NodeIndex)> {
         let expr_node = self.ctx.arena.get(expression)?;
         if expr_node.kind != SyntaxKind::Identifier as u16 {
             return None;
@@ -266,10 +301,21 @@ impl<'a> CheckerState<'a> {
         let value_decl = self.ctx.binder.get_symbol(sym_id)?.value_declaration;
         let decl_node = self.ctx.arena.get(value_decl)?;
         let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let type_annotation = var_decl.type_annotation;
+        let initializer = var_decl.initializer;
         if var_decl.type_annotation.is_some() {
-            return Some(self.get_type_from_type_node(var_decl.type_annotation));
+            return Some((self.get_type_from_type_node(type_annotation), initializer));
         }
         self.jsdoc_type_annotation_for_node(value_decl)
             .or_else(|| self.jsdoc_type_annotation_for_node_inference(value_decl))
+            .map(|annotation| (annotation, initializer))
+    }
+
+    fn type_contains_nullish_kind(&self, type_id: TypeId, nullish: TypeId) -> bool {
+        if type_id == nullish {
+            return true;
+        }
+        crate::query_boundaries::common::union_members(self.ctx.types.as_type_database(), type_id)
+            .is_some_and(|members| members.contains(&nullish))
     }
 }

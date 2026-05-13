@@ -582,6 +582,9 @@ impl<'a> FlowAnalyzer<'a> {
         annotation_type: TypeId,
         nullish_type: TypeId,
     ) -> bool {
+        if self.is_assignable_to_strict_null(nullish_type, annotation_type) {
+            return true;
+        }
         if matches!(
             annotation_type,
             TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR

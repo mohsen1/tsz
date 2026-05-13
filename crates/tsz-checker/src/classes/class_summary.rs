@@ -604,6 +604,12 @@ impl<'a> CheckerState<'a> {
             if self.class_own_member_is_accessor(current_idx, target_name, target_is_static) {
                 return true;
             }
+            if self
+                .class_own_member_kind_name_only(current_idx, target_name, target_is_static)
+                .is_some()
+            {
+                return false;
+            }
             current = self.get_base_class_idx(current_idx);
         }
         false

@@ -449,18 +449,13 @@ impl<'a> CheckerState<'a> {
         // import), so the call would otherwise resolve to Success and the
         // accompanying TS2349 would be missing. See `typeOnlyMerge3.ts`.
         if callee_emitted_type_only_value_error {
-            self.error_not_callable_at(callee_type, call.expression);
             // Still evaluate arguments so downstream definite-assignment /
             // unresolved-name diagnostics still fire on argument sites.
-            let check_excess_properties = false;
-            self.collect_call_argument_types_with_context(
+            return self.error_not_callable_and_collect_any_args(
+                callee_type,
+                call.expression,
                 args,
-                |_i, _arg_count| Some(TypeId::ANY),
-                check_excess_properties,
-                None,
-                CallableContext::none(),
             );
-            return TypeId::ERROR;
         }
 
         if self.callee_name_conflicts_with_namespace_module(call.expression) {
