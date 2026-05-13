@@ -85,14 +85,13 @@ struct InternCacheEntry {
 
 /// Combined thread-local cache for both `lookup()` and `intern()` directions.
 ///
-/// Uses `Cell<[T; N]>` for interior mutability. Both cache entry types are
-/// `Copy`, so `Cell::as_array_of_cells()` gives us per-slot `get`/`set` that
-/// lowers to the same single load / single store as a raw pointer deref —
+/// Uses per-slot `Cell<T>` values for interior mutability. Both cache entry
+/// types are `Copy`, so each probe/insert remains one direct slot `get`/`set`
 /// with no `unsafe` and no manual `Send`/`Sync` impls. The cache is reached
 /// only through `thread_local!`, which requires neither bound.
 struct TypeInternerCache {
-    lookup: Cell<[LookupCacheEntry; LOOKUP_CACHE_SIZE]>,
-    intern: Cell<[InternCacheEntry; INTERN_CACHE_SIZE]>,
+    lookup: [Cell<LookupCacheEntry>; LOOKUP_CACHE_SIZE],
+    intern: [Cell<InternCacheEntry>; INTERN_CACHE_SIZE],
 }
 
 const EMPTY_LOOKUP_ENTRY: LookupCacheEntry = LookupCacheEntry {
@@ -112,15 +111,15 @@ const EMPTY_INTERN_ENTRY: InternCacheEntry = InternCacheEntry {
 impl TypeInternerCache {
     const fn new() -> Self {
         Self {
-            lookup: Cell::new([EMPTY_LOOKUP_ENTRY; LOOKUP_CACHE_SIZE]),
-            intern: Cell::new([EMPTY_INTERN_ENTRY; INTERN_CACHE_SIZE]),
+            lookup: [const { Cell::new(EMPTY_LOOKUP_ENTRY) }; LOOKUP_CACHE_SIZE],
+            intern: [const { Cell::new(EMPTY_INTERN_ENTRY) }; INTERN_CACHE_SIZE],
         }
     }
 
     #[inline(always)]
     const fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        let entry = self.lookup.as_array_of_cells()[idx].get();
+        let entry = self.lookup[idx].get();
         if entry.tag == id.0 && entry.instance_id == instance_id {
             Some(entry.data)
         } else {
@@ -131,7 +130,7 @@ impl TypeInternerCache {
     #[inline(always)]
     fn lookup_insert(&self, id: TypeId, instance_id: u32, data: TypeData) {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        self.lookup.as_array_of_cells()[idx].set(LookupCacheEntry {
+        self.lookup[idx].set(LookupCacheEntry {
             tag: id.0,
             instance_id,
             data,
@@ -141,7 +140,7 @@ impl TypeInternerCache {
     #[inline(always)]
     fn intern_probe(&self, hash: u64, instance_id: u32, key: &TypeData) -> Option<TypeId> {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
-        let entry = self.intern.as_array_of_cells()[idx].get();
+        let entry = self.intern[idx].get();
         if entry.hash == hash && entry.instance_id == instance_id && &entry.key == key {
             Some(entry.result)
         } else {
@@ -152,7 +151,7 @@ impl TypeInternerCache {
     #[inline(always)]
     fn intern_insert(&self, hash: u64, instance_id: u32, key: TypeData, result: TypeId) {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
-        self.intern.as_array_of_cells()[idx].set(InternCacheEntry {
+        self.intern[idx].set(InternCacheEntry {
             hash,
             instance_id,
             key,
@@ -179,10 +178,10 @@ static NEXT_INTERNER_INSTANCE_ID: AtomicU32 = AtomicU32::new(1);
 /// causing incorrect type resolution and panics.
 pub fn clear_thread_local_cache() {
     TL_CACHE.with(|cache| {
-        for cell in cache.lookup.as_array_of_cells() {
+        for cell in &cache.lookup {
             cell.set(EMPTY_LOOKUP_ENTRY);
         }
-        for cell in cache.intern.as_array_of_cells() {
+        for cell in &cache.intern {
             cell.set(EMPTY_INTERN_ENTRY);
         }
     });
