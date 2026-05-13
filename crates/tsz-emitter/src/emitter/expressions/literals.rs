@@ -461,6 +461,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if let Some(recovered) = self.recovered_missing_object_property_value_text(node) {
+            self.write(&recovered);
+            return;
+        }
+
         let emitted_properties: Vec<NodeIndex> = obj
             .elements
             .nodes
@@ -1120,6 +1125,41 @@ impl<'a> Printer<'a> {
         }
 
         Some(format!("{{ return: {value} }}"))
+    }
+
+    fn recovered_missing_object_property_value_text(&self, node: &Node) -> Option<String> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let start = std::cmp::min(node.pos as usize, bytes.len());
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        if start >= end {
+            return None;
+        }
+
+        let open = bytes[start..end].iter().position(|&b| b == b'{')? + start;
+        let source_after_open = text.get(open + 1..end)?;
+        let mut lines = source_after_open
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with("/*"));
+        let first = lines.next()?;
+        let second = lines.next()?;
+        if !first.ends_with(':') {
+            return None;
+        }
+        let name = first.trim_end_matches(':').trim();
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+        {
+            return None;
+        }
+        if second != "return;" {
+            return None;
+        }
+
+        Some(format!("{{ {name}: ,\n    return:  }}"))
     }
 
     /// Emit object literal with spread elements as `Object.assign()` for pre-ES2018 targets.
