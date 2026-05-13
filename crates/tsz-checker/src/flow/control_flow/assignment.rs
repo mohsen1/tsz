@@ -11,7 +11,8 @@ use crate::query_boundaries::common::{
 };
 use crate::query_boundaries::flow_analysis::{
     array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
-    get_array_element_type, get_lazy_def_id, is_assignable, is_assignable_with_env,
+    get_array_element_type, get_lazy_def_id, is_assignable,
+    is_assignable_strict_null as is_assignable_to_strict_null, is_assignable_with_env,
     tuple_elements_for_type, union_members_for_type, widen_literal_to_primitive,
 };
 use crate::query_boundaries::type_computation::core::BinaryOpResult;
@@ -1813,7 +1814,7 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(env) = &self.type_environment {
             is_assignable_with_env(self.interner, &env.borrow(), source, member, true)
         } else {
-            is_assignable(self.interner, source, member)
+            is_assignable_to_strict_null(self.interner, source, member)
         }
     }
 

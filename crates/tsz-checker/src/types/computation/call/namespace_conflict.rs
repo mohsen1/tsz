@@ -1,0 +1,39 @@
+use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+
+impl<'a> CheckerState<'a> {
+    pub(super) fn callee_name_conflicts_with_namespace_module(&self, callee: NodeIndex) -> bool {
+        let Some(callee_ident) = self.ctx.arena.get_identifier_at(callee) else {
+            return false;
+        };
+        if !self
+            .ctx
+            .import_conflict_names
+            .contains(callee_ident.escaped_text.as_str())
+        {
+            return false;
+        }
+
+        self.ctx
+            .binder
+            .get_symbols()
+            .find_all_by_name(&callee_ident.escaped_text)
+            .iter()
+            .copied()
+            .any(|candidate_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(candidate_id)
+                    .is_some_and(|candidate| {
+                        candidate.has_any_flags(symbol_flags::MODULE)
+                            && candidate.declarations.iter().copied().any(|decl_idx| {
+                                self.ctx.arena.get(decl_idx).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                })
+                            })
+                    })
+            })
+    }
+}
