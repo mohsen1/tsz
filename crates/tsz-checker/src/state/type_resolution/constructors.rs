@@ -1145,6 +1145,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if self.heritage_call_has_invalid_mixin_constructor_constraint(expr_idx) {
+            if should_cache {
+                self.ctx
+                    .base_instance_expr_cache
+                    .borrow_mut()
+                    .insert(expr_idx, None);
+            }
+            return None;
+        }
+
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
         let mut resolved = self.instance_type_from_constructor_type(ctor_type);
         if self.ctx.is_js_file()
