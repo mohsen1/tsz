@@ -917,17 +917,34 @@ fn jsx_react_component_type_union_does_not_emit_ts2786() {
         declare namespace React {
             type ReactNode = ReactElement<any> | string | number | null;
             interface ReactElement<P> { props: P; }
+            type ComponentState = any;
+            type ValidationMap<T> = any;
+            type RefObject<T> = { readonly current: T | null };
+            type Ref<T> = string | { bivarianceHack(instance: T | null): any }["bivarianceHack"] | RefObject<T>;
+            type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+            interface StaticLifecycle<P, S> {}
             interface Component<P = {}, S = {}> {
-                props: Readonly<P>;
+                readonly props: Readonly<{ children?: ReactNode }> & Readonly<P>;
+                state: Readonly<S>;
+                context: any;
+                refs: { [key: string]: any };
                 render(): ReactNode;
             }
-            interface ComponentClass<P = {}, S = {}> {
+            interface ComponentClass<P = {}, S = ComponentState> extends StaticLifecycle<P, S> {
                 new(props: P, context?: any): Component<P, S>;
+                propTypes?: ValidationMap<P>;
+                contextTypes?: ValidationMap<any>;
+                defaultProps?: Partial<P>;
+                displayName?: string;
             }
-            interface FunctionComponent<P = {}> {
+            interface StatelessComponent<P = {}> {
                 (props: P & { children?: ReactNode }, context?: any): ReactElement<any> | null;
+                propTypes?: ValidationMap<P>;
+                contextTypes?: ValidationMap<any>;
+                defaultProps?: Partial<P>;
+                displayName?: string;
             }
-            type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>;
+            type ComponentType<P = {}> = ComponentClass<P> | StatelessComponent<P>;
         }
         interface P1 {
             p?: boolean;

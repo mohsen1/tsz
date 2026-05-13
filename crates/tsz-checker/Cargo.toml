@@ -58,6 +58,10 @@ name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
 [[test]]
+name = "optional_chain_literal_nullish_ts2339_tests"
+path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
+
+[[test]]
 name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
@@ -564,6 +568,10 @@ path = "tests/ts2344_class_constructor_constraint.rs"
 [[test]]
 name = "ts2344_accessor_constraint"
 path = "tests/ts2344_accessor_constraint.rs"
+
+[[test]]
+name = "ts2340_super_accessor_tests"
+path = "tests/ts2340_super_accessor_tests.rs"
 
 [[test]]
 name = "ts2344_infer_conditional_constraint"
