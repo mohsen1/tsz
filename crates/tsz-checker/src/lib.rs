@@ -538,6 +538,9 @@ mod never_initializer_falls_through_tests;
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
 #[cfg(test)]
+#[path = "../tests/new_expression_source_display_tests.rs"]
+mod new_expression_source_display_tests;
+#[cfg(test)]
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;
 #[cfg(test)]
