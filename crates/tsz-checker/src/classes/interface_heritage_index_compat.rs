@@ -186,7 +186,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .get_binder_for_arena(decl_arena)
                         .unwrap_or(self.ctx.binder);
-                    let Some(parent_sym) = self.resolve_heritage_symbol_in_arena(
+                    let Some(parent_sym) = Self::resolve_heritage_symbol_in_arena(
                         decl_arena,
                         heritage_binder,
                         expr_idx,
@@ -204,7 +204,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_heritage_symbol_in_arena(
-        &self,
         arena: &NodeArena,
         binder: &BinderState,
         expr_idx: NodeIndex,
@@ -220,7 +219,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let access = arena.get_access_expr_at(expr_idx)?;
-        let left_sym = self.resolve_heritage_symbol_in_arena(arena, binder, access.expression)?;
+        let left_sym = Self::resolve_heritage_symbol_in_arena(arena, binder, access.expression)?;
         let name = arena
             .get_identifier_at(access.name_or_argument)
             .map(|ident| ident.escaped_text.clone())?;

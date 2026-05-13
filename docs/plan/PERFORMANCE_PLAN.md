@@ -1247,6 +1247,17 @@ with the remaining utility aliases still in the declaration-file residue table;
 see
 [`perf-runs/2026-05-13-actual-lib-alias-proof-result-attribution.md`](perf-runs/2026-05-13-actual-lib-alias-proof-result-attribution.md).
 
+**2026-05-13 value-bearing interface follow-up:** the current-main
+transplant of the selected actual-lib value-interface slice admits only
+`Function`, `Object`, and `RegExp` through `direct_actual_lib_symbol_type`.
+Generic utility aliases, `PropertyKey`, `Iterator`, `Locale`, and namespace or
+heritage-sensitive residues stay on fallback paths. On monorepo-006 this drops
+`DelegateCrossArenaSymbol` child-checkers from 26 to 23,
+`checker.with_parent_cache_constructed` from 29 to 26, and `delegate.misses`
+from 28 to 25 with unchanged diagnostics (`10,198`). Decision record:
+[`perf-runs/2026-05-13-delegate-actual-lib-value-interfaces-main.md`](perf-runs/2026-05-13-delegate-actual-lib-value-interfaces-main.md).
+Claim: [`claims/perf-actual-lib-value-interfaces-main-2026-05-13.md`](claims/perf-actual-lib-value-interfaces-main-2026-05-13.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`

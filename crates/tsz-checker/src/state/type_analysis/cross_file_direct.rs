@@ -116,6 +116,7 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
             | "NumberFormatOptionsCurrencyDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
+            | "Object"
             | "RegExpStringIterator"
             | "StringIterator"
     )
@@ -123,6 +124,10 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
 
 fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
     matches!(name, "CollatorOptions")
+}
+
+fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
+    matches!(name, "Function" | "Object" | "RegExp")
 }
 
 impl<'a> CheckerState<'a> {
@@ -321,7 +326,9 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
-        if symbol.has_any_flags(symbol_flags::VALUE) {
+        if symbol.has_any_flags(symbol_flags::VALUE)
+            && !is_direct_actual_lib_value_interface_name(&name)
+        {
             return None;
         }
         // Generic lib utility aliases stay on fallback so application/indexed-access
@@ -1167,6 +1174,66 @@ mod tests {
             params.len(),
             "cache hits must preserve generic application metadata",
         );
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
+        let lib_files = load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts", "es2020.intl.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        for name in ["Function", "Object", "RegExp"] {
+            let sym_id = state
+                .ctx
+                .binder
+                .file_locals
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
+            let delegate_arena = state
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map(std::convert::AsRef::as_ref);
+
+            let (ty, _) = state
+                .direct_actual_lib_symbol_type(
+                    sym_id,
+                    CrossArenaSymbolMissSource::SymbolArena,
+                    delegate_arena,
+                    false,
+                )
+                .unwrap_or_else(|| panic!("{name} should lower through the direct lib path"));
+
+            assert_ne!(ty, TypeId::UNKNOWN, "{name} must not lower to unknown");
+            assert_ne!(ty, TypeId::ERROR, "{name} must not lower to error");
+            assert!(
+                state.ctx.lib_delegation_cache.contains_key(&sym_id),
+                "{name} should populate the delegation cache",
+            );
+        }
     }
 
     #[test]
