@@ -665,6 +665,97 @@ fn test_instantiate_mapped_type_shadowed_param() {
 }
 
 #[test]
+fn test_instantiate_mapped_with_lazy_application_in_as_clause_defers() {
+    // The instantiator's `NoopResolver` cannot resolve Lazy alias references,
+    // so eagerly evaluating an instantiated mapped type whose `name_type`
+    // embeds `Application(Lazy(_), ...)` (e.g. `as ... extends Pick<T, K> ?
+    // K : never`) would collapse the unresolvable Pick application to
+    // `never` and silently drop every key. The instantiator must defer
+    // evaluation to the outer evaluator (which has a real `TypeResolver`).
+    //
+    // Adjacent-case coverage: this test renames the iteration variable from
+    // `K` to `P` to prove the fix is structural, not name-based.
+    use crate::types::{ConditionalType, MappedType, PropertyInfo, Visibility};
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let p_name = interner.intern_string("P");
+    let a_name = interner.intern_string("a");
+
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param_info);
+    let keyof_t = interner.keyof(t_type);
+    let p_param_info = TypeParamInfo {
+        name: p_name,
+        constraint: Some(keyof_t),
+        default: None,
+        is_const: false,
+    };
+    let p_type = interner.type_param(p_param_info);
+
+    // name_type = `{} extends Pick<T, P> ? P : never` with Pick as a Lazy alias.
+    let empty_obj = interner.object(vec![]);
+    let pick_base = interner.lazy(DefId(99));
+    let pick_app = interner.application(pick_base, vec![t_type, p_type]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: empty_obj,
+        extends_type: pick_app,
+        true_type: p_type,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    // template = T[P]
+    let template = interner.index_access(t_type, p_type);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: p_param_info,
+        constraint: keyof_t,
+        name_type: Some(cond),
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T -> concrete object { a: number }.
+    let obj_prop = PropertyInfo {
+        name: a_name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let obj = interner.object(vec![obj_prop]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, obj);
+    let result = instantiate_type(&interner, mapped, &subst);
+
+    // The instantiator must leave the mapped type unevaluated. If it
+    // eagerly evaluated under `NoopResolver`, `Pick<{a: number}, P>` would
+    // resolve to `never` and the mapped type would collapse to `never` or
+    // an empty object.
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
+        "expected deferred Mapped; got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
 fn test_instantiation_depth_limit_returns_error() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");

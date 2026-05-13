@@ -182,9 +182,12 @@ impl<'a> InferenceContext<'a> {
                 }
             }
 
-            // Array types: recurse into element types
+            // Array types: recurse into element types.
             (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
+                let prev = self.in_array_element_context;
+                self.in_array_element_context = true;
                 self.infer_from_types(source_elem, target_elem, priority)?;
+                self.in_array_element_context = prev;
             }
 
             // Tuple types: recurse into elements

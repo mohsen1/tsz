@@ -456,7 +456,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.array_like_element_for_constraint(source),
             self.array_like_element_for_constraint(target),
         ) {
+            let prev = ctx.in_array_element_context;
+            ctx.in_array_element_context = true;
             self.constrain_types(ctx, var_map, source_elem, target_elem, priority);
+            ctx.in_array_element_context = prev;
             return;
         }
 
