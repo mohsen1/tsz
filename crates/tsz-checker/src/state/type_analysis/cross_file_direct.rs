@@ -48,6 +48,33 @@ fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
     })
 }
 
+fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
+    let basename = std::path::Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(file_name);
+    let stem = basename
+        .strip_suffix(".generated.d.ts")
+        .or_else(|| basename.strip_suffix(".d.ts"))
+        .unwrap_or(basename);
+    let stem = stem.strip_prefix("lib.").unwrap_or(stem);
+
+    stem == "dom"
+        || stem.starts_with("dom.")
+        || stem == "webworker"
+        || stem.starts_with("webworker.")
+}
+
+fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
+    arena.source_files.first().is_some_and(|source_file| {
+        if !source_file.is_declaration_file {
+            return false;
+        }
+        is_builtin_lib_file_name(&source_file.file_name)
+            && !is_dom_like_builtin_lib_file_name(&source_file.file_name)
+    })
+}
+
 fn is_external_package_declaration_file_name(file_name: &str) -> bool {
     file_name.starts_with("node_modules/")
         || file_name.starts_with("node_modules\\")
@@ -70,25 +97,16 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .is_some_and(|source_file| !source_file.is_declaration_file)
 }
 
-fn is_direct_actual_lib_interface_name(name: &str) -> bool {
-    matches!(
-        name,
-        "BigIntToLocaleStringOptions"
-            | "CollatorOptions"
-            | "DateTimeFormatOptions"
-            | "Locale"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
-    )
+fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
+    matches!(name, "CollatorOptions")
 }
 
 impl<'a> CheckerState<'a> {
-    fn symbol_declarations_are_builtin_lib_only(
+    fn symbol_declarations_are_direct_actual_lib_only(
         &self,
         sym_id: SymbolId,
         symbol: &tsz_binder::Symbol,
+        name: &str,
     ) -> bool {
         !symbol.declarations.is_empty()
             && symbol.declarations.iter().all(|&decl_idx| {
@@ -98,11 +116,37 @@ impl<'a> CheckerState<'a> {
                     .get(&(sym_id, decl_idx))
                     .is_some_and(|arenas| {
                         !arenas.is_empty()
-                            && arenas
-                                .iter()
-                                .all(|arena| is_builtin_lib_declaration_arena(arena.as_ref()))
+                            && arenas.iter().all(|arena| {
+                                is_direct_actual_lib_declaration_arena(arena.as_ref())
+                                    && Self::lib_declaration_name_matches(
+                                        arena.as_ref(),
+                                        decl_idx,
+                                        name,
+                                    )
+                            })
                     })
             })
+    }
+
+    fn lib_declaration_name_matches(arena: &NodeArena, decl_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let name_node = arena
+            .get_interface(node)
+            .map(|decl| decl.name)
+            .or_else(|| arena.get_type_alias(node).map(|decl| decl.name))
+            .or_else(|| arena.get_class(node).map(|decl| decl.name))
+            .or_else(|| arena.get_function(node).map(|decl| decl.name))
+            .or_else(|| arena.get_enum(node).map(|decl| decl.name))
+            .or_else(|| arena.get_module(node).map(|decl| decl.name))
+            .or_else(|| arena.get_variable_declaration(node).map(|decl| decl.name));
+        name_node.is_some_and(|name_node| {
+            arena
+                .get(name_node)
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .is_some_and(|ident| ident.escaped_text == name)
+        })
     }
 
     pub(super) fn direct_actual_lib_symbol_type(
@@ -114,7 +158,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         if needs_cross_file_delegation
             || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
-            || !delegate_arena.is_some_and(is_builtin_lib_declaration_arena)
+            || !delegate_arena.is_some_and(is_direct_actual_lib_declaration_arena)
             || !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
         {
             return None;
@@ -127,25 +171,32 @@ impl<'a> CheckerState<'a> {
         if symbol.has_any_flags(symbol_flags::VALUE) {
             return None;
         }
+        // Lib utility aliases must stay on the existing lazy alias path so
+        // application/indexed-access behavior sees the declared alias shape.
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return None;
         }
-        if symbol.declarations.len() != 1 {
-            return None;
-        }
-        if !self.symbol_declarations_are_builtin_lib_only(sym_id, symbol) {
-            return None;
-        }
         let name = symbol.escaped_name.clone();
-        if !is_direct_actual_lib_interface_name(&name) {
+        if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name) {
             return None;
         }
-        let direct_type = self.resolve_lib_type_by_name(&name);
-        let params = Vec::new();
-        let direct_type = direct_type?;
+        let direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
+            if !is_direct_actual_intl_lib_interface_name(&name) {
+                return None;
+            }
+            let namespace_sym_id = self.resolve_lib_namespace_export_symbol("Intl", &name)?;
+            if namespace_sym_id != sym_id {
+                return None;
+            }
+            let cache_name = format!("Intl.{name}");
+            self.resolve_lib_interface_type_by_symbol(&cache_name, namespace_sym_id)
+        })?;
         if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
             return None;
         }
+        let params = self.get_type_params_for_symbol(sym_id);
+        self.ctx.symbol_types.insert(sym_id, direct_type);
+        self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
         Some((direct_type, params))
     }
 
@@ -636,12 +687,13 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
-    use crate::context::{CheckerContext, CheckerOptions};
+    use crate::context::{CheckerContext, CheckerOptions, LibContext};
     use crate::state::CheckerState;
+    use crate::test_utils::load_lib_files;
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_parser::parser::{ParserState, syntax_kind_ext};
-    use tsz_solver::TypeInterner;
+    use tsz_solver::{TypeId, TypeInterner};
 
     fn parse_interface_declarations(
         source: &str,
@@ -676,7 +728,18 @@ mod tests {
         Arc<BinderState>,
         TypeInterner,
     ) {
-        let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
+        parse_bound_source_with_name("fixture.ts", source)
+    }
+
+    fn parse_bound_source_with_name(
+        file_name: &str,
+        source: &str,
+    ) -> (
+        Arc<tsz_parser::parser::node::NodeArena>,
+        Arc<BinderState>,
+        TypeInterner,
+    ) {
+        let mut parser = ParserState::new(file_name.to_string(), source.to_string());
         let root = parser.parse_source_file();
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
@@ -825,5 +888,44 @@ mod tests {
                 )
                 .is_none(),
         );
+    }
+
+    #[test]
+    fn resolves_intl_namespace_exported_lib_interface_directly() {
+        let lib_files = load_lib_files(&["es5.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+        let sym_id = state
+            .resolve_lib_namespace_export_symbol("Intl", "CollatorOptions")
+            .expect("Intl.CollatorOptions export should resolve");
+
+        let ty = state
+            .resolve_lib_interface_type_by_symbol("Intl.CollatorOptions", sym_id)
+            .expect("Intl.CollatorOptions should lower directly");
+
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
     }
 }

@@ -23,6 +23,7 @@ jobs:
     name: Re-run CI
     if: |
       github.event.issue.pull_request != null &&
+      github.event.issue.state == 'open' &&
       (
         contains(github.event.comment.body, '/retest') ||
         contains(github.event.comment.body, '/ci')

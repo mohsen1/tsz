@@ -11,6 +11,7 @@ use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::diagnostic_codes as project_diagnostic_codes;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -1902,7 +1903,7 @@ export class Foo<T> extends Base<T> {
         },
     );
 
-    let codes: Vec<_> = diagnostics.iter().map(|(code, _)| *code).collect();
+    let codes = project_diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected outer TS2322 for generic Object.assign initializer, got: {diagnostics:?}"
@@ -1930,7 +1931,7 @@ const res: (() => void) & { func: any } = assign(() => {}, { func });
         },
     );
 
-    let codes: Vec<_> = diagnostics.iter().map(|(code, _)| *code).collect();
+    let codes = project_diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
         "Expected inner TS2769 for generic Object.assign helper, got: {diagnostics:?}"
@@ -4331,7 +4332,7 @@ fn test_ts2322_array_not_assignable_to_interface_extending_array_with_extra_prop
     assert!(
         !assignability_errors.is_empty(),
         "Expected TS2322/TS2741/TS2739 when assigning string[] to interface extending ReadonlyArray with extra properties. All diagnostics: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        project_diagnostic_codes(&diagnostics)
     );
 }
 

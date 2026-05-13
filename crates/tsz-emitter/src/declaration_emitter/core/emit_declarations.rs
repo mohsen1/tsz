@@ -1162,7 +1162,10 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&type_text);
                 } else if let Some((type_text, substituted_parameter_type_query)) =
                     scoped_preferred_return.as_ref()
+                    && let Some(func_name_text) = self.get_identifier_text(func_name)
+                    && let printed_return_type = self.print_type_id(effective_return_type_id)
                     && (direct_function_return
+                        || printed_return_type == format!("ReturnType<typeof {func_name_text}>")
                         || self.should_prefer_source_return_type_text(
                             preferred_return.as_deref().unwrap_or(type_text),
                             effective_return_type_id,
@@ -1252,14 +1255,7 @@ impl<'a> DeclarationEmitter<'a> {
                         && !tp.nodes.is_empty()
                     {
                         let printed_type_text =
-                            self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
-                        let printed_type_text = self
-                            .restore_mapped_return_type_param_constraints(func, &printed_type_text);
-                        let printed_type_text = self
-                            .rewrite_returned_auto_accessor_parameter_unknowns(
-                                func,
-                                &printed_type_text,
-                            );
+                            self.inferred_function_return_type_text(func, effective_return_type_id);
                         let printed_type_text = self
                             .expand_rest_tuple_parameters_in_function_type_text(
                                 func_body,

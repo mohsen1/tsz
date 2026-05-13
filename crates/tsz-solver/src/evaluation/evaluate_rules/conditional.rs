@@ -283,6 +283,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.eval_conditional_array_infer(cond, check_unwrapped, info);
                     }
                 }
+                Some(TypeData::Application(app_id)) => {
+                    if let Some(info) = self.application_array_infer_pattern(app_id) {
+                        return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+                    }
+                }
                 Some(TypeData::Tuple(extends_elements)) => {
                     let extends_elements = self.interner().tuple_list(extends_elements);
                     if extends_elements.len() == 1
@@ -306,6 +311,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 _ => {}
+            }
+
+            let raw_extends_unwrapped = match self.interner().lookup(cond.extends_type) {
+                Some(TypeData::ReadonlyType(inner)) => inner,
+                _ => cond.extends_type,
+            };
+            if raw_extends_unwrapped != extends_unwrapped
+                && let Some(TypeData::Application(app_id)) =
+                    self.interner().lookup(raw_extends_unwrapped)
+                && let Some(info) = self.application_array_infer_pattern(app_id)
+            {
+                return self.eval_conditional_array_infer(cond, check_unwrapped, info);
             }
 
             // Step 2: Check for naked type parameter
@@ -580,6 +597,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         );
                     }
                     return self.evaluate(substituted_true);
+                }
+
+                if self.infer_pattern_has_unresolved_application(cond.extends_type)
+                    || (extends_type != cond.extends_type
+                        && self.infer_pattern_has_unresolved_application(extends_type))
+                {
+                    // Lib-backed patterns can be seen before their base is
+                    // resolved. Keep the conditional deferred rather than
+                    // caching the false branch for e.g. Array<infer U>.
+                    return self.interner().conditional(ConditionalType {
+                        check_type,
+                        extends_type,
+                        true_type: cond.true_type,
+                        false_type: cond.false_type,
+                        is_distributive: cond.is_distributive,
+                    });
                 }
 
                 // Infer pattern didn't match on check_type directly.
@@ -1146,6 +1179,87 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Combine results into a union
         self.interner().union_from_slice(&results)
+    }
+
+    fn infer_pattern_has_unresolved_application(&mut self, type_id: TypeId) -> bool {
+        let mut visited = FxHashSet::default();
+        self.infer_pattern_has_unresolved_application_inner(type_id, &mut visited)
+    }
+
+    fn infer_pattern_has_unresolved_application_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if type_id.is_intrinsic() || !visited.insert(type_id) {
+            return false;
+        }
+
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner().type_application(app_id);
+                let app_args_contain_infer =
+                    app.args.iter().any(|&arg| self.type_contains_infer(arg));
+                if app_args_contain_infer && self.application_base_is_unresolved(app.base) {
+                    return true;
+                }
+                app.args
+                    .iter()
+                    .any(|&arg| self.infer_pattern_has_unresolved_application_inner(arg, visited))
+            }
+            Some(
+                TypeData::Array(elem) | TypeData::ReadonlyType(elem) | TypeData::NoInfer(elem),
+            ) => self.infer_pattern_has_unresolved_application_inner(elem, visited),
+            Some(TypeData::Tuple(elements)) => {
+                self.interner().tuple_list(elements).iter().any(|elem| {
+                    self.infer_pattern_has_unresolved_application_inner(elem.type_id, visited)
+                })
+            }
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
+                self.interner().type_list(members).iter().any(|&member| {
+                    self.infer_pattern_has_unresolved_application_inner(member, visited)
+                })
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                shape.properties.iter().any(|prop| {
+                    self.infer_pattern_has_unresolved_application_inner(prop.type_id, visited)
+                }) || shape.string_index.as_ref().is_some_and(|index| {
+                    self.infer_pattern_has_unresolved_application_inner(index.value_type, visited)
+                }) || shape.number_index.as_ref().is_some_and(|index| {
+                    self.infer_pattern_has_unresolved_application_inner(index.value_type, visited)
+                })
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner().get_conditional(cond_id);
+                self.infer_pattern_has_unresolved_application_inner(cond.check_type, visited)
+                    || self
+                        .infer_pattern_has_unresolved_application_inner(cond.extends_type, visited)
+                    || self.infer_pattern_has_unresolved_application_inner(cond.true_type, visited)
+                    || self.infer_pattern_has_unresolved_application_inner(cond.false_type, visited)
+            }
+            _ => false,
+        }
+    }
+
+    fn application_array_infer_pattern(
+        &self,
+        app_id: crate::types::TypeApplicationId,
+    ) -> Option<TypeParamInfo> {
+        let app = self.interner().type_application(app_id);
+        if app.args.len() != 1 {
+            return None;
+        }
+        let Some(TypeData::Infer(info)) = self.interner().lookup(app.args[0]) else {
+            return None;
+        };
+
+        let is_array_like_pattern = self.application_base_name_is(app.base, "Array")
+            || self.application_base_name_is(app.base, "ReadonlyArray")
+            || self.application_base_has_array_shape(app.base, false)
+            || self.application_base_has_array_shape(app.base, true);
+
+        is_array_like_pattern.then_some(info)
     }
 
     /// Handle array extends pattern: T extends (infer U)[] ? ...

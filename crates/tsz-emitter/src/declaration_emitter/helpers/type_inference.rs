@@ -274,269 +274,6 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    pub(in crate::declaration_emitter) fn call_expression_returned_local_class_constructor_text(
-        &self,
-        expr_idx: NodeIndex,
-        arrow_form: bool,
-    ) -> Option<String> {
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-        let call = self.arena.get_call_expr(expr_node)?;
-        let sym_id = self.value_reference_symbol(call.expression)?;
-        let binder = self.binder?;
-        let symbol = binder.symbols.get(sym_id)?;
-        let source_arena = binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(|arena| arena.as_ref())
-            .unwrap_or(self.arena);
-        if !std::ptr::eq(source_arena, self.arena) {
-            return None;
-        }
-
-        for decl_idx in symbol.declarations.iter().copied() {
-            let Some(func) = self.callable_function_from_symbol_decl(self.arena, decl_idx) else {
-                continue;
-            };
-            let (class_idx, base_param_index) =
-                self.function_returned_local_class_extends_parameter(func)?;
-            let args = call.arguments.as_ref()?;
-            let base_arg = args.nodes.get(base_param_index).copied()?;
-            let base_type_text =
-                self.direct_value_reference_typeof_text(base_arg)
-                    .or_else(|| {
-                        self.nameable_constructor_expression_text(base_arg)
-                            .map(|name| format!("typeof {name}"))
-                    })?;
-            return self.local_class_constructor_type_text_from_ast(
-                class_idx,
-                Some(&base_type_text),
-                arrow_form,
-            );
-        }
-
-        None
-    }
-
-    fn function_returned_local_class_extends_parameter(
-        &self,
-        func: &tsz_parser::parser::node::FunctionData,
-    ) -> Option<(NodeIndex, usize)> {
-        let body_node = self.arena.get(func.body)?;
-        let block = self.arena.get_block(body_node)?;
-
-        let returned = block
-            .statements
-            .nodes
-            .iter()
-            .copied()
-            .find_map(|stmt_idx| {
-                let stmt_node = self.arena.get(stmt_idx)?;
-                if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
-                    return None;
-                }
-                let ret = self.arena.get_return_statement(stmt_node)?;
-                if !ret.expression.is_some() {
-                    return None;
-                }
-                self.skip_parenthesized_expression(ret.expression)
-            })?;
-
-        let returned_node = self.arena.get(returned)?;
-        let class_idx = if returned_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
-            returned
-        } else if returned_node.kind == SyntaxKind::Identifier as u16 {
-            let returned_name = self.get_identifier_text(returned)?;
-            block.statements.nodes.iter().copied().find(|&stmt_idx| {
-                let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                    return false;
-                };
-                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
-                    return false;
-                }
-                self.arena
-                    .get_class(stmt_node)
-                    .and_then(|class| self.get_identifier_text(class.name))
-                    .as_deref()
-                    == Some(returned_name.as_str())
-            })?
-        } else {
-            return None;
-        };
-
-        let class_node = self.arena.get(class_idx)?;
-        let class = self.arena.get_class(class_node)?;
-        let heritage_clauses = class.heritage_clauses.as_ref()?;
-        for clause_idx in heritage_clauses.nodes.iter().copied() {
-            let heritage = self.arena.get_heritage_clause_at(clause_idx)?;
-            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                continue;
-            }
-            let base_idx = heritage.types.nodes.first().copied()?;
-            let base_node = self.arena.get(base_idx)?;
-            let base_expr = self
-                .arena
-                .get_expr_type_args(base_node)
-                .map(|expr| expr.expression)
-                .unwrap_or(base_idx);
-            let base_name = self.get_identifier_text(base_expr)?;
-            for (idx, param_idx) in func.parameters.nodes.iter().copied().enumerate() {
-                let param_node = self.arena.get(param_idx)?;
-                let param = self.arena.get_parameter(param_node)?;
-                if self.get_identifier_text(param.name).as_deref() == Some(base_name.as_str()) {
-                    return Some((class_idx, idx));
-                }
-            }
-        }
-
-        None
-    }
-
-    fn function_returned_local_class_constructor_type_text(
-        &self,
-        func_idx: NodeIndex,
-    ) -> Option<String> {
-        let func_node = self.arena.get(func_idx)?;
-        let func = self.arena.get_function(func_node)?;
-        let body_node = self.arena.get(func.body)?;
-        let block = self.arena.get_block(body_node)?;
-
-        let returned = block
-            .statements
-            .nodes
-            .iter()
-            .copied()
-            .find_map(|stmt_idx| {
-                let stmt_node = self.arena.get(stmt_idx)?;
-                if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
-                    return None;
-                }
-                let ret = self.arena.get_return_statement(stmt_node)?;
-                if !ret.expression.is_some() {
-                    return None;
-                }
-                self.skip_parenthesized_expression(ret.expression)
-            })?;
-
-        let returned_node = self.arena.get(returned)?;
-        if returned_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
-            return self.class_constructor_object_type_text_from_ast(returned);
-        }
-
-        if returned_node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        let returned_name = self.get_identifier_text(returned)?;
-
-        block.statements.nodes.iter().copied().find_map(|stmt_idx| {
-            let stmt_node = self.arena.get(stmt_idx)?;
-            if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
-                return None;
-            }
-            let class = self.arena.get_class(stmt_node)?;
-            (self.get_identifier_text(class.name).as_deref() == Some(returned_name.as_str()))
-                .then(|| self.local_class_constructor_type_text_from_ast(stmt_idx, None, false))
-                .flatten()
-        })
-    }
-
-    fn class_constructor_object_type_text_from_ast(&self, class_idx: NodeIndex) -> Option<String> {
-        self.local_class_constructor_type_text_from_ast(class_idx, None, false)
-    }
-
-    fn local_class_constructor_type_text_from_ast(
-        &self,
-        class_idx: NodeIndex,
-        base_type_text: Option<&str>,
-        arrow_form: bool,
-    ) -> Option<String> {
-        let class_node = self.arena.get(class_idx)?;
-        let class = self.arena.get_class(class_node)?;
-
-        let mut params_text = String::new();
-        if let Some(ctor_idx) = class.members.nodes.iter().copied().find(|&member_idx| {
-            self.arena
-                .get(member_idx)
-                .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
-        }) {
-            let ctor = self
-                .arena
-                .get(ctor_idx)
-                .and_then(|node| self.arena.get_constructor(node))?;
-            let mut scratch = self.scratch_declaration_emitter();
-            scratch.in_constructor_params = true;
-            scratch.emit_parameters_with_body(&ctor.parameters, ctor.body);
-            scratch.in_constructor_params = false;
-            params_text = scratch.writer.take_output();
-        }
-        if params_text.is_empty() && base_type_text.is_some() {
-            params_text = "...args: any[]".to_string();
-        }
-
-        let mut member_scratch = self.scratch_declaration_emitter();
-        member_scratch.indent_level = if arrow_form {
-            self.indent_level + 1
-        } else {
-            self.indent_level + 2
-        };
-        for member_idx in class.members.nodes.iter().copied() {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            member_scratch.emit_class_member(member_idx);
-        }
-        let members = member_scratch.writer.take_output();
-        let members = Self::strip_abstract_member_modifiers(members.trim_end());
-        let members = members.as_str();
-
-        let constructor_type = if arrow_form {
-            let is_abstract = self
-                .arena
-                .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
-            let prefix = if is_abstract { "abstract new " } else { "new " };
-            if members.is_empty() {
-                format!("{prefix}({params_text}) => {{}}")
-            } else {
-                format!("{prefix}({params_text}) => {{\n{members}\n}}")
-            }
-        } else if members.is_empty() {
-            format!("{{\n    new ({params_text}): {{}};\n}}")
-        } else {
-            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
-        };
-
-        if let Some(base_type_text) = base_type_text {
-            if arrow_form {
-                Some(format!("({constructor_type}) & {base_type_text}"))
-            } else {
-                Some(format!("{constructor_type} & {base_type_text}"))
-            }
-        } else {
-            Some(constructor_type)
-        }
-    }
-
-    fn strip_abstract_member_modifiers(members: &str) -> String {
-        members
-            .lines()
-            .map(|line| {
-                let trimmed = line.trim_start();
-                if let Some(rest) = trimmed.strip_prefix("abstract ") {
-                    let indent_len = line.len() - trimmed.len();
-                    format!("{}{}", &line[..indent_len], rest)
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     pub(in crate::declaration_emitter) fn type_annotation_text_from_arena_node(
         &self,
         source_arena: &NodeArena,
@@ -2235,6 +1972,10 @@ impl<'a> DeclarationEmitter<'a> {
                 if ast_type_text
                     .as_ref()
                     .is_some_and(|type_text| type_text.contains(" & "))
+                    || self
+                        .arena
+                        .get_class(expr_node)
+                        .is_some_and(|class| class.name.is_some())
                 {
                     ast_type_text
                 } else {
@@ -2503,90 +2244,7 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn class_expression_constructor_type_text_from_ast(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
-        let expr_node = self.arena.get(expr_idx)?;
-        let class = self.arena.get_class(expr_node)?;
-        let extends_parameter_type_text =
-            self.class_expression_extends_parameter_type_text(expr_idx, class);
-
-        let mut params_text = String::new();
-        if let Some(ctor_idx) = class.members.nodes.iter().copied().find(|&member_idx| {
-            self.arena
-                .get(member_idx)
-                .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
-        }) {
-            let ctor = self
-                .arena
-                .get(ctor_idx)
-                .and_then(|node| self.arena.get_constructor(node))?;
-            let mut scratch = self.scratch_declaration_emitter();
-            scratch.in_constructor_params = true;
-            scratch.emit_parameters_with_body(&ctor.parameters, ctor.body);
-            scratch.in_constructor_params = false;
-            params_text = scratch.writer.take_output();
-        }
-        if params_text.is_empty() && extends_parameter_type_text.is_some() {
-            params_text = "...args: any[]".to_string();
-        }
-
-        let mut member_scratch = self.scratch_declaration_emitter();
-        member_scratch.indent_level = self.indent_level + 2;
-        for member_idx in class.members.nodes.iter().copied() {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            member_scratch.emit_class_member(member_idx);
-        }
-        let members = member_scratch.writer.take_output();
-        let members = members.trim_end();
-
-        let constructor_type = if members.is_empty() {
-            format!("{{\n    new ({params_text}): {{}};\n}}")
-        } else {
-            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
-        };
-
-        if let Some(base_type_text) = extends_parameter_type_text {
-            Some(format!("{constructor_type} & {base_type_text}"))
-        } else {
-            Some(constructor_type)
-        }
-    }
-
-    fn class_expression_extends_parameter_type_text(
-        &self,
-        expr_idx: NodeIndex,
-        class: &tsz_parser::parser::node::ClassData,
-    ) -> Option<String> {
-        let enclosing_func = self.enclosing_function_for_node(expr_idx)?;
-        let heritage_clauses = class.heritage_clauses.as_ref()?;
-        for clause_idx in heritage_clauses.nodes.iter().copied() {
-            let heritage = self.arena.get_heritage_clause_at(clause_idx)?;
-            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                continue;
-            }
-            let base_idx = heritage.types.nodes.first().copied()?;
-            let base_node = self.arena.get(base_idx)?;
-            let base_expr = self
-                .arena
-                .get_expr_type_args(base_node)
-                .map(|expr| expr.expression)
-                .unwrap_or(base_idx);
-            if let Some(type_text) = self.function_parameter_type_text(enclosing_func, base_expr) {
-                return Some(type_text);
-            }
-        }
-
-        None
-    }
-
-    fn enclosing_function_for_node(
+    pub(in crate::declaration_emitter) fn enclosing_function_for_node(
         &self,
         node_idx: NodeIndex,
     ) -> Option<&tsz_parser::parser::node::FunctionData> {
@@ -5640,7 +5298,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn callable_function_from_symbol_decl<'b>(
+    pub(in crate::declaration_emitter) fn callable_function_from_symbol_decl<'b>(
         &self,
         source_arena: &'b NodeArena,
         decl_idx: NodeIndex,
@@ -7061,6 +6719,10 @@ impl<'a> DeclarationEmitter<'a> {
         let (text, substituted_parameter_type_query) =
             self.substitute_function_parameter_type_queries(func, source_type_text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
+        let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
+        let text = self
+            .expand_mapped_alias_index_conditional_text(self.arena, &text)
+            .unwrap_or(text);
         let Some(ref type_params) = func.type_parameters else {
             return (text, substituted_parameter_type_query);
         };
@@ -7088,7 +6750,11 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             self.print_type_id(return_type_id)
         };
-        self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text)
+        let text = self.restore_mapped_return_type_param_constraints(func, &text);
+        let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
+        let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
+        self.expand_mapped_alias_index_conditional_text(self.arena, &text)
+            .unwrap_or(text)
     }
 
     pub(in crate::declaration_emitter) fn restore_mapped_return_type_param_constraints(
@@ -7168,6 +6834,200 @@ impl<'a> DeclarationEmitter<'a> {
             return format!("{prefix}; }}");
         }
         type_text.to_string()
+    }
+
+    fn rewrite_returned_call_conditional_unknown_subject(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> String {
+        let Some(rest) = source_type_text.strip_prefix("unknown extends ") else {
+            return source_type_text.to_string();
+        };
+        let fallback_type_param = func
+            .type_parameters
+            .as_ref()
+            .and_then(|type_params| (type_params.nodes.len() == 1).then_some(type_params.nodes[0]))
+            .and_then(|type_param_idx| self.arena.get(type_param_idx))
+            .and_then(|type_param_node| self.arena.get_type_parameter(type_param_node))
+            .and_then(|type_param| self.get_identifier_text(type_param.name));
+        let Some(return_arg_idx) = self.single_returned_call_first_argument(func.body) else {
+            return fallback_type_param
+                .map(|type_param| format!("{type_param} extends {rest}"))
+                .unwrap_or_else(|| source_type_text.to_string());
+        };
+        let Some(return_arg_name) = self.get_identifier_text(return_arg_idx) else {
+            return source_type_text.to_string();
+        };
+        let Some(type_params) = func.type_parameters.as_ref() else {
+            return source_type_text.to_string();
+        };
+        let type_param_names = self.collect_type_param_names(type_params);
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if self.get_identifier_text(param.name).as_deref() != Some(return_arg_name.as_str()) {
+                continue;
+            }
+            let Some(param_type_text) = self
+                .type_annotation_text_from_arena_node(self.arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+                .map(|text| text.trim().to_string())
+            else {
+                continue;
+            };
+            if type_param_names.iter().any(|name| name == &param_type_text) {
+                return format!("{param_type_text} extends {rest}");
+            }
+        }
+        fallback_type_param
+            .map(|type_param| format!("{type_param} extends {rest}"))
+            .unwrap_or_else(|| source_type_text.to_string())
+    }
+
+    fn single_returned_call_first_argument(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        if block.statements.nodes.len() != 1 {
+            return None;
+        }
+        let stmt_idx = block.statements.nodes[0];
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let ret = self.arena.get_return_statement(stmt_node)?;
+        let expr_idx = self.skip_parenthesized_expression(ret.expression)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        call.arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+    }
+
+    fn expand_mapped_alias_index_conditional_text(
+        &self,
+        source_arena: &NodeArena,
+        type_text: &str,
+    ) -> Option<String> {
+        let object_start = type_text.find("{ [")?;
+        let object_rest = &type_text[object_start..];
+        let object_end = object_rest.find(" ?").map(|idx| object_start + idx)?;
+        let mapped_text = object_rest.strip_prefix("{ [")?;
+        let in_pos = mapped_text.find(" in keyof ")?;
+        let key_param = mapped_text[..in_pos].trim();
+        if !Self::is_simple_identifier_text(key_param) {
+            return None;
+        }
+        let alias_start = in_pos + " in keyof ".len();
+        let mapped_tail = &mapped_text[alias_start..];
+        let alias_application_end = mapped_tail.find("]:").or_else(|| mapped_tail.find('>'))?;
+        let alias_application = mapped_tail[..alias_application_end]
+            .trim()
+            .trim_end_matches(']')
+            .trim();
+        let (alias_name, alias_arg) = Self::single_type_reference_application(alias_application)?;
+        let alias_body =
+            self.expand_single_object_type_alias_application(source_arena, alias_name, alias_arg)?;
+        Some(format!(
+            "{}{alias_body}{}",
+            &type_text[..object_start],
+            &type_text[object_end..]
+        ))
+    }
+
+    fn single_type_reference_application(type_text: &str) -> Option<(&str, &str)> {
+        let (name, rest) = type_text.split_once('<')?;
+        let arg = rest.strip_suffix('>')?;
+        let name = name.trim();
+        if !Self::is_simple_identifier_text(name) {
+            return None;
+        }
+        Some((name, arg.trim()))
+    }
+
+    fn expand_single_object_type_alias_application(
+        &self,
+        source_arena: &NodeArena,
+        alias_name: &str,
+        alias_arg: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            let Some(alias) = source_arena.get_type_alias(stmt_node) else {
+                continue;
+            };
+            if self
+                .identifier_text_from_arena(source_arena, alias.name)
+                .as_deref()
+                != Some(alias_name)
+            {
+                continue;
+            }
+            let type_params = alias.type_parameters.as_ref()?;
+            if type_params.nodes.len() != 1 {
+                return None;
+            }
+            let type_param_node = source_arena.get(type_params.nodes[0])?;
+            let type_param = source_arena.get_type_parameter(type_param_node)?;
+            let type_param_name = self.identifier_text_from_arena(source_arena, type_param.name)?;
+            let alias_text = self
+                .source_slice_from_arena(source_arena, alias.type_node)
+                .or_else(|| self.emit_type_node_text_from_arena(source_arena, alias.type_node))?;
+            let inner = alias_text
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .strip_prefix('{')?
+                .strip_suffix('}')?
+                .trim();
+            if inner.is_empty() || inner.contains('\n') {
+                return None;
+            }
+            let member = Self::replace_whole_words_in_text(
+                inner.trim_end_matches(';').trim(),
+                &[(type_param_name, alias_arg.to_string())],
+            );
+            return Some(format!("{{\n    {member};\n}}"));
+        }
+        self.expand_single_object_type_alias_application_from_source_text(
+            source_arena,
+            alias_name,
+            alias_arg,
+        )
+    }
+
+    fn expand_single_object_type_alias_application_from_source_text(
+        &self,
+        source_arena: &NodeArena,
+        alias_name: &str,
+        alias_arg: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        let marker = format!("type {alias_name}<");
+        let alias_start = source_file.text.find(&marker)?;
+        let param_start = alias_start + marker.len();
+        let param_end = source_file.text[param_start..].find('>')? + param_start;
+        let type_param_name = source_file.text[param_start..param_end].trim();
+        if !Self::is_simple_identifier_text(type_param_name) {
+            return None;
+        }
+        let after_param = &source_file.text[param_end + 1..];
+        let equals_pos = after_param.find('=')? + param_end + 1;
+        let type_start = equals_pos + 1;
+        let type_end = source_file.text[type_start..].find(';')? + type_start;
+        let alias_text = source_file.text[type_start..type_end].trim();
+        let inner = alias_text.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if inner.is_empty() || inner.contains('\n') {
+            return None;
+        }
+        let member = Self::replace_whole_words_in_text(
+            inner.trim_end_matches(';').trim(),
+            &[(type_param_name.to_string(), alias_arg.to_string())],
+        );
+        Some(format!("{{\n    {member};\n}}"))
     }
 
     fn whole_word_boundary(type_text: &str, start: usize, end: usize) -> bool {
@@ -7319,33 +7179,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         returned_object
-    }
-
-    fn direct_returned_class_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
-        let body_node = self.arena.get(body_idx)?;
-        let block = self.arena.get_block(body_node)?;
-        let mut returned_class = None;
-        for stmt_idx in block.statements.nodes.iter().copied() {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
-                continue;
-            }
-            let ret = self.arena.get_return_statement(stmt_node)?;
-            if !ret.expression.is_some() {
-                return None;
-            }
-            let expr_idx = self.skip_parenthesized_expression(ret.expression)?;
-            let expr_node = self.arena.get(expr_idx)?;
-            if expr_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
-                return None;
-            }
-            if returned_class.replace(expr_idx).is_some() {
-                return None;
-            }
-        }
-        returned_class
     }
 
     fn substitute_function_parameter_type_queries(

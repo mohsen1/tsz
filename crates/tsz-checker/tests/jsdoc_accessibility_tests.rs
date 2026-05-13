@@ -4,11 +4,7 @@
 //! trigger TS2341 (private) and TS2445 (protected) when accessed externally
 //! or from subclasses, matching tsc behavior.
 
-use crate::test_utils::check_js_source_diagnostics;
-
-fn diagnostic_codes(diagnostics: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
-    diagnostics.iter().map(|d| d.code).collect()
-}
+use crate::test_utils::{check_js_source_diagnostics, diagnostic_codes};
 
 /// @private on class property → TS2341 when accessed externally
 #[test]
