@@ -281,6 +281,42 @@ fn package_root_fallback_matches_export_star_package_internals() {
 }
 
 #[test]
+fn file_dependency_package_specifier_uses_dependency_name() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-emitter-file-dependency-specifier-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let package_a = root.join("workspace/packageA");
+    let package_c = root.join("workspace/packageC");
+    std::fs::create_dir_all(&package_a).expect("create package A");
+    std::fs::create_dir_all(&package_c).expect("create package C");
+    std::fs::write(
+        package_a.join("index.d.ts"),
+        "export declare class Foo {}\n",
+    )
+    .expect("write package A index");
+    std::fs::write(
+        package_c.join("package.json"),
+        r#"{"private":true,"dependencies":{"package-a":"file:../packageA"}}"#,
+    )
+    .expect("write package C package json");
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    parser.parse_source_file();
+    let emitter = DeclarationEmitter::new(&parser.arena);
+    let current_path = package_c.join("index.ts").to_string_lossy().into_owned();
+    let source_path = package_a.join("index.d.ts").to_string_lossy().into_owned();
+
+    assert_eq!(
+        emitter.package_specifier_for_file_dependency_path(&current_path, &source_path),
+        Some("package-a".to_string())
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn public_module_specifier_combines_relative_default_import_target() {
     assert_eq!(
         DeclarationEmitter::combine_public_module_specifier("@ts-bug/core/utils", "./SvgIcon"),
