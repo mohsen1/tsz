@@ -943,7 +943,11 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
         if var_decl.type_annotation.is_some() {
-            node_types.get(&var_decl.type_annotation.0).copied()
+            node_types
+                .get(&var_decl.type_annotation.0)
+                .copied()
+                .or_else(|| node_types.get(&assignment_node.0).copied())
+                .or_else(|| node_types.get(&var_decl.name.0).copied())
         } else {
             node_types
                 .get(&assignment_node.0)

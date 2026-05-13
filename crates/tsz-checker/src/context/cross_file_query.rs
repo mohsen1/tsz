@@ -185,6 +185,22 @@ impl<'a> CheckerContext<'a> {
         )
     }
 
+    /// Look up a cached source-file symbol-arena result that was proven
+    /// requester-independent before entering this helper.
+    ///
+    /// This keeps the program scope key so small file/symbol ids cannot be
+    /// reused across virtual programs sharing a `DefinitionStore`, but leaves
+    /// the requester slot empty so other files in the same program can reuse
+    /// stable single-declaration class/interface results.
+    pub fn cached_stable_source_file_symbol_arena_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        scope: u64,
+    ) -> Option<(tsz_solver::TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        self.cached_symbol_type_entry(sym_id, file_idx, 0, scope)
+    }
+
     fn cache_symbol_type_entry(
         &self,
         sym_id: SymbolId,
@@ -252,6 +268,19 @@ impl<'a> CheckerContext<'a> {
             type_id,
             type_params,
         );
+    }
+
+    /// Cache a proven requester-independent source-file symbol-arena result.
+    /// See [`cached_stable_source_file_symbol_arena_type`].
+    pub fn cache_stable_source_file_symbol_arena_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: u32,
+        scope: u64,
+        type_id: tsz_solver::TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        self.cache_symbol_type_entry(sym_id, file_idx, 0, scope, type_id, type_params);
     }
 
     /// Look up a cached cross-file interface-type via the canonical
@@ -610,6 +639,41 @@ mod tests {
                 scope + 1,
                 requester_file_idx
             ),
+            None
+        );
+    }
+
+    #[test]
+    fn stable_source_file_symbol_type_cache_key_uses_scope_without_requester() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let store = Arc::new(DefinitionStore::new());
+        let ctx = shared_context(&arena, &binder, &types, store);
+        let sym_id = SymbolId(11);
+        let file_idx = 7;
+        let scope = 0xCAFE_BABE_DEAD_BEEF;
+
+        ctx.cache_stable_source_file_symbol_arena_type(
+            sym_id,
+            file_idx,
+            scope,
+            TypeId::STRING,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            ctx.cached_stable_source_file_symbol_arena_type(sym_id, file_idx, scope)
+                .map(|(type_id, _)| type_id),
+            Some(TypeId::STRING)
+        );
+        assert_eq!(
+            ctx.cached_stable_source_file_symbol_arena_type(sym_id, file_idx, scope + 1),
+            None
+        );
+        assert_eq!(
+            ctx.cached_cross_file_symbol_type(sym_id, file_idx)
+                .map(|(type_id, _)| type_id),
             None
         );
     }

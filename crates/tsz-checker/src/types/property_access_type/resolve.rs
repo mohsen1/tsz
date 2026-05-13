@@ -114,6 +114,9 @@ impl<'a> CheckerState<'a> {
                 access.expression,
                 &base_ident.escaped_text,
             )
+            && self
+                .local_current_file_value_symbol_named(&base_ident.escaped_text)
+                .is_none()
         {
             if self.is_heritage_type_only_context(access.expression)
                 || self.is_in_ambient_computed_property_context()
@@ -181,6 +184,9 @@ impl<'a> CheckerState<'a> {
                 access.expression,
                 &base_ident.escaped_text,
             )
+            && self
+                .local_current_file_value_symbol_named(&base_ident.escaped_text)
+                .is_none()
         {
             self.report_wrong_meaning_diagnostic(
                 &base_ident.escaped_text,
@@ -199,6 +205,51 @@ impl<'a> CheckerState<'a> {
             skip_flow_narrowing,
         ) {
             return result;
+        }
+
+        if let Some(base_ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+            && self
+                .ctx
+                .import_conflict_names
+                .contains(&base_ident.escaped_text)
+            && let Some(namespace_sym_id) = self
+                .ctx
+                .binder
+                .get_symbols()
+                .find_all_by_name(&base_ident.escaped_text)
+                .iter()
+                .copied()
+                .find(|&candidate_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(candidate_id)
+                        .is_some_and(|candidate| {
+                            candidate.has_any_flags(symbol_flags::MODULE)
+                                && candidate.declarations.iter().copied().any(|decl_idx| {
+                                    self.ctx.arena.get(decl_idx).is_some_and(|node| {
+                                        node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                    })
+                                })
+                        })
+                })
+        {
+            let namespace_type = self.get_type_of_symbol(namespace_sym_id);
+            match self.resolve_property_access_with_env(namespace_type, &prop_ident.escaped_text) {
+                PropertyAccessResult::Success { type_id, .. }
+                | PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(type_id),
+                    ..
+                } => {
+                    return self.finalize_property_access_result(
+                        idx,
+                        type_id,
+                        skip_flow_narrowing,
+                        false,
+                    );
+                }
+                _ => {}
+            }
         }
 
         // Get the type of the object.
@@ -404,6 +455,27 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+        if let Some(receiver_ident) = self.ctx.arena.get_identifier_at(access.expression)
+            && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+            && matches!(
+                self.resolve_property_access_with_env(object_type, &prop_ident.escaped_text),
+                PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+            )
+            && let Some(value_sym_id) =
+                self.local_current_file_value_symbol_named(&receiver_ident.escaped_text)
+            && let Some(value_symbol) = self.ctx.binder.get_symbol(value_sym_id)
+            && value_symbol.value_declaration.is_some()
+            && let Some(value_node) = self.ctx.arena.get(value_symbol.value_declaration)
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(value_node)
+            && var_decl.initializer.is_some()
+            && let Some(literal_type) = self.literal_type_from_initializer(var_decl.initializer)
+            && !matches!(
+                self.resolve_property_access_with_env(literal_type, &prop_ident.escaped_text),
+                PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+            )
+        {
+            object_type = literal_type;
+        }
         let (receiver_start, receiver_end) = self
             .ctx
             .arena

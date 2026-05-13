@@ -127,15 +127,6 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
         return Some("@skip");
     }
 
-    // Check @noCheck (keys are already lowercase → "nocheck")
-    if directives
-        .options
-        .get("nocheck")
-        .is_some_and(|v| v == "true")
-    {
-        return Some("@noCheck");
-    }
-
     None
 }
 
@@ -280,12 +271,12 @@ function foo() {}
     }
 
     #[test]
-    fn test_should_skip_test_prefers_skip_over_nocheck() {
+    fn test_should_skip_test_only_honors_skip() {
         let mut directives = TestDirectives::default();
         directives
             .options
             .insert("nocheck".to_string(), "true".to_string());
-        assert_eq!(should_skip_test(&directives), Some("@noCheck"));
+        assert_eq!(should_skip_test(&directives), None);
 
         directives
             .options

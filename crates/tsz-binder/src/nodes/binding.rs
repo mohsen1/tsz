@@ -160,6 +160,12 @@ impl BinderState {
         if existing_symbol.value_declaration.is_none() {
             return true;
         }
+        if existing_symbol.is_type_only
+            && existing_symbol.has_any_flags(symbol_flags::ALIAS)
+            && (new_flags & symbol_flags::VALUE) != 0
+        {
+            return true;
+        }
 
         let non_module_value_flags = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
         let existing_has_non_module_value = (existing_symbol.flags & non_module_value_flags) != 0;

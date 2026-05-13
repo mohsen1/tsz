@@ -1686,6 +1686,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // A generic or inference-bearing TNext cannot be compared reliably from
+        // the declaration alone. Defer rather than reporting TS2763-TS2766 false
+        // positives before instantiation supplies the concrete sent type.
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, next_type)
+            || crate::query_boundaries::common::contains_infer_types(self.ctx.types, next_type)
+        {
+            return true;
+        }
+
         // Check if the sent type is assignable to the iterator's next type
         if self.is_assignable_to(sent_type, next_type) {
             return true;

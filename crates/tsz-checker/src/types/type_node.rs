@@ -1442,6 +1442,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // symbol in the current binder; ignore that collision and fall
                 // through to name-based file/lib lookup.
             } else {
+                if let Some(target_sym_id) = self.resolve_import_alias_type_target_symbol(sym_id) {
+                    return Some(target_sym_id.0);
+                }
                 if let Some(scoped_sym_id) = scoped_sym_id
                     && scoped_sym_id != sym_id
                     && let Some(scoped_symbol) = self.get_symbol_from_any_context(scoped_sym_id)
@@ -1474,6 +1477,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if let Some(target_sym_id) = self.resolve_import_alias_type_target_symbol(sym_id) {
+                return Some(target_sym_id.0);
+            }
             if symbol.escaped_name == name
                 && (symbol.flags
                     & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))

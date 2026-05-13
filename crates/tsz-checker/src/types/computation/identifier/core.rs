@@ -232,6 +232,29 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn local_current_file_value_symbol_named(
+        &self,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        self.ctx
+            .binder
+            .get_symbols()
+            .find_all_by_name(name)
+            .iter()
+            .copied()
+            .find(|&candidate_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(candidate_id)
+                    .is_some_and(|candidate| {
+                        candidate.has_any_flags(symbol_flags::VALUE)
+                            && candidate.value_declaration.is_some()
+                            && (candidate.decl_file_idx == u32::MAX
+                                || candidate.decl_file_idx == self.ctx.current_file_idx as u32)
+                    })
+            })
+    }
+
     fn has_recursive_alias_shape_for_flow_compare(&self, type_id: TypeId) -> bool {
         common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), type_id)
     }
@@ -579,6 +602,13 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if !self.is_identifier_in_type_position(idx)
+                && self.identifier_is_type_only_module_exports_import_projection(idx)
+            {
+                self.error_type_only_value_at(name, idx);
+                return TypeId::ERROR;
+            }
+
             if self.is_type_only_import_equals_namespace_expr(idx) {
                 // When the import-equals resolves to a pure type (interface,
                 // type alias) rather than a namespace/module, tsc emits TS2693
@@ -638,6 +668,19 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.alias_resolves_to_type_only(sym_id) {
+                if !self.is_identifier_in_type_position(idx)
+                    && let Some(candidate_id) = self.local_current_file_value_symbol_named(name)
+                    && let Some(candidate) = self.ctx.binder.get_symbol(candidate_id)
+                    && candidate.value_declaration.is_some()
+                {
+                    let value_type = self.type_of_value_declaration_for_symbol(
+                        candidate_id,
+                        candidate.value_declaration,
+                    );
+                    if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                        return self.check_flow_usage(idx, value_type, candidate_id);
+                    }
+                }
                 let augmentation_lookup = self
                     .get_cross_file_symbol(sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(sym_id))
