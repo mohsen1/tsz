@@ -608,3 +608,94 @@ Before opening a PR, verify each item:
 This directive supersedes any prior pattern in the codebase. Existing
 hardcoded checks discovered during review should be flagged for
 follow-up, not used as precedent for new ones.
+
+## 26) GENERALIZATION GATE - the reported repro is an example, not the scope
+
+When fixing a bug, conformance miss, or benchmark regression, treat the
+reported input as one witness for a broader rule. A PR that only matches
+the reported file, benchmark shape, library alias, or spelling is a
+stopgap, not a complete fix.
+
+Before writing code, identify the semantic operation that is wrong or too
+slow:
+
+- assignability/subtyping/compatibility decision,
+- `keyof` or indexed-access key-space check,
+- mapped/conditional/template/infer evaluation,
+- property/index lookup or object-shape projection,
+- narrowing/control-flow fact,
+- symbol resolution/binding,
+- diagnostic display policy,
+- emit transform policy.
+
+Then write the rule in structural terms:
+
+> "When *<structural condition over syntax, symbols, and/or TypeId>*, tsc
+> <does X>; this change makes tsz <do X> too."
+
+If the rule only mentions a single test name, benchmark name, alias name,
+type-parameter name, property spelling, or rendered diagnostic string, it
+is not general enough. Restate it until the owner layer and equivalent
+cases are clear.
+
+### Required before implementation
+
+1. List at least three adjacent cases that should share the same behavior.
+   Vary names and shapes: inline vs alias, generic vs concrete, builtin vs
+   user-defined, direct vs nested, union/intersection/mapped wrappers when
+   relevant.
+2. Decide the owning layer from the rule. Type semantics belong in solver
+   or query-boundary helpers; checker code should orchestrate and choose
+   diagnostic locations.
+3. Prefer one shared query/helper over two local branches that recognize
+   similar facts in different places. If checker validation and type
+   construction both need the same fact, expose that fact once.
+4. If a narrow fallback or fast path is necessary, name the semantic
+   invariant that makes it safe and document what unsupported shapes fall
+   back to the normal path.
+
+### Test matrix for non-trivial fixes
+
+Every non-trivial behavior or performance fix should include focused
+coverage for:
+
+1. The reported repro.
+2. At least two equivalent shapes that prove the rule, not the spelling.
+3. A renamed type-parameter/mapped-variable case when binders are involved.
+4. An alias/wrapper/nesting case when aliases or lazy refs are involved.
+5. A negative or fallback case proving unsupported shapes are not silently
+   accepted.
+
+If the matrix is intentionally smaller, the PR body must say why the
+change is a narrow stopgap and what follow-up would make it fundamental.
+
+### Performance fixes
+
+Performance PRs must fix the expensive operation, not only the benchmark
+fixture that exposed it.
+
+- Profile or otherwise identify the repeated operation and its expected
+  complexity.
+- State the intended complexity improvement, for example "avoid lowering
+  every union member just to answer a literal property-exists query."
+- Benchmark the reported case, but also add or run a smaller equivalent
+  fixture that would regress if the implementation only matched the
+  benchmark's exact syntax.
+- Fast paths must be keyed by structural invariants, not fixture names.
+  They must preserve correctness by falling back when the invariant cannot
+  be proven.
+- If caching is introduced, state the cache key, invalidation assumptions,
+  and cycle/fuel behavior.
+
+### PR body requirements
+
+PRs for fixes must include:
+
+- the structural rule being implemented,
+- the owner layer and why the logic belongs there,
+- the adjacent-case test matrix,
+- known unsupported shapes or fallback behavior,
+- performance numbers when the PR is performance-motivated.
+
+A PR body that says only "fixes <test>" or "makes <benchmark> pass" is not
+enough unless the PR is explicitly marked as a narrow stopgap.

@@ -655,6 +655,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        if self.indexed_access_literal_property_exists_in_alias_union(
+            data.object_type,
+            data.index_type,
+        ) {
+            return;
+        }
+
         let object_type = self.get_type_from_type_node(data.object_type);
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};

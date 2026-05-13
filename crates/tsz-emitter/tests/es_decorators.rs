@@ -5,6 +5,14 @@ use super::*;
 // =============================================================================
 
 fn emit_decorator(source: &str) -> String {
+    emit_decorator_with(source, false, false)
+}
+
+fn emit_decorator_with(
+    source: &str,
+    use_static_blocks: bool,
+    use_define_for_class_fields: bool,
+) -> String {
     let mut parser =
         tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -18,6 +26,8 @@ fn emit_decorator(source: &str) -> String {
 
     let mut emitter = TC39DecoratorEmitter::new(&parser.arena);
     emitter.set_source_text(source);
+    emitter.set_use_static_blocks(use_static_blocks);
+    emitter.set_use_define_for_class_fields(use_define_for_class_fields);
     emitter.emit_class(class_idx)
 }
 
@@ -380,6 +390,40 @@ fn test_instance_method_decorator_adds_run_initializers_in_constructor() {
     assert!(
         output.contains("__runInitializers(this, _instanceExtraInitializers)"),
         "Expected __runInitializers call in constructor for instance decorators.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_instance_method_decorator_initializes_parameter_property_assignment() {
+    let source =
+        "class Foo {\n    constructor(private message: string) { }\n    @log\n    greet() { }\n}";
+    let output = emit_decorator(source);
+
+    assert!(
+        output.contains("constructor(message)"),
+        "Expected parameter property type/modifier to be stripped from constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "this.message = (__runInitializers(this, _instanceExtraInitializers), message);"
+        ),
+        "Expected parameter property assignment to run instance initializers first.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_instance_method_decorator_initializes_parameter_property_class_field() {
+    let source =
+        "class Foo {\n    constructor(private message: string) { }\n    @log\n    greet() { }\n}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("message = __runInitializers(this, _instanceExtraInitializers);"),
+        "Expected native field emit to host instance initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this.message = message;"),
+        "Expected constructor to assign the parameter property value.\nOutput:\n{output}"
     );
 }
 

@@ -3443,6 +3443,48 @@ module.exports.Strings = Strings;
 }
 
 #[test]
+fn test_js_exported_object_literal_empty_object_member_emits_namespace_value() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const x = {
+    grey: {}
+};
+export { x };
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace x {\n    let grey: {};\n}"),
+        "Expected named JS object exports with empty object members to emit as namespaces: {output}"
+    );
+    assert!(
+        !output.contains("export const x:"),
+        "Did not expect named JS object exports with empty object members to fall back to const object types: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_named_object_alias_empty_object_member_emits_namespace_value() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const chalk = {
+    grey: {}
+};
+module.exports.chalk = chalk;
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace chalk {\n    let grey: {};\n}"),
+        "Expected CommonJS named object aliases with empty object members to emit as namespaces: {output}"
+    );
+    assert!(
+        !output.contains("export const chalk:"),
+        "Did not expect CommonJS named object aliases with empty object members to fall back to const object types: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_anonymous_class_expression_uses_exports_class_surface() {
     let output = emit_js_dts(
         r#"
