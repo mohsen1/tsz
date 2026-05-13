@@ -35,12 +35,13 @@ impl<'a> CheckerState<'a> {
         original_object_type: TypeId,
         prop_name: &str,
     ) -> Option<TypeId> {
-        let lookup_type =
-            crate::query_boundaries::common::application_info(self.ctx.types, original_object_type)
-                .map(|(base, _)| base)
-                .unwrap_or(original_object_type);
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, lookup_type)
-            .or_else(|| self.ctx.definition_store.find_def_for_type(lookup_type))?;
+        let def_id =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)
+                .or_else(|| {
+                    self.ctx
+                        .definition_store
+                        .find_def_for_type(original_object_type)
+                })?;
         let sym_id = self.ctx.def_to_symbol_id(def_id)?;
         let symbol = self.get_cross_file_symbol(sym_id)?;
         if !symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
