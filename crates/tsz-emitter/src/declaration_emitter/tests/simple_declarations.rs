@@ -2861,6 +2861,27 @@ declare namespace baz {
 }
 
 #[test]
+fn test_js_late_bound_function_reserved_alias_skips_existing_namespace_member_name() {
+    let source = r#"
+const normal = 0;
+function foo() {}
+foo.normal = true;
+foo.normal_1 = false;
+"#;
+
+    let output = emit_js_dts_with_usage_analysis(source);
+    let expected = r#"declare namespace foo {
+    let normal_2: boolean;
+    export { normal_2 as normal };
+    let normal_1: boolean;
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected JS reserved alias generation to avoid existing namespace member names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_arrow_assignments_preserve_key_text_and_types() {
     let source = r#"
 const c = "C";
