@@ -184,17 +184,12 @@ impl<'a> CheckerState<'a> {
         _display_object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expression) else {
-            return None;
-        };
-        let Some(declarations) = self
+        let sym_id = self.resolve_identifier_symbol_without_tracking(expression)?;
+        let declarations = self
             .ctx
             .binder
             .get_symbol(sym_id)
-            .map(|symbol| symbol.declarations.clone())
-        else {
-            return None;
-        };
+            .map(|symbol| symbol.declarations.clone())?;
         if declarations.len() != 1 {
             return None;
         }
