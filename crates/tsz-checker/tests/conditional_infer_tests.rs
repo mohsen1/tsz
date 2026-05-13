@@ -1423,3 +1423,102 @@ const bad: P = [3, 1];
             .collect::<Vec<_>>()
     );
 }
+
+// ── Co-located infer: same variable in multiple object property positions ────
+
+/// Basic co-located infer: `{ a: infer U; b: infer U }` must produce
+/// `U = string | number`, not just one of the two.
+#[test]
+fn colocated_infer_same_name_produces_union() {
+    let source = r#"
+type Flatten<T> = T extends { a: infer U; b: infer U } ? U : never;
+type Fl = Flatten<{ a: string; b: number }>;
+const fl: Fl = "test";
+const fl2: Fl = 42;
+const fl_bad: Fl = true;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "`true` is not assignable to `string | number`; got: {diags:#?}"
+    );
+}
+
+/// Renamed iteration variable: same structural rule, different name spelling.
+#[test]
+fn colocated_infer_renamed_variable_produces_union() {
+    let source = r#"
+type Merge<T> = T extends { x: infer V; y: infer V } ? V : never;
+type M = Merge<{ x: boolean; y: number }>;
+const m1: M = true;
+const m2: M = 42;
+const m_bad: M = "hello";
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "`string` must be rejected for `boolean | number`; got: {diags:#?}"
+    );
+}
+
+/// Three positions with the same infer name must all contribute to the union.
+#[test]
+fn colocated_infer_three_positions_union() {
+    let source = r#"
+type Triple<T> = T extends { a: infer U; b: infer U; c: infer U } ? U : never;
+type T3 = Triple<{ a: string; b: number; c: boolean }>;
+const t1: T3 = "ok";
+const t2: T3 = 1;
+const t3: T3 = true;
+const t_bad: T3 = null;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "only `null` should be rejected; got: {diags:#?}"
+    );
+}
+
+/// Mixed infer names: different variable names in different positions still
+/// bind independently (not unioned across different names).
+#[test]
+fn colocated_infer_distinct_names_bind_independently() {
+    let source = r#"
+type Pair<T> = T extends { a: infer A; b: infer B } ? [A, B] : never;
+type P = Pair<{ a: string; b: number }>;
+const p: P = ["hello", 42];
+const p_bad: P = [42, "hello"];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "swapped pair should produce two TS2322 errors; got: {diags:#?}"
+    );
+}
+
+/// Same-type co-located infer: when both positions infer the same type,
+/// the union is just that type (no spurious errors).
+#[test]
+fn colocated_infer_same_type_both_positions() {
+    let source = r#"
+type Both<T> = T extends { x: infer U; y: infer U } ? U : never;
+type B = Both<{ x: string; y: string }>;
+const b: B = "hello";
+const b_bad: B = 42;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "`42` should be the only rejection; got: {diags:#?}"
+    );
+}

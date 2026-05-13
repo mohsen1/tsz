@@ -1762,43 +1762,67 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().conditional(*cond);
         }
 
-        let mut subst = TypeSubstitution::new();
+        // Co-located inferences: `T extends { a: infer U; b: infer U }` unions all
+        // inferred values per variable name (`U = string | number` for `{ a: string; b: number }`).
+        let cond_owned = *cond;
+        let mut candidates: SmallVec<[(Atom, SmallVec<[TypeId; 2]>, TypeParamInfo, bool); 4]> =
+            SmallVec::new();
         for &(prop_name, info, optional) in infer_props {
-            let Some(mut inferred) =
+            let Some(inferred) =
                 self.resolve_conditional_infer_property(check_unwrapped, prop_name, optional)
             else {
-                return self.evaluate(cond.false_type);
+                return self.evaluate(cond_owned.false_type);
+            };
+            if let Some((_, types, _, any_optional)) =
+                candidates.iter_mut().find(|(n, _, _, _)| *n == info.name)
+            {
+                types.push(inferred);
+                *any_optional |= optional; // any optional position makes the merged inference optional
+            } else {
+                candidates.push((info.name, smallvec::smallvec![inferred], info, optional));
+            }
+        }
+
+        let mut subst = TypeSubstitution::new();
+        for (var_name, inferred_types, info, any_optional) in &candidates {
+            let mut inferred = if inferred_types.len() == 1 {
+                inferred_types[0]
+            } else {
+                self.interner().union_from_slice(inferred_types)
             };
 
-            subst.insert(info.name, inferred);
+            subst.insert(*var_name, inferred);
 
             if let Some(constraint) = info.constraint {
                 let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
                 checker.allow_bivariant_rest = true;
                 let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-                if optional {
+                if *any_optional {
                     let Some(filtered) =
                         self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                     else {
-                        let false_inst =
-                            instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
+                        let false_inst = instantiate_type_with_infer(
+                            self.interner(),
+                            cond_owned.false_type,
+                            &subst,
+                        );
                         return self.evaluate(false_inst);
                     };
                     inferred = filtered;
-                } else if is_union || cond.is_distributive {
+                } else if is_union || cond_owned.is_distributive {
                     inferred = self.filter_inferred_by_constraint_or_undefined(
                         inferred,
                         constraint,
                         &mut checker,
                     );
                 } else if !checker.is_subtype_of(inferred, constraint) {
-                    return self.evaluate(cond.false_type);
+                    return self.evaluate(cond_owned.false_type);
                 }
-                subst.insert(info.name, inferred);
+                subst.insert(*var_name, inferred);
             }
         }
 
-        let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
+        let true_inst = instantiate_type_with_infer(self.interner(), cond_owned.true_type, &subst);
         self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
