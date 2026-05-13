@@ -2181,10 +2181,8 @@ impl<'a> CheckerState<'a> {
         let mut target = self.substitute_this_type_if_needed(target);
         let raw_source = source;
         let raw_target = target;
-
         source = self.normalize_awaited_application_args_for_variance(source);
         target = self.normalize_awaited_application_args_for_variance(target);
-
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
         {
