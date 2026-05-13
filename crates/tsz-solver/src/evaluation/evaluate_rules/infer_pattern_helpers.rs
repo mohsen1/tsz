@@ -15,6 +15,7 @@ use crate::types::{
     TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils;
+use crate::visitor::array_element_type;
 use crate::{TypeSubstitution, instantiate_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -269,6 +270,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return false;
                 }
             } else {
+                // Fixed source params match against the element type of the rest array
+                // (e.g. `number` vs element of `unknown[]`); rest source params match
+                // array-to-array since those slots align at the rest level.
+                let rest_elem_type = array_element_type(self.interner(), rest_param.type_id)
+                    .unwrap_or(rest_param.type_id);
                 let mut local_visited = FxHashSet::default();
                 for source_param in remaining_params {
                     let source_param_type = if source_param.optional {
@@ -276,9 +282,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         source_param.type_id
                     };
+                    let pattern_type = if source_param.rest {
+                        rest_param.type_id
+                    } else {
+                        rest_elem_type
+                    };
                     if !self.match_infer_pattern(
                         source_param_type,
-                        rest_param.type_id,
+                        pattern_type,
                         bindings,
                         &mut local_visited,
                         checker,

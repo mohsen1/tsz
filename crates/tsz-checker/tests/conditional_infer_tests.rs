@@ -1563,3 +1563,151 @@ const bad: NR = ["oops"];
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn infer_first_param_with_unknown_rest_resolves_to_string() {
+    // issue #6253: fixed source params must match the element type of a non-infer rest param
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: unknown[]) => unknown ? A : never;
+type A1 = FirstArg<(a: string, b: number) => void>;
+const a1: A1 = "test";
+const bad: A1 = 42;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only `bad: A1 = 42` should error (A1 = string). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_different_names_resolves_correctly() {
+    // different type-param and rest-param names — fix must be structural, not name-keyed
+    let source = r#"
+type FirstArg<T> = T extends (first: infer S, ...rest: unknown[]) => unknown ? S : never;
+type F1 = FirstArg<(x: number, y: string) => void>;
+const ok: F1 = 1;
+const bad: F1 = "nope";
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only `bad: F1 = \"nope\"` should error (F1 = number). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_multiple_extra_fixed_params() {
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: unknown[]) => unknown ? A : never;
+type F3 = FirstArg<(a: string, b: number, c: boolean) => void>;
+const ok: F3 = "hi";
+const bad: F3 = 1;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only numeric assignment should fail (F3 = string). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_rest_elem_constraint_fails_for_incompatible_extra_param() {
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: string[]) => unknown ? A : never;
+type F = FirstArg<(a: string, b: object) => void>;
+const accepted: F = "x" as never;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "F should be `never`; assigning `never` is valid (no errors). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_with_return_infer_and_unknown_rest() {
+    let source = r#"
+type FirstArgAndRet<T> =
+  T extends (x: infer A, ...args: unknown[]) => infer R ? [A, R] : never;
+type FR = FirstArgAndRet<(a: string, b: number) => boolean>;
+const ok: FR = ["hi", true];
+const bad: FR = [1, true];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "FR = [string, boolean]; only `[1, true]` should fail. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_source_rest_param_against_unknown_rest_pattern() {
+    // source rest param compared array-to-array (not array vs element) against pattern rest
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: unknown[]) => unknown ? A : never;
+type FR = FirstArg<(a: string, ...rest: number[]) => void>;
+const ok: FR = "hi";
+const bad: FR = 99;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "FR = string; only numeric assignment should fail. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_source_with_no_extra_params() {
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: unknown[]) => unknown ? A : never;
+type F0 = FirstArg<(a: number) => void>;
+const ok: F0 = 1;
+const bad: F0 = "nope";
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "F0 = number; only string assignment should fail. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
