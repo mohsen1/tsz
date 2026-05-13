@@ -131,6 +131,145 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    pub(super) fn indexed_access_literal_property_exists_in_alias_union(
+        &self,
+        object_node_idx: NodeIndex,
+        index_node_idx: NodeIndex,
+    ) -> bool {
+        let Some(property_name) = self.type_index_string_literal(index_node_idx) else {
+            return false;
+        };
+        self.alias_body_for_non_generic_type_reference_from_node(object_node_idx)
+            .is_some_and(|body_idx| {
+                self.alias_union_members_have_property(body_idx, &property_name)
+            })
+    }
+
+    fn type_index_string_literal(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(node_idx)?;
+        if let Some(literal) = self.ctx.arena.get_literal(node) {
+            return Some(literal.text.to_string());
+        }
+        if let Some(literal_type) = self.ctx.arena.get_literal_type(node) {
+            let literal_node = self.ctx.arena.get(literal_type.literal)?;
+            let literal = self.ctx.arena.get_literal(literal_node)?;
+            return Some(literal.text.to_string());
+        }
+        None
+    }
+
+    fn alias_union_members_have_property(
+        &self,
+        object_node_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(object_node) = self.ctx.arena.get(object_node_idx) else {
+            return false;
+        };
+
+        if object_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(object_node)
+        {
+            return self.alias_union_members_have_property(wrapped.type_node, property_name);
+        }
+
+        if object_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return self
+                .alias_body_for_non_generic_type_reference(object_node)
+                .is_some_and(|body_idx| {
+                    self.alias_union_members_have_property(body_idx, property_name)
+                });
+        }
+
+        if object_node.kind == syntax_kind_ext::UNION_TYPE {
+            let Some(composite) = self.ctx.arena.get_composite_type(object_node) else {
+                return false;
+            };
+            return !composite.types.nodes.is_empty()
+                && composite.types.nodes.iter().all(|&member_idx| {
+                    self.alias_union_members_have_property(member_idx, property_name)
+                });
+        }
+
+        if object_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            return self.type_literal_has_declared_property(object_node, property_name);
+        }
+
+        false
+    }
+
+    fn alias_body_for_non_generic_type_reference(
+        &self,
+        object_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let type_ref = self.ctx.arena.get_type_ref(object_node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+
+        let raw_sym_id = self.resolve_type_symbol_for_lowering(type_ref.type_name)?;
+        let sym_id = tsz_binder::SymbolId(raw_sym_id);
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+            || symbol.declarations.len() != 1
+        {
+            return None;
+        }
+
+        let decl_node = self.ctx.arena.get(symbol.declarations[0])?;
+        let type_alias = self.ctx.arena.get_type_alias(decl_node)?;
+        if type_alias
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty())
+        {
+            return None;
+        }
+        Some(type_alias.type_node)
+    }
+
+    fn alias_body_for_non_generic_type_reference_from_node(
+        &self,
+        mut node_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        loop {
+            let object_node = self.ctx.arena.get(node_idx)?;
+            if object_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+                node_idx = self.ctx.arena.get_wrapped_type(object_node)?.type_node;
+                continue;
+            }
+            return self.alias_body_for_non_generic_type_reference(object_node);
+        }
+    }
+
+    fn type_literal_has_declared_property(
+        &self,
+        type_literal_node: &tsz_parser::parser::node::Node,
+        property_name: &str,
+    ) -> bool {
+        let Some(type_literal) = self.ctx.arena.get_type_literal(type_literal_node) else {
+            return false;
+        };
+        type_literal.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            let Some(signature) = self.ctx.arena.get_signature(member_node) else {
+                return false;
+            };
+            crate::types_domain::queries::core::get_literal_property_name(
+                self.ctx.arena,
+                signature.name,
+            )
+            .as_deref()
+                == Some(property_name)
+        })
+    }
+
     pub(super) fn type_literal_keyof_from_node(
         &mut self,
         type_node_idx: NodeIndex,

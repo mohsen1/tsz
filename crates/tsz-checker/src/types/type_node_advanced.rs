@@ -6,6 +6,8 @@
 //! - Type queries (typeof X)
 //! - Mapped types ({ [P in K]: T })
 
+mod indexed_access_fast_path;
+
 use super::type_node::TypeNodeChecker;
 use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
@@ -90,6 +92,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let factory = self.ctx.types.factory();
 
         if let Some(indexed_access) = self.ctx.arena.get_indexed_access_type(node) {
+            if let Some(fast_result) = self.try_fast_alias_union_literal_index_access(
+                indexed_access.object_type,
+                indexed_access.index_type,
+            ) {
+                return fast_result;
+            }
+
             let object_type = self.check(indexed_access.object_type);
             let index_type = self.check(indexed_access.index_type);
 
