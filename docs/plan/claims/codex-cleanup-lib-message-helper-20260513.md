@@ -1,6 +1,6 @@
 # Claim: add lib-backed diagnostic message helper
 
-Status: WIP
+Status: Ready
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6236
 Branch: `codex/cleanup-lib-message-helper-20260513`
@@ -18,3 +18,9 @@ Branch: `codex/cleanup-lib-message-helper-20260513`
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(check_source_with_libs_code_messages)'`
 - `cargo nextest run -p tsz-checker --test generic_call_inference_tests --no-fail-fast`
+
+## Verification
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(check_source_with_libs_code_messages)'` (1 passed)
+- `cargo nextest run -p tsz-checker --test generic_call_inference_tests --no-fail-fast` (133 passed)

@@ -16,6 +16,7 @@ use tsz_checker::context::CheckerOptions;
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
+use tsz_checker::test_utils::check_source_with_libs_code_messages;
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
@@ -49,15 +50,7 @@ fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
 
 fn compile_with_es5_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let lib_files = load_es5_lib_files_for_test();
-    tsz_checker::test_utils::check_source_with_libs(
-        source,
-        "test.ts",
-        CheckerOptions::default(),
-        &lib_files,
-    )
-    .into_iter()
-    .map(|d| (d.code, d.message_text))
-    .collect()
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &lib_files)
 }
 
 fn relevant_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -119,16 +112,10 @@ fn relevant_strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 
 fn relevant_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
     let lib_files = tsz_checker::test_utils::load_default_lib_files();
-    tsz_checker::test_utils::check_source_with_libs(
-        source,
-        "test.ts",
-        CheckerOptions::default(),
-        &lib_files,
-    )
-    .into_iter()
-    .filter(|d| d.code != 2318)
-    .map(|d| (d.code, d.message_text))
-    .collect()
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &lib_files)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
 }
 
 #[test]
