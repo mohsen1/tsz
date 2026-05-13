@@ -2663,3 +2663,192 @@ fn test_canonical_stable_across_iter_order() {
         "canonical pairs must be sorted by Atom",
     );
 }
+
+// =============================================================================
+// Homomorphic Mapped Type Union Distribution Tests
+// =============================================================================
+
+/// When `{ [P in keyof T]: T[P] }` is instantiated with T = A | B (non-array),
+/// the result must distribute to `{ [P in keyof A]: A[P] } | { [P in keyof B]: B[P] }`.
+/// This mirrors tsc's `instantiateMappedType → mapTypeWithAlias` behavior.
+#[test]
+fn test_homomorphic_mapped_distributes_over_union_of_objects() {
+    use crate::evaluation::evaluate::evaluate_type;
+    use crate::objects::{PropertyCollectionResult, collect_properties};
+    use crate::relations::subtype::NoopResolver;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let p_name = interner.intern_string("P");
+
+    let t_param = TypeParamInfo::simple(t_name);
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let p_param = TypeParamInfo::simple(p_name);
+    let p_type = interner.intern(TypeData::TypeParameter(p_param));
+
+    // Mapped type: { [P in keyof T]: T[P] }
+    let keyof_t = interner.keyof(t_type);
+    let template = interner.index_access(t_type, p_type);
+    let mapped = interner.mapped(MappedType {
+        type_param: p_param,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // NodeA = { type: "A", name: string }
+    let type_key = interner.intern_string("type");
+    let name_key = interner.intern_string("name");
+    let id_key = interner.intern_string("id");
+    let lit_a = interner.literal_string("A");
+    let node_a = interner.object(vec![
+        crate::types::PropertyInfo::new(type_key, lit_a),
+        crate::types::PropertyInfo {
+            declaration_order: 1,
+            ..crate::types::PropertyInfo::new(name_key, TypeId::STRING)
+        },
+    ]);
+
+    // NodeB = { type: "B", id: number }
+    let lit_b = interner.literal_string("B");
+    let node_b = interner.object(vec![
+        crate::types::PropertyInfo::new(type_key, lit_b),
+        crate::types::PropertyInfo {
+            declaration_order: 1,
+            ..crate::types::PropertyInfo::new(id_key, TypeId::NUMBER)
+        },
+    ]);
+
+    // T = NodeA | NodeB
+    let union_t = interner.union(vec![node_a, node_b]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, union_t);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+
+    // After instantiation, result should be a union (distributed)
+    match interner.lookup(instantiated) {
+        Some(TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert_eq!(
+                members.len(),
+                2,
+                "Expected union of 2 distributed mapped types"
+            );
+
+            // Evaluate each member and check its properties
+            let evaluated: Vec<TypeId> = members
+                .iter()
+                .map(|&m| evaluate_type(&interner, m))
+                .collect();
+
+            let resolver = NoopResolver;
+            let mut has_name = false;
+            let mut has_id = false;
+            for &ev in &evaluated {
+                if let PropertyCollectionResult::Properties { properties, .. } =
+                    collect_properties(ev, &interner, &resolver)
+                {
+                    let prop_names: Vec<_> = properties.iter().map(|p| p.name).collect();
+                    if prop_names.contains(&name_key) {
+                        has_name = true;
+                    }
+                    if prop_names.contains(&id_key) {
+                        has_id = true;
+                    }
+                }
+            }
+            assert!(
+                has_name,
+                "NodeA branch should have 'name' property after distribution"
+            );
+            assert!(
+                has_id,
+                "NodeB branch should have 'id' property after distribution"
+            );
+        }
+        other => panic!("Expected Union after distributing mapped type over union, got {other:?}"),
+    }
+}
+
+/// Distribution must produce union member count equal to the union input,
+/// covering different member names (varied spelling proves the fix is structural).
+#[test]
+fn test_homomorphic_mapped_distributes_over_union_varied_names() {
+    use crate::evaluation::evaluate::evaluate_type;
+    use crate::objects::{PropertyCollectionResult, collect_properties};
+    use crate::relations::subtype::NoopResolver;
+
+    let interner = TypeInterner::new();
+
+    // Build Partial<T> = { [K in keyof T]?: T[K] }  with T mapped to Foo | Bar
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+    let t_param = TypeParamInfo::simple(t_name);
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let k_param = TypeParamInfo::simple(k_name);
+    let k_type = interner.intern(TypeData::TypeParameter(k_param));
+    let keyof_t = interner.keyof(t_type);
+    let template = interner.index_access(t_type, k_type);
+    let partial_t = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: Some(crate::types::MappedModifier::Add),
+    });
+
+    // Foo = { x: number }
+    let x_key = interner.intern_string("x");
+    let y_key = interner.intern_string("y");
+    let foo = interner.object(vec![crate::types::PropertyInfo::new(x_key, TypeId::NUMBER)]);
+    // Bar = { y: string }
+    let bar = interner.object(vec![crate::types::PropertyInfo::new(y_key, TypeId::STRING)]);
+
+    let union_t = interner.union(vec![foo, bar]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, union_t);
+    let instantiated = instantiate_type(&interner, partial_t, &subst);
+
+    let result = evaluate_type(&interner, instantiated);
+
+    // Should be a union of 2 objects each with their member-specific properties
+    let Some(TypeData::Union(list_id)) = interner.lookup(result) else {
+        panic!("Expected Union, got {:?}", interner.lookup(result));
+    };
+    let members = interner.type_list(list_id);
+    assert_eq!(
+        members.len(),
+        2,
+        "Partial<Foo|Bar> should have 2 union members"
+    );
+
+    let resolver = NoopResolver;
+    let mut found_x = false;
+    let mut found_y = false;
+    for &m in members.iter() {
+        if let PropertyCollectionResult::Properties { properties, .. } =
+            collect_properties(m, &interner, &resolver)
+        {
+            for prop in &properties {
+                if prop.name == x_key {
+                    found_x = true;
+                }
+                if prop.name == y_key {
+                    found_y = true;
+                }
+            }
+        }
+    }
+    assert!(
+        found_x,
+        "Partial<Foo> branch must have optional 'x' property"
+    );
+    assert!(
+        found_y,
+        "Partial<Bar> branch must have optional 'y' property"
+    );
+}
