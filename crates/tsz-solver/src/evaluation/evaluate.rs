@@ -926,7 +926,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             evaluated,
                             &app.args,
                         );
-                    } else if !is_type_alias_def {
+                    } else {
                         // Parametric structural (interface/class) applications:
                         // also record a back-reference from the evaluated
                         // structural form to the original Application so
@@ -1103,7 +1103,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             _ => result.0 <= display_origin.0,
                         }
                         && result_is_non_empty_structural;
-                    if !skip_type_alias_repaint {
+                    let keep_existing_conditional_branch_alias = is_type_alias_def
+                        && !prefer_application_display_alias
+                        && matches!(
+                            self.interner.lookup(display_origin),
+                            Some(TypeData::Application(_))
+                        )
+                        && self.interner.get_display_alias(result).is_some();
+                    if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
                         if prefer_application_display_alias
                             || (self.expand_application_display_alias_args
                                 && matches!(
@@ -1217,6 +1224,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if app.args.is_empty() {
             return;
         }
+        let app_def_kind = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => self.resolver.get_def_kind(def_id),
+            Some(TypeData::TypeQuery(sym_ref)) => self
+                .resolver
+                .symbol_to_def_id(sym_ref)
+                .and_then(|def_id| self.resolver.get_def_kind(def_id)),
+            _ => None,
+        };
+        // This back-reference is for nominal parametric shapes. Type-alias
+        // applications still need their evaluated structural form for displays
+        // such as TS2339 on conditional helper aliases.
+        if matches!(app_def_kind, Some(crate::def::DefKind::TypeAlias)) {
+            return;
+        }
         // Fast path: all-intrinsic args trivially have no free type
         // parameters; skip the recursive `contains_generic_type_parameters_db`
         // traversal that fires on every parametric application evaluation.
@@ -1232,7 +1253,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
         self.interner
-            .store_display_alias(evaluated, original_type_id);
+            .store_display_alias_preferring_application(evaluated, original_type_id);
     }
 
     fn is_structural_display_alias_result(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
