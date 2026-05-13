@@ -1073,6 +1073,15 @@ to 828, and reduces `bucket_empty` from 343 to 247. The remaining T2.2 work
 should classify the leftover bucket-empty probes and the non-cacheable
 symbol-arena misses.
 
+**2026-05-13 post-#6191 attribution prep:** the next preparatory slice adds
+`source_file_symbol_arena_cache_eligibility_outcomes` to
+`PerfCounterSnapshot` JSON. It records why each symbol-arena delegation is
+cacheable or structurally rejected at
+`symbol_arena_symbol_type_cache_file_idx`, without changing cache behavior.
+Use this array in the next attribution run to split cacheable first misses from
+variable/type-alias/interface cases that never reach the source-file
+symbol-arena cache.
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`

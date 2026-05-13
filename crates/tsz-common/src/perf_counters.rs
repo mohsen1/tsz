@@ -393,6 +393,58 @@ impl CrossFileCacheMissCause {
     }
 }
 
+/// Why a `DelegateCrossArenaSymbol` symbol-arena delegation did or did not
+/// become eligible for the source-file symbol-arena cache.
+///
+/// This is the next-level split after `delegate_miss_classification.by_source`
+/// says `symbol_arenas` dominates. It distinguishes cacheable first misses
+/// (`cacheable`, which may still appear as `cross_file_cache_miss_causes.bucket_empty`)
+/// from the structural reasons a symbol-arena delegation never reaches that
+/// cache at all.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum SourceFileSymbolArenaCacheEligibilityOutcome {
+    Cacheable = 0,
+    CrossFileTarget = 1,
+    NonSymbolArena = 2,
+    ModuleAugmentation = 3,
+    MissingDelegateArena = 4,
+    CurrentArena = 5,
+    MissingSourceFile = 6,
+    TargetDeclarationFile = 7,
+    MissingSymbol = 8,
+    NotClassOrInterface = 9,
+    MultipleDeclarations = 10,
+    DeclarationArenaMismatch = 11,
+    MissingFileIndex = 12,
+}
+
+pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT: usize = 13;
+
+pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES: [&str;
+    SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT] = [
+    "cacheable",
+    "cross_file_target",
+    "non_symbol_arena",
+    "module_augmentation",
+    "missing_delegate_arena",
+    "current_arena",
+    "missing_source_file",
+    "target_declaration_file",
+    "missing_symbol",
+    "not_class_or_interface",
+    "multiple_declarations",
+    "declaration_arena_mismatch",
+    "missing_file_index",
+];
+
+impl SourceFileSymbolArenaCacheEligibilityOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// One process-wide instance. Incremented from any thread, read once at
 /// dump time.
 pub struct PerfCounters {
@@ -430,6 +482,12 @@ pub struct PerfCounters {
     /// all buckets equals the flat miss count for the four reader
     /// helpers in `crates/tsz-checker/src/context/cross_file_query.rs`.
     pub cross_file_cache_miss_cause: [AtomicU64; CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
+    /// Source-file symbol-arena cache eligibility/rejection buckets for
+    /// `DelegateCrossArenaSymbol` delegations. This classifies the remaining
+    /// post-#6191 symbol-arena residue before we widen any cache keys or direct
+    /// lowering paths.
+    pub source_file_symbol_arena_cache_eligibility_outcome:
+        [AtomicU64; SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT],
 
     // ─── checker construction ────────────────────────────────────────────
     pub checker_state_constructed: AtomicU64,
@@ -532,6 +590,8 @@ impl PerfCounters {
                 DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
+            source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };
+                SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT],
             checker_state_constructed: AtomicU64::new(0),
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
@@ -863,6 +923,21 @@ pub fn record_cross_file_cache_miss_cause(cause: CrossFileCacheMissCause) {
     }
     let c = counters();
     c.cross_file_cache_miss_cause[cause.as_index()].fetch_add(1, Ordering::Relaxed);
+}
+
+/// Classify whether a source-file symbol-arena delegation is eligible for the
+/// post-#6191 cache. Called before the cache lookup so non-cacheable residue is
+/// visible in attribution JSON instead of hiding behind the flat miss count.
+#[inline]
+pub fn record_source_file_symbol_arena_cache_eligibility_outcome(
+    outcome: SourceFileSymbolArenaCacheEligibilityOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.source_file_symbol_arena_cache_eligibility_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
 }
 
 /// Record a cross-arena delegate invocation that has no cache fast path —
@@ -1306,6 +1381,7 @@ impl PerfCounters {
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
+            + &Self::dump_source_file_symbol_arena_cache_eligibility_outcomes()
             + &Self::dump_by_reason()
     }
 
@@ -1391,6 +1467,31 @@ impl PerfCounters {
             let count = load(&c.direct_cross_file_interface_lowering_outcome[idx]);
             if count > 0 {
                 out.push_str(&format!("  {name:<28} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
+    fn dump_source_file_symbol_arena_cache_eligibility_outcomes() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .source_file_symbol_arena_cache_eligibility_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nSource-file symbol-arena cache eligibility outcomes:\n");
+        for (idx, name) in SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count = load(&c.source_file_symbol_arena_cache_eligibility_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<32} {count:>12}\n"));
             }
         }
         out
@@ -1519,6 +1620,13 @@ pub struct PerfCounterSnapshot {
     /// reader helpers in
     /// `crates/tsz-checker/src/context/cross_file_query.rs`.
     pub cross_file_cache_miss_causes: Vec<NamedCount>,
+    /// Source-file symbol-arena cache eligibility and rejection reasons.
+    ///
+    /// Always `SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT`
+    /// long, in `SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES`
+    /// order. This splits the post-#6191 `symbol_arenas` residue into
+    /// cacheable first misses versus structural non-cacheable cases.
+    pub source_file_symbol_arena_cache_eligibility_outcomes: Vec<NamedCount>,
 }
 
 /// Per-bucket "is this wired up to its producer?" flag. Lets the bench
@@ -1808,6 +1916,13 @@ impl PerfCounters {
                 .map(|i| NamedCount {
                     name: CROSS_FILE_CACHE_MISS_CAUSE_NAMES[i],
                     count: load(&c.cross_file_cache_miss_cause[i]),
+                })
+                .collect(),
+            source_file_symbol_arena_cache_eligibility_outcomes: (0
+                ..SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES[i],
+                    count: load(&c.source_file_symbol_arena_cache_eligibility_outcome[i]),
                 })
                 .collect(),
         }
@@ -2270,6 +2385,39 @@ mod json_tests {
     }
 
     #[test]
+    fn source_file_symbol_arena_cache_eligibility_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["source_file_symbol_arena_cache_eligibility_outcomes"]
+            .as_array()
+            .expect("source_file_symbol_arena_cache_eligibility_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT,
+            "source_file_symbol_arena_cache_eligibility_outcomes length must match \
+             SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES[i],
+                "source_file_symbol_arena_cache_eligibility_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "source_file_symbol_arena_cache_eligibility_outcomes[{i}].count should be a number",
+            );
+            let obj = row.as_object().expect("row is object");
+            let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+            let expected: std::collections::BTreeSet<&str> =
+                ["name", "count"].into_iter().collect();
+            assert_eq!(
+                actual, expected,
+                "source_file_symbol_arena_cache_eligibility_outcomes[{i}] field shape drifted",
+            );
+        }
+    }
+
+    #[test]
     fn cross_file_cache_miss_cause_atomic_propagates_into_snapshot() {
         // Mirrors `classification_arrays_propagate_atomic_state_into_snapshot`:
         // drive the underlying atomic directly to prove the snapshot reads
@@ -2328,6 +2476,61 @@ mod json_tests {
             read(not_interned_idx) >= before_not_interned.saturating_add(4),
             "type_id_not_interned bump not visible (before={before_not_interned}, after={})",
             read(not_interned_idx),
+        );
+    }
+
+    #[test]
+    fn source_file_symbol_arena_cache_eligibility_atomic_propagates_into_snapshot() {
+        // The public recorder is gated on `TSZ_PERF_COUNTERS`; drive the
+        // atomics directly so this unit test is independent of process env.
+        let c = counters();
+
+        let cacheable_idx = SourceFileSymbolArenaCacheEligibilityOutcome::Cacheable.as_index();
+        let variable_idx =
+            SourceFileSymbolArenaCacheEligibilityOutcome::NotClassOrInterface.as_index();
+        let mismatch_idx =
+            SourceFileSymbolArenaCacheEligibilityOutcome::DeclarationArenaMismatch.as_index();
+
+        let before_cacheable = c.source_file_symbol_arena_cache_eligibility_outcome[cacheable_idx]
+            .load(Ordering::Relaxed);
+        let before_variable = c.source_file_symbol_arena_cache_eligibility_outcome[variable_idx]
+            .load(Ordering::Relaxed);
+        let before_mismatch = c.source_file_symbol_arena_cache_eligibility_outcome[mismatch_idx]
+            .load(Ordering::Relaxed);
+
+        c.source_file_symbol_arena_cache_eligibility_outcome[cacheable_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        c.source_file_symbol_arena_cache_eligibility_outcome[variable_idx]
+            .fetch_add(2, Ordering::Relaxed);
+        c.source_file_symbol_arena_cache_eligibility_outcome[mismatch_idx]
+            .fetch_add(3, Ordering::Relaxed);
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["source_file_symbol_arena_cache_eligibility_outcomes"]
+            .as_array()
+            .expect("source_file_symbol_arena_cache_eligibility_outcomes is array");
+        let read = |idx: usize| rows[idx]["count"].as_u64().unwrap_or(0);
+
+        assert_eq!(rows[cacheable_idx]["name"], "cacheable");
+        assert!(
+            read(cacheable_idx) > before_cacheable,
+            "cacheable bump not visible (before={before_cacheable}, after={})",
+            read(cacheable_idx),
+        );
+
+        assert_eq!(rows[variable_idx]["name"], "not_class_or_interface");
+        assert!(
+            read(variable_idx) >= before_variable.saturating_add(2),
+            "not_class_or_interface bump not visible (before={before_variable}, after={})",
+            read(variable_idx),
+        );
+
+        assert_eq!(rows[mismatch_idx]["name"], "declaration_arena_mismatch");
+        assert!(
+            read(mismatch_idx) >= before_mismatch.saturating_add(3),
+            "declaration_arena_mismatch bump not visible (before={before_mismatch}, after={})",
+            read(mismatch_idx),
         );
     }
 

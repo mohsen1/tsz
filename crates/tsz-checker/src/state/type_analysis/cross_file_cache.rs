@@ -2,7 +2,10 @@
 
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
-use tsz_common::perf_counters::CrossArenaSymbolMissSource;
+use tsz_common::perf_counters::{
+    CrossArenaSymbolMissSource, SourceFileSymbolArenaCacheEligibilityOutcome,
+    record_source_file_symbol_arena_cache_eligibility_outcome,
+};
 
 impl<'a> CheckerState<'a> {
     pub(super) fn symbol_arena_symbol_type_cache_file_idx(
@@ -13,27 +16,55 @@ impl<'a> CheckerState<'a> {
         delegate_arena: Option<&tsz_parser::NodeArena>,
         sym_id: SymbolId,
     ) -> Option<usize> {
+        use SourceFileSymbolArenaCacheEligibilityOutcome as Outcome;
+        let record = |outcome: Outcome| {
+            record_source_file_symbol_arena_cache_eligibility_outcome(outcome);
+        };
+
         if needs_cross_file_delegation {
+            record(Outcome::CrossFileTarget);
             return cross_file_idx;
         }
-        if delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
-            || self.ctx.program_has_module_augmentations()
-        {
+        if delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena {
+            record(Outcome::NonSymbolArena);
+            return None;
+        }
+        if self.ctx.program_has_module_augmentations() {
+            record(Outcome::ModuleAugmentation);
             return None;
         }
 
-        delegate_arena
-            .filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))
-            .filter(|arena| {
-                arena
-                    .source_files
-                    .first()
-                    .is_some_and(|source_file| !source_file.is_declaration_file)
-            })
-            .filter(|arena| {
-                self.ctx
-                    .symbol_arena_symbol_type_cache_is_stable(sym_id, arena)
-            })
-            .and_then(|arena| self.ctx.get_file_idx_for_arena(arena))
+        let Some(arena) = delegate_arena else {
+            record(Outcome::MissingDelegateArena);
+            return None;
+        };
+        if std::ptr::eq(arena, self.ctx.arena) {
+            record(Outcome::CurrentArena);
+            return None;
+        }
+        let Some(source_file) = arena.source_files.first() else {
+            record(Outcome::MissingSourceFile);
+            return None;
+        };
+        if source_file.is_declaration_file {
+            record(Outcome::TargetDeclarationFile);
+            return None;
+        }
+
+        let outcome = self
+            .ctx
+            .source_file_symbol_arena_cache_stability_outcome(sym_id, arena);
+        if outcome != Outcome::Cacheable {
+            record(outcome);
+            return None;
+        }
+
+        let file_idx = self.ctx.get_file_idx_for_arena(arena);
+        if file_idx.is_some() {
+            record(Outcome::Cacheable);
+        } else {
+            record(Outcome::MissingFileIndex);
+        }
+        file_idx
     }
 }
