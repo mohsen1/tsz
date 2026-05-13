@@ -546,7 +546,7 @@ mod tests {
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_parser::parser::{ParserState, syntax_kind_ext};
-    use tsz_solver::{TypeData, TypeInterner};
+    use tsz_solver::TypeInterner;
 
     fn parse_interface_declarations(
         source: &str,
@@ -697,7 +697,7 @@ mod tests {
             .expect("simple same-file interface annotation should lower directly");
 
         assert!(
-            matches!(types.lookup(result), Some(TypeData::Lazy(_))),
+            crate::query_boundaries::common::is_lazy_type(&types, result),
             "variable annotation should preserve the interface lazy type"
         );
     }
