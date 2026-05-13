@@ -1040,6 +1040,97 @@ fn static_field_class_expression_in_parameter_default_uses_es5_comma_alias() {
 }
 
 #[test]
+fn legacy_decorated_anonymous_default_class_static_field_sets_default_name() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare function dec<T>(target: T): T;\n@dec\nexport default class {\n    static y = 1;\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        legacy_decorators: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __setFunctionName ="),
+        "Lowered static field on anonymous decorated default class must request __setFunctionName.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a;"),
+        "The class value alias should be hoisted before the default class assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let default_1 = _a = class"),
+        "Anonymous decorated default class should assign both the export binding and function-name alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_a, \"default\");")
+            && output.contains("default_1.y = 1;")
+            && output.contains("default_1 = __decorate([")
+            && output.contains("export default default_1;"),
+        "Static initialization, decoration, and default export should follow tsc's statement order.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__setFunctionName(_a, \"default_1\")"),
+        "The runtime function name is the default export name, not the synthetic binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn legacy_constructor_param_decorator_static_self_reference_uses_alias() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare const IFoo: any;\nclass BulkEditPreviewProvider {\n    static readonly Schema = 'vscode-bulkeditpreview';\n    static emptyPreview = { scheme: BulkEditPreviewProvider.Schema };\n    constructor(@IFoo private readonly _modeService: IFoo) { }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2018,
+        legacy_decorators: true,
+        no_emit_helpers: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var BulkEditPreviewProvider_1;"),
+        "Constructor parameter decorators that reassign the class need a stable alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "let BulkEditPreviewProvider = BulkEditPreviewProvider_1 = class BulkEditPreviewProvider"
+        ),
+        "The class expression should initialize both the public binding and the stable alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "BulkEditPreviewProvider.emptyPreview = { scheme: BulkEditPreviewProvider_1.Schema };"
+        ),
+        "Static self-references must read from the pre-decoration class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("BulkEditPreviewProvider = BulkEditPreviewProvider_1 = __decorate(["),
+        "The class decorator assignment must keep the alias tracking the decorated class value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_exported_object_binding_non_identifier_property_uses_destructuring_path() {
     let source = r#"declare const obj: any;
 export let { "foo": bar } = obj;

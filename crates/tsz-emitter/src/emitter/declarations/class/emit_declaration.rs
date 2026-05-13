@@ -110,9 +110,18 @@ impl<'a> Printer<'a> {
             } else {
                 self.get_identifier_text_idx(class.name)
             };
+            // Constructor parameter decorators also produce a class-level
+            // `__decorate` assignment (`C = __decorate([__param(...)], C)`),
+            // so self-referential static initializers need the same stable
+            // class-value alias as class decorators.
+            let has_ctor_param_decorators = !self
+                .collect_constructor_param_decorators(&class.members.nodes)
+                .is_empty();
+            let needs_class_decorate =
+                !legacy_class_decorators.is_empty() || has_ctor_param_decorators;
 
             if self.ctx.target_es5 {
-                let needs_alias = !legacy_class_decorators.is_empty()
+                let needs_alias = needs_class_decorate
                     && class_has_self_references(
                         self.arena,
                         self.source_text_for_map(),
@@ -198,19 +207,10 @@ impl<'a> Printer<'a> {
                     false
                 };
 
-            // Check if the class needs a class-level __decorate call due to constructor
-            // parameter decorators (even without class-level decorators).
-            let has_ctor_param_decorators = !self
-                .collect_constructor_param_decorators(&class.members.nodes)
-                .is_empty();
-            // A class-level __decorate is needed for class decorators OR ctor param decorators
-            let needs_class_decorate =
-                !legacy_class_decorators.is_empty() || has_ctor_param_decorators;
-
             // Detect if the class body has self-references that need aliasing.
             // When a decorated class references itself (e.g. `static x() { return C.y; }`),
             // tsc emits: `var C_1; let C = C_1 = class C { static x() { return C_1.y; } };`
-            let needs_alias = !legacy_class_decorators.is_empty()
+            let needs_alias = needs_class_decorate
                 && class_has_self_references(
                     self.arena,
                     self.source_text_for_map(),

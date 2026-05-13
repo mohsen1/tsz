@@ -178,6 +178,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_is_ambiguous(&mut self, contextual: TypeId) -> bool {
+        if self.union_context_for_array_literal_prefers_tuple(contextual) {
+            return false;
+        }
+
         let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
@@ -185,6 +189,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut applicable_shapes = Vec::new();
+        let mut saw_tuple_applicable = false;
+        let mut saw_non_tuple_applicable = false;
         for member in members {
             // Skip null/undefined/void — these don't contribute to array contextual
             // typing ambiguity. tsc strips these before checking (getNonNullableType).
@@ -198,12 +204,22 @@ impl<'a> CheckerState<'a> {
                 if !applicable_shapes.contains(&applicable) {
                     applicable_shapes.push(applicable);
                 }
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
+                    saw_tuple_applicable = true;
+                } else {
+                    saw_non_tuple_applicable = true;
+                }
                 continue;
             }
 
             if let Some(applicable) = self.promise_like_array_context_shape(member) {
                 if !applicable_shapes.contains(&applicable) {
                     applicable_shapes.push(applicable);
+                }
+                if crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
+                    saw_tuple_applicable = true;
+                } else {
+                    saw_non_tuple_applicable = true;
                 }
                 continue;
             }
@@ -237,6 +253,7 @@ impl<'a> CheckerState<'a> {
                     if !applicable_shapes.contains(&value_type) {
                         applicable_shapes.push(value_type);
                     }
+                    saw_non_tuple_applicable = true;
                     continue;
                 }
             }
@@ -248,7 +265,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        applicable_shapes.len() > 1
+        applicable_shapes.len() > 1 && (!saw_tuple_applicable || saw_non_tuple_applicable)
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
