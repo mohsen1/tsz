@@ -24,9 +24,9 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
 use tsz_solver::visitor;
 
-use crate::transforms::emit_utils::string_literal_text;
 use crate::type_cache_view::TypeCacheView;
 
+mod module_surface;
 mod type_walk;
 mod value_references;
 
@@ -296,38 +296,14 @@ impl<'a> UsageAnalyzer<'a> {
                 self.analyze_export_assignment(stmt_idx);
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.analyze_module_declaration(stmt_idx);
+                if let Some(module) = self.arena.get_module(stmt_node)
+                    && self.module_declaration_contributes_public_surface(module)
+                {
+                    self.analyze_module_declaration(stmt_idx);
+                }
             }
             _ => {}
         }
-    }
-
-    fn analyze_module_declaration(&mut self, module_idx: NodeIndex) {
-        let Some(module_node) = self.arena.get(module_idx) else {
-            return;
-        };
-        let Some(module) = self.arena.get_module(module_node) else {
-            return;
-        };
-
-        let previous_ambient_module_specifier = self.current_ambient_module_specifier.clone();
-        if let Some(module_specifier) = string_literal_text(self.arena, module.name) {
-            self.current_ambient_module_specifier = Some(module_specifier);
-        }
-
-        if let Some(body_node) = self.arena.get(module.body) {
-            if let Some(module_block) = self.arena.get_module_block(body_node) {
-                if let Some(ref stmts) = module_block.statements {
-                    for &stmt_idx in &stmts.nodes {
-                        self.analyze_statement(stmt_idx);
-                    }
-                }
-            } else if let Some(_nested_module) = self.arena.get_module(body_node) {
-                self.analyze_module_declaration(module.body);
-            }
-        }
-
-        self.current_ambient_module_specifier = previous_ambient_module_specifier;
     }
 
     fn analyze_import_equals_declaration(&mut self, import_idx: NodeIndex) {
