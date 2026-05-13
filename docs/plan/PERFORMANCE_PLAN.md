@@ -25,13 +25,24 @@ Current guidance:
    reason at a time.
 5. Keep lib snapshot Phase 2/3 and interner redesign counter-gated.
 
+### Parallel PR Coordination (as of 2026-05-13)
+
+- Open overlap watchlist: [#6260](https://github.com/mohsen1/tsz/pull/6260)
+  (`perf(checker): reduce declaration symbol-arena delegation`) updates the
+  T2.2 declaration-file residue and related status-row numbers in this plan.
+- Until #6260 merges, prefer non-overlapping documentation slices in other PRs
+  (metadata fixes, measurement-model clarifications, and new decision records)
+  rather than editing the same status-row counters.
+- After #6260 merges, rebase and fold its `41 -> 11` declaration-file residue
+  update into any pending local branch before further T2.2 plan edits.
+
 ---
 
 ## 1. Current Main Baseline
 
-This plan is rebased against current `main` as of 2026-05-10. The important
-fact is that the codebase has moved since the original plan. Treat the items
-below as the starting point.
+This plan is rebased against current `main` as of 2026-05-13 (`b745f6aa40`).
+The important fact is that the codebase has moved since the original plan.
+Treat the items below as the starting point.
 
 | Area | Current state | Planning consequence |
 | --- | --- | --- |
