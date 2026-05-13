@@ -96,6 +96,54 @@ fn abstract_static_illegal_pair_does_not_emit_ts1029() {
     );
 }
 
+#[test]
+fn readonly_accessor_emits_ts1243_without_ts1029() {
+    let source = "class C { readonly accessor id: number = 1; }";
+    let diagnostics = parse_diagnostics(source);
+
+    assert_eq!(
+        count_error(source, 1243),
+        1,
+        "`readonly accessor` should produce exactly one TS1243: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 1243
+                && message == "'accessor' modifier cannot be used with 'readonly' modifier."
+        }),
+        "`readonly accessor` should anchor TS1243 on the accessor modifier: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_error(source, 1029),
+        0,
+        "`readonly accessor` should not be treated as a modifier-ordering issue: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accessor_readonly_emits_ts1243_without_ts1029() {
+    let source = "class C { accessor readonly id: number = 1; }";
+    let diagnostics = parse_diagnostics(source);
+
+    assert_eq!(
+        count_error(source, 1243),
+        1,
+        "`accessor readonly` should produce exactly one TS1243: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 1243
+                && message == "'readonly' modifier cannot be used with 'accessor' modifier."
+        }),
+        "`accessor readonly` should anchor TS1243 on the readonly modifier: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_error(source, 1029),
+        0,
+        "`accessor readonly` should not be treated as a modifier-ordering issue: {diagnostics:?}"
+    );
+}
+
 // =========================================================================
 // TS1040: override in ambient context (declare)
 // =========================================================================
