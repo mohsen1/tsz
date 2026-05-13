@@ -2292,6 +2292,9 @@ impl<'a> DeclarationEmitter<'a> {
         let exported = self.source_file_has_module_syntax(source_file)
             && self.js_export_equals_names.is_empty();
 
+        let alias_can_share_declaration_name =
+            self.js_default_typedef_alias_can_share_declaration_name(source_file, &alias_name);
+
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -2301,6 +2304,7 @@ impl<'a> DeclarationEmitter<'a> {
                     &jsdoc,
                     &alias_name,
                     exported,
+                    alias_can_share_declaration_name,
                 );
             }
         }
@@ -2309,7 +2313,12 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            self.emit_jsdoc_default_typedef_alias_decl_for_comment(&jsdoc, &alias_name, exported);
+            self.emit_jsdoc_default_typedef_alias_decl_for_comment(
+                &jsdoc,
+                &alias_name,
+                exported,
+                alias_can_share_declaration_name,
+            );
         }
     }
 
@@ -2318,20 +2327,41 @@ impl<'a> DeclarationEmitter<'a> {
         jsdoc: &str,
         alias_name: &str,
         exported: bool,
+        alias_can_share_declaration_name: bool,
     ) {
         let Some(mut decl) = Self::parse_jsdoc_default_typedef_alias_decl(jsdoc, alias_name) else {
             return;
         };
 
-        // A `@typedef {…} default` can map to an existing default-export local
-        // name (e.g. `class Cls; export default Cls;`). Emitting `export type Cls`
-        // would collide with that declaration in `.d.ts`, so synthesize a unique
-        // alias and reserve it for subsequent import/export name generation.
-        if self.reserved_names.contains(&decl.name) {
+        if self.reserved_names.contains(&decl.name) && !alias_can_share_declaration_name {
             decl.name = self.generate_unique_name(&decl.name);
         }
         self.reserved_names.insert(decl.name.clone());
 
         self.emit_rendered_jsdoc_type_alias(decl, exported);
+    }
+
+    fn js_default_typedef_alias_can_share_declaration_name(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        alias_name: &str,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION =>
+                {
+                    if self.extract_declaration_name(stmt_idx).as_deref() == Some(alias_name) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
     }
 }
