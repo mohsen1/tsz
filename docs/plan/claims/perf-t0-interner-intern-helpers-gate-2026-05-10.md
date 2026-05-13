@@ -6,12 +6,12 @@
 
 The main `TypeInterner::intern()` function has used the gate-once-cached
 counter pattern since #4960 — `enabled_fast()` is checked first, then
-`counters()` is dereffed once and the resulting `Option<&PerfCounters>`
+`counters()` (via `OnceLock::get_or_init(...)`) is dereferenced once and the resulting `Option<&PerfCounters>`
 is reused across all increments inside the function.
 
 Eight sibling `intern_*` helper functions still use the inline
 `inc(&counters().X)` shape, paying an unconditional
-`OnceLock<PerfCounters>::get()` every call:
+`OnceLock::get_or_init(...)` path every call:
 
 - `intern_string` — fires per identifier/string interning (millions/run)
 - `intern_type_list` and `intern_type_list_from_slice` — share
@@ -47,7 +47,7 @@ the deref entirely in disabled mode."
 
 - **Enabled mode** (`TSZ_PERF_COUNTERS=1`): counter values unchanged.
 - **Disabled mode** (default): each call site drops one
-  `OnceLock<PerfCounters>::get()` per invocation. Compounds heavily
+  `OnceLock::get_or_init(...)` path per invocation. Compounds heavily
   across `intern_string` and `intern_type_list` which fire at the
   millions-per-compile scale.
 

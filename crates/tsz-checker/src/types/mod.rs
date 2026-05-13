@@ -22,6 +22,7 @@ mod type_node_context;
 pub(crate) mod type_node_helpers;
 mod type_node_lowering;
 mod type_node_merged_value_query;
+mod type_node_property_names;
 mod type_node_query_members;
 mod type_node_resolution;
 pub(crate) mod unique_symbol_arena;
