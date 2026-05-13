@@ -125,11 +125,16 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
     )
 }
 
+fn allow_iterator_symbol_direct_fallback(name: &str) -> bool {
+    matches!(name, "Iterator")
+}
+
 fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
     matches!(
         name,
         "CollatorOptions"
             | "DateTimeFormatOptions"
+            | "Locale"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
             | "NumberFormatOptionsSignDisplayRegistry"
@@ -145,6 +150,7 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
             | "Function"
             | "Iterator"
             | "IteratorObject"
+            | "Locale"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
             | "NumberFormatOptionsSignDisplayRegistry"
@@ -375,7 +381,15 @@ impl<'a> CheckerState<'a> {
         }
         let (direct_type, params) = if should_resolve_actual_lib_interface_with_params(&name) {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
-            (direct_type?, params)
+            if let Some(direct_type) = direct_type {
+                (direct_type, params)
+            } else if allow_iterator_symbol_direct_fallback(&name) {
+                let direct_type = self.resolve_lib_interface_type_by_symbol(&name, sym_id)?;
+                let params = self.get_type_params_for_symbol(sym_id);
+                (direct_type, params)
+            } else {
+                return None;
+            }
         } else {
             let direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
                 if !is_direct_actual_intl_lib_interface_name(&name) {
@@ -1232,6 +1246,7 @@ mod tests {
         for name in [
             "DateTimeFormatOptions",
             "Function",
+            "Locale",
             "NumberFormatOptions",
             "NumberFormatOptionsCurrencyDisplayRegistry",
             "NumberFormatOptionsSignDisplayRegistry",

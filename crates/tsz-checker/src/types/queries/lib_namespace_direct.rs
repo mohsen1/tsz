@@ -11,6 +11,10 @@ use super::lib_resolution::{
     resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
 };
 
+fn allow_direct_lib_interface_heritage(cache_name: &str) -> bool {
+    matches!(cache_name, "Iterator" | "Intl.Locale")
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_lib_namespace_export_symbol(
         &self,
@@ -106,7 +110,8 @@ impl<'a> CheckerState<'a> {
                 .and_then(|node| arena.get_interface(node))
                 .and_then(|interface| interface.heritage_clauses.as_ref())
                 .is_some_and(|clauses| !clauses.nodes.is_empty())
-        }) {
+        }) && !allow_direct_lib_interface_heritage(cache_name)
+        {
             self.ctx
                 .lib_type_resolution_cache
                 .insert(cache_name.to_string(), None);
