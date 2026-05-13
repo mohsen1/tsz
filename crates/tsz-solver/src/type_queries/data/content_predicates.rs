@@ -70,22 +70,17 @@ pub fn contains_named_or_bound_type_parameters_db(db: &dyn TypeDatabase, type_id
 }
 
 /// Like `contains_type_parameters_db`, but ignores references to a known
-/// locally-bound mapped key parameter.
+/// locally-bound mapped key parameter. See
+/// [`contains_free_type_parameters_except_name`] for the leaf-treatment
+/// rationale.
 ///
-/// `TypeParameter` and `Infer` are treated as leaves: their `constraint`
-/// and `default` fields are *metadata* about the parameter, not free usages
-/// by the enclosing type. Walking them would falsely flag instantiated
-/// mapped types as still containing outer parameters — the iteration
-/// variable `K`'s baked-in constraint `keyof T` still mentions `T` long
-/// after `T` was substituted in every structural position of the body.
+/// [`contains_free_type_parameters_except_name`]:
+///     crate::visitors::visitor_predicates::contains_free_type_parameters_except_name
 pub fn contains_type_parameters_except_name_db(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     excluded_name: Atom,
 ) -> bool {
-    if type_id.is_intrinsic() {
-        return false;
-    }
     crate::visitors::visitor_predicates::contains_free_type_parameters_except_name(
         db,
         type_id,

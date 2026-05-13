@@ -877,18 +877,10 @@ fn contains_application_union_without_app() {
 // =========================================================================
 // contains_type_parameters_except_name_db
 // =========================================================================
-//
-// The iteration variable `K` of a mapped type `{ [K in keyof T as F<K>]: ... }`
-// carries its declared constraint (`keyof T`) as immutable metadata baked into
-// the `TypeParameter` record. After the outer alias is instantiated with `T =
-// Obj`, every structural reference to `T` has been substituted, but `K`'s own
-// constraint metadata still mentions `T`. The "free type parameters except
-// `K`" check must treat `TypeParameter` as a leaf so that this stale constraint
-// reference is not mistaken for a live usage requiring further substitution.
 
 #[test]
 fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
-    use crate::types::{ConditionalType, TypeData};
+    use crate::types::ConditionalType;
 
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
@@ -993,12 +985,6 @@ fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
         cond_with_p,
         p_name,
     ));
-
-    // Suppress unused-binding warning on TypeData import.
-    let _ = matches!(
-        interner.lookup(t_param),
-        Some(TypeData::TypeParameter(_)) | None
-    );
 }
 
 // =========================================================================
