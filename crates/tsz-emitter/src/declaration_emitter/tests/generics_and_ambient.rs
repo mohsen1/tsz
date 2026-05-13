@@ -57,6 +57,31 @@ fn test_generic_class_with_default() {
 }
 
 #[test]
+fn test_generic_new_expression_infers_forwarded_base_type_argument() {
+    let output = emit_dts_with_binding(
+        r#"
+    interface Base<T> {
+        a: T;
+    }
+    declare class Derived<T> extends Base<T> {
+    }
+    declare class DerivedDefault<T = string> extends Base<T> {
+    }
+    const a = new Derived(1);
+    const b = new DerivedDefault(1);
+    "#,
+    );
+    assert!(
+        output.contains("declare const a: Derived<number>;"),
+        "Expected forwarded base type argument inference: {output}"
+    );
+    assert!(
+        output.contains("declare const b: DerivedDefault<number>;"),
+        "Expected argument inference to override class default: {output}"
+    );
+}
+
+#[test]
 fn test_multiple_type_parameters() {
     let output = emit_dts(
         "export function map<T, U>(arr: T[], fn: (x: T) => U): U[] { return arr.map(fn); }",
