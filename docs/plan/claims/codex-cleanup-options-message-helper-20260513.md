@@ -1,6 +1,6 @@
 # Claim: add option-aware diagnostic message helper
 
-Status: WIP
+Status: ready for review
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6192
 Branch: `codex/cleanup-options-message-helper-20260513`
@@ -15,6 +15,11 @@ Branch: `codex/cleanup-options-message-helper-20260513`
   cleanup.
 
 ## Verification Plan
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(ts2683_tests::)|test(test_utils::tests::)' --no-fail-fast`
+
+## Verification
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(ts2683_tests::)|test(test_utils::tests::)' --no-fail-fast`
