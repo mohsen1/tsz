@@ -19,8 +19,11 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .get_parenthesized(expr_node)
                 .and_then(|paren| self.const_literal_initializer_text(paren.expression)),
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .arena
+                .get_literal(expr_node)
+                .map(|lit| Self::const_numeric_literal_initializer_text(&lit.text, lit.value)),
             k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
                 || k == SyntaxKind::BigIntLiteral as u16
                 || k == SyntaxKind::TrueKeyword as u16
                 || k == SyntaxKind::FalseKeyword as u16 =>
@@ -36,14 +39,37 @@ impl<'a> DeclarationEmitter<'a> {
                     None
                 }
             }
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                && self.is_negative_literal(expr_node) =>
-            {
-                let raw = self.get_source_slice_no_semi(expr_node.pos, expr_node.end)?;
-                if raw.contains('_') {
-                    Some(raw.replace('_', ""))
-                } else {
-                    Some(raw)
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.arena.get_unary_expr(expr_node)?;
+                let operand_node = self.arena.get(unary.operand)?;
+                match (unary.operator, operand_node.kind) {
+                    (op, k)
+                        if op == SyntaxKind::PlusToken as u16
+                            && k == SyntaxKind::NumericLiteral as u16 =>
+                    {
+                        self.const_literal_initializer_text(unary.operand)
+                    }
+                    (op, k)
+                        if op == SyntaxKind::MinusToken as u16
+                            && k == SyntaxKind::NumericLiteral as u16 =>
+                    {
+                        let lit = self.arena.get_literal(operand_node)?;
+                        let text =
+                            Self::const_numeric_literal_initializer_text(&lit.text, lit.value);
+                        Some(format!("-{text}"))
+                    }
+                    (op, k)
+                        if op == SyntaxKind::MinusToken as u16
+                            && k == SyntaxKind::BigIntLiteral as u16 =>
+                    {
+                        let raw = self.get_source_slice_no_semi(expr_node.pos, expr_node.end)?;
+                        if raw.contains('_') {
+                            Some(raw.replace('_', ""))
+                        } else {
+                            Some(raw)
+                        }
+                    }
+                    _ => None,
                 }
             }
             _ => self
@@ -528,6 +554,34 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(value) = value {
                 Self::format_js_number(value)
             } else {
+                text.replace('_', "")
+            }
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn const_numeric_literal_initializer_text(text: &str, value: Option<f64>) -> String {
+        let lower = text.to_ascii_lowercase();
+        if text.contains('_')
+            || lower.starts_with("0x")
+            || lower.starts_with("0o")
+            || lower.starts_with("0b")
+            || text.chars().filter(|c| c.is_ascii_digit()).count() >= 21
+        {
+            if let Some(value) = value {
+                Self::format_js_number(value)
+            } else {
+                let digits = lower
+                    .strip_prefix("0x")
+                    .map(|digits| (digits, 16))
+                    .or_else(|| lower.strip_prefix("0o").map(|digits| (digits, 8)))
+                    .or_else(|| lower.strip_prefix("0b").map(|digits| (digits, 2)));
+                if let Some((digits, radix)) = digits
+                    && let Ok(value) = i64::from_str_radix(&digits.replace('_', ""), radix)
+                {
+                    return value.to_string();
+                }
                 text.replace('_', "")
             }
         } else {

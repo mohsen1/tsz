@@ -1634,6 +1634,38 @@ choose<"a">("a", "b");
 }
 
 #[test]
+fn explicit_boolean_literal_type_arguments_stay_literal() {
+    let source = r#"
+declare function id<T>(value: T): T;
+id<true>(true);
+id<true>(false);
+id<false>(false);
+id<false>(true);
+
+declare let zero: { <T>(): T };
+const zeroTrue: true = zero<true>(true);
+const zeroFalse: false = zero<false>(false);
+
+declare let f: { <T>(): T, g<U>(): U };
+const inferred = f<true>(true);
+const keepTrue: true = inferred;
+const rejectFalse: false = inferred;
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(code, _)| *code == 2345).collect();
+    let ts2322: Vec<_> = diags.iter().filter(|(code, _)| *code == 2322).collect();
+    assert_eq!(
+        ts2345.len(),
+        2,
+        "Explicit true/false type arguments should remain boolean literal types. Diagnostics: {diags:#?}"
+    );
+    assert!(
+        ts2322.len() == 1,
+        "Instantiation expression call results should not widen boolean literals. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn noinfer_blocks_candidates_nested_in_object_properties() {
     let source = r#"
 declare function chooseProp<T extends string>(value: T, fallback: { x: NoInfer<T> }): void;
@@ -1662,6 +1694,83 @@ chooseProp("a", { x: "a" });
         ts2322.len(),
         1,
         "Lib intrinsic NoInfer nested in an object property should reject only the \"b\" property. Diagnostics: {diags:#?}"
+    );
+}
+
+// ─── NoInfer with array arguments (issue #6363) ──────────────────────
+
+#[test]
+fn noinfer_array_argument_widens_to_primitive() {
+    let source = r#"
+declare function choose<T>(options: T[], fallback: NoInfer<T>): T;
+choose(["a", "b", "c"], "d");
+choose(["a", "b", "c"], "a");
+choose([1, 2, 3], 4);
+choose([true, false], true);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "array literal widens T to primitive so NoInfer fallback passes. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_single_element_widens_to_primitive() {
+    let source = r#"
+declare function choose<T>(options: T[], fallback: NoInfer<T>): T;
+choose(["a"], "b");
+choose([1], 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "single-element array widens to primitive for NoInfer fallback. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_renamed_type_param_widens_to_primitive() {
+    let source = r#"
+declare function pick<U>(candidates: U[], default_value: NoInfer<U>): U;
+pick(["x", "y", "z"], "w");
+pick([10, 20], 30);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "widening is not name-sensitive: different type-param name. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_scalar_literal_still_preserved() {
+    let source = r#"
+declare function choose<T>(value: T, fallback: NoInfer<T>): T;
+choose("a", "b");
+choose("a", "a");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(c, _)| *c == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "scalar direct argument keeps literal narrow; NoInfer fallback rejects mismatch. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_alias_widens_to_primitive() {
+    let source = r#"
+type NI<T> = NoInfer<T>;
+declare function choose<T>(options: T[], fallback: NI<T>): T;
+choose(["foo", "bar"], "baz");
+choose([1, 2], 3);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "NoInfer via type alias still widens array-inferred T to primitive. Diagnostics: {diags:#?}"
     );
 }
 
@@ -3410,5 +3519,65 @@ match(item).with({ kind: "issue", priority: oneOf("medium", "high") }, () => tru
     assert!(
         diags.iter().all(|(code, _)| *code != 2345),
         "generic methods declared in type literals must retain method type params for call inference. Got: {diags:#?}"
+    );
+}
+
+// ─── Variadic tuple spread with type-assertion arguments ─────────────────────
+
+#[test]
+fn variadic_tuple_spread_type_assertion_preserves_literals() {
+    let source = r#"
+declare function concat<T extends readonly unknown[], U extends readonly unknown[]>(a: T, b: U): [...T, ...U];
+const result = concat([1, 2] as [1, 2], ["a", "b"] as ["a", "b"]);
+const _r: [1, 2, "a", "b"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "variadic tuple spread with type-asserted args must preserve literal types. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_type_assertion_preserves_literals_renamed_params() {
+    let source = r#"
+declare function concat<K extends readonly unknown[], V extends readonly unknown[]>(a: K, b: V): [...K, ...V];
+const result = concat([true, false] as [true, false], [42] as [42]);
+const _r: [true, false, 42] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "variadic tuple spread literal preservation must not depend on parameter names K/V. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_without_assertion_widens_to_primitives() {
+    let source = r#"
+declare function concat<T extends readonly unknown[], U extends readonly unknown[]>(a: T, b: U): [...T, ...U];
+const result = concat([1, 2], ["a", "b"]);
+const _bad: [1, 2, "a", "b"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "variadic tuple spread from fresh (non-asserted) tuple must widen literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variadic_tuple_spread_three_way_with_assertions_preserves_literals() {
+    let source = r#"
+declare function concat3<A extends readonly unknown[], B extends readonly unknown[], C extends readonly unknown[]>(
+    a: A, b: B, c: C
+): [...A, ...B, ...C];
+const r = concat3([1] as [1], ["x"] as ["x"], [true] as [true]);
+const _check: [1, "x", true] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "three-way variadic spread with asserted tuples must preserve all literals. Got: {diags:#?}"
     );
 }

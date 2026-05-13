@@ -15,6 +15,7 @@
 //! by `conformance/jsdoc/checkObjectDefineProperty.ts` because it requires
 //! the lib globals (Object, etc.) which are unavailable in unit tests.
 
+use crate::test_utils::diagnostic_codes;
 use tsz_common::options::checker::CheckerOptions;
 
 fn diags_for_strict_js(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
@@ -40,7 +41,7 @@ function take(s) {}
 take(c);
 ";
     let diags = diags_for_strict_js(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         !codes.contains(&2345),
         "TS2345 must not fire — c should have cast type 'string', not 'null'. Got: {diags:#?}",
@@ -58,7 +59,7 @@ function take(s) {}
 take(c);
 ";
     let diags = diags_for_strict_js(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         !codes.contains(&2345),
         "TS2345 must not fire — cast should give c type 'string'. Got: {diags:#?}",
@@ -77,7 +78,7 @@ function consume(n) {}
 consume(result);
 ";
     let diags = diags_for_strict_js(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         !codes.contains(&2345),
         "TS2345 must not fire — cast should give result type 'number'. Got: {diags:#?}",
@@ -96,7 +97,7 @@ function take(n) {}
 take(c);
 ";
     let diags = diags_for_strict_js(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2345),
         "Expected TS2345 (string passed where number required), got codes: {codes:?}\nDiagnostics: {diags:#?}",

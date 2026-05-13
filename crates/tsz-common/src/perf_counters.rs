@@ -16,8 +16,8 @@
 //! collect here decides how PRs 2–7 are scoped. Don't ship later PRs without
 //! looking at the dump on `large-ts-repo` first.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Cache-line-padded `AtomicU64` to avoid false sharing between hot
 /// counters that get hammered concurrently. 64 is the typical cache-line
@@ -443,6 +443,26 @@ impl SourceFileSymbolArenaCacheEligibilityOutcome {
     pub const fn as_index(self) -> usize {
         self as usize
     }
+}
+
+pub const DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT: usize = 128;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DelegateDeclarationFileMissResidue {
+    pub name: String,
+    pub kind: &'static str,
+    pub source: &'static str,
+    pub target_file: Option<String>,
+    pub count: u64,
+}
+
+static DELEGATE_DECLARATION_FILE_MISS_RESIDUES: OnceLock<
+    Mutex<Vec<DelegateDeclarationFileMissResidue>>,
+> = OnceLock::new();
+
+fn delegate_declaration_file_miss_residues()
+-> &'static Mutex<Vec<DelegateDeclarationFileMissResidue>> {
+    DELEGATE_DECLARATION_FILE_MISS_RESIDUES.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 /// One process-wide instance. Incremented from any thread, read once at
@@ -900,6 +920,60 @@ pub fn record_cross_arena_symbol_miss(
     } else {
         c.delegate_cross_arena_symbol_miss_target_source_file
             .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[inline]
+pub fn record_cross_arena_declaration_file_miss_residue(
+    source: CrossArenaSymbolMissSource,
+    kind: CrossArenaSymbolMissKind,
+    name: &str,
+    target_file: Option<&str>,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let source_name = CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES[source.as_index()];
+    let kind_name = CROSS_ARENA_SYMBOL_MISS_KIND_NAMES[kind.as_index()];
+    let target_file = target_file.map(|file| {
+        std::path::Path::new(file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file)
+            .to_owned()
+    });
+    let mut rows = delegate_declaration_file_miss_residues()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.name == name
+            && row.kind == kind_name
+            && row.source == source_name
+            && row.target_file == target_file
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len() < DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT {
+        rows.push(DelegateDeclarationFileMissResidue {
+            name: name.to_owned(),
+            kind: kind_name,
+            source: source_name,
+            target_file,
+            count: 1,
+        });
+    } else if let Some(row) = rows.iter_mut().find(|row| row.name == "__truncated__") {
+        row.count += 1;
+    } else {
+        rows.push(DelegateDeclarationFileMissResidue {
+            name: "__truncated__".to_string(),
+            kind: "overflow",
+            source: "overflow",
+            target_file: None,
+            count: 1,
+        });
     }
 }
 
@@ -1381,6 +1455,9 @@ impl PerfCounters {
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
+            + &Self::dump_delegate_declaration_file_miss_residues(
+                &snap.delegate_declaration_file_miss_residues,
+            )
             + &Self::dump_source_file_symbol_arena_cache_eligibility_outcomes()
             + &Self::dump_by_reason()
     }
@@ -1422,6 +1499,24 @@ impl PerfCounters {
             "target source files",
             load(&c.delegate_cross_arena_symbol_miss_target_source_file),
         ));
+        out
+    }
+
+    fn dump_delegate_declaration_file_miss_residues(
+        rows: &[DelegateDeclarationFileMissResidue],
+    ) -> String {
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDelegateCrossArenaSymbol declaration-file miss residues:\n");
+        for row in rows {
+            let file = row.target_file.as_deref().unwrap_or("<unknown>");
+            out.push_str(&format!(
+                "  {:<32} {:<12} {:<20} {:>8}  {file}\n",
+                row.name, row.kind, row.source, row.count,
+            ));
+        }
         out
     }
 
@@ -1587,6 +1682,15 @@ pub struct PerfCounterSnapshot {
     /// `symbol_arenas` / `declaration_arenas` / `symbol_file_targets`
     /// dominates, and which symbol kinds are walking through the path.
     pub delegate_miss_classification: DelegateMissClassification,
+    /// Bounded symbol-level attribution for declaration-file targets that
+    /// still construct a `DelegateCrossArenaSymbol` child checker after the
+    /// lib/direct lowering fast paths have declined.
+    ///
+    /// Captures at most `DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT`
+    /// distinct `(name, kind, source, target_file)` rows in perf-counter mode.
+    /// This turns the remaining declaration-file residue from an aggregate
+    /// count into the exact APIs the next T2.2 PR needs to prove safe.
+    pub delegate_declaration_file_miss_residues: Vec<DelegateDeclarationFileMissResidue>,
     /// Outcome buckets for the no-child alias shortcut attempted before
     /// constructing a `DelegateCrossArenaSymbol` child checker.
     ///
@@ -1899,6 +2003,8 @@ impl PerfCounters {
                 ),
                 target_source_files: load(&c.delegate_cross_arena_symbol_miss_target_source_file),
             },
+            delegate_declaration_file_miss_residues:
+                Self::snapshot_delegate_declaration_file_miss_residues(),
             alias_shortcut_outcomes: (0..CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT)
                 .map(|i| NamedCount {
                     name: CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES[i],
@@ -1926,6 +2032,24 @@ impl PerfCounters {
                 })
                 .collect(),
         }
+    }
+
+    fn snapshot_delegate_declaration_file_miss_residues() -> Vec<DelegateDeclarationFileMissResidue>
+    {
+        let mut rows = delegate_declaration_file_miss_residues()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        rows.sort_by(|a, b| {
+            b.count.cmp(&a.count).then_with(|| {
+                a.name
+                    .cmp(&b.name)
+                    .then_with(|| a.kind.cmp(b.kind))
+                    .then_with(|| a.source.cmp(b.source))
+                    .then_with(|| a.target_file.cmp(&b.target_file))
+            })
+        });
+        rows
     }
 
     /// Serialize a [`PerfCounterSnapshot`] to `path` using an atomic
@@ -1969,6 +2093,7 @@ mod json_tests {
             "interner",
             "by_reason",
             "delegate_miss_classification",
+            "delegate_declaration_file_miss_residues",
             "alias_shortcut_outcomes",
             "direct_interface_lowering_outcomes",
             "cross_file_cache_miss_causes",
@@ -2302,6 +2427,47 @@ mod json_tests {
                 "by_kind[{i}].count should be a number"
             );
         }
+    }
+
+    #[test]
+    fn delegate_declaration_file_miss_residues_lock_field_shape() {
+        let unique_name = format!("__test_decl_residue_{}__", std::process::id());
+        {
+            let mut rows = delegate_declaration_file_miss_residues()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(DelegateDeclarationFileMissResidue {
+                name: unique_name.clone(),
+                kind: "interface",
+                source: "symbol_arenas",
+                target_file: Some("lib.test.d.ts".to_string()),
+                count: 7,
+            });
+        }
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["delegate_declaration_file_miss_residues"]
+            .as_array()
+            .expect("delegate_declaration_file_miss_residues is array");
+        let row = rows
+            .iter()
+            .find(|row| row["name"] == unique_name)
+            .expect("test residue row is present");
+        let obj = row.as_object().expect("row is object");
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> =
+            ["name", "kind", "source", "target_file", "count"]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            actual, expected,
+            "delegate_declaration_file_miss_residues row field shape drifted",
+        );
+        assert_eq!(row["kind"], "interface");
+        assert_eq!(row["source"], "symbol_arenas");
+        assert_eq!(row["target_file"], "lib.test.d.ts");
+        assert_eq!(row["count"], 7);
     }
 
     #[test]

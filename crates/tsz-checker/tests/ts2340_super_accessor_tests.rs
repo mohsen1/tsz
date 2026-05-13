@@ -13,14 +13,8 @@
 //! because the existing `class_chain_member_kind_name_only` folds
 //! accessors and methods together as `MethodLike`.
 
-use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
-
 fn diags(source: &str) -> Vec<(u32, String)> {
-    check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 fn has_ts2340(diags: &[(u32, String)]) -> bool {

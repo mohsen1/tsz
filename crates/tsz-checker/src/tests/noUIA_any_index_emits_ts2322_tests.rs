@@ -16,6 +16,7 @@
 //! index-signature value type with the standard NUIA read/write split, not
 //! the type-level `any` short-circuit.
 
+use crate::test_utils::diagnostic_codes;
 use tsz_common::options::checker::CheckerOptions;
 
 fn diags_for_strict_nuia(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
@@ -47,7 +48,7 @@ declare const strMap: { [s: string]: boolean };
 const e: boolean = strMap[null as any];
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "NUIA read with any-typed index must emit TS2322 (boolean|undefined → boolean). Got: {codes:?}",
@@ -61,7 +62,7 @@ declare const strMap: { [s: string]: boolean };
 const e: string = strMap[null as any];
 "#;
     let diags = diags_for_strict(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         !codes.contains(&2322),
         "Non-NUIA value access with any-typed index must keep the any fallback. Got: {codes:?}",
@@ -78,7 +79,7 @@ declare const idx: any;
 const v: number = lookupTable[idx];
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "Renamed: NUIA read with any-typed index must emit TS2322 (number|undefined → number). Got: {codes:?}",
@@ -95,7 +96,7 @@ declare const strMap: { [s: string]: boolean };
 strMap[null as any] = undefined;
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "NUIA write of undefined through any-index must emit TS2322. Got: {codes:?}",
@@ -112,7 +113,7 @@ declare const idx: any;
 lookupTable[idx] = undefined;
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "Renamed: NUIA write of undefined through any-index must emit TS2322. Got: {codes:?}",
@@ -128,7 +129,7 @@ declare const strMap: { [s: string]: boolean };
 const x: boolean | undefined = strMap[null as any];
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         !codes.contains(&2322),
         "NUIA-widened read should be assignable to `boolean | undefined`. Got: {codes:?}",
@@ -147,7 +148,7 @@ declare const idx: any;
 const x: boolean = obj[idx];
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         !codes.contains(&2322),
         "Receiver without index signature must keep the type-level `any` fallback for any-typed indices. Got: {codes:?}",
@@ -166,7 +167,7 @@ declare const strMap: { [s: string]: boolean };
 type T_OK = CheckBooleanOnly<(typeof strMap)[any]>;
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         !codes.contains(&2344),
         "Type-level `T[any]` must remain `any` under NUIA (no extra TS2344). Got: {codes:?}",
@@ -187,7 +188,7 @@ const fn = <Key extends keyof typeof myRecord>(key: Key) => {
 };
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "Generic-key write of undefined must emit TS2322. Got: {codes:?}",
@@ -205,7 +206,7 @@ const setter = <P extends keyof typeof lookupTable>(p: P) => {
 };
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "Renamed: generic-key write of undefined must still emit TS2322. Got: {codes:?}",
@@ -227,7 +228,7 @@ const fn = <Key extends keyof typeof myRecord>(key: Key) => {
 };
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "Generic-key read should still emit TS2322 for `string | undefined → string`. Got: {codes:?}",
@@ -241,7 +242,7 @@ declare const strMap: { [s: string]: boolean };
 const e: boolean = strMap[0 as 0 | 1];
 "#;
     let diags = diags_for_strict_nuia(source);
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "NUIA numeric-literal union read should still emit TS2322. Got: {codes:?}",

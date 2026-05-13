@@ -2,6 +2,19 @@
 
 use tsz_checker::diagnostics::Diagnostic;
 
+fn check_source_strict_with_default_libs(source: &str) -> Vec<Diagnostic> {
+    let libs = tsz_checker::test_utils::load_default_lib_files();
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        tsz_checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+        &libs,
+    )
+}
+
 /// Test that conditional types with `infer V` pattern resolve to concrete types
 /// when the check type is a concrete application of the same generic interface.
 ///
@@ -23,6 +36,30 @@ const z: TestSynthetic = '3'; // Should error TS2322: string not assignable to n
         1,
         "Expected exactly 1 TS2322 error (string not assignable to number), got {} errors. All diagnostics: {:?}",
         ts2322_errors.len(),
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn recursive_template_literal_with_string_intrinsics_resolves_to_literal() {
+    let source = r#"
+type CamelCase<S extends string> = S extends `${infer L}_${infer R}`
+  ? `${Lowercase<L>}${CamelCase<Capitalize<R>>}`
+  : Lowercase<S>;
+
+type CC1 = CamelCase<"hello_world">;
+const rejected: CC1 = "anything";
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "recursive CamelCase should resolve to the literal \"helloworld\" and reject arbitrary strings. Actual diagnostics: {:?}",
         diagnostics
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
@@ -105,7 +142,7 @@ type ExtractPropsMatch =
 const matched: true = null as any as ExtractPropsMatch;
 "#;
 
-    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let diagnostics = check_source_strict_with_default_libs(source);
     assert!(
         diagnostics.iter().all(|d| d.code != 2322),
         "expected InferProps equality to hold; all diagnostics: {:?}",
@@ -213,6 +250,50 @@ type B3 = B2[0];
     assert!(
         diagnostics.iter().all(|diag| diag.code != 2339),
         "recursive indexed access must not cascade into TS2339. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn recursive_array_application_infer_flatten_resolves_to_leaf() {
+    let source = r#"
+type Flatten<T> = T extends Array<infer U> ? Flatten<U> : T;
+
+type F0 = Flatten<number[]>;
+type F1 = Flatten<number[][]>;
+type F2 = Flatten<number[][][]>;
+type F3 = Flatten<Array<Array<number>>>;
+
+const f0: F0 = 42;
+const f1: F1 = 42;
+const f2: F2 = 42;
+const f3: F3 = 42;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "recursive Array<infer U> flatten should accept leaf numbers. Actual diagnostics: {diagnostics:#?}"
+    );
+
+    let rejection_source = r#"
+type Flatten<T> = T extends Array<infer U> ? Flatten<U> : T;
+
+type F0 = Flatten<number[]>;
+type F1 = Flatten<number[][]>;
+type F2 = Flatten<number[][][]>;
+type F3 = Flatten<Array<Array<number>>>;
+
+const bad0: F0 = [42];
+const bad1: F1 = [[42]];
+const bad2: F2 = [[[42]]];
+const bad3: F3 = [[42]];
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(rejection_source);
+    let ts2322_count = diagnostics.iter().filter(|diag| diag.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 4,
+        "recursive Array<infer U> flatten should reject nested arrays after resolving to number. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1211,6 +1292,132 @@ type Test = AssertedType<(target: any) => asserts target is number>;
         diagnostics.is_empty(),
         "Expected `infer` inside asserts predicate to bind, got: {:?}",
         diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+// Tests for fix: try_expand_application must evaluate its instantiated result
+// so that distributive conditionals (K extends K ? [K, ...] : never) are resolved
+// to concrete union-of-tuples before the structural subtype check proceeds.
+//
+// Structural rule: "When an Application type's expanded body contains conditional
+// types from distributive instantiation over a union type parameter, the expanded
+// result must be fully evaluated before subtype comparison."
+
+#[test]
+fn test_permutation_type_with_default_param_and_distribution() {
+    // Case 1 (reported repro): T/K naming, numeric literals
+    let source = r#"
+type MyExclude<T, U> = T extends U ? never : T;
+
+type Permutation<T, K = T> =
+  [T] extends [never]
+    ? []
+    : K extends K
+      ? [K, ...Permutation<MyExclude<T, K>>]
+      : never;
+
+type P = Permutation<1 | 2>;
+
+const p1: P = [1, 2];
+const p2: P = [2, 1];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for Permutation<1|2> assignments, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_permutation_type_renamed_params() {
+    // Case 2: same rule, different type parameter names (A/B instead of T/K)
+    // proves the fix is structural, not dependent on parameter name spelling
+    let source = r#"
+type Rem<A, B> = A extends B ? never : A;
+
+type Perm<A, B = A> =
+  [A] extends [never]
+    ? []
+    : B extends B
+      ? [B, ...Perm<Rem<A, B>>]
+      : never;
+
+type Q = Perm<"x" | "y">;
+
+const q1: Q = ["x", "y"];
+const q2: Q = ["y", "x"];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for Perm<'x'|'y'> with renamed params, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_permutation_type_three_element_union() {
+    // Case 3: larger union (3 members) — ensures distribution over >2 members works
+    let source = r#"
+type MyExclude<T, U> = T extends U ? never : T;
+
+type Permutation<T, K = T> =
+  [T] extends [never]
+    ? []
+    : K extends K
+      ? [K, ...Permutation<MyExclude<T, K>>]
+      : never;
+
+type P3 = Permutation<1 | 2 | 3>;
+
+const pa: P3 = [1, 2, 3];
+const pb: P3 = [2, 1, 3];
+const pc: P3 = [3, 1, 2];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for Permutation<1|2|3> assignments, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_permutation_type_invalid_assignment_still_rejected() {
+    // Case 4 (negative): invalid value must still be rejected — the fix must not
+    // loosen type safety for non-permutation tuples
+    let source = r#"
+type MyExclude<T, U> = T extends U ? never : T;
+
+type Permutation<T, K = T> =
+  [T] extends [never]
+    ? []
+    : K extends K
+      ? [K, ...Permutation<MyExclude<T, K>>]
+      : never;
+
+type P = Permutation<1 | 2>;
+
+const bad: P = [3, 1];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for invalid permutation [3, 1]: P, got: {:?}",
+        diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>()

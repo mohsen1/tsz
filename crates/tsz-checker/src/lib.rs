@@ -261,6 +261,9 @@ mod ts2323_tests;
 #[path = "../tests/ts2347_tests.rs"]
 mod ts2347_tests;
 #[cfg(test)]
+#[path = "../tests/ts2352_disjoint_literal_property_tests.rs"]
+mod ts2352_disjoint_literal_property_tests;
+#[cfg(test)]
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
 #[cfg(test)]
@@ -439,6 +442,9 @@ mod for_in_narrowing_tests;
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
+#[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
+mod generic_class_constructor_literal_preservation_tests;
+#[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
@@ -537,6 +543,9 @@ mod never_initializer_falls_through_tests;
 #[cfg(test)]
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
+#[cfg(test)]
+#[path = "../tests/new_expression_source_display_tests.rs"]
+mod new_expression_source_display_tests;
 #[cfg(test)]
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;

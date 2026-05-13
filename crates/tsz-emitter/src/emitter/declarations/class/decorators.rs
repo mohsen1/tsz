@@ -11,6 +11,21 @@ enum DecoratorMemberName {
     Computed { expr: NodeIndex, key: String },
 }
 
+#[derive(Clone, Copy)]
+enum LegacyMemberDecoratorScopeFilter {
+    RequiresPrivateNameScope,
+    DoesNotRequirePrivateNameScope,
+}
+
+impl LegacyMemberDecoratorScopeFilter {
+    const fn matches(self, requires_private_name_scope: bool) -> bool {
+        match self {
+            Self::RequiresPrivateNameScope => requires_private_name_scope,
+            Self::DoesNotRequirePrivateNameScope => !requires_private_name_scope,
+        }
+    }
+}
+
 impl DecoratorMemberName {
     fn dedupe_key(&self) -> String {
         match self {
@@ -47,6 +62,20 @@ impl<'a> Printer<'a> {
         self.arena.get(expr_idx).is_some_and(|node| {
             node.is_identifier() && self.get_identifier_text_idx(expr_idx) == "await"
         })
+    }
+
+    fn legacy_decorator_expression_contains_private_identifier(&self, expr_idx: NodeIndex) -> bool {
+        let mut stack = vec![expr_idx];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.arena.get(current) else {
+                continue;
+            };
+            if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                return true;
+            }
+            stack.extend(self.arena.get_children(current));
+        }
+        false
     }
 
     fn emit_legacy_decorator_expression(&mut self, expr_idx: NodeIndex) {
@@ -213,6 +242,68 @@ impl<'a> Printer<'a> {
             runtime_index += 1;
         }
         result
+    }
+
+    pub(in crate::emitter) fn legacy_member_decorator_needs_private_name_scope(
+        &self,
+        member_idx: NodeIndex,
+    ) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+
+        let (modifiers, parameters): (_, Option<&NodeList>) = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.arena.get_method_decl(member_node) else {
+                    return false;
+                };
+                (&method.modifiers, Some(&method.parameters))
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    return false;
+                };
+                (&prop.modifiers, None)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let Some(accessor) = self.arena.get_accessor(member_node) else {
+                    return false;
+                };
+                (&accessor.modifiers, None)
+            }
+            _ => return false,
+        };
+
+        for dec_idx in self.collect_class_decorators(modifiers) {
+            let Some(dec_node) = self.arena.get(dec_idx) else {
+                continue;
+            };
+            let Some(dec) = self.arena.get_decorator(dec_node) else {
+                continue;
+            };
+            if self.legacy_decorator_expression_contains_private_identifier(dec.expression) {
+                return true;
+            }
+        }
+
+        if let Some(parameters) = parameters {
+            for (_, decorators) in self.collect_param_decorators(parameters) {
+                for dec_idx in decorators {
+                    let Some(dec_node) = self.arena.get(dec_idx) else {
+                        continue;
+                    };
+                    let Some(dec) = self.arena.get_decorator(dec_node) else {
+                        continue;
+                    };
+                    if self.legacy_decorator_expression_contains_private_identifier(dec.expression)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Collect parameter decorators from the constructor of a class.
@@ -526,7 +617,13 @@ impl<'a> Printer<'a> {
 
     /// Emit serialized parameter types as comma-separated values.
     fn emit_serialized_param_types(&mut self, parameters: &NodeList) {
+        let serialized = self.serialize_param_types_to_string(parameters);
+        self.write(&serialized);
+    }
+
+    fn serialize_param_types_to_string(&mut self, parameters: &NodeList) -> String {
         let mut first = true;
+        let mut parts = Vec::new();
         for &param_idx in &parameters.nodes {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
@@ -545,22 +642,109 @@ impl<'a> Printer<'a> {
                     }
                 }
                 if !first {
-                    self.write(", ");
+                    parts.push(", ".to_string());
                 }
                 first = false;
-                if param.dot_dot_dot_token {
+                let serialized = if param.dot_dot_dot_token {
                     // Rest parameter: serialize the element type if it's an array type,
                     // otherwise emit Object (matching tsc behavior).
-                    let serialized = self.serialize_rest_param_element_type(param.type_annotation);
-                    self.write(&serialized);
+                    self.serialize_rest_param_element_type(param.type_annotation)
                 } else if param.type_annotation.is_some() {
-                    let serialized = self.serialize_type_for_metadata(param.type_annotation);
-                    self.write(&serialized);
+                    self.serialize_type_for_metadata(param.type_annotation)
                 } else {
-                    self.write("Object");
-                }
+                    "Object".to_string()
+                };
+                parts.push(serialized);
             }
         }
+        parts.concat()
+    }
+
+    fn emit_metadata_for_accessor(
+        &mut self,
+        members: &[NodeIndex],
+        name_idx: NodeIndex,
+        is_static: bool,
+    ) {
+        let (design_type, param_types) =
+            self.accessor_metadata_strings(members, name_idx, is_static);
+        self.write_helper("__metadata");
+        self.write("(\"design:type\", ");
+        self.write(&design_type);
+        self.write("),");
+        self.write_line();
+        self.write_helper("__metadata");
+        self.write("(\"design:paramtypes\", [");
+        self.write(&param_types);
+        self.write("])");
+    }
+
+    fn accessor_metadata_strings(
+        &mut self,
+        members: &[NodeIndex],
+        name_idx: NodeIndex,
+        is_static: bool,
+    ) -> (String, String) {
+        let Some(target_name) = self.get_decorator_member_name(name_idx) else {
+            return ("Object".to_string(), String::new());
+        };
+        let target_key = target_name.dedupe_key();
+        let mut setter_parameters: Option<NodeList> = None;
+        let mut getter_type = NodeIndex::NONE;
+
+        for &member_idx in members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::GET_ACCESSOR
+                && member_node.kind != syntax_kind_ext::SET_ACCESSOR
+            {
+                continue;
+            }
+            let Some(accessor) = self.arena.get_accessor(member_node) else {
+                continue;
+            };
+            if self.arena.is_static(&accessor.modifiers) != is_static {
+                continue;
+            }
+            let Some(member_name) = self.get_decorator_member_name(accessor.name) else {
+                continue;
+            };
+            if member_name.dedupe_key() != target_key {
+                continue;
+            }
+            if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                setter_parameters = Some(accessor.parameters.clone());
+            } else if accessor.type_annotation.is_some() {
+                getter_type = accessor.type_annotation;
+            }
+        }
+
+        let design_type = if let Some(params) = setter_parameters.as_ref() {
+            params
+                .nodes
+                .first()
+                .and_then(|&param_idx| self.arena.get(param_idx))
+                .and_then(|param_node| self.arena.get_parameter(param_node))
+                .and_then(|param| {
+                    param
+                        .type_annotation
+                        .is_some()
+                        .then_some(param.type_annotation)
+                })
+                .map(|type_idx| self.serialize_type_for_metadata(type_idx))
+                .unwrap_or_else(|| "Object".to_string())
+        } else if getter_type.is_some() {
+            self.serialize_type_for_metadata(getter_type)
+        } else {
+            "Object".to_string()
+        };
+        let param_types = setter_parameters
+            .as_ref()
+            .map(|params| self.serialize_param_types_to_string(params))
+            .unwrap_or_default();
+
+        (design_type, param_types)
     }
 
     /// For a rest parameter, serialize the element type of the array type annotation.
@@ -725,10 +909,35 @@ impl<'a> Printer<'a> {
     /// - Methods/accessors: `__decorate([...], ClassName.prototype, "name", null);`
     /// - Properties: `__decorate([...], ClassName.prototype, "name", void 0);`
     /// - Static members: `__decorate([...], ClassName, "name", ...);`
-    pub(in crate::emitter) fn emit_legacy_member_decorator_calls(
+    pub(in crate::emitter) fn emit_legacy_member_decorator_calls_without_private_name_scope(
         &mut self,
         class_name: &str,
         members: &[NodeIndex],
+    ) {
+        self.emit_legacy_member_decorator_calls_filtered(
+            class_name,
+            members,
+            LegacyMemberDecoratorScopeFilter::DoesNotRequirePrivateNameScope,
+        );
+    }
+
+    pub(in crate::emitter) fn emit_legacy_member_decorator_calls_requiring_private_name_scope(
+        &mut self,
+        class_name: &str,
+        members: &[NodeIndex],
+    ) {
+        self.emit_legacy_member_decorator_calls_filtered(
+            class_name,
+            members,
+            LegacyMemberDecoratorScopeFilter::RequiresPrivateNameScope,
+        );
+    }
+
+    fn emit_legacy_member_decorator_calls_filtered(
+        &mut self,
+        class_name: &str,
+        members: &[NodeIndex],
+        scope_filter: LegacyMemberDecoratorScopeFilter,
     ) {
         if class_name.is_empty() {
             return;
@@ -749,7 +958,10 @@ impl<'a> Printer<'a> {
                 parameters: NodeList,
                 return_type: NodeIndex,
             },
-            Accessor,
+            Accessor {
+                name: NodeIndex,
+                is_static: bool,
+            },
         }
 
         for &member_idx in members {
@@ -794,7 +1006,10 @@ impl<'a> Printer<'a> {
                         accessor.name,
                         false,
                         true,
-                        MemberMetadata::Accessor,
+                        MemberMetadata::Accessor {
+                            name: accessor.name,
+                            is_static: self.arena.is_static(&accessor.modifiers),
+                        },
                     )
                 }
                 _ => continue,
@@ -829,13 +1044,19 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
+            let needs_private_name_scope =
+                self.legacy_member_decorator_needs_private_name_scope(member_idx);
+            if !scope_filter.matches(needs_private_name_scope) {
+                continue;
+            }
+
             self.write_helper("__decorate");
             self.write("([");
             self.write_line();
             self.increase_indent();
 
             // Determine if metadata or param decorators will follow
-            let will_emit_metadata = emit_metadata && !matches!(metadata, MemberMetadata::Accessor);
+            let will_emit_metadata = emit_metadata;
             let has_more = will_emit_metadata || !param_decorators.is_empty();
 
             let emitted_decorators: Vec<NodeIndex> = decorators
@@ -900,7 +1121,10 @@ impl<'a> Printer<'a> {
                         self.emit_metadata_for_method(parameters, return_type);
                         self.write_line();
                     }
-                    MemberMetadata::Accessor => {}
+                    MemberMetadata::Accessor { name, is_static } => {
+                        self.emit_metadata_for_accessor(members, name, is_static);
+                        self.write_line();
+                    }
                 }
             }
 

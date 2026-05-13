@@ -116,6 +116,19 @@ def print_summary(snap: dict) -> None:
         for row in miss_causes:
             pct = 100.0 * row["count"] / total_miss_causes if total_miss_causes else 0.0
             print(f"    {row['name']:<24} {fmt_int(row['count']):>8} {pct:>6.1f}%")
+    decl_residues = snap.get("delegate_declaration_file_miss_residues")
+    if decl_residues:
+        total_decl_residues = sum(row["count"] for row in decl_residues)
+        print(
+            f"  declaration_file_miss_residues rows={fmt_int(len(decl_residues))} "
+            f"total={fmt_int(total_decl_residues)}"
+        )
+        for row in decl_residues[:20]:
+            file_name = row.get("target_file") or "<unknown>"
+            print(
+                f"    {row['name']:<36} {row['kind']:<11} "
+                f"{fmt_int(row['count']):>5}  {file_name}"
+            )
     print()
     print("checker:")
     sc = checker["state_constructed"]

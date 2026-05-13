@@ -21,6 +21,7 @@ use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
+use super::template_segment_prefix::match_template_segment_prefix;
 
 impl<'a> InferenceContext<'a> {
     /// Perform structural type inference from a source type to a target type.
@@ -181,9 +182,12 @@ impl<'a> InferenceContext<'a> {
                 }
             }
 
-            // Array types: recurse into element types
+            // Array types: recurse into element types.
             (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
+                let prev = self.in_array_element_context;
+                self.in_array_element_context = true;
                 self.infer_from_types(source_elem, target_elem, priority)?;
+                self.in_array_element_context = prev;
             }
 
             // Tuple types: recurse into elements
@@ -1467,7 +1471,9 @@ impl<'a> InferenceContext<'a> {
             | (TypeData::Callable(_), TypeData::Callable(_))
             | (TypeData::Function(_), TypeData::Function(_))
             | (TypeData::Tuple(_), TypeData::Tuple(_))
-            | (TypeData::Array(_), TypeData::Array(_)) => true,
+            | (TypeData::Array(_), TypeData::Array(_))
+            | (TypeData::Literal(LiteralValue::String(_)), TypeData::TemplateLiteral(_))
+            | (TypeData::TemplateLiteral(_), TypeData::TemplateLiteral(_)) => true,
             _ => false,
         }
     }
@@ -1819,6 +1825,12 @@ impl<'a> InferenceContext<'a> {
                                 // pos remains unchanged - next infer var starts here
                             }
                         }
+                    } else if let Some(next_pos) =
+                        match_template_segment_prefix(self.interner, source, pos, *type_id)
+                    {
+                        pos = next_pos;
+                    } else {
+                        return None;
                     }
                 }
             }

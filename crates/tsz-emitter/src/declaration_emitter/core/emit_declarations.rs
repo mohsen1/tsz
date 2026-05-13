@@ -1,8 +1,8 @@
 use rustc_hash::FxHashSet;
 use tracing::debug;
 use tsz_common::comments::is_jsdoc_comment;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
@@ -565,198 +565,6 @@ impl<'a> DeclarationEmitter<'a> {
         found_in_ambient_module
     }
 
-    fn emit_deferred_js_export_equals_dependency_classes(
-        &mut self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        if !self.source_is_js_file || self.js_export_equals_names.is_empty() {
-            return;
-        }
-
-        let deferred = source_file
-            .statements
-            .nodes
-            .iter()
-            .copied()
-            .filter(|&stmt_idx| {
-                let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                    return false;
-                };
-                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
-                    return false;
-                }
-                let Some(class) = self.arena.get_class(stmt_node) else {
-                    return false;
-                };
-                self.should_defer_js_export_equals_dependency_class(class.name, &class.modifiers)
-            })
-            .collect::<Vec<_>>();
-        if deferred.is_empty() {
-            return;
-        }
-
-        let export_equals_names = std::mem::take(&mut self.js_export_equals_names);
-        for class_idx in deferred {
-            self.emit_class_declaration(class_idx);
-        }
-        self.js_export_equals_names = export_equals_names;
-    }
-
-    fn should_defer_js_export_equals_dependency_class(
-        &self,
-        name_idx: NodeIndex,
-        modifiers: &Option<NodeList>,
-    ) -> bool {
-        self.source_is_js_file
-            && !self.js_export_equals_names.is_empty()
-            && !self
-                .arena
-                .has_modifier(modifiers, SyntaxKind::ExportKeyword)
-            && !self.is_js_named_exported_name(name_idx)
-            && !self.is_js_export_equals_name(name_idx)
-            && self.is_js_export_equals_namespace_alias_local(name_idx)
-    }
-
-    fn is_js_export_equals_namespace_alias_local(&self, name_idx: NodeIndex) -> bool {
-        let Some(name) = self.get_identifier_text(name_idx) else {
-            return false;
-        };
-
-        self.js_export_equals_names.iter().any(|root_name| {
-            self.js_namespace_export_aliases
-                .get(root_name)
-                .is_some_and(|aliases| aliases.iter().any(|alias| alias.local_name == name))
-        })
-    }
-
-    fn emit_jsdoc_overload_function_declarations(
-        &mut self,
-        func_idx: NodeIndex,
-        is_exported: bool,
-    ) -> bool {
-        if !self.source_is_js_file {
-            return false;
-        }
-        let Some(func_node) = self.arena.get(func_idx) else {
-            return false;
-        };
-        let Some(func) = self.arena.get_function(func_node) else {
-            return false;
-        };
-
-        let overloads =
-            Self::jsdoc_overload_signatures_from_chain(&self.current_statement_jsdoc_chain);
-        if overloads.is_empty() {
-            return false;
-        }
-
-        for overload in overloads {
-            self.emit_jsdoc_overload_comment(&overload.comment);
-            self.write_indent();
-            if is_exported {
-                self.write("export ");
-            }
-            if self.should_emit_declare_keyword(is_exported) {
-                self.write("declare ");
-            }
-            self.write("function ");
-            self.emit_node(func.name);
-            self.emit_jsdoc_template_parameters(&overload.type_params);
-            self.write("(");
-            for (idx, param) in overload.params.iter().enumerate() {
-                if idx > 0 {
-                    self.write(", ");
-                }
-                if param.rest {
-                    self.write("...");
-                }
-                self.write(&param.name);
-                if param.optional && !param.rest {
-                    self.write("?");
-                }
-                self.write(": ");
-                self.write(&param.type_text);
-            }
-            self.write(")");
-            self.write(": ");
-            self.write(overload.return_type.as_deref().unwrap_or("any"));
-            self.write(";");
-            self.write_line();
-        }
-
-        true
-    }
-
-    fn statement_is_jsdoc_overload_signature(&self, stmt_idx: NodeIndex) -> bool {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-        if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-            return self
-                .arena
-                .get_function(stmt_node)
-                .is_some_and(|func| func.body.is_none());
-        }
-        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-            return self
-                .arena
-                .get_export_decl(stmt_node)
-                .and_then(|export| self.arena.get(export.export_clause))
-                .and_then(|clause| self.arena.get_function(clause))
-                .is_some_and(|func| func.body.is_none());
-        }
-        false
-    }
-
-    fn source_text_has_export_function(&self, name_idx: NodeIndex) -> bool {
-        let Some(name) = self.get_identifier_text(name_idx) else {
-            return false;
-        };
-        let Some(text) = self.source_file_text.as_deref() else {
-            return false;
-        };
-        text.contains(&format!("export function {name}"))
-            || text.contains(&format!("export async function {name}"))
-    }
-
-    fn emit_jsdoc_overload_comment(&mut self, jsdoc: &str) {
-        self.write_indent();
-        self.write("/**");
-        self.write_line();
-        for line in jsdoc.trim().lines() {
-            self.write_indent();
-            if line.trim().is_empty() {
-                self.write(" *");
-            } else {
-                self.write(" * ");
-                self.write(line.trim());
-            }
-            self.write_line();
-        }
-        self.write_indent();
-        self.write(" */");
-        self.write_line();
-    }
-
-    fn mark_leading_comments_emitted_before(&mut self, pos: u32) {
-        let Some(text) = self.source_file_text.as_deref() else {
-            return;
-        };
-        let bytes = text.as_bytes();
-        let mut actual_start = pos as usize;
-        while actual_start < bytes.len()
-            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
-        {
-            actual_start += 1;
-        }
-
-        while self.comment_emit_idx < self.all_comments.len()
-            && self.all_comments[self.comment_emit_idx].end as usize <= actual_start
-        {
-            self.comment_emit_idx += 1;
-        }
-    }
-
     fn prune_unused_named_import_specifiers_from_output(output: &str) -> String {
         let lines = output.lines().collect::<Vec<_>>();
         let mut changed = false;
@@ -935,21 +743,7 @@ impl<'a> DeclarationEmitter<'a> {
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
-        let has_jsdoc_overload_tags = self.source_is_js_file
-            && self
-                .current_statement_jsdoc_chain
-                .iter()
-                .any(|jsdoc| Self::jsdoc_has_overload_tag(jsdoc));
-        if has_jsdoc_overload_tags {
-            // JS @overload tags emit one declaration per overload.  Do not bulk
-            // emit the whole leading comment chain before a single signature.
-            if self.statement_is_jsdoc_overload_signature(stmt_idx) {
-                for jsdoc in self.current_statement_jsdoc_chain.clone() {
-                    if Self::jsdoc_has_overload_tag(&jsdoc) {
-                        self.emit_jsdoc_overload_comment(&jsdoc);
-                    }
-                }
-            }
+        if self.emit_jsdoc_overload_comments_if_signature(stmt_idx) {
         } else if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
@@ -1100,50 +894,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain.clear();
     }
 
-    fn statement_emits_js_object_literal_namespace(&self, stmt_idx: NodeIndex) -> bool {
-        if !self.source_is_js_file {
-            return false;
-        }
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-            return false;
-        }
-        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
-            return false;
-        };
-
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                continue;
-            }
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            if decl_list.declarations.nodes.len() != 1 {
-                continue;
-            }
-            let Some(&decl_idx) = decl_list.declarations.nodes.first() else {
-                continue;
-            };
-            let Some(decl_node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                continue;
-            };
-            if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
-                return true;
-            }
-        }
-
-        false
-    }
-
     fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
@@ -1152,57 +902,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain =
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
-        let hoisted_func_idx = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-            Some(stmt_idx)
-        } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-            self.arena
-                .get_export_decl(stmt_node)
-                .and_then(|export| self.arena.get(export.export_clause))
-                .and_then(|clause| {
-                    (clause.kind == syntax_kind_ext::FUNCTION_DECLARATION)
-                        .then_some(self.arena.get_export_decl(stmt_node)?.export_clause)
-                })
-        } else {
-            None
-        };
-        if let Some(func_idx) = hoisted_func_idx
-            && !Self::jsdoc_overload_signatures_from_chain(&jsdoc_chain).is_empty()
-        {
-            let is_exported = self
-                .arena
-                .get(func_idx)
-                .and_then(|func_node| self.arena.get_function(func_node))
-                .is_some_and(|func| {
-                    self.arena
-                        .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                        || self.is_js_named_exported_name(func.name)
-                        || self.source_text_has_export_function(func.name)
-                })
-                || self.statement_has_effective_export(stmt_idx);
-            self.emit_jsdoc_overload_function_declarations(func_idx, is_exported);
-            self.emitted_module_indicator = true;
-            self.current_statement_jsdoc_chain.clear();
+        if self.emit_hoisted_jsdoc_overload_function_statement(stmt_idx, stmt_node, &jsdoc_chain) {
             return;
         }
-        let has_jsdoc_type_function_signature = self
-            .statement_jsdoc_type_function_signature_node(stmt_idx)
-            .is_some();
-        let has_jsdoc_overload_tags = jsdoc_chain
-            .iter()
-            .any(|jsdoc| Self::jsdoc_has_overload_tag(jsdoc));
-        if has_jsdoc_overload_tags {
-            self.emit_jsdoc_comment_chain(&jsdoc_chain);
-        } else if has_jsdoc_type_function_signature {
-            let filtered = Self::jsdoc_chain_without_type_tags(&jsdoc_chain);
-            self.emit_jsdoc_comment_chain(&filtered);
-        } else if jsdoc_chain.len() == 1
-            && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
-            && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
-        {
-            self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
-        } else {
-            self.emit_jsdoc_comment_chain(&jsdoc_chain);
-        }
+        self.emit_hoisted_js_function_jsdoc_chain(stmt_idx, stmt_node, &jsdoc_chain);
         let saved_comment_idx = self.comment_emit_idx;
         self.comment_emit_idx = self
             .all_comments
@@ -1225,7 +928,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain.clear();
     }
 
-    fn hoisted_jsdoc_source_comment_is_multiline(&self, pos: u32) -> bool {
+    pub(in crate::declaration_emitter) fn hoisted_jsdoc_source_comment_is_multiline(
+        &self,
+        pos: u32,
+    ) -> bool {
         let Some(text) = self.source_file_text.as_deref() else {
             return true;
         };
@@ -1313,26 +1019,12 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        if self.emit_jsdoc_overload_function_declarations(func_idx, is_exported) {
-            if should_emit_late_bound_namespace {
-                self.emit_ts_late_bound_function_namespace_from_members(
-                    func.name,
-                    is_exported,
-                    &late_bound_members,
-                );
-            }
-            if !self.emit_js_function_like_class_if_needed(
-                func.name,
-                &func.parameters,
-                func.body,
-                is_exported,
-                func_idx,
-            ) {
-                self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
-            }
-            self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
-            self.mark_leading_comments_emitted_before(func_node.pos);
-            self.skip_comments_in_node(func_node.pos, func_node.end);
+        if self.emit_jsdoc_overload_function_declaration_with_extras(
+            func_idx,
+            is_exported,
+            should_emit_late_bound_namespace,
+            &late_bound_members,
+        ) {
             return;
         }
 
@@ -1497,7 +1189,10 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&type_text);
                 } else if let Some((type_text, substituted_parameter_type_query)) =
                     scoped_preferred_return.as_ref()
+                    && let Some(func_name_text) = self.get_identifier_text(func_name)
+                    && let printed_return_type = self.print_type_id(effective_return_type_id)
                     && (direct_function_return
+                        || printed_return_type == format!("ReturnType<typeof {func_name_text}>")
                         || self.should_prefer_source_return_type_text(
                             preferred_return.as_deref().unwrap_or(type_text),
                             effective_return_type_id,
@@ -1587,14 +1282,7 @@ impl<'a> DeclarationEmitter<'a> {
                         && !tp.nodes.is_empty()
                     {
                         let printed_type_text =
-                            self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
-                        let printed_type_text = self
-                            .restore_mapped_return_type_param_constraints(func, &printed_type_text);
-                        let printed_type_text = self
-                            .rewrite_returned_auto_accessor_parameter_unknowns(
-                                func,
-                                &printed_type_text,
-                            );
+                            self.inferred_function_return_type_text(func, effective_return_type_id);
                         let printed_type_text = self
                             .expand_rest_tuple_parameters_in_function_type_text(
                                 func_body,

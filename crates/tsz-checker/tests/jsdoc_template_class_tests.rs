@@ -3,7 +3,7 @@
 //! Verifies that @template type parameters on JS classes are recognized
 //! and used for generic type checking, matching tsc behavior.
 
-use crate::test_utils::check_js_source_diagnostics;
+use crate::test_utils::{check_js_source_diagnostics, diagnostic_codes};
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::query_boundaries::common::PropertyAccessResult;
 use tsz_checker::state::CheckerState;
@@ -290,7 +290,7 @@ f.a = g.a;
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for assigning boolean to number via @template class, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -315,7 +315,7 @@ b.value;
         ts2339,
         0,
         "Expected no TS2339 for property access on @template class instance, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -347,7 +347,7 @@ p.val;
         ts2339,
         0,
         "Expected no TS2339 for multi-param @template class, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -372,7 +372,7 @@ b.value = c.value;
     assert!(
         ts2322 >= 1,
         "Expected TS2322 for incompatible generic assignment in TS class, got codes: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 

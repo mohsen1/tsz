@@ -299,6 +299,13 @@ impl<'a> DeclarationEmitter<'a> {
             if has_type_annotation {
                 self.write(": ");
                 self.emit_type(type_annotation);
+            } else if keyword == "const"
+                && has_initializer
+                && let Some(template_index_type) =
+                    self.template_index_signature_element_access_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&template_index_type);
             } else if self.inside_non_ambient_namespace
                 && !has_initializer
                 && self.get_identifier_text(decl_name).as_deref() == Some("__proto__")
@@ -437,7 +444,9 @@ impl<'a> DeclarationEmitter<'a> {
                         !text.contains("unknown")
                             && (text.contains("=>")
                                 || text.starts_with('[')
-                                || type_text.contains("unknown"))
+                                || type_text.contains("unknown")
+                                || (keyword == "const"
+                                    && Self::is_literal_type_text_for_const_call(text)))
                     })
                     .cloned()
                     .unwrap_or(type_text);
@@ -466,6 +475,23 @@ impl<'a> DeclarationEmitter<'a> {
                         self.widen_mutable_call_initializer_literal_type_text(initializer)
                 {
                     type_text = widened_type_text;
+                }
+                if keyword == "const"
+                    && self
+                        .const_literal_initializer_text_deep(initializer)
+                        .is_none()
+                    && self.call_contains_unannotated_function_expression(initializer)
+                    && let Some(widened_type_text) =
+                        self.widen_literal_initializer_result_type_text(initializer)
+                {
+                    type_text = widened_type_text;
+                }
+                if keyword == "const"
+                    && type_text == "string"
+                    && let Some(template_index_type) =
+                        self.template_index_signature_element_access_type_text(initializer)
+                {
+                    type_text = template_index_type;
                 }
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
@@ -525,7 +551,14 @@ impl<'a> DeclarationEmitter<'a> {
                 && type_text != "any"
             {
                 self.write(": ");
-                self.write(&type_text);
+                if keyword == "const"
+                    && let Some(template_index_type) =
+                        self.template_index_signature_element_access_type_text(initializer)
+                {
+                    self.write(&template_index_type);
+                } else {
+                    self.write(&type_text);
+                }
             } else if has_initializer
                 && self
                     .arena
@@ -726,12 +759,25 @@ impl<'a> DeclarationEmitter<'a> {
                 if keyword == "const"
                     && let Some(interner) = self.type_interner
                 {
+                    let has_literal_initializer_surface = !has_initializer
+                        || self
+                            .const_literal_initializer_text_deep(initializer)
+                            .is_some();
                     if has_initializer
                         && let Some(formatted) =
                             self.call_initializer_unexported_alias_literal_text(initializer)
                     {
                         self.write(": ");
                         self.write(&formatted);
+                        return;
+                    }
+
+                    if has_initializer
+                        && let Some(template_index_type) =
+                            self.template_index_signature_element_access_type_text(initializer)
+                    {
+                        self.write(": ");
+                        self.write(&template_index_type);
                         return;
                     }
 
@@ -745,7 +791,24 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
-                        let formatted = Self::format_literal_initializer(&lit, interner);
+                        if has_initializer
+                            && let Some(type_text) =
+                                self.call_expression_single_literal_type_argument_text(initializer)
+                        {
+                            let formatted_lit = Self::format_literal_initializer(&lit, interner);
+                            if type_text == formatted_lit {
+                                self.write(": ");
+                                self.write(&type_text);
+                                return;
+                            }
+                        }
+                        let formatted = if has_literal_initializer_surface {
+                            Self::format_literal_initializer(&lit, interner)
+                        } else if let Some(kind) = Self::literal_primitive_kind_text(&lit) {
+                            kind.to_string()
+                        } else {
+                            Self::format_literal_initializer(&lit, interner)
+                        };
                         self.write(": ");
                         self.write(&formatted);
                         return;
@@ -807,6 +870,14 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text = if has_initializer {
+                    self.add_initializer_object_member_comments_to_type_text(
+                        initializer,
+                        &selected_type_text,
+                    )
+                } else {
+                    selected_type_text
+                };
                 let selected_type_text =
                     Self::normalize_inferred_array_any_text(&selected_type_text);
                 let selected_type_text = if has_initializer {
@@ -826,9 +897,17 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 self.insert_import_for_unqualified_imported_type(&selected_type_text);
                 self.write(": ");
-                self.write(&Self::strip_synthetic_anonymous_object_members(
-                    &selected_type_text,
-                ));
+                if keyword == "const"
+                    && has_initializer
+                    && let Some(template_index_type) =
+                        self.template_index_signature_element_access_type_text(initializer)
+                {
+                    self.write(&template_index_type);
+                } else {
+                    self.write(&Self::strip_synthetic_anonymous_object_members(
+                        &selected_type_text,
+                    ));
+                }
             } else if let Some(typeof_text) =
                 self.typeof_prefix_for_value_entity(initializer, has_initializer, None)
             {
@@ -868,6 +947,14 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(decl_idx)
                 .map_or(init_node.end, |node| node.end);
             self.skip_comments_before_raw(skip_end);
+        }
+        if has_initializer
+            && let Some(init_node) = self.arena.get(initializer)
+            && (init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || init_node.kind == syntax_kind_ext::AS_EXPRESSION
+                || init_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+        {
+            self.skip_comments_in_node(init_node.pos, init_node.end);
         }
     }
 
@@ -1024,6 +1111,132 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         None
+    }
+
+    fn widen_literal_initializer_result_type_text(&self, initializer: NodeIndex) -> Option<String> {
+        let interner = self.type_interner?;
+        let type_id = self.get_node_type_or_names(&[initializer])?;
+        if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
+            return Self::literal_primitive_kind_text(&lit).map(str::to_string);
+        }
+        let union_id = tsz_solver::visitor::union_list_id(interner, type_id)?;
+        let members = interner.type_list(union_id);
+        let mut kind: Option<&'static str> = None;
+        for &member in members.iter() {
+            let member_lit = tsz_solver::visitor::literal_value(interner, member)?;
+            let member_kind = Self::literal_primitive_kind_text(&member_lit)?;
+            if let Some(existing) = kind {
+                if existing != member_kind {
+                    return None;
+                }
+            } else {
+                kind = Some(member_kind);
+            }
+        }
+        kind.map(str::to_string)
+    }
+
+    const fn literal_primitive_kind_text(
+        lit: &tsz_solver::types::LiteralValue,
+    ) -> Option<&'static str> {
+        match lit {
+            tsz_solver::types::LiteralValue::String(_) => Some("string"),
+            tsz_solver::types::LiteralValue::Number(_) => Some("number"),
+            tsz_solver::types::LiteralValue::Boolean(_) => Some("boolean"),
+            tsz_solver::types::LiteralValue::BigInt(_) => Some("bigint"),
+        }
+    }
+
+    fn is_literal_type_text_for_const_call(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        matches!(trimmed, "true" | "false" | "null" | "undefined")
+            || trimmed.starts_with('"')
+            || trimmed.starts_with('\'')
+            || tsz_solver::utils::is_numeric_literal_name(trimmed.trim_end_matches('n'))
+    }
+
+    fn call_expression_single_literal_type_argument_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let type_arguments = call.type_arguments.as_ref().or_else(|| {
+            self.arena
+                .get(call.expression)
+                .and_then(|node| self.arena.get_expr_type_args(node))
+                .and_then(|expr_type_args| expr_type_args.type_arguments.as_ref())
+        })?;
+        let &[type_arg] = type_arguments.nodes.as_slice() else {
+            return None;
+        };
+        let type_text = self
+            .emit_type_node_text(type_arg)
+            .or_else(|| self.source_slice_from_arena(self.arena, type_arg))?;
+        let type_text = type_text.trim().to_string();
+        Self::is_literal_type_text_for_const_call(&type_text).then_some(type_text)
+    }
+
+    fn call_contains_unannotated_function_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        match expr_node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.arena
+                    .get_function(expr_node)
+                    .is_some_and(|func| func.type_annotation.is_none())
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let Some(call) = self.arena.get_call_expr(expr_node) else {
+                    return false;
+                };
+                self.call_contains_unannotated_function_expression(call.expression)
+                    || call.arguments.as_ref().is_some_and(|args| {
+                        args.nodes
+                            .iter()
+                            .any(|&arg| self.call_contains_unannotated_function_expression(arg))
+                    })
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                let Some(object) = self.arena.get_literal_expr(expr_node) else {
+                    return false;
+                };
+                object.elements.nodes.iter().any(|&member_idx| {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        return false;
+                    };
+                    if let Some(prop) = self.arena.get_property_assignment(member_node) {
+                        self.call_contains_unannotated_function_expression(prop.initializer)
+                    } else if let Some(method) = self.arena.get_method_decl(member_node) {
+                        method.type_annotation.is_none()
+                    } else {
+                        false
+                    }
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(expr_node)
+                .is_some_and(|paren| {
+                    self.call_contains_unannotated_function_expression(paren.expression)
+                }),
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                self.arena
+                    .get_type_assertion(expr_node)
+                    .is_some_and(|assertion| {
+                        self.call_contains_unannotated_function_expression(assertion.expression)
+                    })
+            }
+            _ => false,
+        }
     }
 
     fn variable_declaration_has_effective_export(&self, decl_idx: NodeIndex) -> bool {
@@ -1356,9 +1569,11 @@ impl<'a> DeclarationEmitter<'a> {
         let type_text = self.print_synthetic_class_extends_alias_type(type_id);
         let source_type_text = self.synthetic_class_extends_alias_source_type_text(heritage);
         let prefer_source_text = type_text == "never"
-            || source_type_text
-                .as_ref()
-                .is_some_and(|source_text| source_text.contains(" & "));
+            || source_type_text.as_ref().is_some_and(|source_text| {
+                source_text.contains(" & ")
+                    || (Self::is_constructor_object_type_text(source_text)
+                        && Self::type_text_has_conditional_infer_surface(&type_text))
+            });
         let type_text = if prefer_source_text {
             source_type_text.unwrap_or(type_text)
         } else {
@@ -1370,6 +1585,15 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_non_exported_declaration = true;
 
         Some(alias_name)
+    }
+
+    fn is_constructor_object_type_text(type_text: &str) -> bool {
+        let trimmed = type_text.trim_start();
+        trimmed.starts_with("{") && trimmed.contains("new (") && trimmed.contains("):")
+    }
+
+    fn type_text_has_conditional_infer_surface(type_text: &str) -> bool {
+        type_text.contains(" extends ") && type_text.contains("infer ")
     }
 
     pub(in crate::declaration_emitter) fn emit_function_initializer_type_annotation(
@@ -1673,6 +1897,234 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn template_index_signature_element_access_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(init_node)?;
+        let receiver_annotation =
+            self.reference_declared_type_annotation_source_text(access.expression)?;
+        if !receiver_annotation.contains('`') || !receiver_annotation.contains("[") {
+            return None;
+        }
+        let key = self.element_access_key_pattern_text(access.name_or_argument)?;
+        let signatures = Self::template_index_signature_texts(&receiver_annotation);
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let mut matched_values = Vec::new();
+        for (pattern, value) in &signatures {
+            if Self::template_index_pattern_matches_key(pattern, &key) {
+                matched_values.push(value.clone());
+            }
+        }
+
+        if matched_values.is_empty() {
+            return Some("any".to_string());
+        }
+        if matched_values.len() == 1 {
+            return matched_values
+                .into_iter()
+                .next()
+                .map(|value| Self::normalize_string_literal_type_quotes(&value));
+        }
+
+        Self::intersect_string_literal_union_texts(&matched_values)
+            .or_else(|| matched_values.into_iter().next())
+            .map(|value| Self::normalize_string_literal_type_quotes(&value))
+    }
+
+    fn element_access_key_pattern_text(&self, key_idx: NodeIndex) -> Option<String> {
+        let key_node = self.arena.get(key_idx)?;
+        if key_node.kind == SyntaxKind::StringLiteral as u16
+            || key_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            if let Some(literal) = self.arena.get_literal(key_node) {
+                return Some(literal.text.clone());
+            }
+        }
+        if key_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
+            let source = self.get_source_slice(key_node.pos, key_node.end)?;
+            return Some(Self::template_expression_source_to_pattern(source.trim()));
+        }
+        None
+    }
+
+    fn template_expression_source_to_pattern(source: &str) -> String {
+        let mut result = String::new();
+        let mut rest = source.trim().trim_start_matches('`').trim_end_matches('`');
+        while let Some(start) = rest.find("${") {
+            result.push_str(&rest[..start]);
+            let after_start = &rest[start + 2..];
+            let Some(end) = after_start.find('}') else {
+                result.push_str("${string}");
+                return result;
+            };
+            result.push_str("${string}");
+            rest = &after_start[end + 1..];
+        }
+        result.push_str(rest);
+        result
+    }
+
+    fn template_index_signature_texts(type_text: &str) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        let mut rest = type_text;
+        while let Some(key_start) = rest.find("[") {
+            rest = &rest[key_start + 1..];
+            let Some(backtick_start) = rest.find('`') else {
+                break;
+            };
+            let after_tick = &rest[backtick_start + 1..];
+            let Some(backtick_end) = after_tick.find('`') else {
+                break;
+            };
+            let pattern = after_tick[..backtick_end].to_string();
+            rest = &after_tick[backtick_end + 1..];
+
+            let Some(close) = rest.find("]") else {
+                break;
+            };
+            let key_tail = rest[..close].trim();
+            let mut key_patterns = vec![pattern];
+            if key_tail.starts_with('&') {
+                key_patterns.extend(key_tail.split('&').filter_map(|part| {
+                    let part = part.trim();
+                    part.strip_prefix('`')
+                        .and_then(|part| part.strip_suffix('`'))
+                        .map(str::to_string)
+                }));
+            }
+            rest = &rest[close + 1..];
+            let Some(colon) = rest.find(':') else {
+                break;
+            };
+            rest = &rest[colon + 1..];
+            let value_end = [rest.find(';'), rest.find('}')]
+                .into_iter()
+                .flatten()
+                .min()
+                .unwrap_or(rest.len());
+            let value = rest[..value_end].trim();
+            let value = Self::normalize_string_literal_type_quotes(value);
+            result.push((key_patterns.join(" & "), value));
+            rest = &rest[value_end..];
+        }
+        result
+    }
+
+    fn template_index_pattern_matches_key(pattern: &str, key: &str) -> bool {
+        pattern
+            .split('&')
+            .map(str::trim)
+            .all(|part| Self::single_template_index_pattern_matches_key(part, key))
+    }
+
+    fn single_template_index_pattern_matches_key(pattern: &str, key: &str) -> bool {
+        let parts: Vec<&str> = pattern.split("${string}").collect();
+        if parts.len() == 1 {
+            return key == pattern;
+        }
+        let mut offset = 0usize;
+        for (idx, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            if idx == 0 {
+                if !key.starts_with(part) {
+                    return false;
+                }
+                offset = part.len();
+                continue;
+            }
+            let Some(found) = key[offset..].find(part) else {
+                return false;
+            };
+            offset += found + part.len();
+        }
+        if let Some(last) = parts.last()
+            && !last.is_empty()
+            && !key.ends_with(last)
+        {
+            return false;
+        }
+        true
+    }
+
+    fn reference_declared_type_annotation_source_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            if let Some(var_decl) = self.arena.get_variable_declaration(decl_node)
+                && var_decl.type_annotation.is_some()
+            {
+                let annotation_node = self.arena.get(var_decl.type_annotation)?;
+                return self
+                    .get_source_slice(annotation_node.pos, annotation_node.end)
+                    .map(|text| text.trim().to_string());
+            }
+            if let Some(param) = self.arena.get_parameter(decl_node)
+                && param.type_annotation.is_some()
+            {
+                let annotation_node = self.arena.get(param.type_annotation)?;
+                return self
+                    .get_source_slice(annotation_node.pos, annotation_node.end)
+                    .map(|text| text.trim().to_string());
+            }
+        }
+
+        None
+    }
+
+    fn intersect_string_literal_union_texts(values: &[String]) -> Option<String> {
+        let mut iter = values.iter();
+        let first = iter.next()?;
+        let mut common = Self::string_literal_union_members(first);
+        for value in iter {
+            let members = Self::string_literal_union_members(value);
+            common.retain(|member| members.iter().any(|candidate| candidate == member));
+        }
+        (!common.is_empty()).then(|| common.join(" | "))
+    }
+
+    fn string_literal_union_members(value: &str) -> Vec<String> {
+        value
+            .split('|')
+            .map(str::trim)
+            .filter(|part| part.starts_with('"') && part.ends_with('"'))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn normalize_string_literal_type_quotes(value: &str) -> String {
+        value
+            .split('|')
+            .map(|part| {
+                let trimmed = part.trim();
+                if let Some(inner) = trimmed
+                    .strip_prefix('\'')
+                    .and_then(|part| part.strip_suffix('\''))
+                {
+                    format!("\"{}\"", inner.replace('"', "\\\""))
+                } else {
+                    trimmed.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     pub(in crate::declaration_emitter) fn simple_type_reference_name(

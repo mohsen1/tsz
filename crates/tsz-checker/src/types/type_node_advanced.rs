@@ -6,6 +6,8 @@
 //! - Type queries (typeof X)
 //! - Mapped types ({ [P in K]: T })
 
+mod indexed_access_fast_path;
+
 use super::type_node::TypeNodeChecker;
 use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
@@ -90,6 +92,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let factory = self.ctx.types.factory();
 
         if let Some(indexed_access) = self.ctx.arena.get_indexed_access_type(node) {
+            if let Some(fast_result) = self.try_fast_alias_union_literal_index_access(
+                indexed_access.object_type,
+                indexed_access.index_type,
+            ) {
+                return fast_result;
+            }
+
             let object_type = self.check(indexed_access.object_type);
             let index_type = self.check(indexed_access.index_type);
 
@@ -1430,6 +1439,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let assertion_expr = self.ctx.arena.skip_parenthesized(decl.initializer);
+        let initializer_is_const_assertion = self
+            .ctx
+            .arena
+            .get(assertion_expr)
+            .and_then(|node| self.ctx.arena.get_type_assertion(node))
+            .and_then(|assertion| self.ctx.arena.get(assertion.type_node))
+            .is_some_and(|type_node| type_node.kind == SyntaxKind::ConstKeyword as u16);
         let initializer = self
             .ctx
             .arena
@@ -1445,12 +1462,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_property_assignment(element_node)?;
                 if self.property_name_text(prop.name).as_deref() == Some(property_name.as_str()) {
-                    return self.literal_type_from_const_member_initializer(prop.initializer);
+                    let member_type =
+                        self.literal_type_from_const_member_initializer(prop.initializer)?;
+                    return Some(if initializer_is_const_assertion {
+                        member_type
+                    } else {
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            member_type,
+                        )
+                    });
                 }
             } else if element_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_shorthand_property(element_node)?;
                 if self.property_name_text(prop.name).as_deref() == Some(property_name.as_str()) {
-                    return self.literal_type_from_const_member_initializer(prop.name);
+                    let member_type = self.literal_type_from_const_member_initializer(prop.name)?;
+                    return Some(if initializer_is_const_assertion {
+                        member_type
+                    } else {
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            member_type,
+                        )
+                    });
                 }
             }
         }
