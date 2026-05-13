@@ -1,0 +1,11 @@
+fixture,run,files,total_s,check_s,parse_bind_s,io_read_s,diagnostics,real_s,user_s,sys_s,max_rss_bytes,peak_footprint_bytes,check_pct,source_file
+monorepo-001,run1,183,0.11,0.05,0.03,0.02,199,0.11,0.12,0.04,134184960,118703400,45.45454545454546,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-001-plain.txt
+monorepo-002,run1,1092,4.88,4.47,0.21,0.15,1990,4.94,3.61,0.34,694829056,658310680,91.5983606557377,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-002-plain.txt
+monorepo-003,run1,5181,73.65,70.91,1.72,0.82,9999,73.76,73.82,2.03,3401252864,3272363752,96.27970128988458,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-003-plain.txt
+monorepo-003,run2,5181,90.97,88.29,2.02,0.38,9999,91.31,82.17,4.5,3400957952,3214806832,97.05397383752886,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-003-plain-run2.txt
+monorepo-004,run1,5233,72.61,71.02,1.05,0.37,10050,72.72,75.4,4.32,3427188736,3324497640,97.81021897810218,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-004-plain.txt
+monorepo-004,run2,5233,79.72,77.16,1.8,0.57,10050,79.83,76.94,3.9,3425337344,3309571912,96.78876066231811,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-004-plain-run2.txt
+monorepo-005,run1,5283,86.04,84.33,1.2,0.33,10100,86.15,82.72,4.22,3445260288,3339849472,98.01255230125521,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-005-plain.txt
+monorepo-005,run2,5283,73.13,71.5,1.11,0.35,10100,73.24,75.7,3.75,3444146176,3327201072,97.77109257486669,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-005-plain-run2.txt
+monorepo-006,run1,5332,89.25,87.6,1.13,0.36,10198,89.38,85.73,5.13,3475406848,3351236376,98.15126050420167,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-006-plain.txt
+monorepo-006,run2,5332,72.69,71.11,1.08,0.34,10198,72.8,75.82,3.84,3476193280,3360247552,97.82638602283672,docs/plan/perf-runs/raw/2026-05-13-timing-post-alias-mapped-monorepo-006-plain-run2.txt
