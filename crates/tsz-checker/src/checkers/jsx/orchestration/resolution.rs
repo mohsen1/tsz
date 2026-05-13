@@ -1,5 +1,4 @@
-//! JSX namespace/symbol resolution, element type lookups, intrinsic elements,
-//! closing element checks, children contextual type, and attribute name extraction.
+//! JSX namespace resolution, intrinsic elements, closing checks, and attributes.
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
@@ -1886,8 +1885,6 @@ impl<'a> CheckerState<'a> {
                 self.jsx_children_contextual_type_for_body_shape(children_type, child_count)
             })
     }
-    // JSX Attribute Name Extraction
-
     /// Extract the attribute name from a JSX attribute name node.
     ///
     /// Handles both simple identifiers (`name`) and namespaced names (`ns:name`).

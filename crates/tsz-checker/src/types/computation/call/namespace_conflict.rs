@@ -1,7 +1,9 @@
+use crate::call_checker::CallableContext;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn callee_name_conflicts_with_namespace_module(&self, callee: NodeIndex) -> bool {
@@ -35,5 +37,22 @@ impl<'a> CheckerState<'a> {
                             })
                     })
             })
+    }
+
+    pub(super) fn error_not_callable_and_collect_any_args(
+        &mut self,
+        callee_type: TypeId,
+        callee_expression: NodeIndex,
+        args: &[NodeIndex],
+    ) -> TypeId {
+        self.error_not_callable_at(callee_type, callee_expression);
+        self.collect_call_argument_types_with_context(
+            args,
+            |_i, _arg_count| Some(TypeId::ANY),
+            false,
+            None,
+            CallableContext::none(),
+        );
+        TypeId::ERROR
     }
 }
