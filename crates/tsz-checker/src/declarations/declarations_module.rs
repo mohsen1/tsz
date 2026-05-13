@@ -455,7 +455,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             //    module exists; otherwise tsc reports TS2664.
             // In script files (no imports/exports), declare module "xxx" declares
             // an ambient external module, which is always valid.
-            else if !self.module_exists(&lit.text)
+            else if !self.module_augmentation_target_exists(&lit.text)
                 && !self.is_declaration_file()
                 && self.is_external_module()
             {
