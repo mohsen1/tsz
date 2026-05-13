@@ -1161,7 +1161,10 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(&type_text);
                 } else if let Some((type_text, substituted_parameter_type_query)) =
                     scoped_preferred_return.as_ref()
+                    && let Some(func_name_text) = self.get_identifier_text(func_name)
+                    && let printed_return_type = self.print_type_id(effective_return_type_id)
                     && (direct_function_return
+                        || printed_return_type == format!("ReturnType<typeof {func_name_text}>")
                         || self.should_prefer_source_return_type_text(
                             preferred_return.as_deref().unwrap_or(type_text),
                             effective_return_type_id,
