@@ -375,7 +375,7 @@ impl<'a> CheckerState<'a> {
                         && sig_contextual_type.is_some_and(|ct| {
                             !crate::query_boundaries::common::is_type_deeply_any(self.ctx.types, ct)
                         })
-                        && crate::query_boundaries::common::contains_any_type(
+                        && crate::query_boundaries::assignability::contains_any_type(
                             self.ctx.types,
                             return_type,
                         )
