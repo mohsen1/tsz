@@ -27,6 +27,10 @@ impl<'a> Printer<'a> {
         // These are just type information in TypeScript (overload signatures)
         let has_recovered_trailing_comma =
             func.body.is_none() && self.has_recovered_declaration_trailing_comma(node);
+        if func.body.is_none() && self.emit_empty_recovered_function_arrow(node, func) {
+            return;
+        }
+
         if func.body.is_none() && !has_recovered_trailing_comma {
             self.skip_comments_for_erased_node(node);
             return;
@@ -214,25 +218,44 @@ impl<'a> Printer<'a> {
         let Some(body_node) = self.arena.get(func.body) else {
             return false;
         };
-        if body_node.kind == syntax_kind_ext::BLOCK || !self.function_decl_source_has_arrow(node) {
+        if body_node.kind == syntax_kind_ext::BLOCK
+            || (!func.equals_greater_than_token && !self.function_decl_source_has_arrow(node))
+        {
             return false;
         }
 
         if !self.function_parameters_have_type_annotations(func) {
-            self.write("function");
-            if func.name.is_some() {
-                self.write_space();
-                self.emit_decl_name(func.name);
-            }
-            self.write("(");
-            self.emit_function_parameters_js(&func.parameters.nodes);
-            self.write(") { }");
+            self.emit_recovered_function_shell(func);
             self.write_line();
         }
 
         self.emit_expression_in_statement_position(func.body);
         self.write_semicolon();
         true
+    }
+
+    fn emit_empty_recovered_function_arrow(
+        &mut self,
+        node: &Node,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        if !func.equals_greater_than_token && !self.function_decl_source_has_arrow(node) {
+            return false;
+        }
+
+        self.emit_recovered_function_shell(func);
+        true
+    }
+
+    fn emit_recovered_function_shell(&mut self, func: &tsz_parser::parser::node::FunctionData) {
+        self.write("function");
+        if func.name.is_some() {
+            self.write_space();
+            self.emit_decl_name(func.name);
+        }
+        self.write("(");
+        self.emit_function_parameters_js(&func.parameters.nodes);
+        self.write(") { }");
     }
 
     fn function_decl_source_has_arrow(&self, node: &Node) -> bool {

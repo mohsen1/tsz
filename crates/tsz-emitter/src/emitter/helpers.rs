@@ -1076,6 +1076,7 @@ impl<'a> Printer<'a> {
                     self.arena
                         .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                         || (func.body.is_none()
+                            && !func.equals_greater_than_token
                             && !self.has_recovered_declaration_trailing_comma(node))
                 } else {
                     false
