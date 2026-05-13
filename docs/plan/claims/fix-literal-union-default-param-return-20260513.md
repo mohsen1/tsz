@@ -3,7 +3,7 @@
 - **Date**: 2026-05-13
 - **Branch**: `fix/literal-union-default-param-return-20260513`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: conformance
 
 ## Intent
@@ -12,8 +12,12 @@ Address #6127, where a function returning a parameter declared as a string liter
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/types/utilities/return_type.rs`
+- `crates/tsz-checker/tests/tuple_type_assertion_inference_tests.rs`
 
 ## Verification
 
-- Pending.
+- `cargo test -p tsz-checker --test tuple_type_assertion_inference_tests -- --nocapture` - passed, 5 tests.
+- `cargo fmt --all -- --check` - passed.
+- `git diff --check` - passed.
+- `cargo run -q -p tsz-cli --bin tsz -- --noEmit --strict /tmp/tsz-6127.ts 2>&1 | head -80` - passed, no diagnostics.
