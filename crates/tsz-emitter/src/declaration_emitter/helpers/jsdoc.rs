@@ -653,9 +653,26 @@ impl<'a> DeclarationEmitter<'a> {
     fn split_jsdoc_params(s: &str) -> Vec<&str> {
         let mut result = Vec::new();
         let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
         let mut start = 0;
         for (i, ch) in s.char_indices() {
+            if let Some(q) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == q {
+                    quote = None;
+                }
+                continue;
+            }
             match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
                 '(' | '<' | '{' | '[' => depth += 1,
                 ')' | '>' | '}' | ']' => {
                     depth = depth.saturating_sub(1);
@@ -947,8 +964,25 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn find_matching_paren(text: &str) -> Option<usize> {
         let mut depth = 1usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
         for (i, ch) in text.char_indices() {
+            if let Some(q) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == q {
+                    quote = None;
+                }
+                continue;
+            }
             match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
                 '(' => depth += 1,
                 ')' => {
                     depth -= 1;
@@ -999,8 +1033,25 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn find_top_level_colon(text: &str) -> Option<usize> {
         let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
         for (i, ch) in text.char_indices() {
+            if let Some(q) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == q {
+                    quote = None;
+                }
+                continue;
+            }
             match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
                 '(' | '<' | '{' | '[' => depth += 1,
                 ')' | '>' | '}' | ']' => depth = depth.saturating_sub(1),
                 ':' if depth == 0 => return Some(i),

@@ -29,6 +29,16 @@ impl<'a> CheckerState<'a> {
         let target_elements =
             crate::query_boundaries::common::tuple_elements(self.ctx.types, target);
         let literal_len = literal.elements.nodes.len();
+        let target_rest_layout = target_elements.as_ref().and_then(|elements| {
+            elements
+                .iter()
+                .position(|element| element.rest)
+                .map(|rest_index| {
+                    let suffix_len = elements.len().saturating_sub(rest_index + 1);
+                    let suffix_start_in_source = literal_len.saturating_sub(suffix_len);
+                    (rest_index, suffix_len, suffix_start_in_source)
+                })
+        });
         let mut parts = Vec::with_capacity(literal.elements.nodes.len());
         for (element_position, element_idx) in literal.elements.nodes.iter().copied().enumerate() {
             let element_node = self.ctx.arena.get(element_idx)?;
@@ -42,8 +52,8 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.array_literal_tuple_element_source_display(
                 element_idx,
                 element_position,
-                literal_len,
                 &target_elements,
+                target_rest_layout,
             ) {
                 parts.push(display);
                 continue;
@@ -61,15 +71,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         element_idx: NodeIndex,
         element_position: usize,
-        literal_len: usize,
         target_elements: &Option<Vec<tsz_solver::TupleElement>>,
+        target_rest_layout: Option<(usize, usize, usize)>,
     ) -> Option<String> {
         let display_element_idx = self.ctx.arena.skip_parenthesized(element_idx);
         let display_element_node = self.ctx.arena.get(display_element_idx)?;
         let target_element = self.target_tuple_element_for_literal_position(
             target_elements,
             element_position,
-            literal_len,
+            target_rest_layout,
         );
 
         // Boolean literals are preserved for boolean-like tuple positions,
@@ -101,12 +111,10 @@ impl<'a> CheckerState<'a> {
         &self,
         target_elements: &'b Option<Vec<tsz_solver::TupleElement>>,
         element_position: usize,
-        literal_len: usize,
+        target_rest_layout: Option<(usize, usize, usize)>,
     ) -> Option<&'b tsz_solver::TupleElement> {
         let elements = target_elements.as_ref()?;
-        if let Some(rest_index) = elements.iter().position(|element| element.rest) {
-            let suffix_len = elements.len().saturating_sub(rest_index + 1);
-            let suffix_start_in_source = literal_len.saturating_sub(suffix_len);
+        if let Some((rest_index, suffix_len, suffix_start_in_source)) = target_rest_layout {
             if element_position < rest_index {
                 return elements.get(element_position);
             }

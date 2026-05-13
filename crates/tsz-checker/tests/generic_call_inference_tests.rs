@@ -571,6 +571,22 @@ const x: string = identity("hello");
 }
 
 #[test]
+fn generic_identity_preserves_single_literal_argument() {
+    let source = r#"
+function identity<T>(x: T): T { return x; }
+const result = identity("test");
+const check: "test" = result;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, message)| {
+            *code != 2322 || !message.contains("Type 'string' is not assignable to type '\"test\"'")
+        }),
+        "generic identity should preserve a single direct literal candidate. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn return_context_detects_mismatch() {
     let source = r#"
 declare function identity<T>(x: T): T;

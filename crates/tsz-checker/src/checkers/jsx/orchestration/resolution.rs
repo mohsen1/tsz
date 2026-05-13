@@ -756,6 +756,12 @@ impl<'a> CheckerState<'a> {
                     request,
                 )
             };
+            // Keep `<this/>` strict even when props recovery succeeds: JSX
+            // component-shape recovery for callable/constructable unions must
+            // not suppress TS2604 for the `this` keyword tag form.
+            if self.get_jsx_tag_name_text(tag_name_idx) == "this" {
+                self.check_jsx_element_has_signatures(resolved_component_type, tag_name_idx);
+            }
             // Class components with multiple construct signatures (e.g. React.Component
             // in react16.d.ts has 2 constructors) must go through overload resolution
             // even when props extraction succeeds. tsc treats JSX elements as calls to

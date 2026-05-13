@@ -2,7 +2,7 @@
 
 - Scan scope: last 500 merged PRs
 - PRs scanned: 500
-- PRs excluded as already followed-up: 48
+- PRs excluded as already followed-up: 83
 - Potential important unresolved threads: 49
 
 ## Top Subsystems
