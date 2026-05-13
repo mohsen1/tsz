@@ -24,7 +24,7 @@ that rejects empty interfaces and non-primitive member annotations.
 Primary attribution run (`timings` in raw JSON):
 
 - diagnostics: `10,198`
-- total/check: `78.12s / 76.36s`
+- total/check: `102.01s / 98.43s`
 - `compute_type_of_symbol.total_calls`: `26,377`
 - `compute_type_of_symbol.kind.interface`: `24,796`
 - `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits`: `0`
@@ -37,11 +37,7 @@ Stable counter signal:
   - `reject_missing_interface_decl=7`
   - `reject_declaration_count=1`
   - `reject_heritage_extends=1`
-
-Validation rerun (recorded in `rerun_validation`):
-
-- timings drifted (`103.68s / 100.79s`) under shared-runner contention
-- `simple-object hits` and `success` stayed `0`
+  - `reject_non_primitive_annotation=24,760`
 
 Interpretation:
 

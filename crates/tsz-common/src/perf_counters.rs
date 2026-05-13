@@ -567,9 +567,10 @@ pub enum ComputeTypeOfSymbolInterfaceSimpleObjectOutcome {
     RejectNonPropertyMember = 7,
     RejectComputedName = 8,
     RejectUnresolvedPropertyName = 9,
+    RejectNonPrimitiveAnnotation = 10,
 }
 
-pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT: usize = 10;
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT: usize = 11;
 
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES: [&str;
     COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_COUNT] = [
@@ -583,6 +584,7 @@ pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES: [&str;
     "reject_non_property_member",
     "reject_computed_name",
     "reject_unresolved_property_name",
+    "reject_non_primitive_annotation",
 ];
 
 impl ComputeTypeOfSymbolInterfaceSimpleObjectOutcome {
