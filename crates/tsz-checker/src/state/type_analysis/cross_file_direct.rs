@@ -101,6 +101,13 @@ fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
     matches!(name, "CollatorOptions")
 }
 
+fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Function" | "Iterator" | "Locale" | "Object" | "RegExp"
+    )
+}
+
 impl<'a> CheckerState<'a> {
     fn symbol_declarations_are_direct_actual_lib_only(
         &self,
@@ -168,7 +175,10 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
-        if symbol.has_any_flags(symbol_flags::VALUE) {
+        let name = symbol.escaped_name.clone();
+        if symbol.has_any_flags(symbol_flags::VALUE)
+            && !is_direct_actual_lib_value_interface_name(&name)
+        {
             return None;
         }
         // Lib utility aliases must stay on the existing lazy alias path so
@@ -176,7 +186,6 @@ impl<'a> CheckerState<'a> {
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return None;
         }
-        let name = symbol.escaped_name.clone();
         if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name) {
             return None;
         }
