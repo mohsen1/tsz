@@ -30,7 +30,15 @@ use tsz_scanner::SyntaxKind;
 use super::jsdoc_function_signature::{
     JsdocFunctionTypeSignature, parse_jsdoc_function_type_signature,
 };
-use super::{JsdocParamDecl, JsdocTypeAliasDecl};
+use super::{JsdocParamDecl, JsdocTypeAliasDecl, escape_string_for_double_quote};
+
+#[derive(Clone)]
+pub(crate) struct JsdocOverloadSignature {
+    pub(crate) comment: String,
+    pub(crate) type_params: Vec<String>,
+    pub(crate) params: Vec<JsdocParamDecl>,
+    pub(crate) return_type: Option<String>,
+}
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn statement_has_attached_jsdoc(
@@ -722,6 +730,9 @@ impl<'a> DeclarationEmitter<'a> {
     /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
     fn normalize_jsdoc_type_atom(s: &str) -> String {
         let s = s.trim();
+        if let Some(inner) = s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+            return format!("\"{}\"", escape_string_for_double_quote(inner));
+        }
         match s {
             "*" | "?" => "any".to_string(),
             // `Array<>` is the form after `normalize_jsdoc_type_expr` strips
@@ -831,6 +842,87 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|raw_line| raw_line.trim_start_matches('*').trim())
             .filter_map(Self::parse_jsdoc_param_decl)
             .collect()
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_has_overload_tag(jsdoc: &str) -> bool {
+        jsdoc.lines().any(|raw_line| {
+            let line = raw_line.trim_start_matches('*').trim();
+            let Some(rest) = line.strip_prefix("@overload") else {
+                return false;
+            };
+            rest.chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$')
+        })
+    }
+
+    pub(crate) fn jsdoc_overload_signatures_from_chain(
+        chain: &[String],
+    ) -> Vec<JsdocOverloadSignature> {
+        let mut overloads = Vec::new();
+        for jsdoc in chain {
+            if !Self::jsdoc_has_overload_tag(jsdoc) {
+                continue;
+            }
+
+            let lines = jsdoc
+                .lines()
+                .map(|line| line.trim_start_matches('*').trim().to_string())
+                .collect::<Vec<_>>();
+            let overload_starts = lines
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, line)| {
+                    line.strip_prefix("@overload").and_then(|rest| {
+                        rest.chars()
+                            .next()
+                            .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$')
+                            .then_some(idx)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if overload_starts.is_empty() {
+                continue;
+            }
+
+            let type_params = Self::parse_jsdoc_template_params(jsdoc);
+            for (idx, &start) in overload_starts.iter().enumerate() {
+                let end = overload_starts
+                    .get(idx + 1)
+                    .copied()
+                    .unwrap_or_else(|| Self::jsdoc_last_overload_segment_end(&lines, start));
+                let segment = lines[start..end].join("\n");
+                let params = Self::parse_jsdoc_param_decls(&segment);
+                let return_type = Self::parse_jsdoc_return_type_text(&segment);
+                if params.is_empty() && return_type.is_none() {
+                    continue;
+                }
+
+                overloads.push(JsdocOverloadSignature {
+                    comment: jsdoc.clone(),
+                    type_params: type_params.clone(),
+                    params,
+                    return_type,
+                });
+            }
+        }
+        overloads
+    }
+
+    fn jsdoc_last_overload_segment_end(lines: &[String], start: usize) -> usize {
+        for idx in start + 1..lines.len().saturating_sub(1) {
+            if !lines[idx].trim().is_empty() {
+                continue;
+            }
+            let next = lines[idx + 1].trim();
+            if next.starts_with("@param")
+                || next.starts_with("@return")
+                || next.starts_with("@returns")
+            {
+                return idx;
+            }
+        }
+        lines.len()
     }
 
     pub(crate) fn jsdoc_param_decl_for_parameter(

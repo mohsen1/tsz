@@ -2042,6 +2042,42 @@ module.exports = BaseFactory;
 }
 
 #[test]
+fn test_jsdoc_combined_overload_tags_emit_all_function_signatures() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {number}
+ *
+ * @overload
+ * @param {string} value
+ * @returns {string}
+ *
+ * @param {string | number} value
+ * @returns {string | number}
+ */
+export function convert(value) {
+    return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function convert(value: number): number;"),
+        "Expected numeric JSDoc overload signature: {output}"
+    );
+    assert!(
+        output.contains("export function convert(value: string): string;"),
+        "Expected string JSDoc overload signature: {output}"
+    );
+    assert!(
+        !output.contains("convert(value: string | number)"),
+        "Did not expect the implementation signature to be emitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"
