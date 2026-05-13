@@ -12,10 +12,10 @@ pub(in crate::emitter) enum ES5RestProp {
 }
 
 /// Work deferred from an array-binding element's "head" emit phase to a later
-/// pass over its siblings — see [`Printer::emit_es5_array_binding_element_head`].
+/// pass over its siblings - see [`Printer::emit_es5_array_binding_element_head`].
 pub(in crate::emitter) enum DeferredArrayElement {
     /// A nested binding pattern; emit `_temp.x` / `_temp[i]` decompositions
-    /// once all sibling reads have been written.
+    /// once the current array-binding run has emitted its non-deferred work.
     NestedDecomposition { pattern: NodeIndex, temp: String },
     /// A simple binding with a default expression; emit the
     /// `name = _temp === void 0 ? init : _temp` assignment after sibling reads.
@@ -258,6 +258,20 @@ impl<'a> Printer<'a> {
         let elem = self.arena.get_binding_element(elem_node)?;
 
         if elem.dot_dot_dot_token {
+            if self.is_binding_pattern(elem.name) {
+                let value_name = self.get_temp_var_name();
+                self.write(", ");
+                self.write(&value_name);
+                self.write(" = ");
+                self.write(temp_name);
+                self.write(".slice(");
+                self.write_usize(index);
+                self.write(")");
+                return Some(DeferredArrayElement::NestedDecomposition {
+                    pattern: elem.name,
+                    temp: value_name,
+                });
+            }
             self.emit_es5_array_rest_element(elem.name, temp_name, index);
             return None;
         }
@@ -341,7 +355,6 @@ impl<'a> Printer<'a> {
         let elem = self.arena.get_binding_element(elem_node)?;
 
         if elem.dot_dot_dot_token {
-            // Rest element keeps its existing inline emit and never defers.
             if !self.has_identifier_text(elem.name) && !self.is_binding_pattern(elem.name) {
                 return None;
             }
@@ -357,7 +370,10 @@ impl<'a> Printer<'a> {
                 self.write(".slice(");
                 self.write_usize(index);
                 self.write(")");
-                self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
+                return Some(DeferredArrayElement::NestedDecomposition {
+                    pattern: elem.name,
+                    temp: value_name,
+                });
             } else {
                 self.write_identifier_text(elem.name);
                 self.write(" = ");
@@ -729,24 +745,8 @@ impl<'a> Printer<'a> {
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
             && let Some(pattern) = self.arena.get_binding_pattern(pattern_node)
         {
-            // When the array pattern contains a nested binding pattern, tsc
-            // emits all element reads (and any default-substitution temps)
-            // first, then performs each element's decomposition/defaulted
-            // assignment in source order. This is required when a later
-            // element's default references a name bound by an earlier element
-            // (e.g. `let [{ ...a }, b = a] = arr`).
-            if self.array_pattern_has_nested(pattern) {
-                let mut pending: Vec<DeferredArrayElement> = Vec::new();
-                for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-                    if let Some(deferred) =
-                        self.emit_es5_array_binding_element_head(elem_idx, temp_name, i)
-                    {
-                        pending.push(deferred);
-                    }
-                }
-                for deferred in pending {
-                    self.emit_es5_array_deferred_element(deferred);
-                }
+            if self.array_pattern_needs_deferred_elements(pattern) {
+                self.emit_es5_array_binding_elements_with_deferred_object_rest(pattern, temp_name);
             } else {
                 for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
                     self.emit_es5_array_binding_element(elem_idx, temp_name, i);
@@ -755,32 +755,218 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Returns true when any direct child of `pattern` is a nested array or
-    /// object binding pattern. Used to gate the two-pass array emit so the
-    /// simpler shapes (`let [a, b, ...rest] = arr`) keep the existing
-    /// single-pass emit.
-    fn array_pattern_has_nested(
+    fn emit_es5_array_binding_elements_with_deferred_object_rest(
+        &mut self,
+        pattern: &tsz_parser::parser::node::BindingPatternData,
+        temp_name: &str,
+    ) {
+        let mut pending: Vec<DeferredArrayElement> = Vec::new();
+        let mut has_deferred_prior = false;
+
+        for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+            if self.array_element_needs_deferred_emit(elem_idx, has_deferred_prior) {
+                has_deferred_prior = true;
+                if let Some(deferred) =
+                    self.emit_es5_array_binding_element_head(elem_idx, temp_name, i)
+                {
+                    pending.push(deferred);
+                }
+            } else {
+                self.emit_es5_array_binding_element(elem_idx, temp_name, i);
+            }
+        }
+
+        for deferred in pending {
+            self.emit_es5_array_deferred_element(deferred);
+        }
+    }
+
+    fn emit_es5_array_binding_elements_direct_with_deferred_object_rest(
+        &mut self,
+        pattern: &tsz_parser::parser::node::BindingPatternData,
+        ident_name: &str,
+        first: &mut bool,
+    ) {
+        let mut pending: Vec<DeferredArrayElement> = Vec::new();
+        let mut has_deferred_prior = false;
+
+        for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+            if self.array_element_needs_deferred_emit(elem_idx, has_deferred_prior) {
+                has_deferred_prior = true;
+                if let Some(deferred) =
+                    self.emit_es5_array_binding_element_head_direct(elem_idx, ident_name, i, first)
+                {
+                    pending.push(deferred);
+                }
+            } else {
+                self.emit_es5_array_binding_element_direct(elem_idx, ident_name, i, first);
+            }
+        }
+
+        for deferred in pending {
+            self.emit_es5_array_deferred_element(deferred);
+        }
+    }
+
+    /// Returns true when an array binding pattern contains an object-rest
+    /// binding that must be split out into a deferred binding assignment.
+    fn array_pattern_needs_deferred_elements(
         &self,
         pattern: &tsz_parser::parser::node::BindingPatternData,
     ) -> bool {
         for &elem_idx in &pattern.elements.nodes {
-            let Some(elem_node) = self.arena.get(elem_idx) else {
-                continue;
-            };
-            if elem_node.kind != syntax_kind_ext::BINDING_ELEMENT {
-                continue;
-            }
-            let Some(elem) = self.arena.get_binding_element(elem_node) else {
-                continue;
-            };
-            if elem.dot_dot_dot_token {
-                continue;
-            }
-            if self.is_binding_pattern(elem.name) {
+            if self.array_element_contains_object_rest(elem_idx) {
                 return true;
             }
         }
         false
+    }
+
+    fn array_element_needs_deferred_emit(
+        &self,
+        elem_idx: NodeIndex,
+        has_deferred_prior: bool,
+    ) -> bool {
+        if self.array_element_contains_object_rest(elem_idx) {
+            return true;
+        }
+
+        has_deferred_prior && !self.is_simple_array_binding_element(elem_idx)
+    }
+
+    fn array_element_contains_object_rest(&self, elem_idx: NodeIndex) -> bool {
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return false;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return false;
+        };
+
+        self.binding_target_contains_object_rest(elem.name)
+    }
+
+    fn binding_target_contains_object_rest(&self, target_idx: NodeIndex) -> bool {
+        let Some(target_node) = self.arena.get(target_idx) else {
+            return false;
+        };
+
+        match target_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                let Some(pattern) = self.arena.get_binding_pattern(target_node) else {
+                    return false;
+                };
+                for &elem_idx in &pattern.elements.nodes {
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                        continue;
+                    };
+                    if elem.dot_dot_dot_token || self.binding_target_contains_object_rest(elem.name)
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                let Some(pattern) = self.arena.get_binding_pattern(target_node) else {
+                    return false;
+                };
+                pattern
+                    .elements
+                    .nodes
+                    .iter()
+                    .any(|&elem_idx| self.array_element_contains_object_rest(elem_idx))
+            }
+            _ => false,
+        }
+    }
+
+    fn is_simple_array_binding_element(&self, elem_idx: NodeIndex) -> bool {
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return true;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return true;
+        };
+
+        self.is_simple_binding_element(elem)
+    }
+
+    fn is_simple_binding_element(&self, elem: &BindingElementData) -> bool {
+        if let Some(property_name) = self.get_binding_element_property_key(elem)
+            && !self.is_literal_property_name(property_name)
+        {
+            return false;
+        }
+
+        if elem.initializer.is_some() && !self.is_simple_inlineable_expression(elem.initializer) {
+            return false;
+        }
+
+        self.is_simple_binding_target(elem.name)
+    }
+
+    fn is_simple_binding_target(&self, target_idx: NodeIndex) -> bool {
+        if target_idx.is_none() {
+            return true;
+        }
+
+        let Some(target_node) = self.arena.get(target_idx) else {
+            return true;
+        };
+
+        match target_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                let Some(pattern) = self.arena.get_binding_pattern(target_node) else {
+                    return true;
+                };
+                pattern.elements.nodes.iter().all(|&elem_idx| {
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        return true;
+                    };
+                    let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                        return true;
+                    };
+                    self.is_simple_binding_element(elem)
+                })
+            }
+            k if k == SyntaxKind::Identifier as u16 => true,
+            _ => false,
+        }
+    }
+
+    fn is_literal_property_name(&self, property_name: NodeIndex) -> bool {
+        let Some(property_node) = self.arena.get(property_name) else {
+            return true;
+        };
+        matches!(
+            property_node.kind,
+            k if k == SyntaxKind::Identifier as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+        )
+    }
+
+    fn is_simple_inlineable_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        let Some(kind) = SyntaxKind::try_from_u16(expr_node.kind) else {
+            return false;
+        };
+
+        matches!(
+            kind,
+            SyntaxKind::StringLiteral
+                | SyntaxKind::NoSubstitutionTemplateLiteral
+                | SyntaxKind::NumericLiteral
+                | SyntaxKind::BigIntLiteral
+        ) || (kind >= SyntaxKind::FIRST_KEYWORD && kind <= SyntaxKind::LAST_KEYWORD)
     }
 
     /// Like `emit_es5_destructuring_pattern` but handles the `first` flag for the first
@@ -822,21 +1008,10 @@ impl<'a> Printer<'a> {
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
             && let Some(pattern) = self.arena.get_binding_pattern(pattern_node)
         {
-            // Same two-pass ordering as `emit_es5_destructuring_pattern` when
-            // any element is a nested binding pattern. See that function's
-            // comment for the rationale.
-            if self.array_pattern_has_nested(pattern) {
-                let mut pending: Vec<DeferredArrayElement> = Vec::new();
-                for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-                    if let Some(deferred) = self
-                        .emit_es5_array_binding_element_head_direct(elem_idx, ident_name, i, first)
-                    {
-                        pending.push(deferred);
-                    }
-                }
-                for deferred in pending {
-                    self.emit_es5_array_deferred_element(deferred);
-                }
+            if self.array_pattern_needs_deferred_elements(pattern) {
+                self.emit_es5_array_binding_elements_direct_with_deferred_object_rest(
+                    pattern, ident_name, first,
+                );
             } else {
                 for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
                     self.emit_es5_array_binding_element_direct(elem_idx, ident_name, i, first);
