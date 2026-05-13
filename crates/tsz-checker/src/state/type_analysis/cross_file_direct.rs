@@ -117,14 +117,8 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
     matches!(
         name,
         "ArrayIterator"
-            | "DateTimeFormatOptions"
             | "Iterator"
             | "IteratorObject"
-            | "Locale"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
             | "Object"
             | "RegExpStringIterator"
             | "StringIterator"
@@ -132,13 +126,30 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
 }
 
 fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
-    matches!(name, "CollatorOptions")
+    matches!(
+        name,
+        "CollatorOptions"
+            | "DateTimeFormatOptions"
+            | "NumberFormatOptions"
+            | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsStyleRegistry"
+            | "NumberFormatOptionsUseGroupingRegistry"
+    )
 }
 
 fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
     matches!(
         name,
-        "Function" | "Iterator" | "IteratorObject" | "Object" | "RegExp"
+        "DateTimeFormatOptions"
+            | "Function"
+            | "Iterator"
+            | "IteratorObject"
+            | "NumberFormatOptions"
+            | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsStyleRegistry"
+            | "NumberFormatOptionsUseGroupingRegistry"
+            | "Object"
+            | "RegExp"
     )
 }
 
@@ -1215,12 +1226,23 @@ mod tests {
         state.ctx.set_lib_contexts(lib_contexts);
         state.ctx.set_actual_lib_file_count(lib_files.len());
 
-        for name in ["Function", "Object", "RegExp"] {
+        let mut failures = Vec::new();
+        for name in [
+            "DateTimeFormatOptions",
+            "Function",
+            "NumberFormatOptions",
+            "NumberFormatOptionsCurrencyDisplayRegistry",
+            "NumberFormatOptionsStyleRegistry",
+            "NumberFormatOptionsUseGroupingRegistry",
+            "Object",
+            "RegExp",
+        ] {
             let sym_id = state
                 .ctx
                 .binder
                 .file_locals
                 .get(name)
+                .or_else(|| state.resolve_lib_namespace_export_symbol("Intl", name))
                 .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
             let delegate_arena = state
                 .ctx
@@ -1229,14 +1251,29 @@ mod tests {
                 .get(&sym_id)
                 .map(std::convert::AsRef::as_ref);
 
-            let (ty, _) = state
-                .direct_actual_lib_symbol_type(
-                    sym_id,
-                    CrossArenaSymbolMissSource::SymbolArena,
-                    delegate_arena,
-                    false,
-                )
-                .unwrap_or_else(|| panic!("{name} should lower through the direct lib path"));
+            let symbol = state
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .expect("symbol id should resolve")
+                .clone();
+            let direct_lib_only =
+                state.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, name);
+
+            let Some((ty, _)) = state.direct_actual_lib_symbol_type(
+                sym_id,
+                CrossArenaSymbolMissSource::SymbolArena,
+                delegate_arena,
+                false,
+            ) else {
+                failures.push(format!(
+                    "{name} (flags=0x{:x}, has_type={}, has_value={}, direct_lib_only={direct_lib_only})",
+                    symbol.flags,
+                    symbol.has_any_flags(tsz_binder::symbol_flags::TYPE),
+                    symbol.has_any_flags(tsz_binder::symbol_flags::VALUE),
+                ));
+                continue;
+            };
 
             assert_ne!(ty, TypeId::UNKNOWN, "{name} must not lower to unknown");
             assert_ne!(ty, TypeId::ERROR, "{name} must not lower to error");
@@ -1245,6 +1282,10 @@ mod tests {
                 "{name} should populate the delegation cache",
             );
         }
+        assert!(
+            failures.is_empty(),
+            "selected value interfaces should lower directly, failures: {failures:?}",
+        );
     }
 
     #[test]
