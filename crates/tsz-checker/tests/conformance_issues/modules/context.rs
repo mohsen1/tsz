@@ -1,6 +1,66 @@
 use crate::core::*;
 
 #[test]
+fn imported_interface_method_signature_keeps_alias_and_forward_param_types() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "kysely.ts",
+                r#"
+export declare class Kysely<DB> {
+    readonly db: DB;
+}
+"#,
+            ),
+            (
+                "dialect-adapter.ts",
+                r#"
+import { Kysely } from "./kysely";
+
+export interface DialectAdapter {
+    acquireMigrationLock(db: Kysely<any>, options: MigrationLockOptions): Promise<void>;
+}
+
+export interface MigrationLockOptions {
+    readonly lockTable: string;
+}
+"#,
+            ),
+            (
+                "mysql-adapter.ts",
+                r#"
+import { Kysely } from "./kysely";
+import { MigrationLockOptions } from "./dialect-adapter";
+
+export declare class MysqlAdapter {
+    acquireMigrationLock(db: Kysely<any>, _opt: MigrationLockOptions): Promise<void>;
+}
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import { DialectAdapter } from "./dialect-adapter";
+import { MysqlAdapter } from "./mysql-adapter";
+
+const adapter: DialectAdapter = new MysqlAdapter();
+adapter;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("MysqlAdapter") && message.contains("DialectAdapter")
+        }),
+        "Imported interface method signatures should resolve imported generic aliases, forward same-file parameter types, and Promise returns without a cascading TS2322. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn project_forward_generic_class_computed_name_no_false_ts2339() {
     let diagnostics = compile_named_project_get_diagnostics_with_options(
         &[
