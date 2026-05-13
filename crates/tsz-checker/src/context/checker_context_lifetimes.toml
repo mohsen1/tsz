@@ -168,6 +168,7 @@ enclosing_class_chain = { lifetime = "FileLocalReset", reason = "checker-local m
 type_env = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 definition_store = { lifetime = "ProgramStable", reason = "shared immutable program data; valid until the compilation or project version changes" }
 share_owner_symbol_type_results = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+source_file_symbol_type_cache_scope = { lifetime = "ProgramStable", reason = "program identity token for shared source-file symbol-type cache entries; valid until the compilation or project version changes" }
 symbol_to_def = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 def_to_symbol = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 def_type_params = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
