@@ -4,7 +4,7 @@
 - **Branch**: `fix-symbolkeys-pick-constraint-20260512`
 - **Base**: `main`
 - **Issue**: [#6099](https://github.com/mohsen1/tsz/issues/6099)
-- **PR**: TBD
+- **PR**: [#6108](https://github.com/mohsen1/tsz/pull/6108)
 - **Status**: WIP
 - **Workstream**: 1 (diagnostic conformance / false-positive solver bug)
 
