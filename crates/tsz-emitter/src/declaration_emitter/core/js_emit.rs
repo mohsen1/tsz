@@ -9,6 +9,9 @@ use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
 
+type JsCommonJsClosureSecondaryMember = (NodeIndex, NodeIndex, NodeIndex);
+type JsCommonJsClosureExport = (NodeIndex, NodeIndex, Vec<JsCommonJsClosureSecondaryMember>);
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_js_class_define_property_accessors_for_name(
         &mut self,
@@ -381,11 +384,10 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_if_possible(
-        &mut self,
+    pub(in crate::declaration_emitter) fn is_js_object_literal_namespace_candidate(
+        &self,
         decl_name: NodeIndex,
         initializer: NodeIndex,
-        is_exported: bool,
     ) -> bool {
         if !self.source_is_js_file || !initializer.is_some() {
             return false;
@@ -444,6 +446,72 @@ impl<'a> DeclarationEmitter<'a> {
                 _ => return false,
             }
         }
+
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn statement_emits_js_object_literal_namespace(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                continue;
+            }
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            if decl_list.declarations.nodes.len() != 1 {
+                continue;
+            }
+            let Some(&decl_idx) = decl_list.declarations.nodes.first() else {
+                continue;
+            };
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_if_possible(
+        &mut self,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+        is_exported: bool,
+    ) -> bool {
+        if !self.is_js_object_literal_namespace_candidate(decl_name, initializer) {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
 
         self.write_indent();
         if is_exported {
@@ -781,6 +849,256 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
+    pub(in crate::declaration_emitter) fn js_commonjs_export_assignment_closure(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> Option<JsCommonJsClosureExport> {
+        if !self.source_file_is_js(source_file) {
+            return None;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                continue;
+            }
+            let Some(func) = self.arena.get_function(stmt_node) else {
+                continue;
+            };
+            let Some(block_node) = self.arena.get(func.body) else {
+                continue;
+            };
+            let Some(block) = self.arena.get_block(block_node) else {
+                continue;
+            };
+            let Some(root_initializer) =
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .find_map(|inner_stmt_idx| {
+                        self.js_module_exports_exports_assignment_initializer(inner_stmt_idx)
+                    })
+            else {
+                continue;
+            };
+
+            let mut secondary_members = Vec::new();
+            for &inner_stmt_idx in &block.statements.nodes {
+                let Some((export_name_idx, local_name_idx, local_initializer)) =
+                    self.js_exports_closure_secondary_member(inner_stmt_idx, &block.statements)
+                else {
+                    continue;
+                };
+                secondary_members.push((export_name_idx, local_name_idx, local_initializer));
+            }
+
+            return Some((stmt_idx, root_initializer, secondary_members));
+        }
+        None
+    }
+
+    fn js_module_exports_exports_assignment_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16
+            || !self.is_module_exports_reference(binary.left)
+        {
+            return None;
+        }
+
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let rhs_node = self.arena.get(rhs)?;
+        if rhs_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let rhs_binary = self.arena.get_binary_expr(rhs_node)?;
+        if rhs_binary.operator_token != SyntaxKind::EqualsToken as u16
+            || !self.is_exports_identifier_reference(rhs_binary.left)
+        {
+            return None;
+        }
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(rhs_binary.right);
+        if self.is_js_function_initializer(initializer) {
+            Some(initializer)
+        } else {
+            None
+        }
+    }
+
+    fn js_exports_closure_secondary_member(
+        &self,
+        stmt_idx: NodeIndex,
+        statements: &NodeList,
+    ) -> Option<(NodeIndex, NodeIndex, NodeIndex)> {
+        let (export_name_idx, initializer) =
+            self.js_commonjs_named_export_for_statement_with_options(stmt_idx, false)?;
+        let local_name = self.get_identifier_text(initializer)?;
+        let (local_name_idx, local_initializer) =
+            self.js_closure_local_function_initializer(statements, &local_name)?;
+        Some((export_name_idx, local_name_idx, local_initializer))
+    }
+
+    fn js_closure_local_function_initializer(
+        &self,
+        statements: &NodeList,
+        name: &str,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        for &stmt_idx in &statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let var_stmt = self.arena.get_variable(stmt_node)?;
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let decl_list_node = self.arena.get(decl_list_idx)?;
+                let decl_list = self.arena.get_variable(decl_list_node)?;
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let decl_node = self.arena.get(decl_idx)?;
+                    let decl = self.arena.get_variable_declaration(decl_node)?;
+                    if self.get_identifier_text(decl.name).as_deref() == Some(name)
+                        && self.is_js_function_initializer(decl.initializer)
+                    {
+                        return Some((decl.name, decl.initializer));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_commonjs_closure_export_assignment(
+        &mut self,
+        root_initializer: NodeIndex,
+        secondary_members: &[JsCommonJsClosureSecondaryMember],
+    ) {
+        let export_name = if self.reserved_names.contains("_exports") {
+            self.generate_unique_name("_exports")
+        } else {
+            "_exports".to_string()
+        };
+        self.reserved_names.insert(export_name.clone());
+
+        self.emit_js_commonjs_closure_export_function(root_initializer, &export_name);
+        if !secondary_members.is_empty() {
+            self.write_indent();
+            self.write("declare namespace ");
+            self.write(&export_name);
+            self.write(" {");
+            self.write_line();
+            self.increase_indent();
+            self.write_indent();
+            self.write("export { ");
+            for (idx, (export_name_idx, local_name_idx, _)) in secondary_members.iter().enumerate()
+            {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                self.emit_node(*local_name_idx);
+                self.write(" as ");
+                self.emit_node(*export_name_idx);
+            }
+            self.write(" };");
+            self.write_line();
+            self.decrease_indent();
+            self.write_indent();
+            self.write("}");
+            self.write_line();
+        }
+
+        self.write_indent();
+        self.write("export = ");
+        self.write(&export_name);
+        self.write(";");
+        self.write_line();
+
+        for (_, local_name_idx, local_initializer) in secondary_members {
+            self.emit_js_synthetic_function_declaration(*local_name_idx, *local_initializer, false);
+        }
+        self.emitted_scope_marker = true;
+        self.emitted_module_indicator = true;
+    }
+
+    fn emit_js_commonjs_closure_export_function(
+        &mut self,
+        initializer: NodeIndex,
+        export_name: &str,
+    ) {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        let Some(func) = self.arena.get_function(init_node) else {
+            return;
+        };
+
+        let jsdoc = self.function_like_jsdoc_for_node(initializer);
+        self.write_indent();
+        self.write("declare function ");
+        self.write(export_name);
+        self.write("(");
+        let saved_comment_idx = self.comment_emit_idx;
+        self.comment_emit_idx = self
+            .all_comments
+            .iter()
+            .position(|comment| comment.end > init_node.pos)
+            .unwrap_or(self.all_comments.len());
+        self.emit_parameters_with_body(&func.parameters, func.body);
+        self.comment_emit_idx = saved_comment_idx;
+        self.write(")");
+
+        if func.type_annotation.is_some() {
+            self.write(": ");
+            self.emit_type(func.type_annotation);
+        } else if let Some(return_type_text) = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_return_type_text)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let (Some(return_type_text), true) =
+            self.function_body_return_hint(func, func.body)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                initializer,
+                &func.parameters,
+            )
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if func.body.is_some() && self.body_returns_void(func.body) {
+            self.write(": void");
+        } else {
+            self.write(": any");
+        }
+        self.write(";");
+        self.write_line();
+    }
+
     pub(in crate::declaration_emitter) fn emit_js_synthetic_function_declaration(
         &mut self,
         name_idx: NodeIndex,
@@ -798,6 +1116,14 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let jsdoc = self.function_like_jsdoc_for_node(initializer);
+        if is_exported
+            && jsdoc
+                .as_deref()
+                .is_some_and(|jsdoc| jsdoc.contains("@constructor"))
+            && self.emit_js_commonjs_constructor_prototype_class(name_idx)
+        {
+            return;
+        }
         let reserved_export_alias = if is_exported {
             self.js_reserved_export_local_name(name_idx)
         } else {
@@ -2099,9 +2425,7 @@ impl<'a> DeclarationEmitter<'a> {
             let saved_comment_idx = self.comment_emit_idx;
             if let Some(member_node) = self.arena.get(member_idx) {
                 if uses_reordered_js_member_comments {
-                    for jsdoc in self.leading_jsdoc_comment_chain_for_pos(member_node.pos) {
-                        self.emit_multiline_jsdoc_comment(&jsdoc);
-                    }
+                    self.emit_leading_jsdoc_comment_chain_preserving_source(member_node.pos);
                 } else {
                     self.emit_leading_jsdoc_comments(member_node.pos);
                 }
@@ -3684,75 +4008,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(name) = self.get_identifier_text(name_idx) else {
             return Vec::new();
         };
-        let Some(source_file_idx) = self.current_source_file_idx else {
-            return Vec::new();
-        };
-        let Some(source_file_node) = self.arena.get(source_file_idx) else {
-            return Vec::new();
-        };
-        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
-            return Vec::new();
-        };
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            let expr_idx = self
-                .arena
-                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
-            let Some(expr_node) = self.arena.get(expr_idx) else {
-                continue;
-            };
-            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                continue;
-            }
-            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
-                continue;
-            };
-            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
-                continue;
-            }
-            let lhs = self
-                .arena
-                .skip_parenthesized_and_assertions_and_comma(binary.left);
-            let Some(lhs_node) = self.arena.get(lhs) else {
-                continue;
-            };
-            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                continue;
-            }
-            let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
-                continue;
-            };
-            if self
-                .get_identifier_text(lhs_access.name_or_argument)
-                .as_deref()
-                != Some("prototype")
-                || self.get_identifier_text(lhs_access.expression).as_deref() != Some(&name)
-            {
-                continue;
-            }
-            let rhs = self
-                .arena
-                .skip_parenthesized_and_assertions_and_comma(binary.right);
-            let Some(rhs_node) = self.arena.get(rhs) else {
-                continue;
-            };
-            if rhs_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                continue;
-            }
-            let Some(object) = self.arena.get_literal_expr(rhs_node) else {
-                continue;
-            };
-            return object.elements.nodes.clone();
-        }
-        Vec::new()
+        self.js_prototype_object_members_for_export_name(&name)
     }
 
     fn js_function_body_returns_new_named(&self, body_idx: NodeIndex, name: &str) -> bool {

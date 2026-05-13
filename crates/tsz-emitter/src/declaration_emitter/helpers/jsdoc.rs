@@ -478,6 +478,9 @@ impl<'a> DeclarationEmitter<'a> {
         if trimmed.is_empty() {
             return "any".to_string();
         }
+        if let Some(index_signature) = Self::normalize_jsdoc_object_index_type(trimmed) {
+            return index_signature;
+        }
         if trimmed == "?" {
             return Self::normalize_jsdoc_type_atom(trimmed);
         }
@@ -489,6 +492,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if let Some(inner) = trimmed.strip_suffix('=') {
             return format!("{} | undefined", Self::normalize_jsdoc_type_expr(inner));
+        }
+        if let Some(inner) = trimmed.strip_prefix('!') {
+            return Self::normalize_jsdoc_type_expr(inner);
+        }
+        if let Some(inner) = trimmed.strip_suffix('!') {
+            return Self::normalize_jsdoc_type_expr(inner);
         }
         if let Some(inner) = Self::strip_balanced_parens(trimmed) {
             let normalized = Self::normalize_jsdoc_type_expr(inner);
@@ -510,6 +519,24 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         Self::normalize_jsdoc_type_atom(trimmed)
+    }
+
+    fn normalize_jsdoc_object_index_type(type_expr: &str) -> Option<String> {
+        let args = type_expr
+            .strip_prefix("Object<")
+            .or_else(|| type_expr.strip_prefix("Object.<"))?
+            .strip_suffix('>')?;
+        let parts = Self::split_jsdoc_params(args);
+        if parts.len() != 2 {
+            return None;
+        }
+        let key = Self::normalize_jsdoc_type_expr(parts[0]);
+        let value = Self::normalize_jsdoc_type_expr(parts[1]);
+        let key = match key.as_str() {
+            "string" | "number" | "symbol" => key,
+            _ => "string".to_string(),
+        };
+        Some(format!("{{\n    [x: {key}]: {value};\n}}"))
     }
 
     fn strip_balanced_parens(text: &str) -> Option<&str> {
@@ -593,6 +620,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Parse parameters
         let mut ts_params = Vec::new();
+        let mut construct_return_type = None;
         if !params_str.trim().is_empty() {
             let raw_params = Self::split_jsdoc_params(params_str);
             let mut unnamed_idx = 0u32;
@@ -611,6 +639,11 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(colon) = Self::find_param_colon(raw) {
                     let name = raw[..colon].trim();
                     let ptype = Self::normalize_jsdoc_type_atom(raw[colon + 1..].trim());
+                    if name == "new" {
+                        construct_return_type = Some(ptype);
+                        unnamed_idx = unnamed_idx.max(1);
+                        continue;
+                    }
                     if is_rest {
                         ts_params.push(format!("...args: {ptype}[]"));
                     } else {
@@ -629,7 +662,15 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        Some(format!("({}) => {}", ts_params.join(", "), return_type))
+        if let Some(construct_return_type) = construct_return_type {
+            Some(format!(
+                "new ({}) => {}",
+                ts_params.join(", "),
+                construct_return_type
+            ))
+        } else {
+            Some(format!("({}) => {}", ts_params.join(", "), return_type))
+        }
     }
 
     /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
@@ -1092,7 +1133,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let rest = rest.trim();
             let (type_expr, _) = Self::parse_jsdoc_braced_type_and_name(rest)?;
-            let text = Self::normalize_jsdoc_type_text(type_expr, false);
+            let text = if type_expr.trim() == "?" {
+                "unknown".to_string()
+            } else {
+                Self::normalize_jsdoc_type_text(type_expr, false)
+            };
             if Self::jsdoc_type_needs_checker_resolution(&text) {
                 return Self::convert_jsdoc_function_type(&text);
             }
@@ -1315,6 +1360,10 @@ impl<'a> DeclarationEmitter<'a> {
             line.strip_prefix("@type")
                 .is_some_and(|rest| !rest.trim_start().starts_with("def"))
         })
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_contains_type_alias_tag(jsdoc: &str) -> bool {
+        Self::jsdoc_has_property_tags(jsdoc) || Self::parse_jsdoc_typedef_alias(jsdoc).is_some()
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_chain_without_type_tags(
@@ -2243,6 +2292,9 @@ impl<'a> DeclarationEmitter<'a> {
         let exported = self.source_file_has_module_syntax(source_file)
             && self.js_export_equals_names.is_empty();
 
+        let alias_can_share_declaration_name =
+            self.js_default_typedef_alias_can_share_declaration_name(source_file, &alias_name);
+
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -2252,6 +2304,7 @@ impl<'a> DeclarationEmitter<'a> {
                     &jsdoc,
                     &alias_name,
                     exported,
+                    alias_can_share_declaration_name,
                 );
             }
         }
@@ -2260,7 +2313,12 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            self.emit_jsdoc_default_typedef_alias_decl_for_comment(&jsdoc, &alias_name, exported);
+            self.emit_jsdoc_default_typedef_alias_decl_for_comment(
+                &jsdoc,
+                &alias_name,
+                exported,
+                alias_can_share_declaration_name,
+            );
         }
     }
 
@@ -2269,20 +2327,41 @@ impl<'a> DeclarationEmitter<'a> {
         jsdoc: &str,
         alias_name: &str,
         exported: bool,
+        alias_can_share_declaration_name: bool,
     ) {
         let Some(mut decl) = Self::parse_jsdoc_default_typedef_alias_decl(jsdoc, alias_name) else {
             return;
         };
 
-        // A `@typedef {…} default` can map to an existing default-export local
-        // name (e.g. `class Cls; export default Cls;`). Emitting `export type Cls`
-        // would collide with that declaration in `.d.ts`, so synthesize a unique
-        // alias and reserve it for subsequent import/export name generation.
-        if self.reserved_names.contains(&decl.name) {
+        if self.reserved_names.contains(&decl.name) && !alias_can_share_declaration_name {
             decl.name = self.generate_unique_name(&decl.name);
         }
         self.reserved_names.insert(decl.name.clone());
 
         self.emit_rendered_jsdoc_type_alias(decl, exported);
+    }
+
+    fn js_default_typedef_alias_can_share_declaration_name(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        alias_name: &str,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION =>
+                {
+                    if self.extract_declaration_name(stmt_idx).as_deref() == Some(alias_name) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
     }
 }

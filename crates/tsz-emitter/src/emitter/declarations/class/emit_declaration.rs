@@ -347,7 +347,10 @@ impl<'a> Printer<'a> {
 
             // Emit __decorate calls for member decorators (methods, properties, accessors)
             if has_legacy_member_decorators {
-                self.emit_legacy_member_decorator_calls(&class_name, &class.members.nodes);
+                self.emit_legacy_member_decorator_calls_without_private_name_scope(
+                    &class_name,
+                    &class.members.nodes,
+                );
             }
 
             let commonjs_exported = self.ctx.is_commonjs()

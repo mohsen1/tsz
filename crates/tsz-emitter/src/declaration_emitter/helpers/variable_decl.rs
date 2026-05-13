@@ -354,7 +354,7 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
-            } else if is_const_null_or_undefined
+            } else if (is_const_null_or_undefined && !js_has_jsdoc_type)
                 || (has_initializer && self.invalid_const_enum_object_access(initializer))
                 || (has_initializer
                     && self.initializer_uses_inaccessible_class_constructor(initializer))

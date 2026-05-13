@@ -1009,6 +1009,10 @@ export const x = () => 1;
         "Expected JS @type alias reference to be preserved: {output}"
     );
     assert!(
+        output.contains("@callback Foo") && output.contains("@type {Foo}"),
+        "Expected callback and variable JSDoc comments to remain in declaration output: {output}"
+    );
+    assert!(
         output.contains("export type Foo = (...args: string[]) => number;"),
         "Expected JS @callback alias to be synthesized after the exported value: {output}"
     );
@@ -1289,6 +1293,44 @@ const send = handlers => Promise.resolve(handlers);
     assert!(
         output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
         "Expected multiline JSDoc typedef alias to be emitted as a local type alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiline_typedef_before_variable_comment_is_preserved() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+let id = 0;
+
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with(
+            "/**\n * @typedef {{\n * [id: string]: [Function, Function];\n * }} ResolveRejectMap\n */\ndeclare let id: number;"
+        ),
+        "Expected source typedef comment to stay attached to the variable declaration: {output}"
+    );
+    assert!(
+        output.contains("declare function send(handlers: ResolveRejectMap): Promise<any>;"),
+        "Expected function variable to use the typedef alias: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected typedef alias to still be emitted: {output}"
     );
 }
 
@@ -3549,6 +3591,134 @@ module.exports.Sub = class {
 }
 
 #[test]
+fn test_js_commonjs_constructor_function_prototype_object_emits_single_class() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @constructor */
+module.exports.MyClass = function() {
+    this.x = 1;
+};
+module.exports.MyClass.prototype = {
+    a: function() {
+    }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export class MyClass {\n    a: () => void;\n}"),
+        "Expected CommonJS constructor functions with prototype object literals to emit as a single class surface: {output}"
+    );
+    assert!(
+        !output.contains("export function MyClass"),
+        "Did not expect the constructor function assignment to emit beside the class: {output}"
+    );
+    assert!(
+        !output.contains("constructor();") && !output.contains("x: number;"),
+        "Did not expect constructor-body properties to leak when tsc uses the prototype object surface: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_assignment_inside_closure_emits_export_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function foo() {
+    module.exports = exports = function (o) {
+        return o;
+    };
+    const m = function () {
+    }
+    exports.methods = m;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function _exports(o: any): any;"),
+        "Expected closure CommonJS root assignment to emit export= function surface: {output}"
+    );
+    assert!(
+        output.contains("declare namespace _exports {\n    export { m as methods };\n}"),
+        "Expected closure CommonJS secondary exports to attach to the synthetic namespace: {output}"
+    );
+    assert!(
+        output.contains("export = _exports;\ndeclare function m(): void;"),
+        "Expected local function secondary export target to be emitted after export=: {output}"
+    );
+    assert!(
+        !output.contains("declare function foo"),
+        "Did not expect enclosing helper closure to leak as the declaration surface: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_type_tags_on_const_null_preserve_closure_type_syntax() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {?} */
+export const a = null;
+/** @type {*} */
+export const b = null;
+/** @type {string?} */
+export const c = null;
+/** @type {string=} */
+export const d = null;
+/** @type {string!} */
+export const e = null;
+/** @type {function(string, number): object} */
+export const f = null;
+/** @type {function(new: object, string, number)} */
+export const g = null;
+/** @type {Object.<string, number>} */
+export const h = null;
+"#,
+    );
+
+    assert!(
+        output.contains("export const a: unknown;"),
+        "Expected bare Closure unknown @type to win over const null fallback: {output}"
+    );
+    assert!(output.contains("export const b: any;"));
+    assert!(output.contains("export const c: string | null;"));
+    assert!(output.contains("export const d: string | undefined;"));
+    assert!(output.contains("export const e: string;"));
+    assert!(output.contains("export const f: (arg0: string, arg1: number) => object;"));
+    assert!(output.contains("export const g: new (arg1: string, arg2: number) => object;"));
+    assert!(output.contains("export const h: {\n    [x: string]: number;\n};"));
+}
+
+#[test]
+fn test_jsdoc_typedef_comment_before_namespace_object_is_not_duplicated() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @template T
+ * @template {keyof T} K
+ * @typedef {T[K]} Foo
+ */
+const x = { a: 1 };
+
+/** @type {Foo<typeof x, "a">} */
+const y = "a";
+"#,
+    );
+
+    assert!(
+        output.starts_with("declare namespace x {\n    let a: number;\n}"),
+        "Expected namespace object emit without leaking implementation-only typedef JSDoc: {output}"
+    );
+    assert!(
+        output.contains("type Foo<T, K extends keyof T> = T[K];"),
+        "Expected typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@typedef"),
+        "Did not expect the source typedef comment to be duplicated in the DTS: {output}"
+    );
+}
+
+#[test]
 fn test_js_array_subclass_emits_array_any_and_constructors() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -5476,12 +5646,12 @@ export default Cls;
     );
     let trimmed = output.trim();
     assert!(
-        trimmed.starts_with("export type Cls_1 = string | number;\nexport default Cls;"),
-        "Expected default typedef to use a collision-safe alias before the hoisted default export: {trimmed}"
+        trimmed.starts_with("export type Cls = string | number;\nexport default Cls;"),
+        "Expected default typedef to reuse the default-exported class name before the hoisted default export: {trimmed}"
     );
     assert!(
-        !trimmed.contains("export type Cls = string | number;"),
-        "Default typedef alias should not collide with the class declaration name: {trimmed}"
+        !trimmed.contains("export type Cls_1 = string | number;"),
+        "Default typedef alias should not synthesize a unique name for a default-exported class: {trimmed}"
     );
     assert!(
         trimmed.contains("declare class Cls"),
@@ -5839,6 +6009,115 @@ export class C {
             " * @protected\n     * @type {null | string}\n     */\n    protected [key]: null | string;"
         ),
         "Expected backing field JSDoc to stay attached to the deferred field: {output}"
+    );
+}
+
+#[test]
+fn test_js_getter_uses_jsdoc_type_tag() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /** @type {string=} */
+    get p1() {
+        return undefined;
+    }
+
+    /** @type {?string} */
+    get p2() {
+        return null;
+    }
+
+    /** @type {string | null} */
+    get p3() {
+        return null;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("get p1(): string | undefined;"),
+        "Expected getter @type to override undefined body inference: {output}"
+    );
+    assert!(
+        output.contains("get p2(): string | null;"),
+        "Expected nullable getter @type to override null body inference: {output}"
+    );
+    assert!(
+        output.contains("get p3(): string | null;"),
+        "Expected explicit union getter @type to override null body inference: {output}"
+    );
+}
+
+#[test]
+fn test_js_accessor_pair_preserves_jsdoc_type_comments_and_optional_param_type() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /** @type {string=} */
+    get value() {
+        return undefined;
+    }
+
+    /** @param {string=} value */
+    set value(value) {
+        this.value = value;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "    /** @param {string=} value */\n    set value(value: string | undefined);"
+        ),
+        "Expected reordered setter comment to stay single-line and optional param to emit as a union: {output}"
+    );
+    assert!(
+        output.contains("    /** @type {string=} */\n    get value(): string | undefined;"),
+        "Expected reordered getter comment to stay single-line and @type to drive getter type: {output}"
+    );
+}
+
+#[test]
+fn test_js_accessor_pair_preserves_multiline_jsdoc_type_comments_when_reordered() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /**
+     * @type {string=}
+     */
+    get value() {
+        return undefined;
+    }
+
+    /**
+     * @param {string=} value
+     */
+    set value(value) {
+        this.value = value;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("    /**\n     * @param {string=} value\n     */\n    set value(value: string | undefined);"),
+        "Expected reordered setter comment to stay multiline: {output}"
+    );
+    assert!(
+        output.contains(
+            "    /**\n     * @type {string=}\n     */\n    get value(): string | undefined;"
+        ),
+        "Expected reordered getter comment to stay multiline: {output}"
+    );
+    assert!(
+        !output.contains("/** @param {string=} value */\n    set value"),
+        "Did not expect reordered setter comment to collapse to one line: {output}"
+    );
+    assert!(
+        !output.contains("/** @type {string=} */\n    get value"),
+        "Did not expect reordered getter comment to collapse to one line: {output}"
     );
 }
 
