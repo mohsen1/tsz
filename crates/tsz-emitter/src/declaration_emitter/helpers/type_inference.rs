@@ -5842,6 +5842,16 @@ impl<'a> DeclarationEmitter<'a> {
                             call,
                         )
                     {
+                        if let Some(evaluated) = self
+                            .evaluate_source_template_infer_conditional_call(
+                                source_arena,
+                                func,
+                                call,
+                                &type_text,
+                            )
+                        {
+                            return Some(evaluated);
+                        }
                         continue;
                     }
                     return self.substitute_source_call_type_parameters(

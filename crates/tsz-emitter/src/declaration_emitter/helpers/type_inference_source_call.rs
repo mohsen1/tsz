@@ -114,6 +114,15 @@ impl<'a> DeclarationEmitter<'a> {
         call: &tsz_parser::parser::node::CallExprData,
         mut type_text: String,
     ) -> Option<String> {
+        if let Some(evaluated) = self.evaluate_source_template_infer_conditional_call(
+            source_arena,
+            func,
+            call,
+            &type_text,
+        ) {
+            return Some(evaluated);
+        }
+
         let Some(type_params) = func.type_parameters.as_ref() else {
             return Some(type_text);
         };
@@ -177,6 +186,208 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn evaluate_source_template_infer_conditional_call(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        call: &tsz_parser::parser::node::CallExprData,
+        type_text: &str,
+    ) -> Option<String> {
+        let (type_param_name, prefix, suffix, false_branch) =
+            Self::parse_template_infer_conditional_text(type_text)?;
+        if false_branch != "unknown" {
+            return None;
+        }
+
+        let arguments = call.arguments.as_ref()?;
+        let param_index = func.parameters.nodes.iter().position(|&param_idx| {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                return false;
+            };
+            self.emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+                .is_some_and(|text| text.trim() == type_param_name)
+        })?;
+        let arg_idx = *arguments.nodes.get(param_index)?;
+
+        self.evaluate_template_infer_argument(arg_idx, &prefix, &suffix)
+    }
+
+    fn parse_template_infer_conditional_text(
+        type_text: &str,
+    ) -> Option<(String, String, String, String)> {
+        let trimmed = type_text.trim();
+        let (check_type, rest) = trimmed.split_once(" extends ")?;
+        let (pattern_text, branches) = rest.split_once(" ? ")?;
+        let (true_branch, false_branch) = branches.split_once(" : ")?;
+
+        let pattern = pattern_text.trim().strip_prefix('`')?.strip_suffix('`')?;
+        let infer_marker = "${infer ";
+        let infer_start = pattern.find(infer_marker)?;
+        let infer_name_start = infer_start + infer_marker.len();
+        let infer_name_end = pattern.get(infer_name_start..)?.find('}')? + infer_name_start;
+        let infer_name = pattern.get(infer_name_start..infer_name_end)?.trim();
+        if infer_name.is_empty() || true_branch.trim() != infer_name {
+            return None;
+        }
+
+        let prefix = pattern.get(..infer_start)?.to_string();
+        let suffix = pattern.get(infer_name_end + 1..)?.to_string();
+        Some((
+            check_type.trim().to_string(),
+            prefix,
+            suffix,
+            false_branch.trim().to_string(),
+        ))
+    }
+
+    fn evaluate_template_infer_argument(
+        &self,
+        arg_idx: tsz_parser::parser::NodeIndex,
+        prefix: &str,
+        suffix: &str,
+    ) -> Option<String> {
+        let arg_idx = self.skip_parenthesized_expression(arg_idx)?;
+        let arg_node = self.arena.get(arg_idx)?;
+        match arg_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let literal = self.arena.get_literal(arg_node)?;
+                Some(Self::template_infer_capture_text(
+                    &literal.text,
+                    prefix,
+                    suffix,
+                ))
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(literal) = self.const_string_literal_initializer_for_identifier(arg_idx)
+                {
+                    return Some(Self::template_infer_capture_text(&literal, prefix, suffix));
+                }
+                Some("unknown".to_string())
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                self.template_expression_infer_capture_text(arg_idx, prefix, suffix)
+            }
+            _ => None,
+        }
+    }
+
+    fn const_string_literal_initializer_for_identifier(
+        &self,
+        expr_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<String> {
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.all_declarations() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if !self.arena.is_const_variable_declaration(decl_idx) {
+                continue;
+            }
+            let Some(init_node) = self.arena.get(decl.initializer) else {
+                continue;
+            };
+            if init_node.kind == SyntaxKind::StringLiteral as u16
+                || init_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            {
+                return self
+                    .arena
+                    .get_literal(init_node)
+                    .map(|lit| lit.text.clone());
+            }
+        }
+        None
+    }
+
+    fn template_expression_infer_capture_text(
+        &self,
+        expr_idx: tsz_parser::parser::NodeIndex,
+        prefix: &str,
+        suffix: &str,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let template = self.arena.get_template_expr(expr_node)?;
+        let spans = &template.template_spans.nodes;
+        if spans.len() != 1 || !suffix.is_empty() {
+            return None;
+        }
+        let head_node = self.arena.get(template.head)?;
+        let head_text = self.arena.get_literal(head_node)?.text.as_str();
+        if head_text != prefix {
+            return Some("unknown".to_string());
+        }
+        let span_node = self.arena.get(spans[0])?;
+        let span = self.arena.get_template_span(span_node)?;
+        let tail_node = self.arena.get(span.literal)?;
+        if self.arena.get_literal(tail_node)?.text.as_str() != suffix {
+            return Some("unknown".to_string());
+        }
+
+        self.template_expression_hole_type_text(span.expression)
+            .map(|text| Self::normalize_string_literal_union_quotes(&text))
+    }
+
+    fn template_expression_hole_type_text(
+        &self,
+        expr_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<String> {
+        self.reference_declared_type_annotation_text(expr_idx)
+            .or_else(|| self.const_literal_initializer_text(expr_idx))
+            .or_else(|| {
+                self.get_node_type_or_names(&[expr_idx])
+                    .map(|type_id| self.print_type_id_for_inferred_declaration(type_id))
+            })
+            .filter(|text| text != "any" && text != "unknown")
+    }
+
+    fn template_infer_capture_text(value: &str, prefix: &str, suffix: &str) -> String {
+        let Some(captured) = value
+            .strip_prefix(prefix)
+            .and_then(|text| text.strip_suffix(suffix))
+        else {
+            return "unknown".to_string();
+        };
+        let escaped = super::escape_string_for_double_quote(captured);
+        format!("\"{escaped}\"")
+    }
+
+    fn normalize_string_literal_union_quotes(type_text: &str) -> String {
+        let parts = Self::split_top_level_union_type_parts(type_text);
+        if parts.len() <= 1 {
+            return Self::normalize_string_literal_quotes(type_text.trim());
+        }
+        parts
+            .iter()
+            .map(|part| Self::normalize_string_literal_quotes(part))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
+    fn normalize_string_literal_quotes(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        if trimmed.len() >= 2
+            && trimmed.starts_with('\'')
+            && trimmed.ends_with('\'')
+            && !trimmed[1..trimmed.len() - 1].contains('\'')
+        {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            let escaped = super::escape_string_for_double_quote(inner);
+            format!("\"{escaped}\"")
+        } else {
+            trimmed.to_string()
+        }
     }
 
     pub(in crate::declaration_emitter) fn source_call_return_reuse_allows_inferred_type_parameters(
