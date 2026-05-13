@@ -223,12 +223,6 @@ fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
                     ),
                 );
             }
-            if let Some(rest) = msg.strip_prefix("TS6231: ") {
-                println!("error TS6231: {rest}");
-                println!("  The file is in the program because:");
-                println!("    Root file specified for compilation\n");
-                std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
-            }
             return Err(e);
         }
     };
