@@ -249,3 +249,61 @@ fn interface_construct_signature_type_predicate_does_not_emit_ts1228() {
         "did not expect TS1228 for predicate return in interface construct signature, got {codes:?}"
     );
 }
+
+#[test]
+fn assertion_predicate_intersection_with_narrower_object_type_does_not_emit_ts2677() {
+    let codes = check_source_codes(
+        r#"
+interface Data {
+    status: "pending" | "complete";
+    value?: string;
+}
+
+function assertComplete(d: Data): asserts d is Data & { status: "complete"; value: string } {
+    if (d.status !== "complete" || !d.value) throw "";
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2677),
+        "did not expect TS2677 for narrowing intersection assertion predicate, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_function_type_intersection_predicate_does_not_emit_ts2677() {
+    let codes = check_source_codes(
+        r#"
+interface Data {
+    status: "pending" | "complete";
+    value?: string;
+}
+
+type AssertComplete = (d: Data) => asserts d is Data & { status: "complete"; value: string };
+"#,
+    );
+    assert!(
+        !codes.contains(&2677),
+        "did not expect TS2677 for narrowing intersection assertion function type, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_predicate_that_widens_parameter_still_emits_ts2677() {
+    let codes = check_source_codes(
+        r#"
+interface Data {
+    status: "pending" | "complete";
+    value?: string;
+}
+
+function assertAnyData(d: { status: "complete" }): asserts d is Data {
+    if (d.status !== "complete") throw "";
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2677),
+        "expected TS2677 for widening assertion predicate, got {codes:?}"
+    );
+}

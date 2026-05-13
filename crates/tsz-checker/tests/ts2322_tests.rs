@@ -6396,3 +6396,63 @@ fn ts2322_non_template_alias_still_rejects_covariant_mismatch() {
         "Box<number> should NOT be assignable to Box<string>, got: {diagnostics:#?}"
     );
 }
+
+// =============================================================================
+// Missing string index signature — interface/class vs indexed target
+// =============================================================================
+
+#[test]
+fn ts2322_interface_without_index_sig_not_assignable_to_string_indexed_type() {
+    let source = r#"
+        interface StringIndex { [key: string]: number }
+        interface SpecificProps { a: number; b: number }
+        const idx: StringIndex = { a: 1, b: 2 } as SpecificProps;
+    "#;
+    assert!(has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
+#[test]
+fn ts2322_interface_without_index_sig_via_variable_not_assignable_to_string_indexed_type() {
+    // Variable binding (not type assertion) also requires index signature.
+    let source = r#"
+        interface StringIndex { [key: string]: number }
+        interface Counts { x: number; y: number }
+        declare const counts: Counts;
+        const idx: StringIndex = counts;
+    "#;
+    assert!(has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
+#[test]
+fn ts2322_interface_with_matching_index_sig_is_assignable_to_string_indexed_type() {
+    // Baseline: an interface that already declares the matching index signature is fine.
+    let source = r#"
+        interface StringIndex { [key: string]: number }
+        interface Indexed { [key: string]: number; a: number; b: number }
+        declare const x: Indexed;
+        const idx: StringIndex = x;
+    "#;
+    assert!(!has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
+#[test]
+fn ts2322_fresh_object_literal_with_compatible_props_is_assignable_to_string_indexed_type() {
+    // Fresh object literals are assignable even without an explicit index sig.
+    let source = r#"
+        interface StringIndex { [key: string]: number }
+        const idx: StringIndex = { a: 1, b: 2 };
+    "#;
+    assert!(!has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
