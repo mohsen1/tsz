@@ -132,3 +132,135 @@ function compoundAssign(x: number | string) {
         "Expected no TS2339 after x += 1 preserves number narrowing, got: {codes:?}"
     );
 }
+
+// --------------------------------------------------------------------------
+// Property-access targets — issue #5937.
+//
+// The narrowing rule is structural: `a.b ??= c` produces a post-expression
+// type of `NonNullable<typeof a.b> | typeof c` regardless of whether the LHS
+// is a variable, a property access, or an element access. The same flow node
+// records the assignment for all three reference kinds, so subsequent reads
+// of the same reference must see the narrowed type. Earlier behavior bailed
+// out before consulting `node_types[assignment_node]` whenever the LHS was a
+// member-like reference, leaking TS18048 for the read that follows.
+// --------------------------------------------------------------------------
+
+#[test]
+fn test_nullish_assignment_narrows_property_access_target() {
+    let source = r#"
+interface Config {
+    options?: { timeout?: number };
+}
+function configure(config: Config) {
+    config.options ??= {};
+    config.options.timeout = 1000;
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&18048),
+        "Expected no TS18048 after `config.options ??= {{}}` narrows the property, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_nullish_assignment_narrows_property_access_then_compound_chain() {
+    let source = r#"
+interface Config {
+    options?: { timeout?: number };
+}
+function configure(config: Config) {
+    config.options ??= {};
+    config.options.timeout ??= 1000;
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&18048),
+        "Expected no TS18048 after chained `??=` through property accesses, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_logical_or_assignment_narrows_property_access_target() {
+    let source = r#"
+interface Config {
+    name?: string;
+}
+function configure(config: Config) {
+    config.name ||= "default";
+    return config.name.toUpperCase();
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&18048),
+        "Expected no TS18048 after `config.name ||= ...` narrows the property, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_nullish_assignment_narrows_element_access_target() {
+    // The rule is structural: an element-access LHS with a string-literal key
+    // is a member-like reference just like the matching property-access form.
+    let source = r#"
+interface Config {
+    options?: { timeout?: number };
+}
+function configure(config: Config) {
+    config["options"] ??= {};
+    config["options"].timeout = 1000;
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&18048),
+        "Expected no TS18048 after `config[\"options\"] ??= {{}}` narrows the element access, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_logical_and_assignment_does_not_widen_property_access_target() {
+    // &&= only assigns when the LHS is truthy, so it must NOT erase a possibly
+    // undefined union member. After `obj.a &&= obj.a`, `obj.a` remains
+    // `{ b: number } | undefined`. The follow-up read should still flag
+    // TS18048. This is the structural counterpart of
+    // `test_logical_and_assignment_does_not_narrow_away_undefined` above.
+    let source = r#"
+interface Obj { a?: { b: number } }
+function foo(obj: Obj) {
+    obj.a &&= { b: 0 };
+    obj.a.b = 42;
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&18048),
+        "Expected TS18048 after `obj.a &&= ...` (no guaranteed assignment), got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_nested_logical_assignment_narrows_through_property_chain() {
+    // Tests the original reproduction in issue #5937 exactly. Two stacked
+    // ??= operators on different depth chains must both narrow.
+    let source = r#"
+interface Config {
+    options?: {
+        timeout?: number;
+        retries?: { count: number };
+    };
+}
+function configure(config: Config) {
+    config.options ??= {};
+    config.options.timeout ??= 1000;
+    config.options.retries ??= { count: 3 };
+    config.options.retries.count = 5;
+}
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&18048),
+        "Expected no TS18048 after nested `??=` narrowing chain, got: {codes:?}"
+    );
+}
