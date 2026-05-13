@@ -167,8 +167,26 @@ impl<'a> CheckerState<'a> {
             Entry::Occupied(mut slot) => {
                 if prop.optional {
                     let earlier = slot.get().clone();
-                    let merged_type = self.ctx.types.union2(earlier.type_id, prop.type_id);
-                    let merged_write = self.ctx.types.union2(earlier.write_type, prop.write_type);
+                    let exact_optional =
+                        tsz_solver::TypeDatabase::exact_optional_property_types(self.ctx.types);
+                    let later_type = if exact_optional {
+                        prop.type_id
+                    } else {
+                        crate::query_boundaries::common::remove_undefined(
+                            self.ctx.types,
+                            prop.type_id,
+                        )
+                    };
+                    let later_write = if exact_optional {
+                        prop.write_type
+                    } else {
+                        crate::query_boundaries::common::remove_undefined(
+                            self.ctx.types,
+                            prop.write_type,
+                        )
+                    };
+                    let merged_type = self.ctx.types.union2(earlier.type_id, later_type);
+                    let merged_write = self.ctx.types.union2(earlier.write_type, later_write);
                     slot.insert(PropertyInfo {
                         name: prop.name,
                         type_id: merged_type,
