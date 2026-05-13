@@ -4,7 +4,7 @@
 - **Branch**: `fix-constrained-infer-conditional-20260513`
 - **Base**: `upstream/main`
 - **Issue**: #6121
-- **PR**: TBD
+- **PR**: https://github.com/mohsen1/tsz/pull/6125
 - **Status**: WIP
 - **Workstream**: solver conformance
 
