@@ -275,6 +275,10 @@ pub enum IRNode {
         body: Vec<Self>,
         /// `WeakMap` declarations for private fields (before the IIFE)
         weakmap_decls: Vec<String>,
+        /// Computed property-name temp declarations for class fields (before the IIFE).
+        computed_prop_temp_decls: Vec<String>,
+        /// Computed property-name temp assignments for class fields (after the IIFE).
+        computed_prop_temp_inits: Vec<Self>,
         /// `WeakMap` instantiations (after the IIFE)
         weakmap_inits: Vec<String>,
         /// Optional comment emitted between weakmap declarations and class var declaration.

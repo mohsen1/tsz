@@ -1782,6 +1782,8 @@ impl<'a> AsyncES5Transformer<'a> {
             body,
             super_param,
             weakmap_decls,
+            computed_prop_temp_decls: _,
+            computed_prop_temp_inits: _,
             weakmap_inits,
             deferred_static_blocks,
             ..

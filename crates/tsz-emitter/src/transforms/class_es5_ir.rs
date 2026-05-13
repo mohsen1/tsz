@@ -2117,18 +2117,6 @@ impl<'a> ES5ClassTransformer<'a> {
                 IRNode::id(self.class_name.clone()),
             )));
         }
-        if !computed_prop_temp_decls.is_empty() {
-            let var_decls: Vec<IRNode> = computed_prop_temp_decls
-                .into_iter()
-                .map(|name| IRNode::VarDecl {
-                    name: name.into(),
-                    initializer: None,
-                })
-                .collect();
-            body.push(IRNode::VarDeclList(var_decls));
-        }
-        body.extend(computed_prop_init_entries);
-
         // Prototype methods and static members interleaved in source order
         let deferred_static_blocks = self.emit_all_members_ir(&mut body, class_idx);
 
@@ -2254,6 +2242,8 @@ impl<'a> ES5ClassTransformer<'a> {
             super_param: self.has_extends.then(|| self.super_name.clone().into()),
             body,
             weakmap_decls,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits: computed_prop_init_entries,
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
