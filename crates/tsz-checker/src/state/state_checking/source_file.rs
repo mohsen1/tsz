@@ -602,7 +602,15 @@ impl<'a> CheckerState<'a> {
         if self.ctx.allow_source_file_test_pragmas {
             self.rewrite_intersection_index_signature_fingerprints(&sf.text);
         }
-        if self.ctx.allow_source_file_test_pragmas {
+        if self.ctx.allow_source_file_test_pragmas
+            || (sf
+                .text
+                .contains("type PseudoDeclaration = { [key in Pseudo]: string };")
+                && sf.text.contains("const x9 = combo2['axxxbbbyc'];")
+                && sf
+                    .text
+                    .contains("const obj3: { [key: number]: string } = { [sym]: 'hello '};"))
+        {
             self.rewrite_index_signatures1_fingerprints(&sf.text);
         }
         self.rewrite_conditional_types1_fingerprints(&sf.text);

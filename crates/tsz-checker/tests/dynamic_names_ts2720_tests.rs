@@ -33,3 +33,27 @@ declare class T13 implements T2 {
         "Expected no TS2720 for public dynamic-name class shape, got: {diagnostics:#?}",
     );
 }
+
+#[test]
+fn class_implements_property_type_mismatch_reports_member_ts2416() {
+    let source = r#"
+interface FileSystem {
+    read: number;
+}
+
+class WorkerFS implements FileSystem {
+    read: string;
+}
+"#;
+    let libs = load_lib_files(&["es5.d.ts", "es2015.d.ts", "dom.d.ts"]);
+    let diagnostics = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
+    let codes: Vec<_> = diagnostics.iter().map(|diag| diag.code).collect();
+    assert!(
+        codes.contains(&2416),
+        "Expected TS2416 for incompatible implemented property, got: {diagnostics:#?}",
+    );
+    assert!(
+        !codes.contains(&2420),
+        "Expected member-level TS2416 without class-level TS2420, got: {diagnostics:#?}",
+    );
+}

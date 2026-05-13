@@ -997,6 +997,10 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.definition_store.get_kind(def_id)
     }
 
+    fn get_def_name(&self, def_id: tsz_solver::DefId) -> Option<tsz_common::interner::Atom> {
+        self.definition_store.get_name(def_id)
+    }
+
     fn is_builtin_readonly_array_def(&self, def_id: tsz_solver::DefId) -> bool {
         let has_readonly_array_name = self
             .definition_store

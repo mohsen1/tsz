@@ -120,17 +120,14 @@ impl<'a> CheckerState<'a> {
             interface_name.to_string()
         };
 
+        let mut properties = Vec::new();
+        let mut has_index_signature = false;
         if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
         {
-            let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
-            if !shape.properties.is_empty() {
-                return (shape.properties.to_vec(), has_index_signature, display_name);
-            }
+            has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
+            properties.extend(shape.properties.iter().cloned());
         }
-
-        let mut properties = Vec::new();
-        let mut has_index_signature = false;
 
         for &decl_idx in interface_declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
@@ -192,8 +189,13 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
+                let name_atom = self.ctx.types.intern_string(&name);
+                if properties.iter().any(|prop| prop.name == name_atom) {
+                    continue;
+                }
+
                 properties.push(PropertyInfo {
-                    name: self.ctx.types.intern_string(&name),
+                    name: name_atom,
                     type_id: member_type,
                     write_type: member_type,
                     optional: sig.question_token,
@@ -1453,25 +1455,53 @@ impl<'a> CheckerState<'a> {
                             interface_type
                         };
                         if !self.is_assignable_to(class_instance_type, target_type) {
-                            let message = if is_class {
-                                format!(
-                                    "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
-                                )
+                            let analysis = self
+                                .analyze_assignability_failure(class_instance_type, target_type);
+                            if !is_class
+                                && let Some(
+                                    tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+                                        property_name,
+                                        source_property_type,
+                                        target_property_type,
+                                        ..
+                                    },
+                                ) = analysis.failure_reason
+                            {
+                                let member_name =
+                                    self.ctx.types.resolve_atom(property_name).to_string();
+                                let class_member_idx = class_members
+                                    .get(&member_name)
+                                    .copied()
+                                    .unwrap_or(class_error_idx);
+                                let expected_str = self.format_type(target_property_type);
+                                let actual_str = self.format_type(source_property_type);
+                                incompatible_members.push((
+                                    class_member_idx,
+                                    member_name,
+                                    expected_str,
+                                    actual_str,
+                                ));
                             } else {
-                                format!(
-                                    "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
-                                )
-                            };
-                            let diagnostic_code = if is_class {
-                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
-                            } else {
-                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
-                            };
-                            self.error_at_node(class_error_idx, &message, diagnostic_code);
-                            if extends_same_base {
-                                // tsc suppresses member-level TS2416 when TS2720 is emitted
-                                // for extends+implements same base patterns
-                                incompatible_members.clear();
+                                let message = if is_class {
+                                    format!(
+                                        "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
+                                    )
+                                } else {
+                                    format!(
+                                        "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
+                                    )
+                                };
+                                let diagnostic_code = if is_class {
+                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
+                                } else {
+                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
+                                };
+                                self.error_at_node(class_error_idx, &message, diagnostic_code);
+                                if extends_same_base {
+                                    // tsc suppresses member-level TS2416 when TS2720 is emitted
+                                    // for extends+implements same base patterns
+                                    incompatible_members.clear();
+                                }
                             }
                         }
                     }
