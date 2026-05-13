@@ -53,6 +53,58 @@ emit('a', {
 }
 
 #[test]
+fn ts7006_no_false_positive_arrow_in_typed_parameter_default() {
+    let diags = check_source_diagnostics(
+        r#"
+function withContextualDefault(fn: (x: number) => number = x => x * 2) {
+    return fn(5);
+}
+"#,
+    );
+    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected no TS7006 when arrow default is contextually typed by parameter annotation, got: {:?}",
+        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts7006_no_false_positive_arrow_in_typed_parameter_default_alt_name() {
+    let diags = check_source_diagnostics(
+        r#"
+function withContextualDefault(fn: (value: string) => string = value => value.toUpperCase()) {
+    return fn("hello");
+}
+"#,
+    );
+    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected no TS7006 when arrow default is contextually typed (alt name), got: {:?}",
+        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts7006_still_emitted_for_unannotated_parameter_default_arrow() {
+    let diags = check_source_diagnostics(
+        r#"
+function noAnnotation(a = (x: unknown) => x, b = y => y) {}
+"#,
+    );
+    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert_eq!(
+        ts7006.len(),
+        1,
+        "Expected exactly one TS7006 for unannotated arrow parameter in un-typed default, got: {:?}",
+        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts2352_this_type_assertion_in_class() {
     let diags = check_source_diagnostics(
         r#"
