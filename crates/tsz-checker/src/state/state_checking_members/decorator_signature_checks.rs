@@ -7,6 +7,20 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Guards against skippable decorator types, then evaluates to the assignability-
+    /// resolved form. Returns `None` when the caller should skip further checks.
+    fn resolve_decorator_type(&mut self, ty: TypeId) -> Option<TypeId> {
+        if ty == TypeId::ERROR || ty == TypeId::ANY || ty == TypeId::UNKNOWN {
+            return None;
+        }
+        self.ensure_relation_input_ready(ty);
+        let resolved = self.evaluate_type_for_assignability(ty);
+        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
+            return None;
+        }
+        Some(resolved)
+    }
+
     /// TS1240 for ES property/accessor decorators.
     ///
     /// The runtime calling convention for ES (TC39) class-member decorators varies
@@ -24,18 +38,9 @@ impl<'a> CheckerState<'a> {
         decorator_type: TypeId,
         first_arg: TypeId,
     ) {
-        if decorator_type == TypeId::ERROR
-            || decorator_type == TypeId::ANY
-            || decorator_type == TypeId::UNKNOWN
-        {
+        let Some(resolved) = self.resolve_decorator_type(decorator_type) else {
             return;
-        }
-
-        self.ensure_relation_input_ready(decorator_type);
-        let resolved = self.evaluate_type_for_assignability(decorator_type);
-        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
-            return;
-        }
+        };
 
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
@@ -132,18 +137,9 @@ impl<'a> CheckerState<'a> {
         decorator_type: TypeId,
         is_constructor_parameter: bool,
     ) {
-        if decorator_type == TypeId::ERROR
-            || decorator_type == TypeId::ANY
-            || decorator_type == TypeId::UNKNOWN
-        {
+        let Some(resolved) = self.resolve_decorator_type(decorator_type) else {
             return;
-        }
-
-        self.ensure_relation_input_ready(decorator_type);
-        let resolved = self.evaluate_type_for_assignability(decorator_type);
-        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
-            return;
-        }
+        };
 
         // Only the key argument shape varies by parameter position.
         let key_arg = if is_constructor_parameter {
