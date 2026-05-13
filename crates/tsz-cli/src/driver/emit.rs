@@ -1583,11 +1583,9 @@ fn wrap_amd_declaration_output(
     wrapped.push_str("\" {\n");
 
     for line in body_lines {
-        let rewritten = rewrite_ambient_module_member_line(&line);
-        if rewritten.is_empty() {
-            wrapped.push('\n');
+        let Some(rewritten) = rewrite_ambient_module_member_line(&line, &amd_module_name) else {
             continue;
-        }
+        };
         wrapped.push_str("    ");
         wrapped.push_str(&rewritten);
         wrapped.push('\n');
@@ -1623,18 +1621,97 @@ fn is_amd_module_directive(line: &str) -> bool {
     }
 }
 
-fn rewrite_ambient_module_member_line(line: &str) -> String {
+fn rewrite_ambient_module_member_line(line: &str, module_name: &str) -> Option<String> {
     let trimmed = line.trim_start();
     let indent = &line[..line.len() - trimmed.len()];
 
-    if let Some(rest) = trimmed.strip_prefix("export declare ") {
-        return format!("{indent}export {rest}");
-    }
-    if let Some(rest) = trimmed.strip_prefix("declare ") {
-        return format!("{indent}{rest}");
+    if trimmed == "export {};" {
+        return None;
     }
 
-    line.to_string()
+    if let Some(rest) = trimmed.strip_prefix("export declare ") {
+        return Some(rewrite_amd_relative_module_specifier_line(
+            format!("{indent}export {rest}"),
+            module_name,
+        ));
+    }
+    if let Some(rest) = trimmed.strip_prefix("declare ") {
+        return Some(rewrite_amd_relative_module_specifier_line(
+            format!("{indent}{rest}"),
+            module_name,
+        ));
+    }
+
+    Some(rewrite_amd_relative_module_specifier_line(
+        line.to_string(),
+        module_name,
+    ))
+}
+
+fn rewrite_amd_relative_module_specifier_line(line: String, module_name: &str) -> String {
+    let trimmed = line.trim_start();
+    let Some(after_keyword) = trimmed
+        .strip_prefix("module \"")
+        .or_else(|| trimmed.strip_prefix("import \""))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("import ")
+                .and_then(|rest| rest.rsplit_once(" from \"").map(|(_, spec)| spec))
+        })
+    else {
+        return line;
+    };
+    let Some(end_quote) = after_keyword.find('"') else {
+        return line;
+    };
+    let specifier = &after_keyword[..end_quote];
+    if !specifier.starts_with('.') {
+        return line;
+    }
+    let Some(resolved) = resolve_amd_relative_module_specifier(module_name, specifier) else {
+        return line;
+    };
+
+    let spec_start = line.len() - trimmed.len()
+        + trimmed
+            .find(specifier)
+            .expect("specifier came from trimmed line");
+    let spec_end = spec_start + specifier.len();
+    let mut rewritten = String::with_capacity(line.len() + resolved.len());
+    rewritten.push_str(&line[..spec_start]);
+    rewritten.push_str(&resolved);
+    rewritten.push_str(&line[spec_end..]);
+    rewritten
+}
+
+fn resolve_amd_relative_module_specifier(module_name: &str, specifier: &str) -> Option<String> {
+    let base_dir = module_name
+        .rsplit_once('/')
+        .map(|(dir, _)| dir)
+        .unwrap_or("");
+    let mut parts: Vec<&str> = if base_dir.is_empty() {
+        Vec::new()
+    } else {
+        base_dir.split('/').collect()
+    };
+    for part in specifier.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part),
+        }
+    }
+    if let Some(last) = parts.last_mut() {
+        *last = last
+            .strip_suffix(".ts")
+            .or_else(|| last.strip_suffix(".tsx"))
+            .or_else(|| last.strip_suffix(".js"))
+            .or_else(|| last.strip_suffix(".jsx"))
+            .unwrap_or(last);
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 fn output_relative_path(base_dir: &Path, root_dir: Option<&Path>, input_path: &Path) -> PathBuf {
