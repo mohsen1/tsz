@@ -98,13 +98,22 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
 }
 
 fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
-    matches!(name, "CollatorOptions")
+    matches!(
+        name,
+        "CollatorOptions"
+            | "DateTimeFormatOptions"
+            | "Locale"
+            | "NumberFormatOptions"
+            | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsStyleRegistry"
+            | "NumberFormatOptionsUseGroupingRegistry"
+    )
 }
 
 fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
     matches!(
         name,
-        "Function" | "Iterator" | "Locale" | "Object" | "RegExp"
+        "Function" | "Iterator" | "Locale" | "Object" | "RegExp" | "Symbol"
     )
 }
 
@@ -113,6 +122,7 @@ fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
         name,
         "ArrayIterator"
             | "DateTimeFormatOptions"
+            | "IteratorObject"
             | "Locale"
             | "NumberFormatOptions"
             | "NumberFormatOptionsCurrencyDisplayRegistry"
