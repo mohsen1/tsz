@@ -1853,62 +1853,15 @@ impl<'a> CheckerState<'a> {
                         );
                         return TypeId::ERROR;
                     }
-                    if !skip_flow_narrowing
-                        && self.ctx.iteration_depth > 0
-                        && !access.question_dot_token
-                        && !matches!(prop_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
-                    {
-                        // A self-recursive loop assignment can make the next iteration's
-                        // receiver wider than the first-pass receiver, e.g. `x = x.length`
-                        // turns `x` from `string` into `string | number`.
-                        let mut current = idx;
-                        while let Some(parent_idx) = self.ctx.arena.parent_of(current) {
-                            if parent_idx.is_none() {
-                                break;
-                            }
-                            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                                break;
-                            };
-                            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                                && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
-                            {
-                                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
-                                    let analyzer = self.flow_analyzer_for_property_reads();
-                                    if analyzer
-                                        .is_matching_reference(binary.left, access.expression)
-                                    {
-                                        let loop_receiver_type =
-                                            factory.union2(object_type, prop_type);
-                                        let loop_receiver_for_access = self
-                                            .resolve_type_for_property_access(loop_receiver_type);
-                                        if matches!(
-                                            self.resolve_property_access_with_env(
-                                                loop_receiver_for_access,
-                                                property_name,
-                                            ),
-                                            PropertyAccessResult::PropertyNotFound { .. }
-                                        ) {
-                                            self.error_property_not_exist_at(
-                                                property_name,
-                                                loop_receiver_type,
-                                                access.name_or_argument,
-                                            );
-                                            return TypeId::ERROR;
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                            if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-                                || parent_node.kind == syntax_kind_ext::BLOCK
-                                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                            {
-                                break;
-                            }
-                            current = parent_idx;
-                        }
+                    if self.report_loop_widened_receiver_property_error(
+                        idx,
+                        access,
+                        property_name,
+                        object_type,
+                        prop_type,
+                        skip_flow_narrowing,
+                    ) {
+                        return TypeId::ERROR;
                     }
                     // When in a write context (assignment target), use the setter
                     // type if the property has divergent getter/setter types.
@@ -2675,44 +2628,6 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
-    }
-
-    /// Handles import.meta property access.
-    /// Returns Some(type) if this is an import.meta access, None otherwise.
-    fn try_resolve_import_meta_access(
-        &mut self,
-        idx: NodeIndex,
-        expression: NodeIndex,
-        name_or_argument: NodeIndex,
-    ) -> Option<TypeId> {
-        let expr_node = self.ctx.arena.get(expression)?;
-        if expr_node.kind != SyntaxKind::ImportKeyword as u16 {
-            return None;
-        }
-
-        let is_meta = self
-            .ctx
-            .arena
-            .get(name_or_argument)
-            .and_then(|n| self.ctx.arena.get_identifier(n))
-            .is_some_and(|ident| ident.escaped_text == "meta");
-
-        if is_meta {
-            self.check_import_meta_in_cjs(idx);
-            // import.meta resolves to the global `ImportMeta` interface
-            // (declared in lib.es2020.full.d.ts). Returning that type
-            // enables TS2339 on unknown properties (`import.meta.blah`)
-            // and merges `declare global { interface ImportMeta { ... } }`
-            // augmentations through lib-heritage merging.
-            if let Some(import_meta_ty) = self.resolve_lib_type_by_name("ImportMeta") {
-                return Some(import_meta_ty);
-            }
-        }
-        // Fallback (ImportMeta not in lib scope, or non-`meta` meta-property
-        // like `import.metal`): return ANY so downstream access doesn't
-        // cascade misleading TS2339s. A separate grammar check is expected
-        // to emit TS17012 for the invalid meta-property name.
-        Some(TypeId::ANY)
     }
 
     /// Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).
