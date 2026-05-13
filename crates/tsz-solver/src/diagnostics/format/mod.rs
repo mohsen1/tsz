@@ -724,6 +724,28 @@ impl<'a> TypeFormatter<'a> {
             .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
     }
 
+    fn display_alias_application_base_has_conditional_body(&self, alias_origin: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            _ => def_store.find_def_for_type(app.base),
+        };
+
+        def_id
+            .and_then(|def_id| def_store.get(def_id))
+            .and_then(|def| def.body)
+            .is_some_and(|body| {
+                matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            })
+    }
+
     /// Skip type alias names for aliases whose body is a generic Application.
     /// Used in assignability messages where tsc shows the Application form.
     pub const fn with_skip_application_alias_names(mut self) -> Self {
@@ -1407,6 +1429,8 @@ impl<'a> TypeFormatter<'a> {
                         self.interner.lookup(alias_origin),
                         Some(TypeData::Application(_))
                     ))
+                || (self.skip_application_alias_names
+                    && self.display_alias_application_base_has_conditional_body(alias_origin))
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
             if (!is_simple_type

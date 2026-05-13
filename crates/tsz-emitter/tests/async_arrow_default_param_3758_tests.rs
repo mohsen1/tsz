@@ -65,8 +65,8 @@ export const arrow = async (a = f(), b = g()) => a;
     );
 }
 
-/// Mixed: required arg + defaulted arg → still forwards via rest-spread, both
-/// params on the generator.
+/// Mixed: required arg + defaulted arg -> preserves required leading params on
+/// the outer arrow and forwards the moved default tail via rest-spread.
 #[test]
 fn async_arrow_mixed_required_and_default_forwards_via_rest() {
     let source = r#"
@@ -76,9 +76,9 @@ export const arrow = async (a: number, b = init()) => a + b;
     let output = emit_es2015_cjs(source);
     assert!(
         output.contains(
-            "(...args_1) => __awaiter(void 0, [...args_1], void 0, function* (a, b = init())"
+            "(a_1, ...args_1) => __awaiter(void 0, [a_1, ...args_1], void 0, function* (a, b = init())"
         ),
-        "expected outer rest, generator with all original params. Output:\n{output}"
+        "expected leading param plus rest forwarding, generator with all original params. Output:\n{output}"
     );
 }
 
