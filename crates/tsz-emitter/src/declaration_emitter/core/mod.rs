@@ -161,6 +161,9 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<JsNamespaceExportAlias>>,
     /// CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
     pub(super) js_cjs_export_aliases: Vec<(String, String)>,
+    /// CJS export aliases that also need a value declaration because the same
+    /// export receives additional non-alias values.
+    pub(super) js_cjs_export_alias_value_declarations: Vec<(String, String)>,
     /// Statements consumed by CJS export alias collection.
     pub(super) js_cjs_export_alias_statements: FxHashSet<NodeIndex>,
     /// Statements consumed by `module.exports = { Name1, Name2 }` object pattern.
