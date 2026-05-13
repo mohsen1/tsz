@@ -747,6 +747,80 @@ pub fn check_multi_file(
     checker.ctx.diagnostics.clone()
 }
 
+/// Parse, bind, and type-check a multi-file project with lib contexts loaded.
+///
+/// This is the lib-aware counterpart to [`check_multi_file`]. Each project
+/// file is bound through [`tsz_binder::BinderState::bind_source_file_with_libs`],
+/// and the checker receives matching `lib_contexts`, so regressions involving
+/// local/imported names that conflict with globals (`Boolean`, `String`, ...)
+/// exercise the same lookup path as project compiles.
+pub fn check_multi_file_with_libs(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> Vec<Diagnostic> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        if lib_files.is_empty() {
+            binder.bind_source_file(parser.get_arena(), root);
+        } else {
+            binder.bind_source_file_with_libs(parser.get_arena(), root, lib_files);
+        }
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .unwrap_or_else(|| panic!("entry_file {entry_file:?} not found in files"));
+    let (resolved_module_paths, resolved_modules) =
+        crate::module_resolution::build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    if lib_files.is_empty() {
+        checker.ctx.set_lib_contexts(Vec::new());
+    } else {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+    checker.ctx.diagnostics.clone()
+}
+
 /// T2.2 test helper: parse, bind, type-check a multi-file project AND return
 /// the populated `cross_file_type_params_cache` for assertion. The cache is
 /// installed before the check runs and is the same `Arc<DashMap>` returned

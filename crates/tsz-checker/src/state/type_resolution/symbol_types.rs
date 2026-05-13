@@ -38,6 +38,16 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        if self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+            && let Some((result, _)) = self.delegate_cross_arena_symbol_resolution(sym_id)
+        {
+            self.ctx.leave_recursion();
+            return result;
+        }
+
         // Compiler-provided intrinsic type aliases whose body is `intrinsic` cannot
         // be resolved from the AST. Intercept BuiltinIteratorReturn early, before
         // any fallback/delegation logic that might treat ANY as "unresolved".
@@ -1230,6 +1240,15 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         use tsz_lowering::TypeLowering;
+
+        if self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+            && let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id)
+        {
+            return result;
+        }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             tracing::debug!(
