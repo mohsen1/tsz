@@ -361,6 +361,42 @@ impl<'a> CheckerState<'a> {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
                     }
+                    // When a non-generic overload succeeds but its return type contains
+                    // `any` (e.g., T = `(a: any) => any` from `Array<(a: any) => any>`),
+                    // defer it so that later generic overloads can be tried with return
+                    // context substitution. A generic overload may bind its type parameter
+                    // to the contextual return type and give a more precise result
+                    // (e.g., `reduce<U>` returning U = Output instead of `(a: any) => any`).
+                    // This matches TypeScript's behavior of preferring generic overloads
+                    // when the non-generic return type is any-tainted and a contextual
+                    // return type exists that could be satisfied by a generic binding.
+                    if has_multiple_arity_compatible_signatures
+                        && sig.type_params.is_empty()
+                        && sig_contextual_type.is_some_and(|ct| {
+                            !crate::query_boundaries::common::is_type_deeply_any(self.ctx.types, ct)
+                        })
+                        && crate::query_boundaries::assignability::contains_any_type(
+                            self.ctx.types,
+                            return_type,
+                        )
+                        && no_rcs_fallback.is_none()
+                        && signatures[idx + 1..].iter().any(|later| {
+                            if later.type_params.is_empty() {
+                                return false;
+                            }
+                            let required = later.params.iter().filter(|p| !p.optional).count();
+                            let has_rest = later.params.iter().any(|p| p.rest);
+                            args.len() >= required && (has_rest || args.len() <= later.params.len())
+                        })
+                    {
+                        no_rcs_fallback = Some((
+                            arg_types.clone(),
+                            return_type,
+                            selected_type_predicate.clone(),
+                            self.ctx.snapshot_full(),
+                        ));
+                        continue;
+                    }
                     // When the matched overload is generic and has contextual refresh args,
                     // re-collect argument types with instantiated parameter types. The first
                     // pass used the union-contextual type which has unresolved type parameters,
