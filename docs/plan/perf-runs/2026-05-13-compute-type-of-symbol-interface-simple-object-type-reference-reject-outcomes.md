@@ -16,10 +16,12 @@ as a named counter array and JSON snapshot field.
 Buckets include:
 
 - `identifier_resolvable_symbol`
-- `identifier_unresolved_symbol`
+- `identifier_value_only_symbol`
+- `identifier_not_found_symbol`
 - `identifier_compiler_managed_type`
 - `qualified_name_resolvable_symbol`
-- `qualified_name_unresolved_symbol`
+- `qualified_name_value_only_symbol`
+- `qualified_name_not_found_symbol`
 - `other_type_name_syntax`
 - `malformed_type_reference`
 
@@ -49,12 +51,12 @@ From the run:
 
 New `type_reference` reject split:
 
-- `identifier_unresolved_symbol = 24,760`
+- `identifier_not_found_symbol = 24,760`
 - all other reject-outcome buckets: `0`
 
 ## Decision
 
-1. Do not relax `type_reference` guards blindly: current residues are unresolved
+1. Do not relax `type_reference` guards blindly: current residues are not-found
    identifiers in this shortcut context.
 2. Any future shortcut expansion here needs a conformance-proven symbol
    resolution strategy first.

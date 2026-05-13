@@ -1244,13 +1244,13 @@ The active residue remains `reject_out_of_arena_decl=16`,
 `reject_non_primitive_annotation=24,760`. A new annotation-kind split shows the
 non-primitive residue is entirely `type_reference` (`24,760`) with all other
 kind buckets at `0`. A follow-up reject-outcome split then shows all
-`type_reference` rows are `identifier_unresolved_symbol` (`24,760`), with
+`type_reference` rows are `identifier_not_found_symbol` (`24,760`), with
 every other type-reference reject-outcome bucket at `0`. That makes direct
 guard relaxation unsafe: this residue currently lacks stable type-symbol
 resolution in the shortcut context. Timing remains noisy under shared-runner
-contention (`92.19s/90.43s` total/check in the latest run), so treat this
+contention (`94.74s/93.16s` total/check in the latest run), so treat this
 rerun as a counter-baseline refresh, not a timing claim. Next step: either a
-conformance-proven symbol-resolution strategy that handles these unresolved
+conformance-proven symbol-resolution strategy that handles these not-found
 type references in the shortcut path, or dead-path simplification if the
 shortcut remains inactive. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-type-reference-reject-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-type-reference-reject-outcomes.md).

@@ -2061,13 +2061,11 @@ impl<'a> CheckerState<'a> {
         };
 
         if type_name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            if matches!(
-                self.resolve_qualified_symbol_in_type_position(type_name_idx),
-                TypeSymbolResolution::Type(_)
-            ) {
-                return Outcome::QualifiedNameResolvableSymbol;
-            }
-            return Outcome::QualifiedNameUnresolvedSymbol;
+            return match self.resolve_qualified_symbol_in_type_position(type_name_idx) {
+                TypeSymbolResolution::Type(_) => Outcome::QualifiedNameResolvableSymbol,
+                TypeSymbolResolution::ValueOnly(_) => Outcome::QualifiedNameValueOnlySymbol,
+                TypeSymbolResolution::NotFound => Outcome::QualifiedNameNotFoundSymbol,
+            };
         }
 
         if type_name_node.kind == SyntaxKind::Identifier as u16 {
@@ -2076,13 +2074,11 @@ impl<'a> CheckerState<'a> {
             {
                 return Outcome::IdentifierCompilerManagedType;
             }
-            if matches!(
-                self.resolve_identifier_symbol_in_type_position(type_name_idx),
-                TypeSymbolResolution::Type(_)
-            ) {
-                return Outcome::IdentifierResolvableSymbol;
-            }
-            return Outcome::IdentifierUnresolvedSymbol;
+            return match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
+                TypeSymbolResolution::Type(_) => Outcome::IdentifierResolvableSymbol,
+                TypeSymbolResolution::ValueOnly(_) => Outcome::IdentifierValueOnlySymbol,
+                TypeSymbolResolution::NotFound => Outcome::IdentifierNotFoundSymbol,
+            };
         }
 
         Outcome::OtherTypeNameSyntax

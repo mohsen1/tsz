@@ -25,7 +25,7 @@ that rejects empty interfaces and non-primitive member annotations.
 Primary attribution run (`timings` in raw JSON):
 
 - diagnostics: `10,198`
-- total/check: `92.19s / 90.43s`
+- total/check: `94.74s / 93.16s`
 - `compute_type_of_symbol.total_calls`: `26,377`
 - `compute_type_of_symbol.kind.interface`: `24,796`
 - `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits`: `0`
@@ -43,7 +43,7 @@ Stable counter signal:
   - `type_reference=24,760`
   - all other annotation-kind buckets `=0`
 - `type_reference` reject-outcome split (new):
-  - `identifier_unresolved_symbol=24,760`
+  - `identifier_not_found_symbol=24,760`
   - all other reject-outcome buckets `=0`
 
 Interpretation:
@@ -57,6 +57,6 @@ Interpretation:
 1. Treat the earlier broad-shortcut hit/success ratios as historical only.
 2. Use this guarded rerun as the active baseline for future interface-demand work.
 3. Next shortcut work should be either:
-   - a conformance-proven path that can resolve these `identifier_unresolved_symbol`
+   - a conformance-proven path that can resolve these `identifier_not_found_symbol`
      annotations without introducing new diagnostics, or
    - deletion/simplification of dead shortcut branches if they remain inactive.
