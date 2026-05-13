@@ -1600,25 +1600,32 @@ impl<'a> CheckerState<'a> {
                     }
                 };
                 let base_class_decl = self.get_class_declaration_from_symbol(base_sym_id);
+                let base_is_foreign_symbol = self
+                    .ctx
+                    .resolve_symbol_file_index(base_sym_id)
+                    .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx);
 
                 // Canonicalize class symbol for cycle guards. Some paths can observe
                 // alias/default-export symbols while the active resolution set tracks
                 // the declaration symbol; check both to avoid recursion leaks.
                 let canonical_base_sym =
                     base_class_decl.and_then(|decl_idx| self.class_declaration_symbol(decl_idx));
-                let base_in_resolution_set = self
-                    .ctx
-                    .class_instance_resolution_set
-                    .contains(&base_sym_id)
+                let base_in_resolution_set = (!base_is_foreign_symbol
+                    && self
+                        .ctx
+                        .class_instance_resolution_set
+                        .contains(&base_sym_id))
                     || canonical_base_sym
                         .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym));
-                let base_visited = visited.contains(&base_sym_id)
+                let base_visited = (!base_is_foreign_symbol && visited.contains(&base_sym_id))
                     || canonical_base_sym.is_some_and(|sym| visited.contains(&sym));
 
                 // CRITICAL: Check for self-referential class BEFORE processing
                 // This catches class C extends C, class D<T> extends D<T>, etc.
                 if let Some(current_sym) = current_sym {
-                    if base_sym_id == current_sym || canonical_base_sym == Some(current_sym) {
+                    if (!base_is_foreign_symbol && base_sym_id == current_sym)
+                        || canonical_base_sym == Some(current_sym)
+                    {
                         // Self-referential inheritance - stop processing.
                         // TS2506 is emitted by the dedicated cycle detection in
                         // class_inheritance.rs, which anchors at the class name (matching tsc).

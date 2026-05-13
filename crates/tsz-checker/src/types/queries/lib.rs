@@ -909,7 +909,13 @@ impl<'a> CheckerState<'a> {
                 symbol_flags::VALUE | symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
             )
         {
-            let exported = if self.ctx.binder.get_symbol(resolved_member_id).is_some() {
+            let exported = if self
+                .ctx
+                .resolve_symbol_file_index(resolved_member_id)
+                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+            {
+                member_symbol.is_exported
+            } else if self.ctx.binder.get_symbol(resolved_member_id).is_some() {
                 self.symbol_has_exported_value_declaration(resolved_member_id)
             } else {
                 member_symbol.is_exported
@@ -2241,13 +2247,21 @@ impl<'a> CheckerState<'a> {
                     })
             };
 
+            let decl_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .or_else(|| {
+                    (symbol.decl_file_idx != u32::MAX).then_some(symbol.decl_file_idx as usize)
+                })
+                .unwrap_or(self.ctx.current_file_idx);
+
             (
                 symbol.flags,
                 symbol.escaped_name.clone(),
                 direct_member_id,
                 module_export_member_id,
                 symbol.import_module.clone(),
-                symbol.decl_file_idx as usize,
+                decl_file_idx,
             )
         };
 

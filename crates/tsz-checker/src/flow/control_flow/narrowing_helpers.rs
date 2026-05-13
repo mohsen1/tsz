@@ -8,8 +8,9 @@ use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeDatabase, TypeEnvironment, TypeId};
+use tsz_solver::TypeId;
 
+use crate::query_boundaries::common::{TypeDatabase, TypeEnvironment};
 use crate::query_boundaries::flow_analysis as flow_query;
 
 const fn primitive_keyword_intrinsic(kind: u16) -> Option<TypeId> {

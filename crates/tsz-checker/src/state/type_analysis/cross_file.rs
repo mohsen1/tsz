@@ -1093,14 +1093,23 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        // Find the symbol's home arena
-        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
+        // Prefer an explicit cross-file owner over `symbol_arenas`: SymbolIds are
+        // local to each binder, so a same-numbered local symbol can have an arena
+        // entry that is unrelated to the exported symbol we are resolving.
+        let explicit_file_idx = self
             .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-        let mut delegate_file_idx = None;
+            .resolve_symbol_file_index(sym_id)
+            .filter(|&file_idx| file_idx != self.ctx.current_file_idx);
+        let mut delegate_arena: Option<&tsz_parser::NodeArena> = explicit_file_idx
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .map(std::convert::AsRef::as_ref)
+            });
+        let mut delegate_file_idx = explicit_file_idx;
 
         let needs_cross_file_delegation = delegate_arena
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))

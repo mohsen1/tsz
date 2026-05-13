@@ -999,6 +999,10 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == SyntaxKind::Identifier as u16 {
             let sym_id = self.resolve_identifier_symbol(idx)?;
+            let lib_binders = self.get_lib_binders();
+            if self.is_import_equals_type_anchor(sym_id, &lib_binders) {
+                return Some(sym_id);
+            }
             // Preserve alias symbols when alias resolution has no concrete target
             // (e.g., `import X = require("...")` namespace-like aliases).
             return self
@@ -1018,11 +1022,8 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.ctx.arena.get_access_expr(node)?;
-            let left_sym =
+            let left_sym_raw =
                 self.resolve_qualified_symbol_inner(access.expression, visited_aliases, depth + 1)?;
-            let left_sym = self
-                .resolve_alias_symbol(left_sym, visited_aliases)
-                .unwrap_or(left_sym);
             let right_name = self
                 .ctx
                 .arena
@@ -1030,6 +1031,12 @@ impl<'a> CheckerState<'a> {
                 .map(|ident| ident.escaped_text.as_str())?;
 
             let lib_binders = self.get_lib_binders();
+            let left_sym = if self.is_import_equals_type_anchor(left_sym_raw, &lib_binders) {
+                left_sym_raw
+            } else {
+                self.resolve_alias_symbol(left_sym_raw, visited_aliases)
+                    .unwrap_or(left_sym_raw)
+            };
             let left_symbol = self
                 .ctx
                 .binder
@@ -1098,10 +1105,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let qn = self.ctx.arena.get_qualified_name(node)?;
-        let left_sym = self.resolve_qualified_symbol_inner(qn.left, visited_aliases, depth + 1)?;
-        let left_sym = self
-            .resolve_alias_symbol(left_sym, visited_aliases)
-            .unwrap_or(left_sym);
+        let left_sym_raw =
+            self.resolve_qualified_symbol_inner(qn.left, visited_aliases, depth + 1)?;
         let right_name = self
             .ctx
             .arena
@@ -1110,6 +1115,12 @@ impl<'a> CheckerState<'a> {
             .map(|ident| ident.escaped_text.as_str())?;
 
         let lib_binders = self.get_lib_binders();
+        let left_sym = if self.is_import_equals_type_anchor(left_sym_raw, &lib_binders) {
+            left_sym_raw
+        } else {
+            self.resolve_alias_symbol(left_sym_raw, visited_aliases)
+                .unwrap_or(left_sym_raw)
+        };
         let left_symbol = self
             .ctx
             .binder
@@ -1427,10 +1438,22 @@ impl<'a> CheckerState<'a> {
         }
         visited_modules.insert(key);
 
-        // First, check if it's a direct export from this module (ambient modules)
-        if let Some(module_exports) = self
-            .ctx
-            .module_exports_for_module(self.ctx.binder, module_specifier)
+        // Cross-file resolution: use file-aware export lookup before consulting
+        // flattened program-wide module export tables. SymbolId values are
+        // binder-local, so resolving through the owner file prevents collisions
+        // with unrelated same-numbered symbols in the current binder.
+        if let Some(sym_id) = self.resolve_cross_file_export(module_specifier, member_name) {
+            return Some(
+                self.resolve_alias_symbol(sym_id, visited_aliases)
+                    .unwrap_or(sym_id),
+            );
+        }
+
+        // First, check if it's a direct export from this module (standalone/current-binder callers)
+        if self.ctx.program_module_exports.is_none()
+            && let Some(module_exports) = self
+                .ctx
+                .module_exports_for_module(self.ctx.binder, module_specifier)
             && let Some(sym_id) = self.resolve_member_from_module_exports(
                 self.ctx.binder,
                 module_exports,
@@ -1439,14 +1462,6 @@ impl<'a> CheckerState<'a> {
             )
         {
             return Some(sym_id);
-        }
-
-        // Cross-file resolution: use canonical file-key lookups via state_type_resolution.
-        if let Some(sym_id) = self.resolve_cross_file_export(module_specifier, member_name) {
-            return Some(
-                self.resolve_alias_symbol(sym_id, visited_aliases)
-                    .unwrap_or(sym_id),
-            );
         }
 
         // Check for named re-exports: `export { foo } from 'bar'`
