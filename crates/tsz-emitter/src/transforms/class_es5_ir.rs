@@ -1328,6 +1328,77 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
+    fn accessor_metadata_strings(
+        &self,
+        members: &[NodeIndex],
+        name_idx: NodeIndex,
+        is_static: bool,
+    ) -> Vec<String> {
+        let Some(target_name) = get_identifier_text(self.arena, name_idx) else {
+            return vec![
+                "__metadata(\"design:type\", Object)".to_string(),
+                "__metadata(\"design:paramtypes\", [])".to_string(),
+            ];
+        };
+        let mut setter_parameters: Option<NodeList> = None;
+        let mut getter_type = NodeIndex::NONE;
+
+        for &member_idx in members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::GET_ACCESSOR
+                && member_node.kind != syntax_kind_ext::SET_ACCESSOR
+            {
+                continue;
+            }
+            let Some(accessor) = self.arena.get_accessor(member_node) else {
+                continue;
+            };
+            if self.arena.is_static(&accessor.modifiers) != is_static {
+                continue;
+            }
+            if get_identifier_text(self.arena, accessor.name).as_deref() != Some(&target_name) {
+                continue;
+            }
+            if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                setter_parameters = Some(accessor.parameters.clone());
+            } else if accessor.type_annotation.is_some() {
+                getter_type = accessor.type_annotation;
+            }
+        }
+
+        let design_type = if let Some(params) = setter_parameters.as_ref() {
+            params
+                .nodes
+                .first()
+                .and_then(|&param_idx| self.arena.get(param_idx))
+                .and_then(|param_node| self.arena.get_parameter(param_node))
+                .and_then(|param| {
+                    param
+                        .type_annotation
+                        .is_some()
+                        .then_some(param.type_annotation)
+                })
+                .map(|type_idx| serialize_type_for_metadata(self.arena, type_idx))
+                .unwrap_or_else(|| "Object".to_string())
+        } else if getter_type.is_some() {
+            serialize_type_for_metadata(self.arena, getter_type)
+        } else {
+            "Object".to_string()
+        };
+
+        let param_types = setter_parameters
+            .as_ref()
+            .map(|params| serialize_param_types(self.arena, params))
+            .unwrap_or_default();
+
+        vec![
+            format!("__metadata(\"design:type\", {design_type})"),
+            format!("__metadata(\"design:paramtypes\", [{param_types}])"),
+        ]
+    }
+
     /// Emit `__decorate` calls for decorated members inside the IIFE body.
     fn emit_member_decorator_ir(&self, body: &mut Vec<IRNode>, class_idx: NodeIndex) {
         let Some(class_node) = self.arena.get(class_idx) else {
@@ -1354,7 +1425,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     parameters: NodeList,
                     return_type: NodeIndex,
                 },
-                Accessor,
+                Accessor {
+                    name: NodeIndex,
+                    is_static: bool,
+                },
             }
 
             let (modifiers, name_idx, is_property, is_accessor, meta) = match member_node.kind {
@@ -1394,7 +1468,10 @@ impl<'a> ES5ClassTransformer<'a> {
                         accessor.name,
                         false,
                         true,
-                        MemberMeta::Accessor,
+                        MemberMeta::Accessor {
+                            name: accessor.name,
+                            is_static: self.arena.is_static(&accessor.modifiers),
+                        },
                     )
                 }
                 _ => continue,
@@ -1449,7 +1526,7 @@ impl<'a> ES5ClassTransformer<'a> {
             let desc_str = if is_property { "void 0" } else { "null" };
 
             // Collect metadata strings if emit_decorator_metadata is enabled
-            let metadata_strs: Vec<String> = if self.emit_decorator_metadata && !is_accessor {
+            let metadata_strs: Vec<String> = if self.emit_decorator_metadata {
                 match &meta {
                     MemberMeta::Property { type_annotation } => {
                         let serialized = serialize_type_for_metadata(self.arena, *type_annotation);
@@ -1471,7 +1548,9 @@ impl<'a> ES5ClassTransformer<'a> {
                             format!("__metadata(\"design:returntype\", {ret_type})"),
                         ]
                     }
-                    MemberMeta::Accessor => Vec::new(),
+                    MemberMeta::Accessor { name, is_static } => {
+                        self.accessor_metadata_strings(&class_data.members.nodes, *name, *is_static)
+                    }
                 }
             } else {
                 Vec::new()

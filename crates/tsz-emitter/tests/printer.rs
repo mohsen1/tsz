@@ -2269,6 +2269,46 @@ fn namespace_es5_class_emits_decorator_metadata() {
     );
 }
 
+#[test]
+fn legacy_accessor_decorator_metadata_uses_accessor_pair_types() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var dec: any;\nclass A {\n    @dec get x() { return 0; }\n    set x(value: number) { }\n}\nclass E {\n    @dec get x() { return 0; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __metadata ="),
+        "Decorated accessors with metadata enabled must request the __metadata helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__metadata(\"design:type\", Number),\n    __metadata(\"design:paramtypes\", [Number])"
+        ),
+        "Accessor pairs should serialize the setter parameter type for design:type and design:paramtypes.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__metadata(\"design:type\", Object),\n    __metadata(\"design:paramtypes\", [])"
+        ),
+        "Getter-only accessors without an explicit type should use Object and an empty paramtypes array.\nOutput:\n{output}"
+    );
+}
+
 /// Regression: ESM `--importHelpers` was not aliasing helper imports
 /// when the helper name collides with a local declaration. tsc emits
 /// `import { __decorate as __decorate_1 } from "tslib";` and uses
