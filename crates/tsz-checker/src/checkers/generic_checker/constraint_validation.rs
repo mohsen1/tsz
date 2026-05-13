@@ -106,20 +106,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Skip constraint checking when an inner generic type ref
-                // already emitted TS2314 / TS2315 / TS2707 (wrong type-arg
-                // count). tsc propagates `errorType` through the surrounding
-                // type expression so the outer constraint check silently
-                // passes, suppressing what would otherwise be a cascading
-                // TS2344 like
-                //   Type 'Outer<Inner<bad-count>>' does not satisfy 'X'.
-                // The lowering pipeline preserves the as-written Application
-                // shape, so a `contains_error_type` check on the type_id
-                // never fires here — instead, look at whether any of those
-                // arity diagnostics point into the type-arg AST node range.
-                //
-                // Test fixture: type-challenges 00008-medium-readonly-2 (#4904)
-                // and the broader `extra-2344-with-2314` cluster.
+                // Suppress cascading TS2344 when an inner type ref already
+                // emitted a type-argument arity diagnostic.
                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                     && self.type_arg_subtree_has_arity_error(arg_idx)
                 {
@@ -132,13 +120,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Skip constraint checking when the type argument is `this` type.
-                // The `this` type is polymorphic (like a type parameter constrained
-                // to the enclosing type) and its constraint satisfaction depends on
-                // the instantiation context. TSC defers this check, so we should too.
-                // Example: `interface Bar extends Foo { other: BoxOfFoo<this>; }`
-                // where `BoxOfFoo<T extends Foo>` — `this` satisfies `T extends Foo`
-                // because `this` in `Bar` is bounded by `Bar` which extends `Foo`.
+                // `this` is polymorphic; tsc defers this constraint check.
                 if query::is_this_type(self.ctx.types.as_type_database(), type_arg) {
                     continue;
                 }
@@ -152,10 +134,8 @@ impl<'a> CheckerState<'a> {
                     ) {
                         continue;
                     }
-                    // The scoped-param substitution below is intentionally only
-                    // used for primitive constraints. For object, tuple, mapped,
-                    // and indexed constraints the substituted shape can lose the
-                    // relation that makes the original generic argument valid.
+                    // Only use scoped-param substitution for primitive constraints;
+                    // richer shapes can lose the relation that makes them valid.
                     if self.type_node_is_generic_ref_with_scoped_type_param_arg(arg_idx)
                         && query::is_primitive_type(
                             self.ctx.types.as_type_database(),
@@ -213,15 +193,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Skip constraint checking for `this` type arguments or types that
-                // contain `this` (e.g., `this['params']`). The polymorphic `this` type
-                // is type-parameter-like and its concrete type is only known at
-                // instantiation time. TSC defers constraint validation for `this`
-                // references, so we must skip them to avoid false TS2344 errors.
-                // Example: `interface TObject<T> extends TSchema { static: Reduce<T, this['params']> }`
-                // where `Reduce<T, P extends unknown[]>` — `this['params']` satisfies
-                // `unknown[]` because `TSchema.params: unknown[]`, but we can't prove it
-                // structurally at definition time without resolving `this`.
+                // Defer `this`-containing references; their concrete type is
+                // only known at instantiation time.
                 if query::is_this_type(self.ctx.types.as_type_database(), type_arg)
                     || crate::query_boundaries::common::contains_this_type(
                         self.ctx.types.as_type_database(),
