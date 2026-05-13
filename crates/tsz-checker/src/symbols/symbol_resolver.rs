@@ -1626,16 +1626,19 @@ impl<'a> CheckerState<'a> {
         {
             if is_compiler_managed_type(ident.escaped_text.as_str()) {
                 let shadows_compiler_managed_type =
-                    matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
-                        && self
-                            .ctx
+                    if matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray") {
+                        let lib_binders = self.get_lib_binders();
+                        self.ctx
                             .binder
                             .file_locals
                             .get(ident.escaped_text.as_str())
-                            .is_some_and(|sym_id| {
-                                !self.ctx.symbol_is_from_actual_lib(sym_id)
-                                    && self.symbol_has_declared_type_meaning(sym_id)
-                            });
+                            .and_then(|sym_id| {
+                                self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                            })
+                            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+                    } else {
+                        false
+                    };
                 if !shadows_compiler_managed_type {
                     return None;
                 }

@@ -141,7 +141,9 @@ impl<'a> CheckerState<'a> {
 
             // Type literal members inside namespaces should prefer same-namespace
             // type declarations before falling back to file/global symbols.
-            if self.lookup_type_parameter(name).is_none()
+            if name != "Array"
+                && name != "ReadonlyArray"
+                && self.lookup_type_parameter(name).is_none()
                 && let Some(sym_id) =
                     self.resolve_unqualified_name_in_enclosing_namespace(type_name_idx, name)
             {
@@ -297,13 +299,18 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types.application(base, lowered_args)
                     };
                 }
-                let local_array_name =
-                    self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
-                        !self.ctx.symbol_is_from_actual_lib(sym_id)
-                            && self.symbol_has_declared_type_meaning(sym_id)
-                    });
-                let array_is_unshadowed =
-                    is_builtin_array && type_param.is_none() && !local_array_name;
+                let array_is_unshadowed = is_builtin_array
+                    && type_param.is_none()
+                    && match sym_id {
+                        None => true,
+                        Some(sid) => {
+                            let lib_binders = self.get_lib_binders();
+                            let symbol = self.ctx.binder.get_symbol_with_libs(sid, &lib_binders);
+                            !symbol.is_some_and(|s| {
+                                s.has_any_flags(tsz_binder::symbols::symbol_flags::TYPE_ALIAS)
+                            })
+                        }
+                    };
 
                 // For Array<T> / ReadonlyArray<T> with type arguments, convert to
                 // proper array types (Array(T) / Readonly(Array(T))) instead of
@@ -313,6 +320,9 @@ impl<'a> CheckerState<'a> {
                     && let Some(args) = &type_ref.type_arguments
                     && let Some(&first_arg) = args.nodes.first()
                 {
+                    for &arg_idx in &args.nodes {
+                        let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
+                    }
                     let elem_type = self.get_type_from_type_node_in_type_literal(first_arg);
                     let array_type = factory.array(elem_type);
                     if name == "ReadonlyArray" {

@@ -918,6 +918,119 @@ export interface DropIndexBuilderProps {
     );
 }
 
+#[test]
+fn project_contextual_method_params_keep_readonly_array_element_type() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2017",
+            "module": "esnext",
+            "strict": true,
+            "lib": ["es2022"],
+            "types": [],
+            "moduleResolution": "bundler",
+            "noEmit": true
+          },
+          "include": ["*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("object-utils.ts"),
+        r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value
+}
+"#,
+    );
+    write_file(
+        &base.join("operation-node.ts"),
+        r#"
+export interface OperationNode {
+  readonly kind: string
+}
+"#,
+    );
+    write_file(
+        &base.join("order-by-item-node.ts"),
+        r#"
+import type { OperationNode } from "./operation-node.js"
+
+export interface OrderByItemNode extends OperationNode {
+  readonly kind: "OrderByItemNode"
+  readonly orderBy: OperationNode
+}
+"#,
+    );
+    write_file(
+        &base.join("order-by-node.ts"),
+        r#"
+import { freeze } from "./object-utils.js"
+import type { OperationNode } from "./operation-node.js"
+import type { OrderByItemNode } from "./order-by-item-node.js"
+
+export interface OrderByNode extends OperationNode {
+  readonly kind: "OrderByNode"
+  readonly items: ReadonlyArray<OrderByItemNode>
+}
+
+type OrderByNodeFactory = Readonly<{
+  create(items: ReadonlyArray<OrderByItemNode>): Readonly<OrderByNode>
+  cloneWithItems(orderBy: OrderByNode, items: ReadonlyArray<OrderByItemNode>): Readonly<OrderByNode>
+}>
+
+export const OrderByNode: OrderByNodeFactory = freeze<OrderByNodeFactory>({
+  create(items) {
+    return freeze({ kind: "OrderByNode", items: freeze([...items]) })
+  },
+  cloneWithItems(orderBy, items) {
+    return freeze({ ...orderBy, items: freeze([...orderBy.items, ...items]) })
+  },
+})
+"#,
+    );
+    write_file(
+        &base.join("aggregate-function-node.ts"),
+        r#"
+import { freeze } from "./object-utils.js"
+import type { OperationNode } from "./operation-node.js"
+import { OrderByNode } from "./order-by-node.js"
+import type { OrderByItemNode } from "./order-by-item-node.js"
+
+export interface AggregateFunctionNode extends OperationNode {
+  readonly kind: "AggregateFunctionNode"
+  readonly orderBy?: OrderByNode
+}
+
+type AggregateFunctionNodeFactory = Readonly<{
+  cloneWithOrderBy(node: AggregateFunctionNode, orderItems: ReadonlyArray<OrderByItemNode>): Readonly<AggregateFunctionNode>
+}>
+
+export const AggregateFunctionNode: AggregateFunctionNodeFactory = freeze<AggregateFunctionNodeFactory>({
+  cloneWithOrderBy(node, orderItems) {
+    return freeze({
+      ...node,
+      orderBy: node.orderBy
+        ? OrderByNode.cloneWithItems(node.orderBy, orderItems)
+        : OrderByNode.create(orderItems),
+    })
+  },
+})
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compilation should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "expected contextual ReadonlyArray method params to keep OrderByItemNode element type, got: {:?}",
+        result.diagnostics
+    );
+}
+
 fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_loader::LibFile>> {
     let lib_paths = crate::config::resolve_default_lib_files(target).expect("default libs");
     let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
