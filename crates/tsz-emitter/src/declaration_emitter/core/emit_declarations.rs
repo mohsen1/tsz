@@ -733,13 +733,21 @@ impl<'a> DeclarationEmitter<'a> {
         let saved_comment_idx = self.comment_emit_idx;
         self.current_statement_jsdoc_chain =
             self.emittable_jsdoc_comment_chain_for_pos(stmt_node.pos);
+        let has_jsdoc_type_alias = self
+            .current_statement_jsdoc_chain
+            .iter()
+            .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
-        if has_jsdoc_type_function_signature {
+        if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
-            let filtered = Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain);
+            let mut filtered =
+                Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain);
+            if has_jsdoc_type_alias {
+                filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
+            }
             self.emit_jsdoc_comment_chain(&filtered);
         } else {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
