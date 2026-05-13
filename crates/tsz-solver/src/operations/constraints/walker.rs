@@ -10,8 +10,8 @@ use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
-    FunctionShape, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
-    TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
+    FunctionShape, IntrinsicKind, LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo,
+    TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -576,6 +576,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.constrain_types(ctx, var_map, *s_type, *t_type, priority);
                     }
                 }
+            }
+            // String literal source against a template literal target: extract capture groups
+            // for each TypeParameter or Infer span by pattern-matching the literal against the
+            // template. Delegates to InferenceContext::infer_from_types so both `infer T`
+            // (conditional) and `T extends string` (generic parameter) spans are handled.
+            (
+                Some(
+                    TypeData::Literal(LiteralValue::String(_))
+                    | TypeData::Intrinsic(IntrinsicKind::String),
+                ),
+                Some(TypeData::TemplateLiteral(_)),
+            ) => {
+                let _ = ctx.infer_from_types(source, target, priority);
             }
             (Some(TypeData::IndexAccess(s_obj, s_idx)), _) => {
                 let evaluated = self.interner.evaluate_index_access(s_obj, s_idx);
