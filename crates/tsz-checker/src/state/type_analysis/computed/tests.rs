@@ -1,5 +1,5 @@
 use super::*;
-use tsz_solver::{QueryDatabase, TypeInterner};
+use crate::query_boundaries::common::{QueryDatabase, TypeInterner};
 
 fn make_prop(name: tsz_common::Atom, declaration_order: u32) -> PropertyInfo {
     PropertyInfo {
