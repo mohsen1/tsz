@@ -2236,6 +2236,26 @@ module.exports.y = 0;
 }
 
 #[test]
+fn test_js_export_equals_does_not_disable_commonjs_member_synthesis() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const root = {};
+export = root;
+root.extra = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export = root;"),
+        "Expected JS `export =` assignment to be preserved: {output}"
+    );
+    assert!(
+        output.contains("extra"),
+        "Export-equals expando member assignment should still contribute declaration surface when JS file uses `export =`. Output: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_marks_same_name_function_exported() {
     let output = emit_js_dts(
         r#"

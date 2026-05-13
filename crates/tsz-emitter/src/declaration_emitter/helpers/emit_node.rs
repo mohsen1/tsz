@@ -394,9 +394,14 @@ impl<'a> DeclarationEmitter<'a> {
         source_file.statements.nodes.iter().any(|&stmt_idx| {
             self.arena.get(stmt_idx).is_some_and(|stmt_node| {
                 let k = stmt_node.kind;
+                let is_native_export_assignment = k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    && self
+                        .arena
+                        .get_export_assignment(stmt_node)
+                        .is_some_and(|assign| !assign.is_export_equals);
                 k == syntax_kind_ext::IMPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || is_native_export_assignment
                     || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                     || self.stmt_has_export_modifier(stmt_node)
             })
