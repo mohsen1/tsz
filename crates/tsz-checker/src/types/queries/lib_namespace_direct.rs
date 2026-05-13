@@ -106,7 +106,8 @@ impl<'a> CheckerState<'a> {
                 .and_then(|node| arena.get_interface(node))
                 .and_then(|interface| interface.heritage_clauses.as_ref())
                 .is_some_and(|clauses| !clauses.nodes.is_empty())
-        }) {
+        }) && cache_name != "Intl.Locale"
+        {
             self.ctx
                 .lib_type_resolution_cache
                 .insert(cache_name.to_string(), None);
