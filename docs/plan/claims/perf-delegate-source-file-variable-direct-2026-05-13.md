@@ -37,4 +37,3 @@ child-checker constructions on `monorepo-006`.
 3. `DelegateCrossArenaSymbol` drops on `monorepo-006` without changing the
    diagnostic count.
 4. A decision record captures the result and next target.
-
