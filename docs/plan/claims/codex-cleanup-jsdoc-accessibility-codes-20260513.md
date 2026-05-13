@@ -1,6 +1,6 @@
 # Claim: dedupe JSDoc accessibility diagnostic code projections
 
-Status: WIP
+Status: Ready
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6266
 Branch: `codex/cleanup-jsdoc-accessibility-codes-20260513`
@@ -14,4 +14,9 @@ Branch: `codex/cleanup-jsdoc-accessibility-codes-20260513`
 ## Verification Plan
 
 - `cargo fmt --check`
-- `cargo nextest run -p tsz-checker --test jsdoc_accessibility_tests --no-fail-fast`
+- `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_accessibility_tests::)' --no-fail-fast`
+
+## Verification
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_accessibility_tests::)' --no-fail-fast` (6 passed)
