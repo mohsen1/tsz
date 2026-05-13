@@ -1807,7 +1807,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let named_instance_return_type = if !class_type_params.is_empty()
+        if !class_type_params.is_empty()
             && let Some(sym_id) = current_sym
         {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -1820,14 +1820,7 @@ impl<'a> CheckerState<'a> {
                 .register_type_to_def(instance_type, def_id);
             self.ctx
                 .register_class_instance_in_envs(def_id, instance_type);
-            let args = class_type_params
-                .iter()
-                .map(|param| factory.type_param(*param))
-                .collect();
-            factory.application(factory.lazy(def_id), args)
-        } else {
-            instance_type
-        };
+        }
 
         let mut construct_signatures = Vec::with_capacity(4);
         for &member_idx in &class.members.nodes {
@@ -1846,7 +1839,7 @@ impl<'a> CheckerState<'a> {
                     construct_signatures.push(self.call_signature_from_constructor(
                         ctor,
                         member_idx,
-                        named_instance_return_type,
+                        instance_type,
                         &class_type_params,
                     ));
                 }
@@ -1854,7 +1847,7 @@ impl<'a> CheckerState<'a> {
                 construct_signatures.push(self.call_signature_from_constructor(
                     ctor,
                     member_idx,
-                    named_instance_return_type,
+                    instance_type,
                     &class_type_params,
                 ));
                 break;
@@ -1865,19 +1858,6 @@ impl<'a> CheckerState<'a> {
         if construct_signatures.is_empty() {
             // If there's a base class with construct signatures, inherit them
             if let Some(inherited) = inherited_construct_signatures {
-                let inherited = if named_instance_return_type != instance_type {
-                    inherited
-                        .into_iter()
-                        .map(|mut sig| {
-                            if sig.return_type == instance_type {
-                                sig.return_type = named_instance_return_type;
-                            }
-                            sig
-                        })
-                        .collect()
-                } else {
-                    inherited
-                };
                 construct_signatures = inherited;
             } else if class.heritage_clauses.is_some() {
                 // The class has a heritage clause but we couldn't resolve
@@ -1906,7 +1886,7 @@ impl<'a> CheckerState<'a> {
                         type_params: class_type_params.clone(),
                         params: Vec::new(),
                         this_type: None,
-                        return_type: named_instance_return_type,
+                        return_type: instance_type,
                         type_predicate: None,
                         is_method: false,
                     });
@@ -1917,7 +1897,7 @@ impl<'a> CheckerState<'a> {
                     type_params: class_type_params.clone(),
                     params: Vec::new(),
                     this_type: None,
-                    return_type: named_instance_return_type,
+                    return_type: instance_type,
                     type_predicate: None,
                     is_method: false,
                 });
