@@ -1114,7 +1114,22 @@ impl<'a> CheckerState<'a> {
             declaring_class_sym.or_else(|| self.class_symbol_from_new_expr(new_expr_idx));
         let class_sym = match class_sym {
             Some(sym) => sym,
-            None => return false, // Can't determine class - skip check
+            None => {
+                // No named class symbol — handle the anonymous class expression
+                // case: `new (class { private constructor() {} })()`. The
+                // constructor type already carries the private/protected mark
+                // (see `private_constructor_types.insert` during class-type
+                // construction), so we just need to check whether the `new`
+                // site lives within the class expression body.
+                if let Some(class_expr_idx) = self.class_expression_from_new_expr(new_expr_idx) {
+                    if self.new_expr_within_class_expression_body(new_expr_idx, class_expr_idx) {
+                        return false;
+                    }
+                    self.emit_anonymous_constructor_access_error(new_expr_idx, is_private);
+                    return true;
+                }
+                return false; // Can't determine class - skip check
+            }
         };
 
         // Walk ALL enclosing classes in the scope chain. If ANY enclosing class
@@ -1450,6 +1465,78 @@ impl<'a> CheckerState<'a> {
                 "Constructor of class '{class_name}' is protected and only accessible within the class declaration."
             );
             self.error_at_node(idx, &message, diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATI);
+        }
+    }
+
+    /// Return the class-expression node when `new <receiver>(...)` is targeting
+    /// an anonymous class expression literal (after stripping parentheses).
+    fn class_expression_from_new_expr(
+        &self,
+        new_expr_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<tsz_parser::parser::NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let call_expr = self.ctx.arena.get_call_expr_at(new_expr_idx)?;
+        let receiver = self.ctx.arena.skip_parenthesized(call_expr.expression);
+        let node = self.ctx.arena.get(receiver)?;
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            Some(receiver)
+        } else {
+            None
+        }
+    }
+
+    /// True when `new_expr_idx` lives lexically inside the body of the given
+    /// class-expression node. Mirrors the "same class allowed for private,
+    /// subclass allowed for protected" lookup that named classes already get
+    /// via `find_all_enclosing_classes`.
+    fn new_expr_within_class_expression_body(
+        &self,
+        new_expr_idx: tsz_parser::parser::NodeIndex,
+        class_expr_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        let mut current = new_expr_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            if ext.parent.is_none() {
+                return false;
+            }
+            if ext.parent == class_expr_idx {
+                return true;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
+    /// Emit TS2673 / TS2674 for an anonymous class expression with
+    /// inaccessible constructor. tsc uses the literal display
+    /// `"(Anonymous class)"` in this message.
+    fn emit_anonymous_constructor_access_error(
+        &mut self,
+        idx: tsz_parser::parser::NodeIndex,
+        is_private: bool,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+
+        let class_name = "(Anonymous class)";
+        if is_private {
+            let message = format!(
+                "Constructor of class '{class_name}' is private and only accessible within the class declaration."
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATION,
+            );
+        } else {
+            let message = format!(
+                "Constructor of class '{class_name}' is protected and only accessible within the class declaration."
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATI,
+            );
         }
     }
 
