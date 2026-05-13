@@ -2939,6 +2939,11 @@ impl<'a> DeclarationEmitter<'a> {
                             "any".to_string()
                         }
                     });
+                if !self.remove_comments {
+                    for jsdoc in self.leading_jsdoc_comment_chain_for_pos(member_node.pos) {
+                        members.push(Self::format_object_member_jsdoc_text(&jsdoc));
+                    }
+                }
                 members.push(format!("readonly {name}: {type_text};"));
                 continue;
             }
@@ -2949,6 +2954,11 @@ impl<'a> DeclarationEmitter<'a> {
             let type_text = self
                 .const_asserted_expression_type_text(initializer, depth + 1)
                 .unwrap_or_else(|| "any".to_string());
+            if !self.remove_comments {
+                for jsdoc in self.leading_jsdoc_comment_chain_for_pos(member_node.pos) {
+                    members.push(Self::format_object_member_jsdoc_text(&jsdoc));
+                }
+            }
             members.push(format!("readonly {name}: {type_text};"));
         }
 
@@ -7638,6 +7648,28 @@ impl<'a> DeclarationEmitter<'a> {
         else {
             return type_text.to_string();
         };
+        self.add_object_literal_member_comments_to_type_text(object_idx, type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn add_initializer_object_member_comments_to_type_text(
+        &self,
+        initializer: NodeIndex,
+        type_text: &str,
+    ) -> String {
+        if self.remove_comments || !type_text.contains("{\n") {
+            return type_text.to_string();
+        }
+        let Some(object_idx) = self.initializer_object_literal_expression(initializer) else {
+            return type_text.to_string();
+        };
+        self.add_object_literal_member_comments_to_type_text(object_idx, type_text)
+    }
+
+    fn add_object_literal_member_comments_to_type_text(
+        &self,
+        object_idx: NodeIndex,
+        type_text: &str,
+    ) -> String {
         let Some(object_node) = self.arena.get(object_idx) else {
             return type_text.to_string();
         };
@@ -7697,6 +7729,21 @@ impl<'a> DeclarationEmitter<'a> {
             format!("{}\n", lines.join("\n"))
         } else {
             lines.join("\n")
+        }
+    }
+
+    fn initializer_object_literal_expression(&self, initializer: NodeIndex) -> Option<NodeIndex> {
+        let initializer = self.skip_parenthesized_non_null_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        match init_node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => Some(initializer),
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                let assertion = self.arena.get_type_assertion(init_node)?;
+                self.initializer_object_literal_expression(assertion.expression)
+            }
+            _ => None,
         }
     }
 
