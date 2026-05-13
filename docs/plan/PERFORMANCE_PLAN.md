@@ -1232,6 +1232,21 @@ behavior-neutral; its purpose is to make the canonical generic-aware alias
 query/application PR measurable without expanding the allowlist first. Claim:
 [`claims/perf-actual-lib-alias-body-outcomes-2026-05-13.md`](claims/perf-actual-lib-alias-body-outcomes-2026-05-13.md).
 
+**2026-05-13 alias-body proof result follow-up:** the next stacked slice keeps
+the same decorator-only behavior but changes the internal alias-body helper to
+return a typed proof object containing the proven body, `DefinitionStore`
+`DefId`, alias type parameters, and the proof outcome. The current caller still
+destructures that object back into the same `(TypeId, Vec<TypeParamInfo>)`
+return and still keeps
+generic aliases and `PropertyKey` on fallback. This separates resolver/body
+proof plumbing from the later generic alias application PR. Claim:
+[`claims/perf-actual-lib-alias-body-proof-result-2026-05-13.md`](claims/perf-actual-lib-alias-body-proof-result-2026-05-13.md).
+Branch-local monorepo-006 attribution on this slice records
+`direct_actual_lib_alias_body_outcomes = { success: 2, name_not_admitted: 14 }`,
+with the remaining utility aliases still in the declaration-file residue table;
+see
+[`perf-runs/2026-05-13-actual-lib-alias-proof-result-attribution.md`](perf-runs/2026-05-13-actual-lib-alias-proof-result-attribution.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
