@@ -654,24 +654,28 @@ impl ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind {
 #[repr(usize)]
 pub enum ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
     IdentifierResolvableSymbol = 0,
-    IdentifierUnresolvedSymbol = 1,
-    IdentifierCompilerManagedType = 2,
-    QualifiedNameResolvableSymbol = 3,
-    QualifiedNameUnresolvedSymbol = 4,
-    OtherTypeNameSyntax = 5,
-    MalformedTypeReference = 6,
+    IdentifierValueOnlySymbol = 1,
+    IdentifierNotFoundSymbol = 2,
+    IdentifierCompilerManagedType = 3,
+    QualifiedNameResolvableSymbol = 4,
+    QualifiedNameValueOnlySymbol = 5,
+    QualifiedNameNotFoundSymbol = 6,
+    OtherTypeNameSyntax = 7,
+    MalformedTypeReference = 8,
 }
 
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT:
-    usize = 7;
+    usize = 9;
 
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES:
     [&str; COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT] = [
     "identifier_resolvable_symbol",
-    "identifier_unresolved_symbol",
+    "identifier_value_only_symbol",
+    "identifier_not_found_symbol",
     "identifier_compiler_managed_type",
     "qualified_name_resolvable_symbol",
-    "qualified_name_unresolved_symbol",
+    "qualified_name_value_only_symbol",
+    "qualified_name_not_found_symbol",
     "other_type_name_syntax",
     "malformed_type_reference",
 ];
@@ -3741,7 +3745,7 @@ mod json_tests {
             ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind::TypeReference
                 .as_index();
         let ctos_simple_object_type_reference_reject_outcome_idx =
-            ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome::IdentifierUnresolvedSymbol
+            ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome::IdentifierNotFoundSymbol
                 .as_index();
 
         let before_source =
@@ -3964,14 +3968,14 @@ mod json_tests {
                 [ctos_simple_object_type_reference_reject_outcome_idx];
         assert_eq!(
             ctos_simple_object_type_reference_reject_outcome_row["name"],
-            "identifier_unresolved_symbol"
+            "identifier_not_found_symbol"
         );
         assert!(
             ctos_simple_object_type_reference_reject_outcome_row["count"]
                 .as_u64()
                 .unwrap_or(0)
                 > before_ctos_simple_object_type_reference_reject_outcome,
-            "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes[identifier_unresolved_symbol] did not reflect the bump",
+            "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes[identifier_not_found_symbol] did not reflect the bump",
         );
 
         assert!(
