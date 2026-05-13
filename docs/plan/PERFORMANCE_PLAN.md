@@ -1171,6 +1171,22 @@ from 30 to 28 with unchanged diagnostics (`10,198`). Decision record:
 [`perf-runs/2026-05-13-delegate-actual-lib-alias-body-query.md`](perf-runs/2026-05-13-delegate-actual-lib-alias-body-query.md).
 Claim: [`claims/perf-actual-lib-alias-body-query-2026-05-13.md`](claims/perf-actual-lib-alias-body-query-2026-05-13.md).
 
+**2026-05-13 value-merged iterator follow-up:** a narrow declaration-file
+interface slice now admits value-merged actual-lib iterator interfaces
+(`Iterator` and `IteratorObject`) through `resolve_lib_type_with_params`.
+Admission remains restricted to this pair; other value-merged interfaces stay
+on fallback. On monorepo-006 this drops `DelegateCrossArenaSymbol` children
+from 22 to 20, `delegate.misses` from 24 to 20, and
+`checker.with_parent_cache_constructed` from 25 to 20 with unchanged
+diagnostics (`10,198`) on the current-main attribution rerun. Counters-off
+timing was noisy across two local pairs, so this is a delegation-residue claim,
+not a standalone wall-clock timing claim. Residue rows removed:
+`IteratorObject`, `Symbol`.
+Decision record:
+[`perf-runs/2026-05-13-delegate-actual-lib-iterator-value-merged.md`](perf-runs/2026-05-13-delegate-actual-lib-iterator-value-merged.md).
+Claim:
+[`claims/perf-delegate-actual-lib-iterator-value-merged-2026-05-13.md`](claims/perf-delegate-actual-lib-iterator-value-merged-2026-05-13.md).
+
 **2026-05-13 `compute_type_of_symbol` interface fast path:** for local
 single-declaration interfaces, we now skip three high-frequency costs when not
 needed: computed-name precompute maps, member type-parameter prewarm scans, and

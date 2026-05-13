@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "mode": "timing",
+  "tsz": {
+    "version": "0.1.9",
+    "commit": null,
+    "profile": "release"
+  },
+  "fixture": {
+    "name": null,
+    "repo": null,
+    "ref": null,
+    "actual_commit": null,
+    "path": null,
+    "local_override": false
+  },
+  "command_line": [
+    "/Users/mohsen/code/tsz-perf-master-20260512/.target-perf-iterator-rebased/release/tsz",
+    "--project",
+    "/Users/mohsen/code/tsz-perf-master-20260512/scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json",
+    "--pretty",
+    "false",
+    "--noEmit",
+    "--diagnostics-json",
+    "/tmp/tsz-perf-iterator-56518-20260513/diag.json",
+    "--perf-counters-json",
+    "/tmp/tsz-perf-iterator-56518-20260513/pc.json"
+  ],
+  "phases_ms": {
+    "config_discovery": 0.0,
+    "source_discovery": 0.0,
+    "module_resolution": 0.0,
+    "io_read": 359.545458,
+    "load_libs": 4.555583,
+    "parse_bind": 1649.6446250000001,
+    "check": 144860.81225000002,
+    "emit": 0.000125,
+    "total": 146924.39212499998
+  },
+  "counts": {
+    "files": 5332,
+    "root_files": 5250,
+    "lib_files": 82,
+    "source_bytes": 0,
+    "diagnostics": 10198
+  },
+  "rss_peak_bytes": 3018670080
+}
