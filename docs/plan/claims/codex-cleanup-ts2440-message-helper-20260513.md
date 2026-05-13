@@ -1,6 +1,6 @@
 # Claim: reuse TS2440 diagnostic message helper
 
-Status: WIP
+Status: ready for review
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6171
 Branch: `codex/cleanup-ts2440-message-helper-20260513`
@@ -14,6 +14,11 @@ Branch: `codex/cleanup-ts2440-message-helper-20260513`
   cleanup.
 
 ## Verification Plan
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(ts2440_tests::)' --no-fail-fast`
+
+## Verification
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(ts2440_tests::)' --no-fail-fast`
