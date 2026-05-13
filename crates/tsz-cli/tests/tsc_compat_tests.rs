@@ -118,6 +118,36 @@ fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
 }
 
 #[test]
+fn relative_module_augmentation_missing_target_reports_ts2664() {
+    let temp = TempDir::new("relative_module_augmentation_missing_target").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"declare module "./nonexistent" {
+    interface Extra {
+        extra: boolean;
+    }
+}
+
+export {};
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(code, 0, "missing relative augmentation target should fail");
+    assert!(
+        output.contains("error TS2664: Invalid module name in augmentation, module './nonexistent' cannot be found."),
+        "expected TS2664 for unresolved relative module augmentation, got:\n{output}"
+    );
+}
+
+#[test]
 fn tsconfig_output_only_flags_accept_jsonc_trailing_commas() {
     let temp = TempDir::new("output_only_flags_jsonc").expect("temp dir");
     write_file(
