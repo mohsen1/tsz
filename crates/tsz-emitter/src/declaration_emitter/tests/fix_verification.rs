@@ -1734,6 +1734,45 @@ let gResult3 = g(helloOrWorld);
 }
 
 #[test]
+fn fix_short_circuit_string_literal_overload_operands_match_tsc_dts_widening() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const explicitString: "string" = "string";
+const explicitNumber: "number" = "number";
+const explicitBoolean: "boolean" = "boolean";
+const explicitStringOrNumber = explicitString || explicitNumber;
+const explicitStringOrBoolean = explicitString || explicitBoolean;
+const explicitBooleanOrNumber = explicitNumber || explicitBoolean;
+const explicitStringOrBooleanOrNumber = explicitStringOrBoolean || explicitNumber;
+
+const inferredString = "string";
+const inferredNumber = "number";
+const inferredBoolean = "boolean";
+const inferredStringOrNumber = inferredString || inferredNumber;
+const inferredStringOrBoolean = inferredString || inferredBoolean;
+const inferredBooleanOrNumber = inferredNumber || inferredBoolean;
+const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumber;
+"#,
+    );
+
+    for expected in [
+        r#"declare const explicitStringOrNumber: "string" | "number";"#,
+        r#"declare const explicitStringOrBoolean: "string" | "boolean";"#,
+        r#"declare const explicitBooleanOrNumber: "number" | "boolean";"#,
+        r#"declare const explicitStringOrBooleanOrNumber: "string" | "number" | "boolean";"#,
+        "declare const inferredStringOrNumber: string;",
+        "declare const inferredStringOrBoolean: string;",
+        "declare const inferredBooleanOrNumber: string;",
+        "declare const inferredStringOrBooleanOrNumber: string;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected short-circuit operand type `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"
