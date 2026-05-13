@@ -21,6 +21,10 @@ fn check_strict_js_source_diagnostics(source: &str) -> Vec<crate::diagnostics::D
     )
 }
 
+fn diagnostic_codes(diagnostics: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
 /// @readonly on class property → TS2540 when assigned outside constructor
 #[test]
 fn test_jsdoc_readonly_property_assignment_emits_ts2540() {
@@ -37,7 +41,7 @@ f.y = 12
     assert!(
         ts2540 >= 1,
         "Expected TS2540 for assignment to @readonly property, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -59,7 +63,7 @@ class Foo {
         ts2540,
         0,
         "Expected no TS2540 for constructor assignment to @readonly property, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -80,7 +84,7 @@ f.y = 12
         ts2540,
         0,
         "Expected no TS2540 for non-readonly property assignment, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -97,7 +101,7 @@ function b() {}
     assert!(
         ts8022 >= 1,
         "Expected TS8022 for @augments on function, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -124,7 +128,7 @@ class B extends A {
     assert!(
         ts8022 >= 1,
         "Expected TS8022 for @extends separated from class by interposed JSDoc, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -143,7 +147,7 @@ class A {
     assert!(
         ts8022 >= 1,
         "Expected TS8022 for dangling @extends at EOF, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -159,7 +163,7 @@ const t = 0;
     assert!(
         ts8021 >= 1,
         "Expected TS8021 for @typedef without type, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -176,7 +180,7 @@ const value = { n: 1 };
 value.n.toFixed();
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&2304),
         "Expected unresolved Foo when @typedefx is ignored, got: {codes:?}",
@@ -200,7 +204,7 @@ const value = { n: 1 };
 value.n.toFixed();
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&2304),
         "Expected unresolved Foo when @importx is ignored, got: {codes:?}",
@@ -224,7 +228,7 @@ function f() {
 f;
 "#;
     let diagnostics = check_strict_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&2683),
         "Expected TS2683 when @thisx is ignored, got: {codes:?}",
@@ -246,7 +250,7 @@ class Derived extends Base {
 Derived;
 "#;
     let diagnostics = check_strict_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&4119),
         "Expected TS4119 when @overridex is ignored, got: {codes:?}",
@@ -263,7 +267,7 @@ class C {
 }
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         !codes.contains(&1092),
         "Expected no TS1092 for @templateFoo, got: {codes:?}",
@@ -280,7 +284,7 @@ class C {
 }
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&1092),
         "Expected TS1092 for a real constructor @template tag, got: {codes:?}",
@@ -300,7 +304,7 @@ class C {
 }
 "#;
     let diagnostics = check_strict_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         codes.contains(&1093),
         "Expected TS1093 for constructor @return after @typedef, got: {codes:?}",
@@ -320,7 +324,7 @@ class C {
 }
 "#;
     let diagnostics = check_strict_js_source_diagnostics(source);
-    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diagnostics);
     assert!(
         !codes.contains(&1093),
         "Expected nested callback @returns not to emit TS1093, got: {codes:?}",
@@ -340,7 +344,7 @@ const t = 0;
         ts8021,
         0,
         "Expected no TS8021 for @typedef with type, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -361,7 +365,7 @@ const person = { name: "" };
         ts8021,
         0,
         "Expected no TS8021 for @typedef with @property, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -432,7 +436,7 @@ class B extends A {}
         ts8022,
         0,
         "Expected no TS8022 for @extends on class, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -451,7 +455,7 @@ fn test_jsdoc_property_private_name_emits_ts1003() {
     assert!(
         ts1003 >= 1,
         "Expected TS1003 for JSDoc private-name property, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
