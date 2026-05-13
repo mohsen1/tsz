@@ -996,13 +996,8 @@ impl<'a> CheckerState<'a> {
                     // there are no accessible ones from other merged declarations.
                     // When both exist, the interface itself has TS2320 (conflicting
                     // base types) which already covers the error.
-                    if any_inaccessible_privates && !any_accessible_privates {
-                        self.error_at_node(
-                            class_error_idx,
-                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
-                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                        );
-                    }
+                    let emit_inaccessible_private_implements_error =
+                        any_inaccessible_privates && !any_accessible_privates;
 
                     if has_private_members {
                         let message = format!(
@@ -1570,6 +1565,17 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
+                    }
+
+                    if emit_inaccessible_private_implements_error
+                        && missing_members.is_empty()
+                        && incompatible_members.is_empty()
+                    {
+                        self.error_at_node(
+                            class_error_idx,
+                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                        );
                     }
 
                     // Report error for missing members
