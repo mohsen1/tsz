@@ -1184,8 +1184,9 @@ query/application PR measurable without expanding the allowlist first. Claim:
 **2026-05-13 alias-body proof result follow-up:** the next stacked slice keeps
 the same decorator-only behavior but changes the internal alias-body helper to
 return a typed proof object containing the proven body, `DefinitionStore`
-`DefId`, and alias type parameters. The current caller still destructures that
-object back into the same `(TypeId, Vec<TypeParamInfo>)` return and still keeps
+`DefId`, alias type parameters, and the proof outcome. The current caller still
+destructures that object back into the same `(TypeId, Vec<TypeParamInfo>)`
+return and still keeps
 generic aliases and `PropertyKey` on fallback. This separates resolver/body
 proof plumbing from the later generic alias application PR. Claim:
 [`claims/perf-actual-lib-alias-body-proof-result-2026-05-13.md`](claims/perf-actual-lib-alias-body-proof-result-2026-05-13.md).

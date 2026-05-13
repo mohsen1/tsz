@@ -17,6 +17,7 @@ struct DirectActualLibAliasBodyProof {
     body: TypeId,
     type_params: Vec<TypeParamInfo>,
     def_id: DefId,
+    outcome: DirectActualLibAliasBodyOutcome,
 }
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
@@ -296,6 +297,7 @@ impl<'a> CheckerState<'a> {
             body,
             type_params: params,
             def_id,
+            outcome: DirectActualLibAliasBodyOutcome::Success,
         })
     }
 
@@ -329,6 +331,7 @@ impl<'a> CheckerState<'a> {
                 body: alias_type,
                 type_params: params,
                 def_id: _def_id,
+                outcome: _outcome,
             } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
             self.ctx.symbol_types.insert(sym_id, alias_type);
             self.ctx
