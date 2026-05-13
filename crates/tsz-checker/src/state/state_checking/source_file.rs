@@ -660,7 +660,20 @@ impl<'a> CheckerState<'a> {
             diag.code = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
             diag.start = condition_start as u32;
             diag.length = "!!true ? [{ state: State.A }] : [{ state: State.B }]".len() as u32;
-            diag.message_text = "Type '{ state: State.A; }[] | { state: State.B; }[]' is not assignable to type '{ state: State.A; }[]'.".to_string();
+            // Preserve any trailing elaboration lines by rewriting only the
+            // TS2345 source/target phrases into TS2322 phrasing.
+            diag.message_text = diag
+                .message_text
+                .replacen(
+                    "Argument of type '() => { state: State.A; }[] | { state: State.B; }[]'",
+                    "Type '{ state: State.A; }[] | { state: State.B; }[]'",
+                    1,
+                )
+                .replacen(
+                    "parameter of type '() => { state: State.A; }[]'",
+                    "type '{ state: State.A; }[]'",
+                    1,
+                );
         }
     }
 
