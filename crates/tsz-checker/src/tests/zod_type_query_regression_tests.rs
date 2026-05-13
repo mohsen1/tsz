@@ -648,6 +648,44 @@ function safeParse(params?: Partial<ParseParamsNoData>) {
 }
 
 #[test]
+fn zod_class_field_alias_keeps_class_this_in_external_module() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "expected default libs to load");
+
+    let diags = check_source_with_libs(
+        r#"
+export abstract class ZodType<Output> {
+    abstract parse(data: unknown): Output;
+    async safeParseAsync(data: unknown): Promise<{ success: true; data: Output }> {
+        return { success: true, data: this.parse(data) };
+    }
+
+    spa = this.safeParseAsync;
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2532 | 2339))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected class field initializer `this` not to be treated as module-top-level undefined, got: {:?}",
+        relevant
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn zod_reexport_cycle_keeps_in_progress_class_method_placeholders() {
     let diags = check_multi_file(
         &[

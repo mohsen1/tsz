@@ -1208,7 +1208,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn this_has_contextual_owner(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext::{
             CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION, PROPERTY_ASSIGNMENT, SET_ACCESSOR,
+            METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION, PROPERTY_ASSIGNMENT,
+            PROPERTY_DECLARATION, SET_ACCESSOR,
         };
         let mut current = idx;
         let mut iterations = 0;
@@ -1223,6 +1224,7 @@ impl<'a> CheckerState<'a> {
                 k if k == GET_ACCESSOR
                     || k == SET_ACCESSOR
                     || k == METHOD_DECLARATION
+                    || k == PROPERTY_DECLARATION
                     || k == CONSTRUCTOR =>
                 {
                     let parent = self.ctx.arena.get_extended(current)?.parent;

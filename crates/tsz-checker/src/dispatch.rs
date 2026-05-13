@@ -212,27 +212,37 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     return self.checker.apply_flow_narrowing(idx, this_type);
                 }
                 if let Some(this_type) = self.checker.current_this_type() {
-                    let transient_this_marker =
-                        crate::query_boundaries::property_access::is_this_type(
-                            self.checker.ctx.types,
-                            this_type,
-                        ) || crate::query_boundaries::common::contains_type_parameters(
-                            self.checker.ctx.types,
-                            this_type,
-                        );
                     // A nested regular function creates its own `this` binding.
                     // Ignore any outer contextual/class `this` unless the
                     // function itself owns that binding.
-                    if !has_intermediate_function
-                        && (!contextual_owner_is_class || !transient_this_marker)
-                    {
+                    if !has_intermediate_function && !contextual_owner_is_class {
                         return self.checker.apply_flow_narrowing(idx, this_type);
                     }
                     // Fall through — either the nested function has its own `this`,
                     // or the lexical owner is a class member whose `this` binding
                     // should outrank transient call-context ThisType markers.
                 }
-                if let Some(class_idx) = self
+                if let Some(owner_idx) = contextual_owner
+                    && contextual_owner_is_class
+                    && !self
+                        .checker
+                        .is_this_in_nested_function_without_own_this_binding(idx)
+                {
+                    let is_in_static = self.checker.is_in_static_class_member_context(idx);
+                    if let Some(class_node) = self.checker.ctx.arena.get(owner_idx)
+                        && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
+                    {
+                        let this_type = if is_in_static {
+                            self.checker
+                                .get_class_constructor_type(owner_idx, class_data)
+                        } else {
+                            self.checker.get_class_instance_type(owner_idx, class_data)
+                        };
+                        self.checker.apply_flow_narrowing(idx, this_type)
+                    } else {
+                        TypeId::ANY
+                    }
+                } else if let Some(class_idx) = self
                     .checker
                     .ctx
                     .enclosing_class
