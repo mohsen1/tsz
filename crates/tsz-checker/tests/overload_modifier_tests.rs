@@ -1,4 +1,4 @@
-//! Tests for overload modifier agreement: TS2383, TS2385, TS2386.
+//! Tests for overload modifier agreement: TS2383, TS2385, TS2386, TS2394.
 
 use crate::test_utils::check_source_code_messages as get_diagnostics;
 
@@ -96,4 +96,41 @@ class C {
 }
 "#;
     assert!(has_error(source, 2386));
+}
+
+// TS2394: overload signature must be compatible with implementation signature
+
+#[test]
+fn ts2394_type_predicate_overload_with_boolean_impl_no_error() {
+    let source = r#"
+function check(x: unknown): x is string;
+function check(x: unknown, kind: string): x is number;
+function check(x: unknown, kind?: string): boolean {
+    if (kind === "number") return typeof x === "number";
+    return typeof x === "string";
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_asserts_predicate_overload_no_error() {
+    let source = r#"
+function assert(x: unknown): asserts x is string;
+function assert(x: unknown, msg?: string): asserts x is string {
+    if (typeof x !== "string") throw new Error(msg ?? "not a string");
+}
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
+fn ts2394_incompatible_param_types_still_errors() {
+    let source = r#"
+function bad(x: string): boolean;
+function bad(x: number): boolean {
+    return true;
+}
+"#;
+    assert!(has_error(source, 2394));
 }

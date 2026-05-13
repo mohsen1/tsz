@@ -5491,7 +5491,133 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(in crate::declaration_emitter) fn callable_function_from_symbol_decl<'b>(
+    pub(in crate::declaration_emitter) fn call_expression_source_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let source_arena = binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref())
+            .unwrap_or(self.arena);
+
+        let mut function_decl_count = 0usize;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(_func) = self.callable_function_from_symbol_decl(source_arena, decl_idx)
+            else {
+                continue;
+            };
+            function_decl_count += 1;
+            if function_decl_count > 1 {
+                return None;
+            }
+        }
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(func) = self.callable_function_from_symbol_decl(source_arena, decl_idx) else {
+                continue;
+            };
+            if func.type_annotation.is_some() {
+                if let Some(type_text) =
+                    self.source_slice_from_arena(source_arena, func.type_annotation)
+                    && self.source_return_type_annotation_is_reusable(
+                        source_arena,
+                        func.type_annotation,
+                    )
+                {
+                    let type_text = type_text
+                        .trim_end()
+                        .trim_end_matches(';')
+                        .trim_end()
+                        .to_string();
+                    if call.type_arguments.is_none()
+                        && self.source_return_type_mentions_type_parameter(
+                            source_arena,
+                            func,
+                            &type_text,
+                        )
+                    {
+                        continue;
+                    }
+                    return self.substitute_source_call_type_parameters(
+                        source_arena,
+                        func,
+                        call,
+                        type_text,
+                    );
+                }
+            } else if func.body.is_some()
+                && !self.source_function_body_contains_direct_call_to_name(
+                    source_arena,
+                    func,
+                    &symbol.escaped_name,
+                )
+                && let Some(type_text) = {
+                    let mut scratch = if std::ptr::eq(source_arena, self.arena)
+                        && let (Some(type_cache), Some(type_interner), Some(binder)) =
+                            (&self.type_cache, self.type_interner, self.binder)
+                    {
+                        DeclarationEmitter::with_type_info(
+                            source_arena,
+                            type_cache.clone(),
+                            type_interner,
+                            binder,
+                        )
+                    } else {
+                        DeclarationEmitter::new(source_arena)
+                    };
+                    let source_file = self.arena_source_file(source_arena)?;
+                    scratch.source_is_declaration_file = source_file.is_declaration_file;
+                    scratch.source_is_js_file = scratch.source_file_is_js(source_file);
+                    scratch.current_source_file_idx = self.current_source_file_idx;
+                    scratch.source_file_text = Some(source_file.text.clone());
+                    scratch.current_file_path = self.current_file_path.clone();
+                    scratch.current_arena = self.current_arena.clone();
+                    scratch.arena_to_path = self.arena_to_path.clone();
+                    scratch.indent_level = self.indent_level;
+                    let generic_source_func = func
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| !params.nodes.is_empty());
+                    let mut type_text = scratch.source_function_return_type_text(func)?;
+                    let source_return_text = scratch
+                        .function_body_returned_parameter_call_return_type_text(source_arena, func);
+                    if generic_source_func {
+                        type_text = source_return_text?;
+                    } else if type_text.contains("unknown")
+                        && let Some(source_return_text) = source_return_text
+                    {
+                        type_text = source_return_text;
+                    }
+                    let type_text =
+                        scratch.substitute_call_result_parameter_type_queries(func, &type_text);
+                    let (type_text, _) =
+                        scratch.function_return_type_text_for_declaration_scope(func, &type_text);
+                    scratch.substitute_source_call_type_parameters(
+                        source_arena,
+                        func,
+                        call,
+                        type_text,
+                    )
+                }
+            {
+                return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
+            }
+        }
+
+        None
+    }
+
+    fn callable_function_from_symbol_decl<'b>(
         &self,
         source_arena: &'b NodeArena,
         decl_idx: NodeIndex,
@@ -5518,6 +5644,72 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn source_function_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let body_node = self.arena.get(func.body)?;
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return self.function_body_preferred_return_type_text(func.body);
+        }
+
+        self.preferred_expression_type_text(func.body)
+            .or_else(|| self.infer_fallback_type_text_at(func.body, 0))
+            .filter(|text| !text.is_empty() && text != "any")
+    }
+
+    fn source_return_type_annotation_is_reusable(
+        &self,
+        source_arena: &NodeArena,
+        type_annotation: NodeIndex,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return true;
+        };
+        let Some(type_node) = source_arena.get(type_annotation) else {
+            return true;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return true;
+        }
+        let Some(type_ref) = source_arena.get_type_ref(type_node) else {
+            return true;
+        };
+        let Some(name_node) = source_arena.get(type_ref.type_name) else {
+            return true;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return true;
+        }
+
+        let Some(sym_id) = binder
+            .get_node_symbol(type_ref.type_name)
+            .or_else(|| binder.resolve_identifier(source_arena, type_ref.type_name))
+        else {
+            return true;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return true;
+        };
+        let parent_id = symbol.parent;
+        if parent_id == SymbolId::NONE
+            || self.enclosing_namespace_symbol == Some(parent_id)
+            || symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
+        {
+            return true;
+        }
+        let Some(parent) = binder.symbols.get(parent_id) else {
+            return true;
+        };
+        if !parent.has_any_flags(symbol_flags::NAMESPACE | symbol_flags::ENUM) {
+            return true;
+        }
+        if !symbol.is_exported && !symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
+            return false;
+        }
+        parent.is_exported || parent.has_any_flags(symbol_flags::EXPORT_VALUE)
     }
 
     pub(in crate::declaration_emitter) fn tagged_template_declared_return_type_text(

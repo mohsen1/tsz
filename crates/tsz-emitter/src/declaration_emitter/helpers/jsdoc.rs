@@ -278,26 +278,8 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn jsdoc_angle_brackets_are_balanced(text: &str) -> bool {
         let mut depth = 0usize;
-        let mut quoted: Option<char> = None;
-        let mut escaped = false;
         for ch in text.chars() {
-            if let Some(quote) = quoted {
-                if escaped {
-                    escaped = false;
-                    continue;
-                }
-                if ch == '\\' {
-                    escaped = true;
-                    continue;
-                }
-                if ch == quote {
-                    quoted = None;
-                }
-                continue;
-            }
-
             match ch {
-                '\'' | '"' => quoted = Some(ch),
                 '<' => depth += 1,
                 '>' => {
                     if depth == 0 {
@@ -1571,20 +1553,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn trim_jsdoc_same_line_following_tags(text: &str) -> &str {
-        let mut prev_was_whitespace = false;
-        for (idx, ch) in text.char_indices() {
-            if ch == '@'
-                && prev_was_whitespace
-                && text[idx + ch.len_utf8()..]
-                    .chars()
-                    .next()
-                    .is_some_and(|next| next.is_ascii_alphabetic())
-            {
-                return text[..idx].trim_end();
-            }
-            prev_was_whitespace = ch.is_whitespace();
-        }
-        text
+        text.find(" @")
+            .map(|idx| text[..idx].trim_end())
+            .unwrap_or(text)
     }
 
     /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
@@ -1913,7 +1884,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn parse_jsdoc_default_typedef_alias_decl(
         jsdoc: &str,
-        typedef_alias_name: &str,
+        alias_name: &str,
     ) -> Option<JsdocTypeAliasDecl> {
         let type_params = Self::parse_jsdoc_template_params(jsdoc);
         let (name, type_text) = if Self::jsdoc_has_property_tags(jsdoc) {
@@ -1926,7 +1897,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(JsdocTypeAliasDecl {
-            name: typedef_alias_name.to_string(),
+            name: alias_name.to_string(),
             type_params,
             type_text,
             description_lines: Vec::new(),
@@ -1987,47 +1958,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
         self.write(&rendered);
         if exported {
-            self.emitted_module_indicator = true;
-        }
-    }
-
-    fn jsdoc_default_typedef_alias_name(&self, default_export_name: &str) -> String {
-        let base = format!("{default_export_name}_default");
-        if !self.reserved_names.contains(&base) && !self.emitted_jsdoc_type_aliases.contains(&base)
-        {
-            return base;
-        }
-
-        let mut suffix = 1usize;
-        loop {
-            let candidate = format!("{base}_{suffix}");
-            if !self.reserved_names.contains(&candidate)
-                && !self.emitted_jsdoc_type_aliases.contains(&candidate)
-            {
-                return candidate;
-            }
-            suffix += 1;
-        }
-    }
-
-    fn emit_rendered_jsdoc_default_typedef_alias(
-        &mut self,
-        decl: JsdocTypeAliasDecl,
-        exported: bool,
-    ) {
-        if !self.emitted_jsdoc_type_aliases.insert(decl.name.clone()) {
-            return;
-        }
-        self.reserved_names.insert(decl.name.clone());
-        let Some(rendered) = Self::render_jsdoc_type_alias_decl(&decl, false) else {
-            return;
-        };
-        self.write(&rendered);
-        if exported {
-            self.write("export { type ");
-            self.write(&decl.name);
-            self.write(" as default };");
-            self.write_line();
             self.emitted_module_indicator = true;
         }
     }
@@ -2255,10 +2185,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file || self.js_export_default_names.len() != 1 {
             return;
         }
-        let Some(default_export_name) = self.js_export_default_names.iter().next().cloned() else {
+        let Some(alias_name) = self.js_export_default_names.iter().next().cloned() else {
             return;
         };
-        let typedef_alias_name = self.jsdoc_default_typedef_alias_name(&default_export_name);
 
         let exported = self.source_file_has_module_syntax(source_file)
             && self.js_export_equals_names.is_empty();
@@ -2268,11 +2197,11 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
-                if let Some(decl) =
-                    Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &typedef_alias_name)
-                {
-                    self.emit_rendered_jsdoc_default_typedef_alias(decl, exported);
-                }
+                self.emit_jsdoc_default_typedef_alias_decl_for_comment(
+                    &jsdoc,
+                    &alias_name,
+                    exported,
+                );
             }
         }
 
@@ -2280,11 +2209,29 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
-            if let Some(decl) =
-                Self::parse_jsdoc_default_typedef_alias_decl(&jsdoc, &typedef_alias_name)
-            {
-                self.emit_rendered_jsdoc_default_typedef_alias(decl, exported);
-            }
+            self.emit_jsdoc_default_typedef_alias_decl_for_comment(&jsdoc, &alias_name, exported);
         }
+    }
+
+    fn emit_jsdoc_default_typedef_alias_decl_for_comment(
+        &mut self,
+        jsdoc: &str,
+        alias_name: &str,
+        exported: bool,
+    ) {
+        let Some(mut decl) = Self::parse_jsdoc_default_typedef_alias_decl(jsdoc, alias_name) else {
+            return;
+        };
+
+        // A `@typedef {…} default` can map to an existing default-export local
+        // name (e.g. `class Cls; export default Cls;`). Emitting `export type Cls`
+        // would collide with that declaration in `.d.ts`, so synthesize a unique
+        // alias and reserve it for subsequent import/export name generation.
+        if self.reserved_names.contains(&decl.name) {
+            decl.name = self.generate_unique_name(&decl.name);
+        }
+        self.reserved_names.insert(decl.name.clone());
+
+        self.emit_rendered_jsdoc_type_alias(decl, exported);
     }
 }

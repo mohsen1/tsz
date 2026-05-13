@@ -1012,41 +1012,6 @@ const test = dibbity => dibbity
 }
 
 #[test]
-fn test_js_variable_preserves_generic_jsdoc_type_reference_with_gt_in_string_literal() {
-    let output = emit_js_dts(
-        r#"
-/** @type {Test<"a>b">} */
-const value = 1;
-"#,
-    );
-
-    assert!(
-        output.contains("declare const value: Test<\"a>b\">;"),
-        "Expected generic JSDoc @type references with quoted `>` characters to remain name-like and be preserved: {output}"
-    );
-}
-
-#[test]
-fn test_js_template_same_line_typedef_with_tab_separator_trims_following_tag() {
-    let output = emit_js_dts(
-        r#"
-/** @template T	@typedef {T} Alias */
-/** @type {Alias<number>} */
-const value = 1;
-"#,
-    );
-
-    assert!(
-        output.contains("declare const value: Alias<number>;"),
-        "Expected tab-separated same-line @template/@typedef to preserve the generic alias reference: {output}"
-    );
-    assert!(
-        output.contains("type Alias<T> = T;"),
-        "Expected same-line @template with tab separator to emit clean template params: {output}"
-    );
-}
-
-#[test]
 fn test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference() {
     let output = emit_js_dts(
         r#"
@@ -1901,30 +1866,6 @@ export = a;
         output.matches("export = a;").count(),
         1,
         "Did not expect duplicate JS export= statements: {output}"
-    );
-}
-
-#[test]
-fn test_js_export_equals_keeps_commonjs_function_expando_namespace_members() {
-    let output = emit_js_dts(
-        r#"
-function foo() {}
-foo.label = "ok";
-export = foo;
-"#,
-    );
-
-    assert!(
-        output.contains("export = foo;"),
-        "Expected export= statement to be preserved: {output}"
-    );
-    assert!(
-        output.contains("declare namespace foo {"),
-        "Expected function expando declarations to emit a merged namespace under export=: {output}"
-    );
-    assert!(
-        output.contains("label: string;"),
-        "Expected function expando member to be emitted under export=: {output}"
     );
 }
 
@@ -2890,33 +2831,12 @@ declare function baz(): void;
 declare namespace baz {
     let _class: boolean;
     export { _class as class };
-    export let normal: boolean;
+    let normal_1: boolean;
+    export { normal_1 as normal };
 }"#;
     assert!(
         output.contains(expected),
         "Expected JS reserved function expandos to use keyword aliases and avoid reused local names.\nOutput:\n{output}"
-    );
-}
-
-#[test]
-fn test_js_late_bound_function_alias_generation_avoids_existing_namespace_members() {
-    let source = r#"
-export const normal = 1;
-export function foo() {}
-foo.normal = false;
-foo.normal_1 = true;
-"#;
-
-    let output = emit_js_dts_with_usage_analysis(source);
-    let expected = r#"export function foo(): void;
-export namespace foo {
-    let normal_2: boolean;
-    export { normal_2 as normal };
-    let normal_1: boolean;
-}"#;
-    assert!(
-        output.contains(expected),
-        "Expected namespace alias generation to skip existing member names when resolving collisions: {output}"
     );
 }
 
@@ -5366,18 +5286,16 @@ export default Cls;
     );
     let trimmed = output.trim();
     assert!(
-        trimmed.starts_with(
-            "type Cls_default = string | number;\nexport { type Cls_default as default };\nexport default Cls;"
-        ),
-        "Expected default typedef to emit before the hoisted default export: {trimmed}"
+        trimmed.starts_with("export type Cls_1 = string | number;\nexport default Cls;"),
+        "Expected default typedef to use a collision-safe alias before the hoisted default export: {trimmed}"
+    );
+    assert!(
+        !trimmed.contains("export type Cls = string | number;"),
+        "Default typedef alias should not collide with the class declaration name: {trimmed}"
     );
     assert!(
         trimmed.contains("declare class Cls"),
         "Expected the exported class declaration to remain: {trimmed}"
-    );
-    assert!(
-        !trimmed.contains("export type Cls ="),
-        "Did not expect default typedef alias to collide with the class type name: {trimmed}"
     );
 }
 
