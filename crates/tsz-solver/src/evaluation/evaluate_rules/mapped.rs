@@ -872,6 +872,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
     fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
+        match self.keyof_constraint_guard.enter(constraint) {
+            crate::recursion::RecursionResult::Entered => {}
+            _ => return constraint,
+        }
+
+        let result = self.evaluate_keyof_or_constraint_inner(constraint);
+        self.keyof_constraint_guard.leave(constraint);
+        result
+    }
+
+    fn evaluate_keyof_or_constraint_inner(&mut self, constraint: TypeId) -> TypeId {
         // PERF: Single lookup handles all cases instead of 4 separate DashMap lookups.
         let members = match self.interner().lookup(constraint) {
             Some(TypeData::Conditional(cond_id)) => {
@@ -1582,5 +1593,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         self.interner().tuple(mapped_elements)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TypeInterner;
+    use crate::recursion::RecursionResult;
+
+    #[test]
+    fn evaluate_keyof_or_constraint_preserves_reentrant_constraint() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let constraint = interner.keyof(TypeId::STRING);
+
+        assert!(matches!(
+            evaluator.keyof_constraint_guard.enter(constraint),
+            RecursionResult::Entered
+        ));
+        assert_eq!(
+            evaluator.evaluate_keyof_or_constraint(constraint),
+            constraint
+        );
+        evaluator.keyof_constraint_guard.leave(constraint);
     }
 }

@@ -50,6 +50,8 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     cache: FxHashMap<TypeId, TypeId>,
     /// Unified recursion guard for `TypeId` cycle detection, depth, and iteration limits.
     guard: crate::recursion::RecursionGuard<TypeId>,
+    /// Recursion guard for mapped-key constraint simplification.
+    pub(super) keyof_constraint_guard: crate::recursion::RecursionGuard<TypeId>,
     /// Per-DefId recursion depth counter.
     /// Allows recursive type aliases (like `TrimRight`) to expand up to `MAX_DEF_DEPTH`
     /// times before stopping, matching tsc's TS2589 "Type instantiation is excessively
@@ -150,6 +152,9 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
+            keyof_constraint_guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
+            ),
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
@@ -195,6 +200,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
             guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
+            ),
+            keyof_constraint_guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
             def_depth: FxHashMap::default(),
