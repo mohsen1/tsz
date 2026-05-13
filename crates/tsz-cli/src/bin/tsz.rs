@@ -22,6 +22,19 @@ const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
 const TS5112_COMMAND_LINE_FILES_MESSAGE: &str = "tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error.";
 
+/// Extensions tsc lists in TS6231 "could not resolve path" messages, in tsc's display order.
+const TS6231_EXTENSIONS: &str = "'.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'";
+
+/// Prints a root-file resolution failure in tsc's format and exits with the diagnostics
+/// status code. Keeps the "file is in the program because" context consistent across all
+/// root-file error codes.
+fn report_root_file_diagnostic(code: u32, message: &str) -> ! {
+    println!("error TS{code}: {message}");
+    println!("  The file is in the program because:");
+    println!("    Root file specified for compilation\n");
+    std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED)
+}
+
 fn main() -> Result<()> {
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
     // Supports TSZ_LOG_FORMAT=tree|json|text (see src/tracing_config.rs).
@@ -186,13 +199,16 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         Ok(r) => r,
         Err(e) => {
             let msg = e.to_string();
-            // Intercept TS6053 file-not-found errors from discover_ts_files and
-            // format them matching tsc v6 output.
             if let Some(rest) = msg.strip_prefix("TS6053: ") {
-                println!("error TS6053: {rest}");
-                println!("  The file is in the program because:");
-                println!("    Root file specified for compilation\n");
-                std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
+                report_root_file_diagnostic(6053, rest);
+            }
+            if let Some(path_str) = msg.strip_prefix("TS6231: ") {
+                report_root_file_diagnostic(
+                    6231,
+                    &format!(
+                        "Could not resolve the path '{path_str}' with the extensions: {TS6231_EXTENSIONS}."
+                    ),
+                );
             }
             return Err(e);
         }
