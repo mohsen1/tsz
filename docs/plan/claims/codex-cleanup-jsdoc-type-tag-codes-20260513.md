@@ -1,6 +1,6 @@
 # Claim: dedupe JSDoc type tag diagnostic code projections
 
-Status: WIP
+Status: Ready
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6257
 Branch: `codex/cleanup-jsdoc-type-tag-codes-20260513`
@@ -15,3 +15,8 @@ Branch: `codex/cleanup-jsdoc-type-tag-codes-20260513`
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --test jsdoc_type_tag_tests --no-fail-fast`
+
+## Verification
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --test jsdoc_type_tag_tests --no-fail-fast` (33 passed)
