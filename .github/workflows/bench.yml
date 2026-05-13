@@ -12,12 +12,12 @@ on:
     - cron: '0 15 * * *'
   workflow_dispatch:
 
-# Coalesce rapid workflow_run triggers (stale commits get cancelled).
-# Protect schedule/dispatch runs from cancellation - they're explicit requests
-# and the 2x daily schedule guarantees fresh data even during rapid merges.
+# Keep one benchmark active and one freshest pending benchmark. A new trigger
+# replaces any older pending run, but does not cancel the long-running benchmark
+# that is already producing useful data for tsz.dev.
 concurrency:
-  group: bench-${{ github.event_name == 'workflow_run' && 'auto' || 'explicit' }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+  group: bench
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -56,7 +56,8 @@ jobs:
             fi
           fi
 
-          # Concurrency group handles all coalescing - no debounce or explicit run checks needed
+          # Concurrency handles coalescing: the active run finishes, and only
+          # the freshest pending run remains queued.
 
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
 
@@ -78,7 +79,7 @@ jobs:
         name: Confirm benchmark should proceed
         shell: bash
         run: |
-          # Concurrency group handles supersession - just proceed
+          # Concurrency handles supersession before this job starts.
           echo "should_run=true" >> "$GITHUB_OUTPUT"
 
       - name: Restore GCS caches
