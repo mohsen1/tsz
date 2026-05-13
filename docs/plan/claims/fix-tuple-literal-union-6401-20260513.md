@@ -1,6 +1,6 @@
 # Claim: fix tuple literal widening against distributive conditional union (#6401)
 
-Status: claim
+Status: ready
 Owner: Codex
 Branch: fix-tuple-literal-union-6401-20260513
 Issue: #6401
