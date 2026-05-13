@@ -1303,6 +1303,36 @@ const t1: T1 = { a: 1, b: "x" };
     );
 }
 
+fn explicit_unknown_type_argument_violates_function_constraint() {
+    let Some(_) = find_tsz_binary() else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new("explicit_unknown_type_arg_constraint").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        r#"
+type AppendArgument<Fn extends (...args: any[]) => any, A> =
+  Fn extends (...args: infer Args) => infer R
+    ? (...args: [...Args, A]) => R
+    : never;
+
+type T1 = AppendArgument<unknown, undefined>;
+"#,
+    );
+
+    let output = assert_tsc_tsz_match(
+        &temp.path,
+        &["--noEmit", "--strict", "--pretty", "false", "test.ts"],
+        "explicit unknown type argument constraints",
+    );
+    assert_eq!(
+        output.matches("TS2344").count(),
+        1,
+        "expected explicit unknown to emit TS2344, got:\n{output}"
+    );
+}
+
 #[test]
 fn esnext_lib_loads_disposable_symbols_without_builtin_lib_diagnostics() {
     let Some(_) = find_tsz_binary() else {

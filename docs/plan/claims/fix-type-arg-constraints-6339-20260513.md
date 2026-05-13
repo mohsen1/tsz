@@ -1,7 +1,7 @@
 # Fix generic type argument constraint diagnostics (#6339)
 
-Status: claim
-PR: TBD
+Status: ready
+PR: #6345
 
 ## Scope
 
@@ -17,3 +17,9 @@ Investigate and fix missing TS2344 diagnostics when explicit type arguments viol
 - Reproduce #6339 with a focused CLI case against `tsz` and `tsc`.
 - Add focused regression coverage for TS2344 on invalid explicit type arguments.
 - Run the targeted test and formatting check.
+
+## Verification
+
+- `cargo run -p tsz-cli --bin tsz -- --noEmit --strict --pretty false /tmp/issue6339.ts` now reports TS2344 for explicit `unknown`, `string`, and object type arguments.
+- `cargo test -p tsz-cli --test tsc_compat_tests explicit_unknown_type_argument_violates_function_constraint -- --nocapture` passed.
+- `cargo fmt --all -- --check` passed.

@@ -3,6 +3,7 @@
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -40,6 +41,19 @@ impl<'a> CheckerState<'a> {
             .any(|d| d.code == code && d.start >= start && d.start < end)
     }
 
+    fn type_arg_is_unknown_keyword(&self, type_arg_idx: NodeIndex) -> bool {
+        self.node_text(type_arg_idx)
+            .is_some_and(|text| text.trim() == "unknown")
+            || self
+                .type_arg_identifier_name(type_arg_idx)
+                .is_some_and(|name| name == "unknown")
+            || self
+                .ctx
+                .arena
+                .get(type_arg_idx)
+                .is_some_and(|node| node.kind == SyntaxKind::UnknownKeyword as u16)
+    }
+
     /// Validate each type argument against its corresponding type parameter
     /// constraint. Reports TS2344 when a type argument doesn't satisfy its
     /// constraint. Shared by call expressions, new expressions, and type refs.
@@ -65,6 +79,27 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self.type_arg_is_unknown_keyword(arg_idx)
+                {
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let inst_constraint = self.instantiate_constraint_with_type_args(
+                        constraint_resolved,
+                        type_params,
+                        &type_args,
+                    );
+                    if !matches!(inst_constraint, TypeId::ANY | TypeId::UNKNOWN) {
+                        let constraint_str =
+                            self.format_type_diagnostic_constraint(inst_constraint);
+                        self.error_at_node_msg(
+                            arg_idx,
+                            crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+                            &["unknown", &constraint_str],
+                        );
+                        continue;
+                    }
+                }
+
                 // Skip constraint checking when the type argument is an error type
                 // (avoids cascading errors from unresolved references)
                 if type_arg == TypeId::ERROR {
