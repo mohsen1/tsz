@@ -2353,25 +2353,37 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(&callee_type) = node_types.get(&call.expression.0) else {
             return pre_type;
         };
-        let Some(signature) = self.predicate_signature_for_type(callee_type) else {
-            return pre_type;
+
+        // Cache holds solver-instantiated predicates (generic T → concrete type arg).
+        // Raw callee type carries the uninstantiated signature; cache must win when present.
+        let (assertion_predicate, assertion_params) = if let Some(predicates) =
+            self.call_type_predicates
+            && let Some((pred, params)) = predicates.get(&flow.node.0)
+            && pred.asserts
+        {
+            (*pred, params.clone())
+        } else {
+            let Some(sig) = self.predicate_signature_for_type(callee_type) else {
+                return pre_type;
+            };
+            if !sig.predicate.asserts {
+                return pre_type;
+            }
+            (sig.predicate, sig.params)
         };
-        if !signature.predicate.asserts {
-            return pre_type;
-        }
 
         let Some(predicate_target) =
-            self.predicate_target_expression(call, &signature.predicate, &signature.params)
+            self.predicate_target_expression(call, &assertion_predicate, &assertion_params)
         else {
             return pre_type;
         };
 
         // For generic assertion functions like `assertEqual<T>(value: any, type: T): asserts value is T`,
-        // the predicate's type_id is the unresolved type parameter T. Resolve it by matching against
-        // the call's actual argument types.
+        // the predicate's type_id may still be an unresolved type parameter T. Resolve it by
+        // matching against the call's actual argument types.
         let resolved_predicate = self.resolve_generic_predicate(
-            &signature.predicate,
-            &signature.params,
+            &assertion_predicate,
+            &assertion_params,
             call,
             callee_type,
             node_types,
