@@ -8,7 +8,9 @@ mod return_context;
 use crate::context::TypingRequest;
 use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
-use crate::query_boundaries::common::{ContextualTypeContext, PendingDiagnosticBuilder};
+use crate::query_boundaries::common::{
+    CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -52,7 +54,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> Option<OverloadResolution> {
-        use crate::query_boundaries::common::{CallResult, FunctionShape};
+        use crate::query_boundaries::common::FunctionShape;
 
         tracing::debug!(
             "resolve_overloaded_call_with_signatures: signatures = {:?}, args = {:?}",
@@ -255,14 +257,19 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (mut result, instantiated_predicate, instantiated_params) = self
-                .resolve_call_with_checker_adapter(
+            let (mut result, instantiated_predicate, instantiated_params) = if let Some(result) =
+                self.overload_string_argument_array_parameter_mismatch(&sig, &arg_types)
+            {
+                (result, None, None)
+            } else {
+                self.resolve_call_with_checker_adapter(
                     resolved_func_type,
                     &arg_types,
                     force_bivariant_callbacks,
                     sig_contextual_type,
                     None,
-                );
+                )
+            };
             if let CallResult::ArgumentTypeMismatch {
                 expected,
                 actual,
@@ -1954,5 +1961,44 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
         }
+    }
+
+    fn overload_string_argument_array_parameter_mismatch(
+        &mut self,
+        sig: &tsz_solver::CallSignature,
+        arg_types: &[TypeId],
+    ) -> Option<CallResult> {
+        arg_types
+            .iter()
+            .copied()
+            .enumerate()
+            .find_map(|(index, actual)| {
+                if !self.type_is_string_like_for_overload_applicability(actual) {
+                    return None;
+                }
+                let expected = sig
+                    .params
+                    .get(index)
+                    .map(|param| param.type_id)
+                    .or_else(|| {
+                        sig.params
+                            .last()
+                            .and_then(|param| param.rest.then_some(param.type_id))
+                    })?;
+                self.is_array_like_type(expected)
+                    .then_some(CallResult::ArgumentTypeMismatch {
+                        index,
+                        expected,
+                        actual,
+                        fallback_return: sig.return_type,
+                    })
+            })
+    }
+
+    fn type_is_string_like_for_overload_applicability(&self, type_id: TypeId) -> bool {
+        type_id == TypeId::STRING
+            || crate::query_boundaries::common::is_string_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::string_literal_value(self.ctx.types, type_id)
+                .is_some()
     }
 }
