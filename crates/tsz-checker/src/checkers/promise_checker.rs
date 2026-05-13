@@ -1731,14 +1731,14 @@ impl<'a> CheckerState<'a> {
     pub fn unwrap_async_return_type_for_body(&mut self, return_type: TypeId) -> TypeId {
         // Try simple unwrap first
         if let Some(unwrapped) = self.unwrap_promise_type(return_type) {
-            return self.evaluate_awaited_application(unwrapped);
+            return self.resolve_awaited_for_body(unwrapped);
         }
         // For unions, unwrap each Promise member individually
         if let Some(members) = query::union_members(self.ctx.types, return_type) {
             let mut new_members: Vec<TypeId> = Vec::new();
             for member in &members {
                 if let Some(unwrapped) = self.unwrap_promise_type(*member) {
-                    new_members.push(self.evaluate_awaited_application(unwrapped));
+                    new_members.push(self.resolve_awaited_for_body(unwrapped));
                 } else {
                     new_members.push(*member);
                 }
@@ -1746,6 +1746,36 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.factory().union(new_members);
         }
         return_type
+    }
+
+    /// Evaluate an `Awaited<X>` for async body checking; fall back to `X` when
+    /// the conditional type cannot be resolved (e.g. unconstrained type parameters).
+    fn resolve_awaited_for_body(&mut self, type_id: TypeId) -> TypeId {
+        let evaluated = self.evaluate_awaited_application(type_id);
+        if evaluated != type_id && !self.is_awaited_application(evaluated) {
+            return evaluated;
+        }
+        // Unevaluated Awaited<X>: use X directly (mirrors tsc getAwaitedType fallback).
+        self.awaited_application_arg(evaluated).unwrap_or(evaluated)
+    }
+
+    /// Strip all Promise layers and evaluate `Awaited<>` at each level, mirroring
+    /// tsc's `getAwaitedType`. Returns `None` when the type is not Promise-like.
+    pub fn get_fully_awaited_body_return_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let inner = self.unwrap_promise_type(type_id)?;
+        Some(self.strip_promise_layers(inner))
+    }
+
+    /// Iteratively strip recognized Promise layers, evaluating `Awaited<X>` at each step.
+    fn strip_promise_layers(&mut self, type_id: TypeId) -> TypeId {
+        let mut current = type_id;
+        for _ in 0..32 {
+            let Some(inner) = self.unwrap_promise_type(current) else {
+                break;
+            };
+            current = self.evaluate_awaited_application(inner);
+        }
+        current
     }
 
     /// If `type_id` is an `Awaited<X>` application, evaluate it through the

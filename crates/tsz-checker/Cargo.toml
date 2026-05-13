@@ -54,6 +54,10 @@ name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "async_nested_promise_return_tests"
+path = "tests/async_nested_promise_return_tests.rs"
+
+[[test]]
 name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 

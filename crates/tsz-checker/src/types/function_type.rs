@@ -1939,12 +1939,10 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(return_type)
                 }
             } else if is_async_for_context && has_type_annotation {
-                // Unwrap Promise<T> to T for async function return type checking.
-                // Use the pre-expansion annotated return type because
-                // evaluate_application_type() may have expanded Promise<T> into its
-                // structural object form, which unwrap_promise_type() can't recognise.
+                // Use the pre-expansion type: evaluate_application_type() may have
+                // expanded Promise<T> into a structural form unwrap_promise_type can't recognise.
                 let original_type = annotated_return_type.unwrap_or(return_type);
-                self.unwrap_promise_type(original_type)
+                self.get_fully_awaited_body_return_type(original_type)
                     .unwrap_or(return_type)
             } else if is_async_for_context
                 && has_contextual_return

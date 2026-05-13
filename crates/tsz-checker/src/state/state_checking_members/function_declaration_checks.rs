@@ -694,9 +694,8 @@ impl<'a> CheckerState<'a> {
         let body_return_type = if is_generator && has_type_annotation {
             self.compute_generator_body_return_type(func, return_type)
         } else if func.is_async && has_type_annotation {
-            // Unwrap Promise<T> to T for async function return type checking.
-            // The function body returns T, which gets auto-wrapped in a Promise.
-            self.unwrap_promise_type(return_type).unwrap_or(return_type)
+            self.get_fully_awaited_body_return_type(return_type)
+                .unwrap_or(return_type)
         } else if has_declared_return {
             return_type
         } else {
