@@ -1,6 +1,6 @@
 # Claim: dedupe JSDoc satisfies diagnostic code projections
 
-Status: WIP
+Status: Ready
 Owner: Codex
 Issue: https://github.com/mohsen1/tsz/issues/6272
 Branch: `codex/cleanup-jsdoc-satisfies-codes-20260513`
@@ -15,3 +15,8 @@ Branch: `codex/cleanup-jsdoc-satisfies-codes-20260513`
 
 - `cargo fmt --check`
 - `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_satisfies_tests::)' --no-fail-fast`
+
+## Verification
+
+- `cargo fmt --check`
+- `cargo nextest run -p tsz-checker --lib -E 'test(jsdoc_satisfies_tests::)' --no-fail-fast` (9 passed)
