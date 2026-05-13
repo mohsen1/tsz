@@ -35,6 +35,24 @@ pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
     pub(in crate::declaration_emitter) body: NodeIndex,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComputedObjectIndexKeyKind {
+    ConcreteString,
+    ConcreteNumber,
+    ConcreteSymbol,
+    DynamicString,
+    DynamicNumber,
+    DynamicSymbol,
+    Unknown,
+}
+
+#[derive(Debug)]
+struct ComputedObjectIndexMember {
+    kind: ComputedObjectIndexKeyKind,
+    name_text: Option<String>,
+    value_type: String,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn synthetic_class_extends_alias_source_type_text(
         &self,
@@ -1964,9 +1982,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 self.conditional_unique_symbol_union_type_text(expr_idx)
             }
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                self.class_static_computed_index_access_type_text(expr_idx)
-            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self
+                .template_index_signature_element_access_type_text(expr_idx)
+                .or_else(|| self.class_static_computed_index_access_type_text(expr_idx)),
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 let ast_type_text = self.class_expression_constructor_type_text_from_ast(expr_idx);
                 if ast_type_text
@@ -8159,8 +8177,11 @@ impl<'a> DeclarationEmitter<'a> {
         if lines.len() < 2 {
             return Some(printed);
         }
-        if let Some(source_union) =
-            self.source_ordered_object_literal_index_value_union_text(initializer)
+        let recovered_computed_index_signatures =
+            self.rewrite_object_literal_computed_index_signatures(initializer, &mut lines);
+        if !recovered_computed_index_signatures
+            && let Some(source_union) =
+                self.source_ordered_object_literal_index_value_union_text(initializer)
         {
             Self::rewrite_broad_index_signature_value_union(&mut lines, &source_union);
         }
@@ -8324,7 +8345,367 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        self.remove_dynamic_computed_object_literal_property_lines(initializer, &mut lines);
+        self.deduplicate_object_literal_property_lines(&mut lines);
+
         Some(lines.join("\n"))
+    }
+
+    fn rewrite_object_literal_computed_index_signatures(
+        &self,
+        object_expr_idx: NodeIndex,
+        lines: &mut Vec<String>,
+    ) -> bool {
+        let members = self.computed_object_index_members(object_expr_idx);
+        if members.is_empty() {
+            return false;
+        }
+
+        let has_dynamic_string = members
+            .iter()
+            .any(|member| member.kind == ComputedObjectIndexKeyKind::DynamicString);
+        let has_dynamic_number = members
+            .iter()
+            .any(|member| member.kind == ComputedObjectIndexKeyKind::DynamicNumber);
+        let has_dynamic_symbol = members
+            .iter()
+            .any(|member| member.kind == ComputedObjectIndexKeyKind::DynamicSymbol);
+
+        if !has_dynamic_string && !has_dynamic_number && !has_dynamic_symbol {
+            self.deduplicate_object_literal_property_lines(lines);
+            return false;
+        }
+
+        let mut concrete_string_or_number = Vec::new();
+        let mut dynamic_string_or_number = Vec::new();
+        let mut number_values = Vec::new();
+        let mut symbol_values = Vec::new();
+        let mut dynamic_names = Vec::new();
+
+        for member in &members {
+            match member.kind {
+                ComputedObjectIndexKeyKind::ConcreteString => {
+                    Self::push_unique_type_text(&mut concrete_string_or_number, &member.value_type);
+                }
+                ComputedObjectIndexKeyKind::ConcreteNumber => {
+                    Self::push_unique_type_text(&mut concrete_string_or_number, &member.value_type);
+                    Self::push_unique_type_text(&mut number_values, &member.value_type);
+                }
+                ComputedObjectIndexKeyKind::ConcreteSymbol => {
+                    Self::push_unique_type_text(&mut symbol_values, &member.value_type);
+                }
+                ComputedObjectIndexKeyKind::DynamicString => {
+                    Self::push_unique_type_text(&mut dynamic_string_or_number, &member.value_type);
+                    if let Some(name_text) = member.name_text.as_deref() {
+                        dynamic_names.push(name_text.to_string());
+                    }
+                }
+                ComputedObjectIndexKeyKind::DynamicNumber => {
+                    Self::push_unique_type_text(&mut dynamic_string_or_number, &member.value_type);
+                    Self::push_unique_type_text(&mut number_values, &member.value_type);
+                    if let Some(name_text) = member.name_text.as_deref() {
+                        dynamic_names.push(name_text.to_string());
+                    }
+                }
+                ComputedObjectIndexKeyKind::DynamicSymbol => {
+                    Self::push_unique_type_text(&mut symbol_values, &member.value_type);
+                    if let Some(name_text) = member.name_text.as_deref() {
+                        dynamic_names.push(name_text.to_string());
+                    }
+                }
+                ComputedObjectIndexKeyKind::Unknown => {}
+            }
+        }
+
+        lines.retain(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.starts_with("[x: string]:")
+                && !trimmed.starts_with("[x: number]:")
+                && !trimmed.starts_with("[x: symbol]:")
+                && !dynamic_names
+                    .iter()
+                    .any(|name| Self::object_literal_property_line_matches(line, name, ""))
+        });
+
+        let mut new_index_lines = Vec::new();
+        let indent = "    ".repeat((self.indent_level + 1) as usize);
+        if has_dynamic_string {
+            let mut values = concrete_string_or_number.clone();
+            for value in &dynamic_string_or_number {
+                Self::push_unique_type_text(&mut values, value);
+            }
+            if !values.is_empty() {
+                new_index_lines.push(format!("{indent}[x: string]: {};", values.join(" | ")));
+            }
+        }
+        if has_dynamic_number && !number_values.is_empty() {
+            new_index_lines.push(format!(
+                "{indent}[x: number]: {};",
+                number_values.join(" | ")
+            ));
+        }
+        if has_dynamic_symbol && !symbol_values.is_empty() {
+            new_index_lines.push(format!(
+                "{indent}[x: symbol]: {};",
+                symbol_values.join(" | ")
+            ));
+        }
+
+        for (offset, line) in new_index_lines.into_iter().enumerate() {
+            lines.insert(1 + offset, line);
+        }
+        self.deduplicate_object_literal_property_lines(lines);
+        true
+    }
+
+    fn computed_object_index_members(
+        &self,
+        object_expr_idx: NodeIndex,
+    ) -> Vec<ComputedObjectIndexMember> {
+        let Some(object_node) = self.arena.get(object_expr_idx) else {
+            return Vec::new();
+        };
+        let Some(object) = self.arena.get_literal_expr(object_node) else {
+            return Vec::new();
+        };
+        let mut members = Vec::new();
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(name_idx) else {
+                continue;
+            };
+            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                continue;
+            }
+
+            let Some(value_type) = self.object_literal_member_index_value_type_text(member_idx)
+            else {
+                continue;
+            };
+            let name_text = self
+                .object_literal_member_name_text(name_idx)
+                .or_else(|| self.constant_computed_property_name_text(name_idx));
+            let kind = self.computed_object_index_key_kind(name_idx, name_text.as_deref());
+            members.push(ComputedObjectIndexMember {
+                kind,
+                name_text,
+                value_type: Self::parenthesize_type_text_in_union_position(&value_type),
+            });
+        }
+
+        members
+    }
+
+    fn constant_computed_property_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        let computed = self.arena.get_computed_property(name_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        self.constant_computed_key_expression_text(expr_idx)
+    }
+
+    fn constant_computed_key_expression_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::NumericLiteral as u16 {
+            let value = self.arena.get_literal(expr_node)?.value?;
+            return Some(Self::format_js_number(value));
+        }
+        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let binary = self.arena.get_binary_expr(expr_node)?;
+            if binary.operator_token != SyntaxKind::PlusToken as u16 {
+                return None;
+            }
+            let left = self.constant_computed_key_number_value(binary.left)?;
+            let right = self.constant_computed_key_number_value(binary.right)?;
+            return Some(Self::format_js_number(left + right));
+        }
+        None
+    }
+
+    fn constant_computed_key_number_value(&self, expr_idx: NodeIndex) -> Option<f64> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::NumericLiteral as u16 {
+            return self.arena.get_literal(expr_node)?.value;
+        }
+        None
+    }
+
+    fn remove_dynamic_computed_object_literal_property_lines(
+        &self,
+        object_expr_idx: NodeIndex,
+        lines: &mut Vec<String>,
+    ) {
+        let dynamic_names: Vec<String> = self
+            .computed_object_index_members(object_expr_idx)
+            .into_iter()
+            .filter_map(|member| {
+                matches!(
+                    member.kind,
+                    ComputedObjectIndexKeyKind::DynamicString
+                        | ComputedObjectIndexKeyKind::DynamicNumber
+                        | ComputedObjectIndexKeyKind::DynamicSymbol
+                )
+                .then_some(member.name_text)
+                .flatten()
+            })
+            .collect();
+
+        if dynamic_names.is_empty() {
+            return;
+        }
+
+        lines.retain(|line| {
+            !dynamic_names
+                .iter()
+                .any(|name| Self::object_literal_property_line_matches(line, name, ""))
+        });
+    }
+
+    fn computed_object_index_key_kind(
+        &self,
+        name_idx: NodeIndex,
+        name_text: Option<&str>,
+    ) -> ComputedObjectIndexKeyKind {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return ComputedObjectIndexKeyKind::Unknown;
+        };
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return ComputedObjectIndexKeyKind::Unknown;
+        };
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return ComputedObjectIndexKeyKind::Unknown;
+        };
+
+        match expr_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                return ComputedObjectIndexKeyKind::ConcreteString;
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                return ComputedObjectIndexKeyKind::ConcreteNumber;
+            }
+            k if k == SyntaxKind::Identifier as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
+            {
+                if let Some(type_id) = self.get_node_type_or_names(&[expr_idx]) {
+                    let is_unique_symbol = self.type_interner.is_some_and(|interner| {
+                        tsz_solver::visitor::unique_symbol_ref(interner, type_id).is_some()
+                    });
+                    if type_id == tsz_solver::TypeId::SYMBOL || is_unique_symbol {
+                        return ComputedObjectIndexKeyKind::ConcreteSymbol;
+                    }
+                }
+                if name_text.is_some() {
+                    return ComputedObjectIndexKeyKind::ConcreteString;
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if self.is_symbol_call(expr_idx) {
+                    return ComputedObjectIndexKeyKind::DynamicSymbol;
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if self.computed_binary_expression_is_number_like(expr_idx) {
+                    return ComputedObjectIndexKeyKind::DynamicNumber;
+                }
+                return ComputedObjectIndexKeyKind::DynamicString;
+            }
+            _ => {}
+        }
+
+        ComputedObjectIndexKeyKind::Unknown
+    }
+
+    fn computed_binary_expression_is_number_like(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::PlusToken as u16 {
+            return false;
+        }
+        self.computed_key_expression_is_number_like(binary.left)
+            && self.computed_key_expression_is_number_like(binary.right)
+    }
+
+    fn computed_key_expression_is_number_like(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        expr_node.kind == SyntaxKind::NumericLiteral as u16
+            || self
+                .get_node_type_or_names(&[expr_idx])
+                .is_some_and(|type_id| type_id == tsz_solver::TypeId::NUMBER)
+    }
+
+    fn push_unique_type_text(values: &mut Vec<String>, value: &str) {
+        if !values.iter().any(|existing| existing == value) {
+            values.push(value.to_string());
+        }
+    }
+
+    fn deduplicate_object_literal_property_lines(&self, lines: &mut Vec<String>) {
+        let mut seen = Vec::<String>::new();
+        lines.retain(|line| {
+            let Some(key) = Self::object_literal_property_identity_key(line) else {
+                return true;
+            };
+            if seen.iter().any(|existing| existing == &key) {
+                return false;
+            }
+            seen.push(key);
+            true
+        });
+    }
+
+    fn object_literal_property_identity_key(line: &str) -> Option<String> {
+        let trimmed = line.trim().trim_end_matches(';').trim();
+        if trimmed.starts_with("[x: ") || trimmed == "{" || trimmed == "}" {
+            return None;
+        }
+        let colon_idx = if trimmed.starts_with('[') {
+            let bracket_end = trimmed.find(']')?;
+            trimmed.get(bracket_end + 1..)?.find(':')? + bracket_end + 1
+        } else {
+            trimmed.find(':')?
+        };
+        let name = trimmed[..colon_idx]
+            .trim()
+            .strip_prefix("readonly ")
+            .unwrap_or(trimmed[..colon_idx].trim())
+            .trim();
+        let value = trimmed[colon_idx + 1..].trim();
+        let normalized_name = name
+            .strip_prefix('"')
+            .and_then(|name| name.strip_suffix('"'))
+            .or_else(|| {
+                name.strip_prefix('\'')
+                    .and_then(|name| name.strip_suffix('\''))
+            })
+            .unwrap_or(name);
+        Some(format!("{normalized_name}:{value}"))
     }
 
     fn source_ordered_object_literal_index_value_union_text(
