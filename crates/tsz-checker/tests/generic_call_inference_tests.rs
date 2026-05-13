@@ -1697,6 +1697,83 @@ chooseProp("a", { x: "a" });
     );
 }
 
+// ─── NoInfer with array arguments (issue #6363) ──────────────────────
+
+#[test]
+fn noinfer_array_argument_widens_to_primitive() {
+    let source = r#"
+declare function choose<T>(options: T[], fallback: NoInfer<T>): T;
+choose(["a", "b", "c"], "d");
+choose(["a", "b", "c"], "a");
+choose([1, 2, 3], 4);
+choose([true, false], true);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "array literal widens T to primitive so NoInfer fallback passes. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_single_element_widens_to_primitive() {
+    let source = r#"
+declare function choose<T>(options: T[], fallback: NoInfer<T>): T;
+choose(["a"], "b");
+choose([1], 2);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "single-element array widens to primitive for NoInfer fallback. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_renamed_type_param_widens_to_primitive() {
+    let source = r#"
+declare function pick<U>(candidates: U[], default_value: NoInfer<U>): U;
+pick(["x", "y", "z"], "w");
+pick([10, 20], 30);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "widening is not name-sensitive: different type-param name. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_scalar_literal_still_preserved() {
+    let source = r#"
+declare function choose<T>(value: T, fallback: NoInfer<T>): T;
+choose("a", "b");
+choose("a", "a");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(c, _)| *c == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "scalar direct argument keeps literal narrow; NoInfer fallback rejects mismatch. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn noinfer_array_alias_widens_to_primitive() {
+    let source = r#"
+type NI<T> = NoInfer<T>;
+declare function choose<T>(options: T[], fallback: NI<T>): T;
+choose(["foo", "bar"], "baz");
+choose([1, 2], 3);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "NoInfer via type alias still widens array-inferred T to primitive. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Inference with multiple callbacks ────────────────────────────────
 
 #[test]

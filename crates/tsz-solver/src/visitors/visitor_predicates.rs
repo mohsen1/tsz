@@ -73,6 +73,24 @@ pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::Literal(_)))
 }
 
+/// Check if a type is a union whose every member is a fresh literal.
+///
+/// Returns `true` for `"a" | "b" | "c"`, `1 | 2 | 3`, `true | false`, etc.
+/// Returns `false` for scalar `Literal` types, primitives, and any union that
+/// contains at least one non-literal member.
+pub fn is_union_of_fresh_literals(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = types.type_list(list_id);
+            !members.is_empty() && members.iter().all(|&m| is_literal_type(types, m))
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is a module namespace type (import * as ns).
 ///
 /// Matches: `TypeData::ModuleNamespace`(_)
