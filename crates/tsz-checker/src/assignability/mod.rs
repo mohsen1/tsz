@@ -9,6 +9,7 @@ pub mod assignability_checker;
 mod assignability_diagnostics;
 mod assignability_type_param_helpers;
 pub mod assignment_checker;
+mod awaited_variance_normalization;
 pub(crate) mod compound_assignment;
 mod nullish_error_targets;
 mod polymorphic_this_diagnostics;
