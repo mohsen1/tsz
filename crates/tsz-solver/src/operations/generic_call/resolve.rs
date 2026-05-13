@@ -2236,7 +2236,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             } else {
                                 crate::widen_literal_type(self.interner.as_type_database(), ty)
                             }
-                        } else if self.inference_type_contains_fresh_object_or_array(ty) {
+                        } else if self.inference_type_contains_fresh_object_or_array(ty)
+                            && !infer_ctx.has_type_annotation_candidates(var)
+                        {
                             crate::operations::widening::widen_type_for_inference(
                                 self.interner.as_type_database(),
                                 ty,

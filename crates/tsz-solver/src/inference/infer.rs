@@ -1211,7 +1211,8 @@ impl<'a> InferenceContext<'a> {
             priority,
             is_fresh_literal: (!context.from_object_property || context.source_is_fresh)
                 && (is_literal_type(self.interner, ty)
-                    || is_union_of_fresh_literals(self.interner, ty))
+                    || (self.in_array_element_context
+                        && is_union_of_fresh_literals(self.interner, ty)))
                 && !self.source_is_type_annotation,
             from_object_property: context.from_object_property,
             from_index_signature: context.from_index_signature,
@@ -1374,6 +1375,14 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
         !info.candidates.is_empty() && info.candidates.iter().all(|c| c.from_array_element)
+    }
+
+    /// Returns `true` if any covariant candidate came from a type assertion (`expr as T`).
+    /// Asserted types are non-fresh and must not be widened.
+    pub fn has_type_annotation_candidates(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates.iter().any(|c| c.source_is_type_annotation)
     }
 }
 
