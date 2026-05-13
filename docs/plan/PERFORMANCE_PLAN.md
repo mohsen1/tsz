@@ -1149,6 +1149,23 @@ remain on the fallback path until a typed alias-body query or canonical
 allowlist. Claim:
 [`claims/perf-lib-delegation-cache-type-params-2026-05-13.md`](claims/perf-lib-delegation-cache-type-params-2026-05-13.md).
 
+**2026-05-13 typed alias-body query follow-up:** the next implementation slice
+starts that typed-query path without reopening the generic utility-alias
+shortcut. After the broader non-generic alias attempt failed conformance in
+assignability-sensitive aliases such as `PropertyKey`, this slice admits only
+the decorator metadata aliases (`DecoratorMetadata` and
+`DecoratorMetadataObject`). Their declarations are proven to come from the
+bundled lib and the existing lib resolver must return a `Lazy(DefId)` with a
+registered `DefinitionStore` body; the direct path then caches the registered
+body rather than the opaque alias wrapper. Generic aliases such as `Record` and
+conformance-sensitive non-generic aliases such as `PropertyKey` still return
+`None` and stay on the child-checker fallback path. On monorepo-006 this drops
+`DelegateCrossArenaSymbol` child-checkers from 28 to 26,
+`checker.with_parent_cache_constructed` from 31 to 29, and `delegate.misses`
+from 30 to 28 with unchanged diagnostics (`10,198`). Decision record:
+[`perf-runs/2026-05-13-delegate-actual-lib-alias-body-query.md`](perf-runs/2026-05-13-delegate-actual-lib-alias-body-query.md).
+Claim: [`claims/perf-actual-lib-alias-body-query-2026-05-13.md`](claims/perf-actual-lib-alias-body-query-2026-05-13.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
