@@ -614,6 +614,224 @@ export const Mixed = mixin(Unmixed);
 }
 
 #[test]
+fn test_class_extends_mixin_recovered_base_alias_uses_object_constructor_syntax() {
+    let source = r#"
+class A {
+    constructor(...args: any[]) {}
+    get myName(): string {
+        return "A";
+    }
+}
+
+function Mixin<T extends typeof A>(Super: T) {
+    return class B extends Super {
+        get myName(): string {
+            return "B";
+        }
+    };
+}
+
+export class C extends Mixin(A) {
+    get myName(): string {
+        return "C";
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "C",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, TypeId::NEVER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(
+            "declare const C_base: {\n    new (...args: any[]): {\n        get myName(): string;\n    };\n} & typeof A;"
+        ),
+        "Expected recovered synthetic base alias to use object constructor syntax: {output}"
+    );
+    assert!(
+        !output.contains("declare const C_base: (new (...args: any[]) =>"),
+        "Did not expect synthetic base aliases to use arrow constructor syntax: {output}"
+    );
+}
+
+#[test]
+fn test_class_extends_mixin_recovered_auto_accessor_expands_in_structural_alias() {
+    let source = r#"
+function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
+    return class extends superclass {
+        accessor name = "";
+    };
+}
+
+class BaseClass {
+    accessor name = "";
+}
+
+export class MyClass extends mixin(BaseClass) {
+    accessor name = "";
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "MyClass",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, TypeId::NEVER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(
+            "declare const MyClass_base: {\n    new (...args: any[]): {\n        get name(): string;\n        set name(arg: string);\n    };\n} & typeof BaseClass;"
+        ),
+        "Expected recovered synthetic base alias to expand auto accessors structurally: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare function mixin<T extends {\n    new (...args: any[]): {};\n}>(superclass: T): {\n    new (...args: any[]): {\n        get name(): string;\n        set name(arg: string);\n    };\n} & T;"
+        ),
+        "Expected returned-class function type to expand auto accessors structurally: {output}"
+    );
+}
+
+#[test]
+fn test_class_extends_abstract_mixin_recovered_base_alias_uses_abstract_arrow_syntax() {
+    let source = r#"
+interface Constructor<C> { new (...args: any[]): C; }
+
+export class Unmixed {
+    foo = 1;
+}
+
+function Filter<C extends Constructor<{}>>(ctor: C) {
+    abstract class FilterMixin extends ctor {
+        abstract match(path: string): boolean;
+        thing = 12;
+    }
+    return FilterMixin;
+}
+
+export class FilteredThing extends Filter(Unmixed) {
+    match(path: string) {
+        return false;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let class_idx = find_class_node(
+        &parser,
+        "FilteredThing",
+        tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION,
+    );
+    let extends_expr_idx = find_class_extends_expression(&parser, class_idx);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(extends_expr_idx.0, TypeId::NEVER);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(
+            "declare const FilteredThing_base: (abstract new (...args: any[]) => {\n    match(path: string): boolean;\n    thing: number;\n}) & typeof Unmixed;"
+        ),
+        "Expected abstract recovered synthetic base alias to keep abstract arrow syntax: {output}"
+    );
+}
+
+#[test]
+fn test_mixin_call_intersection_substitutes_nested_call_return_text() {
+    let source = r#"
+type Constructor<T> = new(...args: any[]) => T;
+
+class Base {}
+class Derived extends Base {}
+
+interface Printable {
+    print(): void;
+}
+
+const Printable = <T extends Constructor<Base>>(superClass: T): Constructor<Printable> & { message: string } & T =>
+    class extends superClass {
+        static message = "hello";
+        print() {}
+    }
+
+interface Tagged {
+    _tag: string;
+}
+
+function Tagged<T extends Constructor<{}>>(superClass: T): Constructor<Tagged> & T {
+    class C extends superClass {
+        _tag: string;
+    }
+    return C;
+}
+
+const Thing2 = Tagged(Printable(Derived));
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains(
+            "declare const Thing2: Constructor<Tagged> & Constructor<Printable> & {\n    message: string;\n} & Constructor<Base>;"
+        ),
+        "Expected nested mixin call substitution to preserve source intersection order: {output}"
+    );
+    assert!(
+        !output.contains("=> {"),
+        "Did not expect recovered arrow body text in nested mixin return type: {output}"
+    );
+}
+
+#[test]
 #[ignore = "regressed after remote changes: class extends expression declaration emit loses local dependency source order"]
 fn test_named_class_extends_expression_keeps_local_dependency_in_source_order() {
     let source = r#"

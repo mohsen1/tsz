@@ -9,6 +9,9 @@ use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
 
+type CommonJsClosureExpando = (NodeIndex, NodeIndex, NodeIndex);
+type CommonJsExportAssignmentClosure = (NodeIndex, NodeIndex, Vec<CommonJsClosureExpando>);
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_js_class_define_property_accessors_for_name(
         &mut self,
@@ -802,7 +805,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn js_commonjs_export_assignment_closure(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> Option<(NodeIndex, NodeIndex, Vec<(NodeIndex, NodeIndex, NodeIndex)>)> {
+    ) -> Option<CommonJsExportAssignmentClosure> {
         if !self.source_file_is_js(source_file) {
             return None;
         }
@@ -3780,12 +3783,36 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some(type_text);
         }
+        if self.js_function_body_returns_jsx(body_idx) {
+            return Some("JSX.Element".to_string());
+        }
 
         self.function_body_single_return_expression(body_idx)
             .and_then(|expr_idx| {
                 self.js_constructor_assignment_expression_type_text(expr_idx, params, 0)
             })
             .filter(|type_text| !type_text.is_empty() && type_text != "any")
+    }
+
+    fn js_function_body_returns_jsx(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let expr_idx = if body_node.kind == syntax_kind_ext::BLOCK {
+            let Some(return_expr) = self.function_body_single_return_expression(body_idx) else {
+                return false;
+            };
+            return_expr
+        } else {
+            body_idx
+        };
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        self.arena.get(expr_idx).is_some_and(|expr_node| {
+            expr_node.kind == syntax_kind_ext::JSX_ELEMENT
+                || expr_node.kind == syntax_kind_ext::JSX_FRAGMENT
+        })
     }
 
     pub(in crate::declaration_emitter) fn emit_js_function_like_class_if_needed(

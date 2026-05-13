@@ -6,6 +6,12 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NullishGuard {
+    Null,
+    Undefined,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn async_returned_function_initializer_promise_type_text(
         &self,
@@ -234,10 +240,14 @@ impl<'a> DeclarationEmitter<'a> {
         inner_func: &tsz_parser::parser::node::FunctionData,
         outer_type_param_names: &[String],
     ) -> Option<String> {
-        let outer_type_param_names = outer_func
-            .and_then(|func| func.type_parameters.as_ref())
-            .map(|type_params| self.collect_type_param_names(type_params))
-            .unwrap_or_else(|| outer_type_param_names.to_vec());
+        let outer_type_param_names = if outer_type_param_names.is_empty() {
+            outer_func
+                .and_then(|func| func.type_parameters.as_ref())
+                .map(|type_params| self.collect_type_param_names(type_params))
+                .unwrap_or_default()
+        } else {
+            outer_type_param_names.to_vec()
+        };
         let inner_type_params = inner_func.type_parameters.as_ref();
         let inner_renames = inner_type_params.map_or_else(Vec::new, |type_params| {
             self.shadowed_function_type_param_renames(type_params, &outer_type_param_names)
@@ -336,6 +346,11 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
         let has_direct_function_return = direct_function_return.is_some();
         let return_text = direct_function_return
+            .or_else(|| {
+                self.function_body_returned_local_function_object_type_text(func, func_body)
+            })
+            .or_else(|| self.function_body_guarded_parameter_return_text(func, func_body))
+            .or_else(|| self.function_body_composed_nullish_guard_return_text(func, func_body))
             .or_else(|| self.function_body_nonnullable_short_circuit_return_text(func, func_body))
             .or_else(|| self.function_body_preferred_return_type_text(func_body))
             .map(|type_text| {
@@ -343,6 +358,282 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(type_text)
             });
         (return_text, has_direct_function_return)
+    }
+
+    fn function_body_returned_local_function_object_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+    ) -> Option<String> {
+        let return_expr = self.function_body_unique_return_expression(func_body)?;
+        self.returned_local_function_object_type_text(func, return_expr, &[], 0)
+    }
+
+    fn returned_local_function_object_type_text(
+        &self,
+        owner_func: &tsz_parser::parser::node::FunctionData,
+        object_expr_idx: NodeIndex,
+        owner_type_param_renames: &[(String, String)],
+        depth: u32,
+    ) -> Option<String> {
+        let object_node = self.arena.get(object_expr_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        if object.elements.nodes.is_empty() {
+            return None;
+        }
+
+        let owner_type_param_names = owner_func
+            .type_parameters
+            .as_ref()
+            .map(|type_params| {
+                let mut names = Vec::new();
+                for name in self.collect_type_param_names(type_params) {
+                    names.push(name.clone());
+                    if let Some(renamed) = owner_type_param_renames
+                        .iter()
+                        .find_map(|(from, to)| (from == &name).then(|| to.clone()))
+                        && !names.contains(&renamed)
+                    {
+                        names.push(renamed);
+                    }
+                }
+                names
+            })
+            .unwrap_or_default();
+
+        let mut members = Vec::new();
+        for member_idx in object.elements.nodes.iter().copied() {
+            let member_node = self.arena.get(member_idx)?;
+            let shorthand = self.arena.get_shorthand_property(member_node)?;
+            if shorthand.object_assignment_initializer.is_some() {
+                return None;
+            }
+            let name = self.get_identifier_text(shorthand.name)?;
+            let (func_idx, func) = self.local_function_declaration(owner_func, &name)?;
+            let type_text = self.source_nested_function_type_text(
+                Some(owner_func),
+                func_idx,
+                func,
+                &owner_type_param_names,
+            )?;
+            let type_text =
+                Self::rename_type_text_identifiers(&type_text, owner_type_param_renames);
+            members.push(Self::format_object_member_type_text(
+                &name, &type_text, depth,
+            ));
+        }
+
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let formatted_members = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect::<Vec<_>>();
+        Some(format!(
+            "{{\n{}\n{closing_indent}}}",
+            formatted_members.join("\n")
+        ))
+    }
+
+    fn local_function_declaration(
+        &self,
+        owner_func: &tsz_parser::parser::node::FunctionData,
+        name: &str,
+    ) -> Option<(NodeIndex, &tsz_parser::parser::node::FunctionData)> {
+        let body_node = self.arena.get(owner_func.body)?;
+        let block = self.arena.get_block(body_node)?;
+        for stmt_idx in block.statements.nodes.iter().copied() {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                continue;
+            }
+            let func = self.arena.get_function(stmt_node)?;
+            if self.get_identifier_text(func.name).as_deref() == Some(name) {
+                return Some((stmt_idx, func));
+            }
+        }
+        None
+    }
+
+    fn function_body_composed_nullish_guard_return_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+    ) -> Option<String> {
+        let body_node = self.arena.get(func_body)?;
+        let block = self.arena.get_block(body_node)?;
+        let [return_idx] = block.statements.nodes.as_slice() else {
+            return None;
+        };
+        let return_node = self.arena.get(*return_idx)?;
+        let ret = self.arena.get_return_statement(return_node)?;
+        let outer_call_node = self.arena.get(ret.expression)?;
+        let outer_call = self.arena.get_call_expr(outer_call_node)?;
+        let outer_excluded = self.callee_nullish_guard_kind(outer_call.expression)?;
+        let [inner_expr] = outer_call.arguments.as_ref()?.nodes.as_slice() else {
+            return None;
+        };
+
+        let inner_call_node = self.arena.get(*inner_expr)?;
+        let inner_call = self.arena.get_call_expr(inner_call_node)?;
+        let inner_excluded = self.callee_nullish_guard_kind(inner_call.expression)?;
+        if outer_excluded == inner_excluded {
+            return None;
+        }
+        let [arg_idx] = inner_call.arguments.as_ref()?.nodes.as_slice() else {
+            return None;
+        };
+        let param_name = self.get_identifier_text(*arg_idx)?;
+
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if self.get_identifier_text(param.name).as_deref() != Some(param_name.as_str()) {
+                continue;
+            }
+            let param_text = self
+                .emit_type_node_text(param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))?;
+            return Some(format!("{param_text} & {{}}"));
+        }
+
+        None
+    }
+
+    fn callee_nullish_guard_kind(&self, callee_idx: NodeIndex) -> Option<NullishGuard> {
+        let sym_id = self.value_reference_symbol(callee_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = self.arena.get_function(decl_node) else {
+                continue;
+            };
+            let Some((_, excluded, _)) = self.guarded_parameter_return_info(func, func.body) else {
+                continue;
+            };
+            return Some(excluded);
+        }
+        None
+    }
+
+    fn function_body_guarded_parameter_return_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+    ) -> Option<String> {
+        let (_, excluded, param_text) = self.guarded_parameter_return_info(func, func_body)?;
+        match excluded {
+            NullishGuard::Null => Some(format!("{param_text} & ({{}} | undefined)")),
+            NullishGuard::Undefined => Some(format!("{param_text} & ({{}} | null)")),
+        }
+    }
+
+    fn guarded_parameter_return_info(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+    ) -> Option<(String, NullishGuard, String)> {
+        let body_node = self.arena.get(func_body)?;
+        let block = self.arena.get_block(body_node)?;
+        let [guard_idx, return_idx] = block.statements.nodes.as_slice() else {
+            return None;
+        };
+
+        let guard_node = self.arena.get(*guard_idx)?;
+        let guard = self.arena.get_if_statement(guard_node)?;
+        if guard.else_statement.is_some() || !self.statement_always_throws(guard.then_statement) {
+            return None;
+        }
+
+        let (param_name, excluded) = self.nullish_equality_guard_parameter(guard.expression)?;
+        let return_node = self.arena.get(*return_idx)?;
+        let ret = self.arena.get_return_statement(return_node)?;
+        if self.get_identifier_text(ret.expression).as_deref() != Some(param_name.as_str()) {
+            return None;
+        }
+
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if self.get_identifier_text(param.name).as_deref() != Some(param_name.as_str()) {
+                continue;
+            }
+            let param_text = self
+                .emit_type_node_text(param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))?;
+            return Some((param_name, excluded, param_text));
+        }
+
+        None
+    }
+
+    fn statement_always_throws(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind == syntax_kind_ext::THROW_STATEMENT {
+            return true;
+        }
+        if stmt_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(stmt_node)
+        {
+            return block.statements.nodes.iter().copied().any(|stmt_idx| {
+                self.arena
+                    .get(stmt_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::THROW_STATEMENT)
+            });
+        }
+        false
+    }
+
+    fn nullish_equality_guard_parameter(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(String, NullishGuard)> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsEqualsEqualsToken as u16 {
+            return None;
+        }
+        self.nullish_equality_side(binary.left, binary.right)
+            .or_else(|| self.nullish_equality_side(binary.right, binary.left))
+    }
+
+    fn nullish_equality_side(
+        &self,
+        name_idx: NodeIndex,
+        nullish_idx: NodeIndex,
+    ) -> Option<(String, NullishGuard)> {
+        let nullish_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(nullish_idx);
+        let nullish_node = self.arena.get(nullish_idx)?;
+        let excluded = if nullish_node.kind == SyntaxKind::NullKeyword as u16 {
+            NullishGuard::Null
+        } else if nullish_node.kind == SyntaxKind::UndefinedKeyword as u16
+            || self.get_identifier_text(nullish_idx).as_deref() == Some("undefined")
+        {
+            NullishGuard::Undefined
+        } else {
+            return None;
+        };
+        let name_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(name_idx);
+        let name = self.get_identifier_text(name_idx)?;
+        Some((name, excluded))
     }
 
     fn function_body_nonnullable_short_circuit_return_text(
@@ -789,6 +1080,20 @@ impl<'a> DeclarationEmitter<'a> {
                 inner_type_param_renames,
             ) {
                 type_text
+            } else if let Some(type_text) = self.returned_local_function_object_type_text(
+                inner_func,
+                return_expr,
+                inner_type_param_renames,
+                1,
+            ) {
+                type_text
+            } else if return_node.kind == SyntaxKind::Identifier as u16 {
+                self.function_scope_identifier_type_text(
+                    outer_func,
+                    inner_func,
+                    return_expr,
+                    inner_type_param_renames,
+                )?
             } else {
                 if return_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
                     return None;
