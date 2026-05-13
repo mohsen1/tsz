@@ -89,6 +89,30 @@ var holder = { a };
 }
 
 #[test]
+fn object_spread_return_handles_undefined_only_type_branches() {
+    let source = r#"
+function f1<T>(a: T & undefined) {
+    return { ...a };
+}
+function f2<T>(a: T | T & undefined) {
+    return { ...a };
+}
+function f3<T extends undefined>(a: T) {
+    return { ...a };
+}
+function f4<T extends undefined>(a: object | T) {
+    return { ...a };
+}
+"#;
+    let output = emit_dts(source);
+
+    assert!(output.contains("declare function f1<T>(a: T & undefined): any;"));
+    assert!(output.contains("declare function f2<T>(a: T | T & undefined): T | (T & undefined);"));
+    assert!(output.contains("declare function f3<T extends undefined>(a: T): any;"));
+    assert!(output.contains("declare function f4<T extends undefined>(a: object | T): {};"));
+}
+
+#[test]
 fn strip_internal_omits_exported_top_level_declarations() {
     let source = r#"
 /** @internal */

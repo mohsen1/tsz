@@ -841,7 +841,9 @@ impl<'a> DeclarationEmitter<'a> {
         changed.then(|| expanded_parts.join(" & "))
     }
 
-    fn split_top_level_intersection_parts(text: &str) -> Vec<String> {
+    pub(in crate::declaration_emitter) fn split_top_level_intersection_parts(
+        text: &str,
+    ) -> Vec<String> {
         let bytes = text.as_bytes();
         let mut brace_depth = 0usize;
         let mut bracket_depth = 0usize;

@@ -360,6 +360,157 @@ impl<'a> DeclarationEmitter<'a> {
         (return_text, has_direct_function_return)
     }
 
+    pub(in crate::declaration_emitter) fn function_body_single_spread_object_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+    ) -> Option<String> {
+        let return_expr = self.function_body_unique_return_expression(func_body)?;
+        let return_node = self.arena.get(return_expr)?;
+        if return_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(return_node)?;
+        let [member_idx] = object.elements.nodes.as_slice() else {
+            return None;
+        };
+        let member_node = self.arena.get(*member_idx)?;
+        let spread = self.arena.get_spread(member_node)?;
+        let spread_expr = self.skip_parenthesized_non_null_and_comma(spread.expression);
+        let spread_name = self.get_identifier_text(spread_expr)?;
+        let param_type_text = self.function_parameter_type_annotation_text(func, &spread_name)?;
+        let undefined_type_params = self.undefined_constrained_type_param_names(func);
+        Self::spread_object_or_falsy_return_text(&param_type_text, &undefined_type_params)
+    }
+
+    fn function_parameter_type_annotation_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        name: &str,
+    ) -> Option<String> {
+        for &param_idx in &func.parameters.nodes {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if self.get_identifier_text(param.name).as_deref() != Some(name) {
+                continue;
+            }
+            return self
+                .source_slice_from_arena(self.arena, param.type_annotation)
+                .map(|text| Self::trim_source_type_annotation_slice(&text))
+                .or_else(|| {
+                    self.type_annotation_text_from_arena_node(self.arena, param.type_annotation)
+                })
+                .map(|text| text.trim().to_string());
+        }
+        None
+    }
+
+    fn undefined_constrained_type_param_names(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Vec<String> {
+        let Some(type_params) = func.type_parameters.as_ref() else {
+            return Vec::new();
+        };
+        let mut names = Vec::new();
+        for &type_param_idx in &type_params.nodes {
+            let Some(type_param_node) = self.arena.get(type_param_idx) else {
+                continue;
+            };
+            let Some(type_param) = self.arena.get_type_parameter(type_param_node) else {
+                continue;
+            };
+            let Some(constraint_text) = self
+                .source_slice_from_arena(self.arena, type_param.constraint)
+                .or_else(|| {
+                    self.type_annotation_text_from_arena_node(self.arena, type_param.constraint)
+                })
+                .map(|text| text.trim().to_string())
+            else {
+                continue;
+            };
+            if constraint_text == "undefined"
+                && let Some(name) = self.get_identifier_text(type_param.name)
+            {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    fn spread_object_or_falsy_return_text(
+        param_type_text: &str,
+        undefined_type_params: &[String],
+    ) -> Option<String> {
+        let union_parts = Self::split_top_level_union_type_parts(param_type_text);
+        if union_parts.len() > 1 {
+            if union_parts
+                .iter()
+                .any(|part| Self::type_text_is_undefined_intersection(part))
+            {
+                return Some(
+                    union_parts
+                        .iter()
+                        .map(|part| Self::parenthesize_intersection_type_text_in_union(part))
+                        .collect::<Vec<_>>()
+                        .join(" | "),
+                );
+            }
+
+            let has_object = union_parts.iter().any(|part| part == "object");
+            let has_only_object_or_undefined_type_param = union_parts.iter().all(|part| {
+                part == "object" || undefined_type_params.iter().any(|name| name == part)
+            });
+            if has_object && has_only_object_or_undefined_type_param {
+                return Some("{}".to_string());
+            }
+
+            if union_parts
+                .iter()
+                .any(|part| undefined_type_params.iter().any(|name| name == part))
+            {
+                return Some(param_type_text.to_string());
+            }
+        }
+
+        if Self::type_text_is_undefined_intersection(param_type_text)
+            || undefined_type_params
+                .iter()
+                .any(|name| name == param_type_text)
+        {
+            return Some("any".to_string());
+        }
+
+        None
+    }
+
+    fn trim_source_type_annotation_slice(text: &str) -> String {
+        let mut trimmed = text.trim();
+        while trimmed.ends_with(')') {
+            let opens = trimmed.bytes().filter(|&b| b == b'(').count();
+            let closes = trimmed.bytes().filter(|&b| b == b')').count();
+            if closes <= opens {
+                break;
+            }
+            trimmed = trimmed.trim_end_matches(')').trim_end();
+        }
+        trimmed.to_string()
+    }
+
+    fn type_text_is_undefined_intersection(type_text: &str) -> bool {
+        let parts = Self::split_top_level_intersection_parts(type_text);
+        parts.len() > 1 && parts.iter().any(|part| part == "undefined")
+    }
+
+    fn parenthesize_intersection_type_text_in_union(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        if Self::split_top_level_intersection_parts(trimmed).len() > 1 {
+            format!("({trimmed})")
+        } else {
+            trimmed.to_string()
+        }
+    }
+
     fn function_body_returned_local_function_object_type_text(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
