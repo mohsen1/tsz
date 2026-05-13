@@ -556,6 +556,9 @@ mod overload_anchor_at_argument_tests;
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/promise_all_generic_callback_regression_tests.rs"]
+mod promise_all_generic_callback_regression_tests;
+#[cfg(test)]
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
 #[cfg(test)]
