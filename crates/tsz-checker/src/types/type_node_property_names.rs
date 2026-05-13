@@ -1,15 +1,95 @@
+//! Property-name helpers for `TypeNodeChecker`.
+
 use super::type_node::TypeNodeChecker;
+use super::unique_symbol_arena::{is_symbol_call_initializer, is_unique_symbol_type_annotation};
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::SymbolRef;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
-    pub(super) fn get_well_known_symbol_property_name(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<String> {
+    /// Get property name from a property name node.
+    fn get_property_name(&self, name_idx: NodeIndex) -> Option<String> {
+        crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, name_idx)
+    }
+
+    fn register_well_known_symbol_name_mapping(&mut self, name: &str, sym_id: SymbolId) {
+        if !name.starts_with("[Symbol.") {
+            return;
+        }
+
+        let symbol_ref = SymbolRef(sym_id.0);
+        let name_key = name.to_string();
+
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            env.register_well_known_symbol_name(name_key.clone(), symbol_ref);
+        }
+        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+            env.register_well_known_symbol_name(name_key, symbol_ref);
+        }
+    }
+
+    /// Resolve a property name, including computed names backed by unique symbols.
+    pub(super) fn get_property_name_resolved(&mut self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return self.get_property_name(name_idx);
+        }
+
+        let computed = self.ctx.arena.get_computed_property(name_node)?;
+
+        if let Some(name) = self.get_property_name(name_idx)
+            && (name.starts_with("[Symbol.") || name.starts_with("__unique_"))
+        {
+            if name.starts_with("[Symbol.")
+                && let Some(sym_id) = self.resolve_computed_property_symbol(computed.expression)
+            {
+                self.register_well_known_symbol_name_mapping(&name, sym_id);
+            }
+            return Some(name);
+        }
+
+        if let Some(symbol_name) = self.get_well_known_symbol_property_name(computed.expression) {
+            if let Some(sym_id) = self.resolve_computed_property_symbol(computed.expression) {
+                self.register_well_known_symbol_name_mapping(&symbol_name, sym_id);
+            }
+            return Some(symbol_name);
+        }
+
+        let sym_id = self.resolve_computed_property_symbol(computed.expression)?;
+        if self.symbol_refers_to_unique_symbol(sym_id) {
+            return Some(format!("__unique_{}", sym_id.0));
+        }
+
+        self.get_property_name(name_idx)
+    }
+
+    pub(super) fn is_symbol_property_name(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+
+        if self
+            .get_property_name_resolved(name_idx)
+            .is_some_and(|name| name.starts_with("[Symbol."))
+        {
+            return true;
+        }
+
+        self.resolve_computed_property_symbol(computed.expression)
+            .is_some_and(|sym_id| self.symbol_refers_to_unique_symbol(sym_id))
+    }
+
+    fn get_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(expr_idx)?;
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
@@ -48,7 +128,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         None
     }
 
-    pub(super) fn resolve_computed_property_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+    fn resolve_computed_property_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
         let node = self.ctx.arena.get(expr_idx)?;
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
@@ -83,7 +163,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         expression_name_text_in_arena(self.ctx.arena, idx)
     }
 
-    pub(super) fn symbol_refers_to_unique_symbol(&self, sym_id: SymbolId) -> bool {
+    fn symbol_refers_to_unique_symbol(&self, sym_id: SymbolId) -> bool {
         self.symbol_refers_to_unique_symbol_anywhere(sym_id)
     }
 
@@ -108,8 +188,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return false;
             };
             (var_decl.type_annotation.is_some()
-                && self.is_unique_symbol_type_annotation_in_arena(arena, var_decl.type_annotation))
-                || self.is_symbol_call_initializer_in_arena(arena, var_decl.initializer)
+                && is_unique_symbol_type_annotation(arena, var_decl.type_annotation))
+                || is_symbol_call_initializer(arena, var_decl.initializer)
         })
     }
 
