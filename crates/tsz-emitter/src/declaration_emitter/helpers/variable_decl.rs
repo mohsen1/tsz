@@ -421,7 +421,9 @@ impl<'a> DeclarationEmitter<'a> {
                         !text.contains("unknown")
                             && (text.contains("=>")
                                 || text.starts_with('[')
-                                || type_text.contains("unknown"))
+                                || type_text.contains("unknown")
+                                || (keyword == "const"
+                                    && Self::is_literal_type_text_for_const_call(text)))
                     })
                     .unwrap_or(type_text);
                 let has_public_import_type = Self::type_text_starts_with_import_type(&type_text)
@@ -738,6 +740,17 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
+                        if has_initializer
+                            && let Some(type_text) =
+                                self.call_expression_single_literal_type_argument_text(initializer)
+                        {
+                            let formatted_lit = Self::format_literal_initializer(&lit, interner);
+                            if type_text == formatted_lit {
+                                self.write(": ");
+                                self.write(&type_text);
+                                return;
+                            }
+                        }
                         let formatted = if has_literal_initializer_surface {
                             Self::format_literal_initializer(&lit, interner)
                         } else if let Some(kind) = Self::literal_primitive_kind_text(&lit) {
@@ -1057,6 +1070,39 @@ impl<'a> DeclarationEmitter<'a> {
             tsz_solver::types::LiteralValue::Boolean(_) => Some("boolean"),
             tsz_solver::types::LiteralValue::BigInt(_) => Some("bigint"),
         }
+    }
+
+    fn is_literal_type_text_for_const_call(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        matches!(trimmed, "true" | "false" | "null" | "undefined")
+            || trimmed.starts_with('"')
+            || trimmed.starts_with('\'')
+            || tsz_solver::utils::is_numeric_literal_name(trimmed.trim_end_matches('n'))
+    }
+
+    fn call_expression_single_literal_type_argument_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let type_arguments = call.type_arguments.as_ref().or_else(|| {
+            self.arena
+                .get(call.expression)
+                .and_then(|node| self.arena.get_expr_type_args(node))
+                .and_then(|expr_type_args| expr_type_args.type_arguments.as_ref())
+        })?;
+        let &[type_arg] = type_arguments.nodes.as_slice() else {
+            return None;
+        };
+        let type_text = self
+            .emit_type_node_text(type_arg)
+            .or_else(|| self.source_slice_from_arena(self.arena, type_arg))?;
+        let type_text = type_text.trim().to_string();
+        Self::is_literal_type_text_for_const_call(&type_text).then_some(type_text)
     }
 
     fn call_contains_unannotated_function_expression(&self, expr_idx: NodeIndex) -> bool {
