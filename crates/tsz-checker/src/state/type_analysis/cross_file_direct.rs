@@ -108,6 +108,22 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
     )
 }
 
+fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
+    matches!(
+        name,
+        "ArrayIterator"
+            | "DateTimeFormatOptions"
+            | "Locale"
+            | "NumberFormatOptions"
+            | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsStyleRegistry"
+            | "NumberFormatOptionsUseGroupingRegistry"
+            | "Object"
+            | "RegExpStringIterator"
+            | "StringIterator"
+    )
+}
+
 impl<'a> CheckerState<'a> {
     fn symbol_declarations_are_direct_actual_lib_only(
         &self,
@@ -189,21 +205,35 @@ impl<'a> CheckerState<'a> {
         if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, &name) {
             return None;
         }
-        let direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
-            if !is_direct_actual_intl_lib_interface_name(&name) {
-                return None;
+
+        let mut params = Vec::new();
+        let mut direct_type = if should_resolve_actual_lib_interface_with_params(&name) {
+            let (resolved, resolved_params) = self.resolve_lib_type_with_params(&name);
+            params = resolved_params;
+            resolved
+        } else {
+            None
+        };
+        if direct_type.is_none() {
+            direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
+                if !is_direct_actual_intl_lib_interface_name(&name) {
+                    return None;
+                }
+                let namespace_sym_id = self.resolve_lib_namespace_export_symbol("Intl", &name)?;
+                if namespace_sym_id != sym_id {
+                    return None;
+                }
+                let cache_name = format!("Intl.{name}");
+                self.resolve_lib_interface_type_by_symbol(&cache_name, namespace_sym_id)
+            });
+            if direct_type.is_some() {
+                params = self.get_type_params_for_symbol(sym_id);
             }
-            let namespace_sym_id = self.resolve_lib_namespace_export_symbol("Intl", &name)?;
-            if namespace_sym_id != sym_id {
-                return None;
-            }
-            let cache_name = format!("Intl.{name}");
-            self.resolve_lib_interface_type_by_symbol(&cache_name, namespace_sym_id)
-        })?;
+        }
+        let direct_type = direct_type?;
         if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
             return None;
         }
-        let params = self.get_type_params_for_symbol(sym_id);
         self.ctx.symbol_types.insert(sym_id, direct_type);
         self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
         Some((direct_type, params))
