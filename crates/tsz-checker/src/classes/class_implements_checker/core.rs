@@ -120,17 +120,15 @@ impl<'a> CheckerState<'a> {
             interface_name.to_string()
         };
 
+        let mut properties = Vec::new();
+        let mut has_index_signature = false;
+
         if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, interface_type)
         {
-            let has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
-            if !shape.properties.is_empty() {
-                return (shape.properties.to_vec(), has_index_signature, display_name);
-            }
+            has_index_signature = shape.string_index.is_some() || shape.number_index.is_some();
+            properties.extend(shape.properties.iter().cloned());
         }
-
-        let mut properties = Vec::new();
-        let mut has_index_signature = false;
 
         for &decl_idx in interface_declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
@@ -192,7 +190,7 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
-                properties.push(PropertyInfo {
+                let property_info = PropertyInfo {
                     name: self.ctx.types.intern_string(&name),
                     type_id: member_type,
                     write_type: member_type,
@@ -206,7 +204,15 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                     is_symbol_named: false,
                     single_quoted_name: false,
-                });
+                };
+                if let Some(existing_idx) = properties
+                    .iter()
+                    .position(|existing| existing.name == property_info.name)
+                {
+                    properties[existing_idx] = property_info;
+                } else {
+                    properties.push(property_info);
+                }
             }
         }
 
@@ -953,13 +959,8 @@ impl<'a> CheckerState<'a> {
                     // there are no accessible ones from other merged declarations.
                     // When both exist, the interface itself has TS2320 (conflicting
                     // base types) which already covers the error.
-                    if any_inaccessible_privates && !any_accessible_privates {
-                        self.error_at_node(
-                            class_error_idx,
-                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
-                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                        );
-                    }
+                    let emit_inaccessible_private_implements_error =
+                        any_inaccessible_privates && !any_accessible_privates;
 
                     if has_private_members {
                         let message = format!(
@@ -1428,7 +1429,7 @@ impl<'a> CheckerState<'a> {
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
                     let check_whole_type = extends_same_base
-                        || ((is_class || interface_has_index_signature)
+                        || (interface_has_index_signature
                             && missing_members.is_empty()
                             && incompatible_members.is_empty());
                     if check_whole_type {
@@ -1453,27 +1454,70 @@ impl<'a> CheckerState<'a> {
                             interface_type
                         };
                         if !self.is_assignable_to(class_instance_type, target_type) {
-                            let message = if is_class {
-                                format!(
-                                    "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
-                                )
-                            } else {
-                                format!(
-                                    "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
-                                )
-                            };
-                            let diagnostic_code = if is_class {
-                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
-                            } else {
-                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
-                            };
-                            self.error_at_node(class_error_idx, &message, diagnostic_code);
-                            if extends_same_base {
-                                // tsc suppresses member-level TS2416 when TS2720 is emitted
-                                // for extends+implements same base patterns
-                                incompatible_members.clear();
+                            let mut handled_as_member_mismatch = false;
+                            if !is_class {
+                                let analysis = self.analyze_assignability_failure(
+                                    class_instance_type,
+                                    target_type,
+                                );
+                                if let Some(
+                                    tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+                                        property_name,
+                                        source_property_type,
+                                        target_property_type,
+                                        ..
+                                    },
+                                ) = analysis.failure_reason
+                                {
+                                    let member_name = self.ctx.types.resolve_atom(property_name);
+                                    if let Some(&class_member_idx) = class_members.get(&member_name)
+                                    {
+                                        let expected_str = self.format_type(target_property_type);
+                                        let actual_str = self.format_type(source_property_type);
+                                        incompatible_members.push((
+                                            class_member_idx,
+                                            member_name,
+                                            expected_str,
+                                            actual_str,
+                                        ));
+                                        handled_as_member_mismatch = true;
+                                    }
+                                }
+                            }
+                            if !handled_as_member_mismatch {
+                                let message = if is_class {
+                                    format!(
+                                        "Class '{class_name}' incorrectly implements class '{interface_display_name}'. Did you mean to extend '{interface_display_name}' and inherit its members as a subclass?"
+                                    )
+                                } else {
+                                    format!(
+                                        "Class '{class_name}' incorrectly implements interface '{interface_display_name}'."
+                                    )
+                                };
+                                let diagnostic_code = if is_class {
+                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
+                                } else {
+                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
+                                };
+                                self.error_at_node(class_error_idx, &message, diagnostic_code);
+                                if extends_same_base {
+                                    // tsc suppresses member-level TS2416 when TS2720 is emitted
+                                    // for extends+implements same base patterns
+                                    incompatible_members.clear();
+                                }
                             }
                         }
+                    }
+
+                    if emit_inaccessible_private_implements_error
+                        && missing_members.is_empty()
+                        && incompatible_members.is_empty()
+                    {
+                        self.error_at_node(
+                            class_error_idx,
+                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                        );
                     }
 
                     // Report error for missing members
