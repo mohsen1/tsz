@@ -262,10 +262,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         initializer_idx: NodeIndex,
     ) -> Option<TypeId> {
-        let array_idx = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(initializer_idx);
+        let array_idx = self.ctx.arena.skip_parenthesized(initializer_idx);
         let node = self.ctx.arena.get(array_idx)?;
         if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
             return None;
