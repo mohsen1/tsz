@@ -1575,8 +1575,20 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                let needs_computed_name_map = has_local_computed_property_name;
+                let needs_prewarm =
+                    declarations.len() > 1 || has_out_of_arena_decl || has_cross_file_same_index;
+                let needs_local_heritage_merge = has_local_interface_heritage_extends;
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_fastpath_outcome(
+                    tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceFastPathOutcome::from_skips(
+                        !needs_computed_name_map,
+                        !needs_prewarm,
+                        !needs_local_heritage_merge,
+                    ),
+                );
+
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
-                let (computed_names, computed_symbol_names) = if has_local_computed_property_name {
+                let (computed_names, computed_symbol_names) = if needs_computed_name_map {
                     (
                         self.precompute_computed_property_names(&declarations),
                         self.precompute_symbol_named_computed_property_names(&declarations),
@@ -1587,13 +1599,11 @@ impl<'a> CheckerState<'a> {
                         rustc_hash::FxHashSet::default(),
                     )
                 };
-                let prewarmed_type_params =
-                    if declarations.len() > 1 || has_out_of_arena_decl || has_cross_file_same_index
-                    {
-                        self.prewarm_member_type_reference_params(&declarations)
-                    } else {
-                        rustc_hash::FxHashMap::default()
-                    };
+                let prewarmed_type_params = if needs_prewarm {
+                    self.prewarm_member_type_reference_params(&declarations)
+                } else {
+                    rustc_hash::FxHashMap::default()
+                };
 
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
@@ -1695,7 +1705,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let mut interface_type = if has_local_interface_heritage_extends {
+                let mut interface_type = if needs_local_heritage_merge {
                     self.merge_interface_heritage_types(&declarations, interface_type)
                 } else {
                     interface_type

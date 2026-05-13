@@ -1176,6 +1176,15 @@ time from `80.69s` to `79.60s` (`-1.35%`) and total time from `82.36s` to
 `81.25s` (`-1.35%`). Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath.md).
 
+**2026-05-13 `compute_type_of_symbol` interface fast-path outcomes:** new
+interface-branch counters split which skip-combination fired per interface call.
+On monorepo-006, `skip_all_three` accounts for `24,767 / 24,796` interface
+calls (`99.88%`), with only 18 non-`skip_all_three` rows total. This says the
+current skip gates are already saturating and the next meaningful reduction
+should target interface cold-call volume / lowering cost instead of more gate
+tuning. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-fastpath-outcomes.md).
+
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
 Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
