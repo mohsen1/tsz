@@ -178,6 +178,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_is_ambiguous(&mut self, contextual: TypeId) -> bool {
+        if self.union_context_for_array_literal_prefers_tuple(contextual) {
+            return false;
+        }
+
         let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, contextual)
         else {
