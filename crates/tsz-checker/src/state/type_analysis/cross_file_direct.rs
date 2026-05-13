@@ -182,6 +182,9 @@ impl<'a> CheckerState<'a> {
         symbol: &tsz_binder::Symbol,
         name: &str,
     ) -> bool {
+        if name != "FlatArray" {
+            return false;
+        }
         !symbol.declarations.is_empty()
             && symbol.declarations.iter().all(|&decl_idx| {
                 self.ctx

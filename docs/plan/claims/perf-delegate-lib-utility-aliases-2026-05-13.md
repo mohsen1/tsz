@@ -4,8 +4,8 @@ Date: 2026-05-13
 
 ## Claim
 
-A tightly guarded direct path for actual-lib utility aliases with an indexed
-type-literal body and conditional index reduces monorepo-006
+A tightly guarded direct path for the measured actual-lib `FlatArray` utility
+alias with an indexed type-literal body and conditional index reduces monorepo-006
 `DelegateCrossArenaSymbol` child-checker constructions from 28 to 27 while
 keeping diagnostics stable at 10,198.
 
@@ -21,8 +21,8 @@ keeping diagnostics stable at 10,198.
 ## Scope
 
 This is a conservative proof slice, not a general lib-alias solution.
-`IteratorResult` and `Record` were rejected after hosted conformance regressed
-on the broader exploratory branch. The admitted path is shape-gated on the
-actual lib alias body rather than on the symbol name. The larger fix should be
-a broader canonical actual-lib type-alias body query or prepopulated canonical
-`DefinitionStore` entry.
+`IteratorResult`, `Record`, and broader shape-only routing were rejected after
+hosted conformance regressed on the exploratory branch. The admitted path is
+both name-limited to the measured `FlatArray` row and shape-gated on the actual
+lib alias body. The larger fix should be a broader canonical actual-lib
+type-alias body query or prepopulated canonical `DefinitionStore` entry.

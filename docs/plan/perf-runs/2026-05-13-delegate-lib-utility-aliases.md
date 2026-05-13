@@ -1,12 +1,12 @@
 # Delegate Lib Utility Aliases - 2026-05-13
 
-This run admits the actual-lib type-alias row from the repeated
-declaration-file residue table whose alias body matches the supported
-indexed type-literal plus conditional-index utility shape. On the current
-fixture that is the row reported as `FlatArray`. The earlier exploratory branch
-also tried `IteratorResult` and `Record`, but hosted conformance regressed
-iterator-return fingerprints and recursive mapped type relationships, so those
-alias body shapes stay on the fallback path.
+This run admits the measured `FlatArray` actual-lib type-alias row from the
+repeated declaration-file residue table. The admitted declaration still has to
+match the supported indexed type-literal plus conditional-index utility shape.
+The earlier exploratory branch also tried `IteratorResult`, `Record`, and then
+broader shape-only routing, but hosted conformance regressed iterator-return
+fingerprints and recursive mapped type relationships, so those alias body shapes
+stay on the fallback path.
 
 The implementation is intentionally guarded:
 
@@ -14,6 +14,7 @@ The implementation is intentionally guarded:
 - source must be `symbol_arenas`
 - symbol must be type-only
 - every declaration must match the exact alias name in an actual lib arena
+- the symbol must be the measured `FlatArray` row
 - every alias declaration must have the supported indexed-access body shape
 - alias lowering reuses the existing paired body/type-parameter resolver
 
