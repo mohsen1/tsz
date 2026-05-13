@@ -903,9 +903,13 @@ impl<'a> LoweringPass<'a> {
             self.mark_class_helpers(idx, heritage);
         }
 
-        // TC39 (non-legacy) decorator detection
-        // At ESNext, TC39 decorators are native syntax — no transform needed.
-        let target_supports_native_decorators = self.ctx.options.target == ScriptTarget::ESNext;
+        // TC39 (non-legacy) decorator detection.
+        // At ESNext, TC39 decorators are native syntax only when class fields
+        // can stay native too. With useDefineForClassFields=false, class
+        // initialization semantics still need lowering, so decorators must be
+        // lowered with the class elements they initialize.
+        let target_supports_native_decorators = self.ctx.options.target == ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields;
         let has_tc39_decorators = !self.ctx.options.legacy_decorators
             && !target_supports_native_decorators
             && self.class_has_decorators(class);

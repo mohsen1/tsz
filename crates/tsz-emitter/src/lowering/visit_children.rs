@@ -368,8 +368,9 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class_data) = self.arena.get_class(node) {
                     // TC39 (non-legacy) decorator detection for class expressions
-                    let target_supports_native_decorators =
-                        self.ctx.options.target == tsz_common::ScriptTarget::ESNext;
+                    let target_supports_native_decorators = self.ctx.options.target
+                        == tsz_common::ScriptTarget::ESNext
+                        && self.ctx.options.use_define_for_class_fields;
                     let has_tc39_decorators = !self.ctx.options.legacy_decorators
                         && !target_supports_native_decorators
                         && self.class_has_decorators(class_data);
