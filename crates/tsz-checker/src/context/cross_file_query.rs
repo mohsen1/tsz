@@ -51,7 +51,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     pub fn source_file_symbol_type_cache_scope(&self) -> u64 {
-        self.source_file_symbol_type_cache_scope.max(1)
+        self.definition_store.source_file_symbol_type_cache_scope()
     }
 
     pub fn symbol_arena_symbol_type_cache_is_stable(
