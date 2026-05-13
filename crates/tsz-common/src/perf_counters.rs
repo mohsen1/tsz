@@ -302,6 +302,49 @@ impl CrossArenaAliasShortcutOutcome {
     }
 }
 
+/// Eligibility outcome for the stable source-file symbol-arena cache key.
+///
+/// This runs before a `DelegateCrossArenaSymbol` child-checker fallback. It
+/// answers a different question than [`CrossFileCacheMissCause`]: whether the
+/// source-file symbol-arena cache is structurally allowed to be queried at all.
+/// When this reports `Eligible`, the existing cache-hit and miss-cause counters
+/// say whether that key was warm or cold.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum SourceFileSymbolArenaCacheEligibility {
+    Eligible = 0,
+    NonSymbolArenaSource = 1,
+    ModuleAugmentation = 2,
+    CurrentArena = 3,
+    MissingArena = 4,
+    DeclarationFile = 5,
+    MissingSourceFile = 6,
+    UnstableSymbol = 7,
+    MissingFileIndex = 8,
+}
+
+pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_COUNT: usize = 9;
+
+pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_NAMES: [&str;
+    SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_COUNT] = [
+    "eligible",
+    "non_symbol_arena_source",
+    "module_augmentation",
+    "current_arena",
+    "missing_arena",
+    "declaration_file",
+    "missing_source_file",
+    "unstable_symbol",
+    "missing_file_index",
+];
+
+impl SourceFileSymbolArenaCacheEligibility {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(usize)]
 pub enum DirectCrossFileInterfaceLoweringOutcome {
@@ -422,6 +465,9 @@ pub struct PerfCounters {
     /// `DelegateCrossArenaSymbol` miss constructs a child checker.
     pub delegate_cross_arena_alias_shortcut_outcome:
         [AtomicU64; CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
+    /// Structural eligibility for the stable source-file symbol-arena cache.
+    pub source_file_symbol_arena_cache_eligibility:
+        [AtomicU64; SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_COUNT],
     /// Outcome buckets for direct cross-file interface lowering attempts.
     pub direct_cross_file_interface_lowering_outcome:
         [AtomicU64; DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
@@ -528,6 +574,8 @@ impl PerfCounters {
             delegate_cross_arena_symbol_miss_target_source_file: AtomicU64::new(0),
             delegate_cross_arena_alias_shortcut_outcome: [const { AtomicU64::new(0) };
                 CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
+            source_file_symbol_arena_cache_eligibility: [const { AtomicU64::new(0) };
+                SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_COUNT],
             direct_cross_file_interface_lowering_outcome: [const { AtomicU64::new(0) };
                 DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
@@ -850,6 +898,18 @@ pub fn record_cross_arena_alias_shortcut_outcome(outcome: CrossArenaAliasShortcu
     }
     let c = counters();
     c.delegate_cross_arena_alias_shortcut_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn record_source_file_symbol_arena_cache_eligibility(
+    outcome: SourceFileSymbolArenaCacheEligibility,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.source_file_symbol_arena_cache_eligibility[outcome.as_index()]
         .fetch_add(1, Ordering::Relaxed);
 }
 
@@ -1305,6 +1365,7 @@ impl PerfCounters {
             snap.resolver.candidate_paths_total,
         ) + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
+            + &Self::dump_source_file_symbol_arena_cache_eligibility()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
             + &Self::dump_by_reason()
     }
@@ -1364,6 +1425,31 @@ impl PerfCounters {
         let mut out = String::from("\nDelegateCrossArenaSymbol alias shortcut outcomes:\n");
         for (idx, name) in CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES.iter().enumerate() {
             let count = load(&c.delegate_cross_arena_alias_shortcut_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<28} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
+    fn dump_source_file_symbol_arena_cache_eligibility() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .source_file_symbol_arena_cache_eligibility
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nSource-file symbol-arena cache eligibility:\n");
+        for (idx, name) in SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count = load(&c.source_file_symbol_arena_cache_eligibility[idx]);
             if count > 0 {
                 out.push_str(&format!("  {name:<28} {count:>12}\n"));
             }
@@ -1496,6 +1582,15 @@ pub struct PerfCounterSnapshot {
     /// shortcut bailed for a structural reason; a high `success` count
     /// says the fast path is paying off.
     pub alias_shortcut_outcomes: Vec<NamedCount>,
+    /// Structural eligibility buckets for the stable source-file
+    /// symbol-arena cache. Always
+    /// `SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_COUNT` long, in
+    /// `SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_NAMES` order.
+    ///
+    /// `eligible` means the cache was queried with the requester-independent
+    /// source-file key; combine with `delegate.cache_hits_cross_file` and
+    /// `cross_file_cache_miss_causes` to distinguish warm keys from cold keys.
+    pub source_file_symbol_arena_cache_eligibility: Vec<NamedCount>,
     /// Outcome buckets for direct cross-file interface lowering attempts.
     ///
     /// JSON counterpart of
@@ -1797,6 +1892,13 @@ impl PerfCounters {
                     count: load(&c.delegate_cross_arena_alias_shortcut_outcome[i]),
                 })
                 .collect(),
+            source_file_symbol_arena_cache_eligibility: (0
+                ..SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_COUNT)
+                .map(|i| NamedCount {
+                    name: SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_NAMES[i],
+                    count: load(&c.source_file_symbol_arena_cache_eligibility[i]),
+                })
+                .collect(),
             direct_interface_lowering_outcomes: (0
                 ..DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -1855,6 +1957,7 @@ mod json_tests {
             "by_reason",
             "delegate_miss_classification",
             "alias_shortcut_outcomes",
+            "source_file_symbol_arena_cache_eligibility",
             "direct_interface_lowering_outcomes",
             "cross_file_cache_miss_causes",
         ] {
@@ -2213,6 +2316,39 @@ mod json_tests {
     }
 
     #[test]
+    fn source_file_symbol_arena_cache_eligibility_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["source_file_symbol_arena_cache_eligibility"]
+            .as_array()
+            .expect("source_file_symbol_arena_cache_eligibility is array");
+        assert_eq!(
+            rows.len(),
+            SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_COUNT,
+            "source_file_symbol_arena_cache_eligibility length must match \
+             SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_NAMES[i],
+                "source_file_symbol_arena_cache_eligibility[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "source_file_symbol_arena_cache_eligibility[{i}].count should be a number",
+            );
+            let obj = row.as_object().expect("row is object");
+            let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+            let expected: std::collections::BTreeSet<&str> =
+                ["name", "count"].into_iter().collect();
+            assert_eq!(
+                actual, expected,
+                "source_file_symbol_arena_cache_eligibility[{i}] field shape drifted",
+            );
+        }
+    }
+
+    #[test]
     fn direct_interface_lowering_outcomes_locks_to_names_array() {
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -2349,6 +2485,7 @@ mod json_tests {
         let source_idx = CrossArenaSymbolMissSource::SymbolArena.as_index();
         let kind_idx = CrossArenaSymbolMissKind::Class.as_index();
         let aso_idx = CrossArenaAliasShortcutOutcome::Success.as_index();
+        let sfsa_idx = SourceFileSymbolArenaCacheEligibility::Eligible.as_index();
         let dilo_idx = DirectCrossFileInterfaceLoweringOutcome::Success.as_index();
 
         let before_source =
@@ -2360,6 +2497,8 @@ mod json_tests {
             .load(Ordering::Relaxed);
         let before_aso =
             c.delegate_cross_arena_alias_shortcut_outcome[aso_idx].load(Ordering::Relaxed);
+        let before_sfsa =
+            c.source_file_symbol_arena_cache_eligibility[sfsa_idx].load(Ordering::Relaxed);
         let before_dilo =
             c.direct_cross_file_interface_lowering_outcome[dilo_idx].load(Ordering::Relaxed);
 
@@ -2368,6 +2507,7 @@ mod json_tests {
         c.delegate_cross_arena_symbol_miss_target_declaration_file
             .fetch_add(1, Ordering::Relaxed);
         c.delegate_cross_arena_alias_shortcut_outcome[aso_idx].fetch_add(1, Ordering::Relaxed);
+        c.source_file_symbol_arena_cache_eligibility[sfsa_idx].fetch_add(1, Ordering::Relaxed);
         c.direct_cross_file_interface_lowering_outcome[dilo_idx].fetch_add(1, Ordering::Relaxed);
 
         let snap = PerfCounters::snapshot();
@@ -2409,6 +2549,16 @@ mod json_tests {
         assert!(
             success_row["count"].as_u64().unwrap_or(0) > before_aso,
             "alias_shortcut_outcomes[success] did not reflect the bump",
+        );
+
+        let sfsa = json["source_file_symbol_arena_cache_eligibility"]
+            .as_array()
+            .expect("source_file_symbol_arena_cache_eligibility is array");
+        let eligible_row = &sfsa[sfsa_idx];
+        assert_eq!(eligible_row["name"], "eligible");
+        assert!(
+            eligible_row["count"].as_u64().unwrap_or(0) > before_sfsa,
+            "source_file_symbol_arena_cache_eligibility[eligible] did not reflect the bump",
         );
 
         let dilo = json["direct_interface_lowering_outcomes"]
