@@ -1361,7 +1361,6 @@ impl<'a> CheckerState<'a> {
             false,
             contextual_type,
         );
-
         match result {
             CallResult::Success(mut return_type) => {
                 if let Some(fixed_return) = self.typed_array_length_constructor_return_type(
@@ -1662,6 +1661,14 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+                if let Some(contextual_type) = contextual_type
+                    && self.constructor_mismatch_recovery_matches_contextual_return(
+                        constructor_type,
+                        contextual_type,
+                    )
+                {
+                    return contextual_type;
+                }
                 if let Some(ref type_args_list) = explicit_new_type_arguments
                     && !type_args_list.nodes.is_empty()
                 {
@@ -1762,6 +1769,52 @@ impl<'a> CheckerState<'a> {
         } else {
             type_id
         }
+    }
+    fn constructor_mismatch_recovery_matches_contextual_return(
+        &self,
+        constructor_type: TypeId,
+        contextual_type: TypeId,
+    ) -> bool {
+        let Some(return_type) = crate::query_boundaries::common::construct_return_type_for_type(
+            self.ctx.types,
+            constructor_type,
+        ) else {
+            return false;
+        };
+
+        if return_type == contextual_type {
+            return true;
+        }
+
+        let return_app = query::get_application_info(self.ctx.types, return_type).or_else(|| {
+            self.ctx
+                .types
+                .get_display_alias(return_type)
+                .and_then(|alias| query::get_application_info(self.ctx.types, alias))
+        });
+        let contextual_app =
+            query::get_application_info(self.ctx.types, contextual_type).or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(contextual_type)
+                    .and_then(|alias| query::get_application_info(self.ctx.types, alias))
+            });
+        if let (Some((return_base, _)), Some((contextual_base, contextual_args))) =
+            (return_app, contextual_app)
+            && return_base == contextual_base
+            && !contextual_args.is_empty()
+            && contextual_args
+                .iter()
+                .any(|&arg| arg != TypeId::ANY && arg != TypeId::UNKNOWN && arg != TypeId::ERROR)
+        {
+            return true;
+        }
+
+        let return_name = self.format_type(return_type);
+        let contextual_name = self.format_type(contextual_type);
+        contextual_name
+            .strip_prefix(return_name.as_str())
+            .is_some_and(|suffix| suffix.starts_with('<'))
     }
 }
 
