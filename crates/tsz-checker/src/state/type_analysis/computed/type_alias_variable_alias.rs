@@ -122,13 +122,6 @@ impl<'a> CheckerState<'a> {
                         .declaration_arenas
                         .contains_key(&(sym_id, decl_idx));
 
-                if (flags & symbol_flags::VALUE != 0)
-                    && !self.ctx.merged_value_types.contains_key(&sym_id)
-                    && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
-                {
-                    self.ctx.merged_value_types.insert(sym_id, val_type);
-                }
-
                 let enclosing_tp_updates = if type_alias.type_parameters.is_none() {
                     self.push_enclosing_type_params_for_node(decl_arena, decl_idx)
                 } else {
@@ -343,6 +336,19 @@ impl<'a> CheckerState<'a> {
                 // "{ size: number; kind: \"sq\" }"). Mirrors the interface path above.
                 if let Some(shape) = type_environment::object_shape(self.ctx.types, alias_type) {
                     self.ctx.definition_store.set_instance_shape(def_id, shape);
+                }
+
+                // Register alias body before computing the value side: the value initializer
+                // may reference this alias in annotations (e.g. `(): Alias => ...`), so the
+                // DefinitionStore must hold the concrete type before contextual typing runs.
+                if flags & symbol_flags::VALUE != 0 {
+                    self.ctx
+                        .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
+                    if !self.ctx.merged_value_types.contains_key(&sym_id)
+                        && let Some(val_type) = self.compute_value_type_for_merged_alias(sym_id)
+                    {
+                        self.ctx.merged_value_types.insert(sym_id, val_type);
+                    }
                 }
 
                 // Return the params that were used during lowering - this ensures
