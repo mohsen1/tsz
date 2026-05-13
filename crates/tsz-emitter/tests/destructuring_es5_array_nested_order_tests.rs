@@ -7,7 +7,7 @@
 //! (`b = _r === void 0 ? a : _r`). Without this, a later element's default
 //! expression can observe a name that has not been bound yet by an earlier
 //! element's decomposition. Source:
-//! https://github.com/microsoft/TypeScript/issues/39181
+//! <https://github.com/microsoft/TypeScript/issues/39181>
 //!
 //! Covers the conformance fixture
 //! `tests/cases/conformance/es6/destructuring/destructuringEvaluationOrder.ts`
@@ -39,16 +39,16 @@ fn array_destructuring_with_object_rest_emits_reads_before_decompositions() {
     // (b's default references `a`, so `a` must be in scope first).
     let read_q = output
         .find("_a = arr[0]")
-        .expect(&format!("expected `_a = arr[0]` read in output:\n{output}"));
+        .unwrap_or_else(|| panic!("expected `_a = arr[0]` read in output:\n{output}"));
     let read_r = output
         .find("_b = arr[1]")
-        .expect(&format!("expected `_b = arr[1]` read in output:\n{output}"));
-    let rest_decomp = output.find("a = __rest(_a").expect(&format!(
-        "expected `a = __rest(_a, ...)` rest decomposition in output:\n{output}"
-    ));
-    let b_assign = output.find("b = _b").expect(&format!(
-        "expected `b = _b === void 0 ? a : _b` assignment in output:\n{output}"
-    ));
+        .unwrap_or_else(|| panic!("expected `_b = arr[1]` read in output:\n{output}"));
+    let rest_decomp = output.find("a = __rest(_a").unwrap_or_else(|| {
+        panic!("expected `a = __rest(_a, ...)` rest decomposition in output:\n{output}")
+    });
+    let b_assign = output.find("b = _b").unwrap_or_else(|| {
+        panic!("expected `b = _b === void 0 ? a : _b` assignment in output:\n{output}")
+    });
 
     assert!(
         read_q < read_r,
@@ -73,16 +73,16 @@ fn array_destructuring_two_nested_emits_all_reads_first() {
 
     let read_0 = output
         .find("_a[0]")
-        .expect(&format!("missing `_a[0]` read:\n{output}"));
+        .unwrap_or_else(|| panic!("missing `_a[0]` read:\n{output}"));
     let read_1 = output
         .find("_a[1]")
-        .expect(&format!("missing `_a[1]` read:\n{output}"));
+        .unwrap_or_else(|| panic!("missing `_a[1]` read:\n{output}"));
     let dot_x = output
         .find(".x")
-        .expect(&format!("missing `.x` decomposition:\n{output}"));
+        .unwrap_or_else(|| panic!("missing `.x` decomposition:\n{output}"));
     let dot_y = output
         .find(".y")
-        .expect(&format!("missing `.y` decomposition:\n{output}"));
+        .unwrap_or_else(|| panic!("missing `.y` decomposition:\n{output}"));
 
     assert!(
         read_0 < read_1,
@@ -111,10 +111,10 @@ fn array_destructuring_without_nested_keeps_single_pass_layout() {
     // first defaulted assignment that uses `arr[0]`.
     let first_a_decl = output
         .find("a = ")
-        .expect(&format!("missing `a = ...` assignment:\n{output}"));
+        .unwrap_or_else(|| panic!("missing `a = ...` assignment:\n{output}"));
     let read_1 = output
         .find("arr[1]")
-        .expect(&format!("missing `arr[1]` read:\n{output}"));
+        .unwrap_or_else(|| panic!("missing `arr[1]` read:\n{output}"));
     assert!(
         first_a_decl < read_1,
         "Without nested patterns, element 1's read should still come after element 0's decl.\nOutput:\n{output}"
