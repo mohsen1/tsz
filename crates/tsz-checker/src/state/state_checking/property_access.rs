@@ -329,17 +329,14 @@ impl<'a> CheckerState<'a> {
         // This is especially important for hot paths like repeated `string[].push`
         // checks in class-heavy files.
         let mut result = self.resolve_property_access_via_boundary(object_type, prop_name);
-        if (matches!(
+        if matches!(
             result,
             tsz_solver::operations::property::PropertyAccessResult::Success {
                 type_id: TypeId::ANY,
                 from_index_signature: false,
                 ..
             }
-        ) || matches!(
-            result,
-            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
-        )) && let Some(member_type) =
+        ) && let Some(member_type) =
             self.recover_lazy_interface_member_type(original_object_type, prop_name)
         {
             result = tsz_solver::operations::property::PropertyAccessResult::Success {
