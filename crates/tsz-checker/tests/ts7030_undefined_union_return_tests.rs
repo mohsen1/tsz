@@ -1,9 +1,8 @@
 //! Tests for TS7030 handling when the declared return type includes `undefined`.
 //!
 //! When `noImplicitReturns` is enabled, TS7030 ("Not all code paths return a value")
-//! must still be emitted for functions/methods whose annotated return type is a
-//! union containing `undefined`. TypeScript only skips top-level `undefined`,
-//! `void`, and `any` return types.
+//! is suppressed for top-level `undefined`, `void`, `any`, and unions containing
+//! `void` or `any`. A union containing `undefined` alone still reports TS7030.
 //!
 //! Related issue: #5949
 
@@ -23,7 +22,7 @@ fn check_with_no_implicit_returns(source: &str) -> Vec<u32> {
         .collect()
 }
 
-/// `string | undefined` return type still reports TS7030.
+/// `string | undefined` return type: TS7030 is still emitted.
 #[test]
 fn ts7030_emitted_for_string_or_undefined_return() {
     let source = r#"

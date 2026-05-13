@@ -1053,8 +1053,7 @@ impl<'a> CheckerState<'a> {
     /// Check if TS7030 (noImplicitReturns) should be skipped for this return type.
     ///
     /// TSC skips TS7030 for functions whose return type is or contains `void` or `any`.
-    /// Top-level `undefined` also causes a skip. A union with `undefined` does not skip:
-    /// TypeScript still reports TS7030 for `string | undefined` when some paths return.
+    /// Top-level `undefined` also causes a skip, but `undefined` in a union does not.
     /// For unannotated functions, we only check top-level types because our inferred
     /// return types use `void` for implicit fall-through (TSC uses `undefined`).
     pub fn should_skip_no_implicit_return_check(

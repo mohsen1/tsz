@@ -6,7 +6,7 @@ fn check(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)> {
         files,
         entry_file,
         CheckerOptions {
-            module: ModuleKind::CommonJS,
+            module: ModuleKind::ESNext,
             strict: true,
             ..CheckerOptions::default()
         },
@@ -85,7 +85,7 @@ A.toUpperCase();
 }
 
 #[test]
-fn type_only_reexport_import_can_merge_with_local_namespace_value() {
+fn conflicted_reexport_keeps_local_namespace_surface() {
     let diagnostics = check(
         &[
             (
@@ -122,14 +122,14 @@ A.displayName;
 
     assert!(
         codes.contains(&2440),
-        "import/type conflict should still report TS2440, got: {diagnostics:?}"
+        "conflicted re-export should report TS2440, got: {diagnostics:?}"
     );
     assert!(
         codes.contains(&2349),
-        "calling the namespace-merged type-only import should report TS2349, got: {diagnostics:?}"
+        "conflicted namespace call should report TS2349, got: {diagnostics:?}"
     );
     assert!(
-        !codes.contains(&2339) && !codes.contains(&2722),
-        "namespace property access should not cascade TS2339/TS2722, got: {diagnostics:?}"
+        !codes.iter().any(|code| matches!(*code, 2339 | 2722)),
+        "conflicted re-export should not resolve through the imported function value, got: {diagnostics:?}"
     );
 }
