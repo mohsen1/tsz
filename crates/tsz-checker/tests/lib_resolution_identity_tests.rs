@@ -82,7 +82,6 @@ fn imported_promise_return_does_not_pick_dom_symbol() {
         "dom.d.ts",
     ]);
     if libs.is_empty() {
-        eprintln!("Skipping test: lib files not available");
         return;
     }
 
