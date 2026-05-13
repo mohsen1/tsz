@@ -432,6 +432,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_recovered_missing_name_enum_declaration(node, enum_decl) {
+            return;
+        }
+
         // Transform enum to IIFE pattern for all targets
         {
             let mut transformer = EnumES5Transformer::new(self.arena);
@@ -537,6 +541,39 @@ impl<'a> Printer<'a> {
             }
             // If transformer returns None (e.g., const enum), emit nothing
         }
+    }
+
+    fn emit_recovered_missing_name_enum_declaration(
+        &mut self,
+        node: &Node,
+        enum_decl: &tsz_parser::parser::node::EnumData,
+    ) -> bool {
+        if !self.get_identifier_text_idx(enum_decl.name).is_empty()
+            || !enum_decl.members.nodes.is_empty()
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = std::cmp::min(node.end as usize, text.len());
+        if start >= end {
+            return false;
+        }
+        let source = &text[start..end];
+        if !source.trim_start().starts_with("enum void") {
+            return false;
+        }
+
+        self.write("var ;");
+        self.write_line();
+        self.write("(function () {");
+        self.write_line();
+        self.write("})( || ( = {}));");
+        self.write_line();
+        self.write("void {};");
+        true
     }
 
     pub(in crate::emitter) fn emit_enum_member(&mut self, node: &Node) {
