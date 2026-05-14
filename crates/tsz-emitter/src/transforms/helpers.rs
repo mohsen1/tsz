@@ -487,6 +487,12 @@ impl HelpersNeeded {
         if self.generator {
             names.push("__generator");
         }
+        if self.add_disposable_resource {
+            names.push("__addDisposableResource");
+        }
+        if self.dispose_resources {
+            names.push("__disposeResources");
+        }
         if self.await_helper {
             names.push("__await");
         }
@@ -523,12 +529,6 @@ impl HelpersNeeded {
         if self.class_private_field_in {
             names.push("__classPrivateFieldIn");
         }
-        if self.add_disposable_resource {
-            names.push("__addDisposableResource");
-        }
-        if self.dispose_resources {
-            names.push("__disposeResources");
-        }
         if self.prop_key {
             names.push("__propKey");
         }
@@ -556,8 +556,9 @@ impl HelpersNeeded {
 ///   4: param
 ///   5: awaiter
 ///   6: generator
+///   7: disposable helpers
 ///  no priority (last): rest, read, spreadArray, values, asyncValues,
-///                      importDefault, classPrivateField*, disposable helpers
+///                      importDefault, classPrivateField*
 pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
     let mut output = String::new();
 
@@ -634,7 +635,15 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(SET_FUNCTION_NAME_HELPER);
         output.push('\n');
     }
-    // Async generator helpers (after awaiter/generator/setFunctionName)
+    if helpers.add_disposable_resource {
+        output.push_str(ADD_DISPOSABLE_RESOURCE_HELPER);
+        output.push('\n');
+    }
+    if helpers.dispose_resources {
+        output.push_str(DISPOSE_RESOURCES_HELPER);
+        output.push('\n');
+    }
+    // Async generator helpers (after awaiter/generator/disposable helpers)
     if helpers.await_helper {
         output.push_str(AWAIT_HELPER);
         output.push('\n');
@@ -691,14 +700,6 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
     }
     if helpers.class_private_field_in {
         output.push_str(CLASS_PRIVATE_FIELD_IN_HELPER);
-        output.push('\n');
-    }
-    if helpers.add_disposable_resource {
-        output.push_str(ADD_DISPOSABLE_RESOURCE_HELPER);
-        output.push('\n');
-    }
-    if helpers.dispose_resources {
-        output.push_str(DISPOSE_RESOURCES_HELPER);
         output.push('\n');
     }
     if helpers.async_values {
@@ -873,6 +874,8 @@ mod tests {
                 "__param",
                 "__awaiter",
                 "__generator",
+                "__addDisposableResource",
+                "__disposeResources",
                 "__await",
                 "__asyncGenerator",
                 "__asyncDelegator",
@@ -885,8 +888,6 @@ mod tests {
                 "__classPrivateFieldGet",
                 "__classPrivateFieldSet",
                 "__classPrivateFieldIn",
-                "__addDisposableResource",
-                "__disposeResources",
                 "__propKey",
                 "__setFunctionName",
                 "__rewriteRelativeImportExtension",

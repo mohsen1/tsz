@@ -460,6 +460,41 @@ new cls3();
 }
 
 #[test]
+fn test_abstract_mixin_applied_to_concrete_base_instantiation() {
+    let source = r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+
+abstract class AbstractBase {
+    abstract getId(): string;
+}
+
+function Loggable<TBase extends Constructor<AbstractBase>>(Base: TBase) {
+    abstract class Loggable extends Base {
+        log(): string {
+            return this.getId();
+        }
+    }
+    return Loggable;
+}
+
+class ConcreteBase extends AbstractBase {
+    getId() { return 'id'; }
+}
+
+const LoggableBase = Loggable(ConcreteBase);
+const lb = new LoggableBase();
+const id: string = lb.log();
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2511),
+        "Expected no TS2511 for abstract mixin applied to concrete base. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_complicated_indexes_of_intersections_are_inferencable() {
     let source = r#"
 interface FormikConfig<Values> {

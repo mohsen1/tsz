@@ -52,14 +52,18 @@ python3 scripts/conformance/query-conformance.py --dashboard
 
 ### Workflow For Semantic Changes
 
-1. **Check active work** — inspect open issues, draft PRs, and `WIP` labels/titles before starting
-2. **Claim the scope** — create or update a GitHub issue, mark it `WIP`, and keep new findings there
+1. **Check active work** — inspect draft PRs, open PRs, recent merged PRs, and relevant issues before starting
+2. **Claim the scope** — open a draft PR early; a GitHub issue is optional
 3. **Research** — use offline analysis tools and existing tests before running heavy commands
 4. **Understand the root cause** — read the relevant checker/solver code
 5. **Fix the root cause** — not a symptom. Follow architecture rules
 6. **Verify narrowly** — run only targeted local checks needed for debugging
-7. **Push a draft PR** — let CI run build, lint, and unit tests; do not wait idle
+7. **Push updates to the draft PR** — let CI run build, lint, and unit tests; do not wait idle
 8. **Mark ready for review** — triggers conformance, emit, fourslash, WASM, and snapshot gates
+
+Include your stable `AgentName` in every PR body and substantive PR comment.
+Use the draft PR body for scope, invariants, findings, verification, and
+coordination notes.
 
 ```bash
 # Run a specific test when debugging the root cause
