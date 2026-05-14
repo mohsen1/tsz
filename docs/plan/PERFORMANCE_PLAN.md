@@ -1463,6 +1463,20 @@ relaxing any guard. Decision record:
 Claim:
 [`claims/perf-simple-object-provenance-residues-2026-05-14.md`](claims/perf-simple-object-provenance-residues-2026-05-14.md).
 
+**2026-05-14 simple-object missing-interface lib resolution negative result:**
+a behavior follow-up tried to admit the named
+`reject_missing_interface_decl` rows through existing lib metadata resolvers.
+The regenerated monorepo-006 attribution run looked bounded
+(`reject_missing_interface_decl` dropped from `7` to `4` with diagnostics still
+at `10,198`), but CI conformance rejected both the broad iterator-inclusive
+allowlist and the narrowed non-iterator allowlist. The attempted behavior is
+therefore not safe to merge. Keep the shortcut guards closed until lib reuse is
+keyed by proven semantic identity and preserves type-parameter instantiation,
+not by a string allowlist plus resolver fallback. Decision record:
+[`perf-runs/2026-05-14-simple-object-missing-interface-lib.md`](perf-runs/2026-05-14-simple-object-missing-interface-lib.md).
+Claim:
+[`claims/perf-simple-object-missing-interface-lib-2026-05-14.md`](claims/perf-simple-object-missing-interface-lib-2026-05-14.md).
+
 **2026-05-14 composite/array attribution companion:** a follow-up attribution
 record for the same guarded union/intersection, array, and tuple admission
 shows the remaining annotation-kind buckets (`union_or_intersection`,
