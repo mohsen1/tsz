@@ -2716,6 +2716,36 @@ export = X;
 }
 
 #[test]
+fn test_export_equals_namespace_keeps_private_heritage_dependency() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace X {
+    class PrivateBase {
+    }
+
+    export class PublicDerived extends PrivateBase {
+    }
+}
+
+export = X;
+"#,
+    );
+
+    assert!(
+        output.contains("class PrivateBase"),
+        "Expected private heritage dependency to be retained: {output}"
+    );
+    assert!(
+        output.contains("export class PublicDerived extends PrivateBase"),
+        "Expected exported heritage declaration to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected namespace scope marker for mixed exported/private members: {output}"
+    );
+}
+
+#[test]
 fn test_private_namespace_exports_do_not_retain_private_top_level_interfaces() {
     let output = emit_dts_with_usage_analysis(
         r#"

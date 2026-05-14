@@ -221,6 +221,7 @@ impl<'a> DeclarationEmitter<'a> {
             return used.contains_key(&sym_id);
         }
         self.namespace_member_referenced_by_exported_object_literal(decl_idx, &name)
+            || self.namespace_member_referenced_by_exported_type_surface(decl_idx, &name)
     }
 
     pub(crate) fn namespace_member_referenced_by_exported_object_literal(
@@ -407,7 +408,249 @@ impl<'a> DeclarationEmitter<'a> {
                 return true;
             }
         }
+        self.namespace_member_referenced_by_exported_type_surface(
+            name_idx,
+            &name_ident.escaped_text,
+        )
+    }
+
+    fn namespace_member_referenced_by_exported_type_surface(
+        &self,
+        member_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(module_block_idx) = self.containing_module_block_idx(member_idx) else {
+            return false;
+        };
+        let Some(module_block_node) = self.arena.get(module_block_idx) else {
+            return false;
+        };
+        let Some(module_block) = self.arena.get_module_block(module_block_node) else {
+            return false;
+        };
+        let Some(statements) = module_block.statements.as_ref() else {
+            return false;
+        };
+        statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| self.exported_statement_type_surface_references_name(stmt_idx, name))
+    }
+
+    fn containing_module_block_idx(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        for _ in 0..128 {
+            let node = self.arena.get(current)?;
+            if self.arena.get_module_block(node).is_some() {
+                return Some(current);
+            }
+            let parent = self.arena.parent_of(current)?;
+            if parent.is_none() {
+                return None;
+            }
+            current = parent;
+        }
+        None
+    }
+
+    fn exported_statement_type_surface_references_name(
+        &self,
+        stmt_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if let Some(export) = self.arena.get_export_decl(stmt_node)
+            && export.export_clause.is_some()
+        {
+            return self.declaration_type_surface_references_name(export.export_clause, name);
+        }
+        if self.stmt_has_export_modifier(stmt_node) {
+            return self.declaration_type_surface_references_name(stmt_idx, name);
+        }
         false
+    }
+
+    fn declaration_type_surface_references_name(&self, decl_idx: NodeIndex, name: &str) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        match decl_node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.arena.get_class(decl_node).is_some_and(|class| {
+                    class
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| self.node_list_references_name(params, name))
+                        || class
+                            .heritage_clauses
+                            .as_ref()
+                            .is_some_and(|heritage| self.node_list_references_name(heritage, name))
+                })
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(decl_node).is_some_and(|iface| {
+                    iface
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| self.node_list_references_name(params, name))
+                        || iface
+                            .heritage_clauses
+                            .as_ref()
+                            .is_some_and(|heritage| self.node_list_references_name(heritage, name))
+                        || self.node_list_references_name(&iface.members, name)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(decl_node).is_some_and(|alias| {
+                    alias
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| self.node_list_references_name(params, name))
+                        || self.node_references_name(alias.type_node, name)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn node_list_references_name(&self, list: &tsz_parser::parser::NodeList, name: &str) -> bool {
+        list.nodes
+            .iter()
+            .copied()
+            .any(|node_idx| self.node_references_name(node_idx, name))
+    }
+
+    fn node_references_name(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == name),
+            k if k == syntax_kind_ext::QUALIFIED_NAME => self
+                .arena
+                .get_qualified_name(node)
+                .is_some_and(|qualified| {
+                    self.node_references_name(qualified.left, name)
+                        || self.node_references_name(qualified.right, name)
+                }),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                self.arena.get_access_expr(node).is_some_and(|access| {
+                    self.node_references_name(access.expression, name)
+                        || self.node_references_name(access.name_or_argument, name)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                self.arena.get_type_ref(node).is_some_and(|type_ref| {
+                    self.node_references_name(type_ref.type_name, name)
+                        || type_ref
+                            .type_arguments
+                            .as_ref()
+                            .is_some_and(|args| self.node_list_references_name(args, name))
+                })
+            }
+            k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
+                self.arena.get_expr_type_args(node).is_some_and(|expr| {
+                    self.node_references_name(expr.expression, name)
+                        || expr
+                            .type_arguments
+                            .as_ref()
+                            .is_some_and(|args| self.node_list_references_name(args, name))
+                })
+            }
+            k if k == syntax_kind_ext::HERITAGE_CLAUSE => self
+                .arena
+                .get_heritage_clause(node)
+                .is_some_and(|heritage| self.node_list_references_name(&heritage.types, name)),
+            k if k == syntax_kind_ext::TYPE_PARAMETER => {
+                self.arena.get_type_parameter(node).is_some_and(|param| {
+                    self.node_references_name(param.constraint, name)
+                        || self.node_references_name(param.default, name)
+                })
+            }
+            k if k == syntax_kind_ext::PROPERTY_SIGNATURE
+                || k == syntax_kind_ext::METHOD_SIGNATURE
+                || k == syntax_kind_ext::CALL_SIGNATURE
+                || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+            {
+                self.arena.get_signature(node).is_some_and(|sig| {
+                    sig.type_parameters
+                        .as_ref()
+                        .is_some_and(|params| self.node_list_references_name(params, name))
+                        || sig
+                            .parameters
+                            .as_ref()
+                            .is_some_and(|params| self.node_list_references_name(params, name))
+                        || self.node_references_name(sig.type_annotation, name)
+                })
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(node)
+                .is_some_and(|prop| self.node_references_name(prop.type_annotation, name)),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(node).is_some_and(|method| {
+                    method
+                        .type_parameters
+                        .as_ref()
+                        .is_some_and(|params| self.node_list_references_name(params, name))
+                        || self.node_list_references_name(&method.parameters, name)
+                        || self.node_references_name(method.type_annotation, name)
+                })
+            }
+            k if k == syntax_kind_ext::PARAMETER => self
+                .arena
+                .get_parameter(node)
+                .is_some_and(|param| self.node_references_name(param.type_annotation, name)),
+            k if k == syntax_kind_ext::INDEX_SIGNATURE => {
+                self.arena.get_index_signature(node).is_some_and(|sig| {
+                    self.node_list_references_name(&sig.parameters, name)
+                        || self.node_references_name(sig.type_annotation, name)
+                })
+            }
+            _ => self.node_text_references_name(node_idx, name),
+        }
+    }
+
+    fn node_text_references_name(&self, node_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        let Some(source_text) = self.source_file_text.as_deref() else {
+            return false;
+        };
+        let start = node.pos as usize;
+        let end = node.end as usize;
+        let Some(text) = source_text.get(start..end) else {
+            return false;
+        };
+        Self::text_references_identifier(text, name)
+    }
+
+    fn text_references_identifier(text: &str, name: &str) -> bool {
+        let mut search_from = 0;
+        while let Some(offset) = text[search_from..].find(name) {
+            let start = search_from + offset;
+            let end = start + name.len();
+            let before = text[..start].chars().next_back();
+            let after = text[end..].chars().next();
+            let before_boundary = before.is_none_or(|ch| !Self::is_visibility_identifier_part(ch));
+            let after_boundary = after.is_none_or(|ch| !Self::is_visibility_identifier_part(ch));
+            if before_boundary && after_boundary {
+                return true;
+            }
+            search_from = end;
+        }
+        false
+    }
+
+    const fn is_visibility_identifier_part(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
     /// Check if a statement node has the `export` keyword modifier.
@@ -559,7 +802,10 @@ impl<'a> DeclarationEmitter<'a> {
                 .table
                 .get(&name_ident.escaped_text)
                 .is_some_and(|scope_sym_id| used.contains_key(&scope_sym_id))
-        })
+        }) || self.namespace_member_referenced_by_exported_type_surface(
+            name_idx,
+            &name_ident.escaped_text,
+        )
     }
 
     pub(crate) fn declared_ambient_value_dependency_is_initializer_only(
