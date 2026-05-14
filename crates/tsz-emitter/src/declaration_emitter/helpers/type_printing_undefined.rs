@@ -1,31 +1,8 @@
 //! Optional and undefined semantic helpers for declaration type printing.
 
-#[allow(unused_imports)]
-use super::super::{DeclarationEmitter, ImportPlan, PlannedImportModule, PlannedImportSymbol};
-#[allow(unused_imports)]
-use crate::emitter::type_printer::TypePrinter;
-#[allow(unused_imports)]
-use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
-#[allow(unused_imports)]
-use rustc_hash::{FxHashMap, FxHashSet};
-#[allow(unused_imports)]
-use std::sync::Arc;
-#[allow(unused_imports)]
-use tracing::debug;
-#[allow(unused_imports)]
-use tsz_binder::{BinderState, SymbolId, symbol_flags};
-#[allow(unused_imports)]
-use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-#[allow(unused_imports)]
-use tsz_parser::parser::ParserState;
-#[allow(unused_imports)]
-use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
-#[allow(unused_imports)]
+use super::super::DeclarationEmitter;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-#[allow(unused_imports)]
-use tsz_parser::parser::{NodeIndex, NodeList};
-#[allow(unused_imports)]
-use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn simplify_inexact_optional_mapped_intersection_text(
