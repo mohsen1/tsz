@@ -6,6 +6,113 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn emit_statement_list_with_using_scope(
+        &mut self,
+        statements: &NodeList,
+    ) -> bool {
+        if self.ctx.options.target.supports_es2025()
+            || !self.block_has_using_declarations(statements)
+        {
+            return false;
+        }
+
+        let using_async = self.block_has_await_using(statements);
+        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
+        let prev_block_using_env = self
+            .block_using_env
+            .replace((env_name.clone(), using_async));
+
+        self.write(env_decl_keyword);
+        self.write(" ");
+        self.write(&env_name);
+        self.write(" = { stack: [], error: void 0, hasError: false };");
+        self.write_line();
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        for &stmt in &statements.nodes {
+            if let Some(stmt_node) = self.arena.get(stmt) {
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                self.emit_comments_before_pos(actual_start);
+            }
+            let before_emit_len = self.writer.len();
+            self.emit(stmt);
+            if self.writer.len() > before_emit_len && !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+        }
+
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("catch (");
+        self.write(&error_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        self.write(&env_name);
+        self.write(".error = ");
+        self.write(&error_name);
+        self.write(";");
+        self.write_line();
+        self.write(&env_name);
+        self.write(".hasError = true;");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("finally {");
+        self.write_line();
+        self.increase_indent();
+        if using_async {
+            let await_kw = if self.ctx.emit_await_as_yield || self.ctx.emit_await_as_yield_await {
+                "yield"
+            } else {
+                "await"
+            };
+            self.write(env_decl_keyword);
+            self.write(" ");
+            self.write(&result_name);
+            self.write(" = ");
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+            self.write("if (");
+            self.write(&result_name);
+            self.write(")");
+            self.write_line();
+            self.increase_indent();
+            self.write(await_kw);
+            self.write(" ");
+            if self.ctx.emit_await_as_yield_await {
+                self.write_helper("__await");
+                self.write("(");
+                self.write(&result_name);
+                self.write(")");
+            } else {
+                self.write(&result_name);
+            }
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+        } else {
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.block_using_env = prev_block_using_env;
+        true
+    }
+
     pub(in crate::emitter) fn emit_recovered_class_keyword_variable_statement_tail(
         &mut self,
         node: &Node,
@@ -502,5 +609,179 @@ impl<'a> Printer<'a> {
         if let Some(elem) = self.arena.get_binding_element(elem_node) {
             self.collect_binding_names(elem.name, names);
         }
+    }
+
+    pub(in crate::emitter) fn emit_async_generator_shadow_variable_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+
+        let mut initialized_decls = Vec::new();
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if !self.async_generator_shadow_decl_list_applies(decl_list_node) {
+                return false;
+            }
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                if self
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+                    .is_some_and(|decl| decl.initializer.is_some())
+                {
+                    initialized_decls.push(decl_idx);
+                }
+            }
+        }
+
+        for (i, decl_idx) in initialized_decls.iter().copied().enumerate() {
+            if i > 0 {
+                self.write_line();
+            }
+            let mut first = true;
+            if self.emit_async_generator_shadow_assignment(decl_idx, true, &mut first) {
+                self.write_semicolon();
+            }
+        }
+        true
+    }
+
+    pub(in crate::emitter) fn emit_async_generator_shadow_for_initializer(
+        &mut self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if !self.async_generator_shadow_decl_list_applies(init_node) {
+            return false;
+        }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return false;
+        };
+
+        let mut first = true;
+        for &decl_idx in &decl_list.declarations.nodes {
+            self.emit_async_generator_shadow_assignment(decl_idx, false, &mut first);
+        }
+        true
+    }
+
+    pub(in crate::emitter) fn emit_async_generator_shadow_for_in_of_initializer(
+        &mut self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if !self.async_generator_shadow_decl_list_applies(init_node) {
+            return false;
+        }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return false;
+        };
+
+        for (i, &decl_idx) in decl_list.declarations.nodes.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+            {
+                self.emit_decl_name(decl.name);
+            }
+        }
+        true
+    }
+
+    pub(in crate::emitter) fn async_generator_shadow_decl_list_applies(
+        &self,
+        decl_list_node: &Node,
+    ) -> bool {
+        if self.ctx.async_generator_shadowed_parameter_names.is_empty()
+            || decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST
+        {
+            return false;
+        }
+
+        let flags = decl_list_node.flags as u32;
+        if flags & (node_flags::LET | node_flags::CONST | node_flags::USING) != 0 {
+            return false;
+        }
+
+        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        decl_list
+            .declarations
+            .nodes
+            .iter()
+            .copied()
+            .any(|decl_idx| {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    return false;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    return false;
+                };
+                let mut names = Vec::new();
+                self.collect_binding_names(decl.name, &mut names);
+                names.iter().any(|name| {
+                    self.ctx
+                        .async_generator_shadowed_parameter_names
+                        .iter()
+                        .any(|param| param == name)
+                })
+            })
+    }
+
+    fn emit_async_generator_shadow_assignment(
+        &mut self,
+        decl_idx: NodeIndex,
+        statement_position: bool,
+        first: &mut bool,
+    ) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if decl.initializer.is_none() {
+            return false;
+        }
+
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+
+        if self.ctx.needs_es2018_lowering && self.pattern_has_object_rest(decl.name) {
+            self.emit_object_rest_var_decl(decl.name, decl.initializer, None);
+            return true;
+        }
+
+        let is_object_pattern = self
+            .arena
+            .get(decl.name)
+            .is_some_and(|name| name.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN);
+        if statement_position && is_object_pattern {
+            self.write("(");
+        }
+        self.emit_decl_name(decl.name);
+        self.write(" = ");
+        self.emit_expression(decl.initializer);
+        if statement_position && is_object_pattern {
+            self.write(")");
+        }
+        true
     }
 }

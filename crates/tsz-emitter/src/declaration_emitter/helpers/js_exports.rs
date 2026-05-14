@@ -1365,43 +1365,60 @@ impl<'a> DeclarationEmitter<'a> {
             return result;
         }
 
-        // First, collect all top-level variable names (let/var/const declarations).
-        let mut top_level_var_names: FxHashSet<String> = FxHashSet::default();
+        // First, collect all top-level names that may acquire a prototype
+        // surface through `Name.prototype.member = ...` assignments.
+        let mut top_level_names: FxHashSet<String> = FxHashSet::default();
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-                continue;
-            }
-            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
-                continue;
-            };
-            for &decl_list_idx in &var_stmt.declarations.nodes {
-                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                    continue;
-                };
-                if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                    continue;
-                }
-                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                    continue;
-                };
-                for &decl_idx in &decl_list.declarations.nodes {
-                    if let Some(decl_node) = self.arena.get(decl_idx)
-                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                        && let Some(name) = self.get_identifier_text(decl.name)
-                    {
-                        // Skip names already handled by CJS expando
-                        if !js_export_equals_names.contains(&name) {
-                            top_level_var_names.insert(name);
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                        continue;
+                    };
+                    for &decl_list_idx in &var_stmt.declarations.nodes {
+                        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                            continue;
+                        };
+                        if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                            continue;
+                        }
+                        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                            continue;
+                        };
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            if let Some(decl_node) = self.arena.get(decl_idx)
+                                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                                && let Some(name) = self.get_identifier_text(decl.name)
+                                && !js_export_equals_names.contains(&name)
+                            {
+                                top_level_names.insert(name);
+                            }
                         }
                     }
                 }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if let Some(func) = self.arena.get_function(stmt_node)
+                        && let Some(name) = self.get_identifier_text(func.name)
+                        && !js_export_equals_names.contains(&name)
+                    {
+                        top_level_names.insert(name);
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if let Some(class) = self.arena.get_class(stmt_node)
+                        && let Some(name) = self.get_identifier_text(class.name)
+                        && !js_export_equals_names.contains(&name)
+                    {
+                        top_level_names.insert(name);
+                    }
+                }
+                _ => {}
             }
         }
 
-        if top_level_var_names.is_empty() {
+        if top_level_names.is_empty() {
             return result;
         }
 
@@ -1472,13 +1489,123 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(root_name) = self.get_identifier_text(receiver_access.expression) else {
                 continue;
             };
-            if !top_level_var_names.contains(&root_name) {
+            if !top_level_names.contains(&root_name) {
                 continue;
             }
 
             let rhs = self
                 .arena
                 .skip_parenthesized_and_assertions_and_comma(binary.right);
+            let entry = result.members.entry(root_name).or_default();
+            if !entry.iter().any(|(existing_name, existing_init)| {
+                *existing_name == lhs_access.name_or_argument && *existing_init == rhs
+            }) {
+                entry.push((lhs_access.name_or_argument, rhs));
+            }
+            result.consumed_stmts.insert(stmt_idx);
+        }
+
+        result
+    }
+
+    pub(crate) fn collect_js_class_static_members(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> crate::declaration_emitter::helpers::JsClassStaticMembers {
+        let mut result = crate::declaration_emitter::helpers::JsClassStaticMembers::default();
+        if !self.source_file_is_js(source_file) {
+            return result;
+        }
+
+        let mut top_level_names = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if let Some(func) = self.arena.get_function(stmt_node)
+                        && let Some(name) = self.get_identifier_text(func.name)
+                    {
+                        top_level_names.insert(name);
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if let Some(class) = self.arena.get_class(stmt_node)
+                        && let Some(name) = self.get_identifier_text(class.name)
+                    {
+                        top_level_names.insert(name);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if top_level_names.is_empty() {
+            return result;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let lhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.left);
+            let Some(lhs_node) = self.arena.get(lhs) else {
+                continue;
+            };
+            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+            if self
+                .get_identifier_text(lhs_access.name_or_argument)
+                .as_deref()
+                == Some("prototype")
+            {
+                continue;
+            }
+            let Some(root_name) = self.get_identifier_text(lhs_access.expression) else {
+                continue;
+            };
+            if self.js_export_equals_names.contains(&root_name) {
+                continue;
+            }
+            if !top_level_names.contains(&root_name) {
+                continue;
+            }
+            let rhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right);
+            if !(self.is_js_function_initializer(rhs)
+                || self.js_namespace_object_member_initializer_supported(rhs))
+            {
+                continue;
+            }
             let entry = result.members.entry(root_name).or_default();
             if !entry.iter().any(|(existing_name, existing_init)| {
                 *existing_name == lhs_access.name_or_argument && *existing_init == rhs

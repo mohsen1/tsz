@@ -6,6 +6,7 @@
 //! - Type queries (typeof X)
 //! - Mapped types ({ [P in K]: T })
 
+mod enum_indexed_access;
 mod indexed_access_fast_path;
 
 use super::type_node::TypeNodeChecker;
@@ -538,9 +539,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let evaluated = evaluated_result.result;
                 if evaluated != TypeId::ERROR
                     && evaluated != indexed_type
-                    && self.is_full_enum_member_union(evaluated)
+                    && let Some(parent_enum_type) =
+                        self.full_enum_member_union_parent_type(evaluated)
                 {
-                    return evaluated;
+                    return parent_enum_type;
                 }
             }
 
@@ -548,59 +550,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else {
             TypeId::ERROR
         }
-    }
-
-    fn is_full_enum_member_union(&self, type_id: TypeId) -> bool {
-        let Some(list_id) = crate::query_boundaries::common::union_list_id(self.ctx.types, type_id)
-        else {
-            return false;
-        };
-        let members = self.ctx.types.type_list(list_id);
-        if members.is_empty() {
-            return false;
-        }
-
-        let mut parent = tsz_binder::SymbolId::NONE;
-        for &member_type in members.iter() {
-            let Some((def_id, _)) =
-                crate::query_boundaries::common::enum_components(self.ctx.types, member_type)
-            else {
-                return false;
-            };
-            let Some(member_sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-                return false;
-            };
-            let Some(member_symbol) = self.ctx.binder.symbols.get(member_sym_id) else {
-                return false;
-            };
-            if !member_symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-                || member_symbol.parent.is_none()
-            {
-                return false;
-            }
-            if parent.is_none() {
-                parent = member_symbol.parent;
-            } else if parent != member_symbol.parent {
-                return false;
-            }
-        }
-
-        let Some(parent_symbol) = self.ctx.binder.symbols.get(parent) else {
-            return false;
-        };
-        let Some(exports) = parent_symbol.exports.as_ref() else {
-            return false;
-        };
-        let enum_member_count = exports
-            .iter()
-            .filter(|(_, sym_id)| {
-                self.ctx.binder.symbols.get(**sym_id).is_some_and(|symbol| {
-                    symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-                })
-            })
-            .count();
-
-        enum_member_count == members.len()
     }
 
     /// Check if a type is a union containing Application (generic instantiation) members.

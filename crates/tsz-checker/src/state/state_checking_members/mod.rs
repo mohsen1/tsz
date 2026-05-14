@@ -9,6 +9,7 @@ mod function_declaration_checks;
 mod implicit_any_checks;
 mod index_signature_checks;
 mod index_signature_key_helpers;
+mod index_signature_type_helpers;
 mod index_signature_validity;
 mod interface_checks;
 mod member_access;

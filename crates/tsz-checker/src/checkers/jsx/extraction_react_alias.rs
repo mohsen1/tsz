@@ -100,16 +100,21 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(super) fn is_react_jsx_component_alias_display(&self, type_id: TypeId) -> bool {
-        let display = self.format_type(type_id);
-        display == "React.ComponentType"
-            || display == "ComponentType"
-            || display == "React.ReactType"
-            || display == "ReactType"
-            || display.starts_with("React.ComponentType<")
-            || display.starts_with("ComponentType<")
-            || display.starts_with("React.ReactType<")
-            || display.starts_with("ReactType<")
+    /// Returns true when `type_id` is a union whose members include at least one
+    /// React library component alias application.  Covers patterns like
+    /// `ComponentType<P1> | ComponentType<P2>` where the union itself is not an
+    /// Application and `is_react_jsx_component_alias_application` would return false.
+    pub(in crate::checkers_domain::jsx) fn is_react_jsx_component_alias_union(
+        &self,
+        type_id: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_some_and(
+            |members| {
+                members
+                    .iter()
+                    .any(|&m| self.is_react_jsx_component_alias_application(m))
+            },
+        )
     }
 
     pub(super) fn is_react_jsx_component_branch_display(&self, type_id: TypeId) -> bool {

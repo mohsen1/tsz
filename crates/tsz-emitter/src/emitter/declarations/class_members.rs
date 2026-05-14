@@ -277,6 +277,39 @@ impl<'a> Printer<'a> {
             self.emit_method_async_lowered_body(method.body, &method.parameters.nodes);
         } else {
             self.write(" ");
+            let lowered_async_arrow_super_capture = if self.ctx.needs_async_lowering {
+                crate::transforms::emit_utils::collect_lowered_async_arrow_super_capture(
+                    self.arena,
+                    method.body,
+                )
+            } else {
+                crate::transforms::emit_utils::AsyncMethodSuperCapture::default()
+            };
+            let has_lowered_async_arrow_super_capture =
+                !lowered_async_arrow_super_capture.property_names.is_empty()
+                    || lowered_async_arrow_super_capture.needs_element_index;
+            let prev_pending_lowered_async_arrow_super_capture =
+                self.pending_lowered_async_arrow_super_capture.take();
+            if has_lowered_async_arrow_super_capture {
+                let source_text = self.source_text.unwrap_or_default();
+                let super_alias_text = (!lowered_async_arrow_super_capture
+                    .property_names
+                    .is_empty())
+                .then(|| crate::transforms::emit_utils::hygienic_temp_name("_super", source_text));
+                let super_index_alias_text = lowered_async_arrow_super_capture
+                    .needs_element_index
+                    .then(|| {
+                        crate::transforms::emit_utils::hygienic_temp_name(
+                            "_superIndex",
+                            source_text,
+                        )
+                    });
+                self.pending_lowered_async_arrow_super_capture = Some((
+                    lowered_async_arrow_super_capture,
+                    super_alias_text,
+                    super_index_alias_text,
+                ));
+            }
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
             self.function_scope_depth += 1;
@@ -293,6 +326,8 @@ impl<'a> Printer<'a> {
             self.ctx.flags.in_generator = prev_in_generator;
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
+            self.pending_lowered_async_arrow_super_capture =
+                prev_pending_lowered_async_arrow_super_capture;
         }
     }
 
@@ -489,6 +524,7 @@ impl<'a> Printer<'a> {
 
         // Emit function body with await→yield substitution and (issue #3759)
         // an active `_super` capture alias when the body references super.
+        let saved_yield = self.ctx.emit_await_as_yield;
         self.ctx.emit_await_as_yield = true;
         let prev_super_alias = self.scoped_static_super_base_alias.take();
         let prev_super_direct = self.scoped_static_super_direct_access;
@@ -508,13 +544,16 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
-            for &stmt in &block.statements.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt) {
-                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                    self.emit_comments_before_pos(actual_start);
+            let statements = block.statements.clone();
+            if !self.emit_statement_list_with_using_scope(&statements) {
+                for &stmt in &statements.nodes {
+                    if let Some(stmt_node) = self.arena.get(stmt) {
+                        let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                        self.emit_comments_before_pos(actual_start);
+                    }
+                    self.emit(stmt);
+                    self.write_line();
                 }
-                self.emit(stmt);
-                self.write_line();
             }
         }
         self.function_scope_depth = prev_function_scope_depth;
@@ -522,7 +561,7 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_direct_access = prev_super_direct;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
-        self.ctx.emit_await_as_yield = false;
+        self.ctx.emit_await_as_yield = saved_yield;
 
         self.decrease_indent();
         self.write("});");

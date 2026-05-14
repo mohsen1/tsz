@@ -11,6 +11,7 @@ use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType, ObjectFlags,
     ObjectShape, PropertyInfo, TupleListId, TypeData, TypeId,
 };
+use crate::visitor::keyof_inner_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
@@ -198,11 +199,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
-        // Evaluate the constraint to get concrete keys
+        // Issue #6814: `interner.union` collapses `"foo" | string | number`
+        // into `string | number`, so the eager-eval path below loses literal
+        // keys that an `as` clause must filter per-iteration. Rescue them when
+        // the constraint is `keyof T` and T combines named properties with a
+        // string/number index signature.
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
-        let key_set = match self.extract_mapped_keys(keys) {
+        let key_set = match self
+            .try_extract_keyof_keys_for_mapped_iteration(constraint)
+            .or_else(|| self.extract_mapped_keys(keys))
+        {
             Some(mut keys) => {
                 // Deduplicate string literals to handle overlapping enum members
                 // (e.g. `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
@@ -1132,6 +1140,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             name: prop.name,
             key_literal,
         }
+    }
+
+    /// When `constraint = keyof Operand` and Operand has both literal property
+    /// keys AND a string/number index signature, return the structural key set
+    /// (literals plus index flags) so per-key as-clause filters can drop the
+    /// index step without dropping the named properties. Returns `None` when
+    /// no rescue is possible — leaving the existing eager-eval flow unchanged.
+    ///
+    /// The pre-screen is a perf gate, not a correctness gate: `evaluate_mapped`
+    /// runs for every mapped type, so operand shapes that cannot possibly
+    /// satisfy `(literal keys) ∧ (string|number index)` skip the more expensive
+    /// `extract_mapped_keys` walk.
+    fn try_extract_keyof_keys_for_mapped_iteration(
+        &mut self,
+        constraint: TypeId,
+    ) -> Option<MappedKeys> {
+        let operand = keyof_inner_type(self.interner(), constraint)?;
+        match self.interner().lookup(operand) {
+            // Operand shapes that cannot combine literal keys with an index
+            // signature — skip the walk. `Object` is the no-index variant;
+            // the others return `NonObject` from `collect_properties`.
+            Some(
+                TypeData::Object(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::Union(_)
+                | TypeData::Intrinsic(_),
+            ) => return None,
+            // Inspect the shape directly to skip the walk when an
+            // `ObjectWithIndex` doesn't actually combine literals + index.
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                if shape.properties.is_empty()
+                    || (shape.string_index.is_none() && shape.number_index.is_none())
+                {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        let keys = self.extract_mapped_keys(constraint)?;
+        (!keys.keys.is_empty() && (keys.has_string || keys.has_number)).then_some(keys)
     }
 
     /// Extract mapped keys from a type (for mapped type iteration).

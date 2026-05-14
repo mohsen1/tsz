@@ -70,6 +70,10 @@ name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
 [[test]]
+name = "array_subclass_inheritance_tests"
+path = "tests/array_subclass_inheritance_tests.rs"
+
+[[test]]
 name = "tuple_rest_array_canonicalization_tests"
 path = "tests/tuple_rest_array_canonicalization_tests.rs"
 
@@ -472,6 +476,10 @@ path = "tests/commonjs_module_export_alias_tests.rs"
 [[test]]
 name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
+
+[[test]]
+name = "recursive_conditional_mapped_infer_tests"
+path = "tests/recursive_conditional_mapped_infer_tests.rs"
 
 [[test]]
 name = "in_chain_narrows_unconstrained_type_param_tests"
@@ -938,6 +946,10 @@ name = "indexed_access_resolved_union_property_tests"
 path = "tests/indexed_access_resolved_union_property_tests.rs"
 
 [[test]]
+name = "indexed_access_unconstrained_param_tests"
+path = "tests/indexed_access_unconstrained_param_tests.rs"
+
+[[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"
 path = "tests/js_exports_surface_fallback_for_named_imports_tests.rs"
 
@@ -1132,6 +1144,10 @@ path = "tests/mapped_type_numeric_literal_key_tests.rs"
 [[test]]
 name = "ts2344_infer_positional_constraint_tests"
 path = "tests/ts2344_infer_positional_constraint_tests.rs"
+
+[[test]]
+name = "nested_infer_extends_scope_tests"
+path = "tests/nested_infer_extends_scope_tests.rs"
 
 [lints]
 workspace = true

@@ -119,6 +119,23 @@ const x: E = n;  // OK: number type to enum type
     test_enum_assignability(source, 0);
 }
 
+#[test]
+fn test_typeof_enum_keyof_indexed_access_assigns_to_enum() {
+    let source = r#"
+enum Direction {
+  Up,
+  Down,
+  Left,
+  Right
+}
+
+type EnumValues = typeof Direction[keyof typeof Direction];
+declare const ev: EnumValues;
+const evCheck: Direction = ev;
+"#;
+    test_enum_assignability(source, 0);
+}
+
 // Note: Tests for rejecting arbitrary number literals (e.g., 999) assigned to
 // numeric enums are validated via conformance tests, which have full lib types.
 // The unit test checker doesn't load lib types, so enum member unions may not

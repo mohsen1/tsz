@@ -811,7 +811,7 @@ impl<'a> CheckerState<'a> {
         let mut any_checked = false;
         let mut all_valid = true;
         let is_react_component_alias_union =
-            is_union && self.is_react_jsx_component_alias_display(component_type);
+            self.is_react_jsx_component_alias_union(component_type);
 
         for (raw_member_type, member_type) in types_to_check {
             if self.is_jsx_string_tag_type(member_type) {
