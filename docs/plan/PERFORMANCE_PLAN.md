@@ -1270,6 +1270,17 @@ Decision record:
 Claim:
 [`claims/perf-delegate-actual-lib-partial-2026-05-14.md`](claims/perf-delegate-actual-lib-partial-2026-05-14.md).
 
+**2026-05-14 FlatArray alias follow-up:** a ninth narrow slice admits
+`FlatArray` in the existing direct actual-lib alias-body allowlist. On
+monorepo-006 this drops `DelegateCrossArenaSymbol` children from 4 to 2,
+`delegate.misses` from 4 to 2, and `checker.with_parent_cache_constructed`
+from 4 to 2 with unchanged diagnostics (`10,198`). Declaration-file residue
+row removed: `FlatArray` (count `2`).
+Decision record:
+[`perf-runs/2026-05-14-delegate-actual-lib-flatarray.md`](perf-runs/2026-05-14-delegate-actual-lib-flatarray.md).
+Claim:
+[`claims/perf-delegate-actual-lib-flatarray-2026-05-14.md`](claims/perf-delegate-actual-lib-flatarray-2026-05-14.md).
+
 **2026-05-13 `compute_type_of_symbol` interface fast path:** for local
 single-declaration interfaces, we now skip three high-frequency costs when not
 needed: computed-name precompute maps, member type-parameter prewarm scans, and
