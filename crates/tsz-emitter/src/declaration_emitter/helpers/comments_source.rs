@@ -129,6 +129,70 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn emit_jsdoc_comment_chain_preserving_source_for_pos(
+        &mut self,
+        pos: u32,
+        chain: &[String],
+    ) -> bool {
+        if self.remove_comments {
+            return true;
+        }
+        if chain.is_empty() {
+            return true;
+        }
+
+        let Some(text) = self.source_file_text.clone() else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let mut matched = Vec::with_capacity(chain.len());
+        let mut chain_idx = 0usize;
+        for (comment_idx, comment) in self.all_comments.iter().enumerate() {
+            if comment.end as usize > actual_start {
+                break;
+            }
+
+            let raw = &text[comment.pos as usize..comment.end as usize];
+            if raw.starts_with("/**")
+                && raw != "/**/"
+                && get_jsdoc_content(comment, &text) == chain[chain_idx]
+            {
+                matched.push(comment_idx);
+                chain_idx += 1;
+                if chain_idx == chain.len() {
+                    break;
+                }
+            }
+        }
+
+        if chain_idx != chain.len() {
+            return false;
+        }
+
+        for (position, idx) in matched.iter().copied().enumerate() {
+            let comment = &self.all_comments[idx];
+            let next_on_same_line = matched.get(position + 1).is_some_and(|next_idx| {
+                let next = &self.all_comments[*next_idx];
+                !text[comment.end as usize..next.pos as usize].contains('\n')
+            });
+            self.emit_jsdoc_comment_text_preserving_source(
+                &text,
+                comment.pos,
+                comment.end,
+                next_on_same_line,
+            );
+        }
+
+        true
+    }
+
     pub(crate) fn emit_multiline_jsdoc_comment(&mut self, jsdoc: &str) {
         if self.remove_comments {
             return;
@@ -215,6 +279,13 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
                     let content = line[char_width..].trim_end();
+                    let content = if let Some(rest) = content.strip_prefix('*')
+                        && rest.starts_with("  ")
+                    {
+                        format!("* {}", rest.trim_start())
+                    } else {
+                        content.to_string()
+                    };
                     let output_indent = (self.indent_level as usize) * 4;
                     let out_width = if line_width >= source_indent {
                         output_indent + (line_width - source_indent)
@@ -224,7 +295,7 @@ impl<'a> DeclarationEmitter<'a> {
                     for _ in 0..out_width {
                         self.write_raw(" ");
                     }
-                    self.write(content);
+                    self.write(&content);
                 }
             }
         } else {

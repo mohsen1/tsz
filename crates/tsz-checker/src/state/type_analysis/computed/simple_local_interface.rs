@@ -181,22 +181,102 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_simple_local_interface_fastpath_type(&self, type_idx: NodeIndex) -> bool {
-        self.ctx.arena.get(type_idx).is_some_and(|node| {
-            matches!(
-                node.kind,
-                kind if kind == SyntaxKind::AnyKeyword as u16
-                    || kind == SyntaxKind::BigIntKeyword as u16
-                    || kind == SyntaxKind::BooleanKeyword as u16
-                    || kind == SyntaxKind::NeverKeyword as u16
-                    || kind == SyntaxKind::NumberKeyword as u16
-                    || kind == SyntaxKind::ObjectKeyword as u16
-                    || kind == SyntaxKind::StringKeyword as u16
-                    || kind == SyntaxKind::SymbolKeyword as u16
-                    || kind == SyntaxKind::UndefinedKeyword as u16
-                    || kind == SyntaxKind::UnknownKeyword as u16
-                    || kind == SyntaxKind::VoidKeyword as u16
-            )
-        })
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return false;
+        };
+        if matches!(
+            node.kind,
+            kind if kind == SyntaxKind::AnyKeyword as u16
+                || kind == SyntaxKind::BigIntKeyword as u16
+                || kind == SyntaxKind::BooleanKeyword as u16
+                || kind == SyntaxKind::NeverKeyword as u16
+                || kind == SyntaxKind::NumberKeyword as u16
+                || kind == SyntaxKind::ObjectKeyword as u16
+                || kind == SyntaxKind::StringKeyword as u16
+                || kind == SyntaxKind::SymbolKeyword as u16
+                || kind == SyntaxKind::UndefinedKeyword as u16
+                || kind == SyntaxKind::UnknownKeyword as u16
+                || kind == SyntaxKind::VoidKeyword as u16
+                || kind == syntax_kind_ext::LITERAL_TYPE
+                || kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE
+        ) {
+            return true;
+        }
+
+        if node.kind == syntax_kind_ext::UNION_TYPE
+            || node.kind == syntax_kind_ext::INTERSECTION_TYPE
+        {
+            return self
+                .ctx
+                .arena
+                .get_composite_type(node)
+                .is_some_and(|composite| {
+                    composite
+                        .types
+                        .nodes
+                        .iter()
+                        .copied()
+                        .all(|member| self.is_simple_local_interface_fastpath_type(member))
+                });
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_TYPE {
+            return self.ctx.arena.get_array_type(node).is_some_and(|array| {
+                self.is_simple_local_interface_fastpath_type(array.element_type)
+            });
+        }
+
+        if node.kind == syntax_kind_ext::TUPLE_TYPE {
+            return self.ctx.arena.get_tuple_type(node).is_some_and(|tuple| {
+                tuple
+                    .elements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .all(|element| self.is_simple_local_interface_fastpath_type(element))
+            });
+        }
+
+        self.is_simple_local_interface_primitive_type_reference(node)
+    }
+
+    fn is_simple_local_interface_primitive_type_reference(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(type_name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(type_name_node) else {
+            return false;
+        };
+        matches!(
+            ident.escaped_text.as_str(),
+            "any"
+                | "bigint"
+                | "boolean"
+                | "never"
+                | "number"
+                | "object"
+                | "string"
+                | "symbol"
+                | "undefined"
+                | "unknown"
+                | "void"
+        )
     }
 
     fn classify_simple_local_interface_non_primitive_annotation_kind(

@@ -173,6 +173,14 @@ pub trait TypeDatabase {
         None
     }
 
+    /// Mark an application base whose type-alias body is a conditional type.
+    fn mark_conditional_alias_base(&self, _base: TypeId) {}
+
+    /// Return whether an application base was marked as a conditional alias.
+    fn is_conditional_alias_base(&self, _base: TypeId) -> bool {
+        false
+    }
+
     /// Record the as-written origin members for a flattened Union TypeId.
     ///
     /// The checker calls this from `get_type_from_union_type` so that the
@@ -593,6 +601,14 @@ impl TypeDatabase for TypeInterner {
 
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         Self::get_display_alias(self, type_id)
+    }
+
+    fn mark_conditional_alias_base(&self, base: TypeId) {
+        Self::mark_conditional_alias_base(self, base);
+    }
+
+    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        Self::is_conditional_alias_base(self, base)
     }
 
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {

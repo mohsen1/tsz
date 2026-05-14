@@ -102,6 +102,24 @@ fn relevant_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn relevant_strict_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = tsz_checker::test_utils::load_default_lib_files();
+    check_source_with_libs_code_messages(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|(code, _)| *code != 2318)
+    .collect()
+}
+
 #[test]
 fn variadic_rest_tuple_satisfies_array_rest_constraint() {
     let source = r#"
@@ -2916,6 +2934,56 @@ const wrongString: number = madeString.props.stuff;
     assert_eq!(
         ts2322_count, 1,
         "instantiating the returned constructor should preserve `stuff: string` and reject assignment to number exactly once. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_constructor_options_infer_from_context_sensitive_object_member_return() {
+    let source = r#"
+declare class Connection {
+    ok(): void;
+}
+
+declare class Pending<R> {
+    promise: Promise<R>;
+}
+
+interface PoolOptions<R> {
+    create: () => R | Promise<R>;
+    destroy: (resource: R) => void;
+    validate?: (resource: R) => boolean;
+}
+
+declare class Pool<R> {
+    constructor(options: PoolOptions<R>);
+    acquire(): Pending<R>;
+    release(resource: R): void;
+}
+
+declare const tarn: {
+    Pool: typeof Pool;
+};
+
+const pool = new tarn.Pool({
+    create: async () => new Connection(),
+    destroy: (connection) => {
+        connection.ok();
+    },
+    validate: (connection) => true,
+});
+
+const keep: Pending<Connection> = pool.acquire();
+const reject: Pending<string> = pool.acquire();
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "generic constructor options should infer callback parameter types during Round 2. Got: {diags:#?}"
+    );
+    let ts2322_count = diags.iter().filter(|(code, _)| *code == 2322).count();
+    assert_eq!(
+        ts2322_count, 1,
+        "Pool should infer R = Connection from create(), accept Connection assignment, and reject string assignment exactly once. Got: {diags:#?}"
     );
 }
 

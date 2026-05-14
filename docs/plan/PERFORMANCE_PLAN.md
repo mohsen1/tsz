@@ -1358,6 +1358,33 @@ or fix the parser/classification boundary if it should be a `NumberKeyword`.
 Decision record:
 [`perf-runs/2026-05-14-simple-object-type-reference-residues.md`](perf-runs/2026-05-14-simple-object-type-reference-residues.md).
 
+**2026-05-14 primitive/literal simple-object admission:** the follow-up admits
+only no-argument primitive intrinsic type references and literal/template
+literal annotations into the existing simple local-interface shortcut. The
+property `TypeId` still comes from `get_type_from_type_node_in_type_literal`.
+On regenerated monorepo-006, diagnostics stay at `10,198`, simple-object hits
+move from `0` to `24,760`, `success` moves from `0` to `24,760`, and
+`reject_non_primitive_annotation` drops from `24,762` to `2`. The
+type-reference residue table is empty after the change. Timing in this
+attribution run is noisy and not a timing claim. The next possible admission
+target is now the two remaining concrete rows:
+`union_or_intersection=1` and `array_or_tuple=1`. Decision record:
+[`perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md`](perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md).
+
+**2026-05-14 simple-object residual annotation admission:** the next slice
+admits recursively simple union/intersection, array, and tuple annotations when
+every child annotation is already accepted by the same local shortcut guard.
+This keeps arbitrary type references and resolver-dependent shapes on fallback.
+On regenerated monorepo-006, diagnostics stay at `10,198`,
+`checker.compute_type_of_symbol_interface_simple_object_fastpath_hits` moves
+from `24,760` to `24,762`, `success` moves from `24,760` to `24,762`, and
+`reject_non_primitive_annotation` drops from `2` to `0`. The measured
+annotation-kind residue is now exhausted; the remaining shortcut rejects are
+declaration/provenance guards (`reject_out_of_arena_decl=6`,
+`reject_missing_interface_decl=7`). No timing claim is made from this
+attribution-mode run. Decision record:
+[`perf-runs/2026-05-14-simple-object-residual-annotations.md`](perf-runs/2026-05-14-simple-object-residual-annotations.md).
+
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
 any more aliases, add `direct_actual_lib_alias_body_outcomes` to the perf
 counter JSON/text dump and wire it at every return point in the actual-lib

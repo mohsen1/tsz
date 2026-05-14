@@ -282,6 +282,63 @@ export class UserStore<T extends User> {
 `,
   },
   {
+    key: "sound_mode",
+    title: "Sound Mode: Sticky Freshness",
+    category: "diagnostics",
+    description: "Fresh object literals stay exact after a variable assignment.",
+    soundDiagnosticCode: "TSZ3006",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+// Sticky freshness keeps object-literal excess-property checks alive
+// after the literal has been assigned to a variable.
+interface Point2D { x: number; y: number }
+
+const point3d = { x: 1, y: 2, z: 3 };
+const point: Point2D = point3d;
+`,
+  },
+  {
+    key: "sound_mode_argument",
+    title: "Sound Mode: Method Bivariance",
+    category: "diagnostics",
+    description: "Method implementations cannot narrow a parameter unsafely.",
+    soundDiagnosticCode: "TSZ2002",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+interface EventSink {
+  handle(value: string | number): void;
+}
+
+class StringOnlySink implements EventSink {
+  handle(value: string) {
+    value.toUpperCase();
+  }
+}
+`,
+  },
+  {
+    key: "sound_mode_array",
+    title: "Sound Mode: Any Escape",
+    category: "diagnostics",
+    description: "Nested any cannot quietly satisfy a more precise shape.",
+    soundDiagnosticCode: "TSZ1001",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+interface Payload {
+  name: string;
+}
+
+function parsePayload(): { name: any } {
+  return JSON.parse('{"name":{"firstName":"Alan","lastName":"Turing"}}');
+}
+
+const payload: Payload = parsePayload();
+`,
+  },
+  {
     key: "errors",
     title: "Type Errors",
     category: "diagnostics",

@@ -70,7 +70,7 @@ pub use expression_ops::*;
 pub(crate) use generics::{GenericInstantiationResult, solve_generic_instantiation};
 pub use iterators::{
     IteratorInfo, extract_iterator_result_value_types, get_async_iterable_element_type,
-    get_iterator_info,
+    get_iterator_info, target_has_non_iterable_property_shape,
 };
 pub use widening::*;
 
