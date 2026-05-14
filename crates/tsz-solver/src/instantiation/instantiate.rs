@@ -1997,7 +1997,7 @@ pub fn instantiate_type(
 /// Cache-aware variant of [`instantiate_type`].
 ///
 /// `query_db = Some(db)` enables the cross-call instantiation cache on
-/// `QueryCache` (PR 3/4 of the `docs/plan/ROADMAP.md` cache workstream).
+/// `QueryCache`.
 ///
 /// The leaf fast paths (`TypeParameter` direct hit, `IndexAccess(T, P)`) run
 /// BEFORE any cache-key construction so they remain allocation-free.
@@ -2148,7 +2148,7 @@ pub fn instantiate_type_preserving(
     instantiate_type_preserving_cached(interner, None, type_id, substitution)
 }
 
-/// Cache-aware variant of [`instantiate_type_preserving`] (PR 3/4).
+/// Cache-aware variant of [`instantiate_type_preserving`].
 pub fn instantiate_type_preserving_cached(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
@@ -2233,7 +2233,7 @@ pub fn instantiate_type_preserving_meta(
     instantiate_type_preserving_meta_cached(interner, None, type_id, substitution)
 }
 
-/// Cache-aware variant of [`instantiate_type_preserving_meta`] (PR 3/4).
+/// Cache-aware variant of [`instantiate_type_preserving_meta`].
 pub fn instantiate_type_preserving_meta_cached(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
@@ -2288,7 +2288,7 @@ pub fn instantiate_type_with_infer(
     instantiate_type_with_infer_cached(interner, None, type_id, substitution)
 }
 
-/// Cache-aware variant of [`instantiate_type_with_infer`] (PR 3/4).
+/// Cache-aware variant of [`instantiate_type_with_infer`].
 pub fn instantiate_type_with_infer_cached(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
@@ -2405,7 +2405,7 @@ pub fn substitute_this_type(
     substitute_this_type_cached(interner, None, type_id, this_type)
 }
 
-/// Cache-aware variant of [`substitute_this_type`] (PR 3/4).
+/// Cache-aware variant of [`substitute_this_type`].
 ///
 /// Per the design carve-out (§5), we DO probe the cache here even though
 /// the substitution is empty, because `this_type.is_some()` makes the
