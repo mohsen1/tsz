@@ -96,6 +96,48 @@ fn is_single_quoted_string_property_name_node(
 }
 
 impl<'a> CheckerState<'a> {
+    /// Decide whether an object-literal property value's literal type should
+    /// be widened to its primitive. Inside a `satisfies T` operand we apply
+    /// tsc's exact `isLiteralOfContextualType` per-property gate (via
+    /// `contextual_type_allows_literal`) and ignore `preserve_literal_types` —
+    /// the user-written `T` is a finer specification than the wrapping
+    /// generic-call's contextual broadening. Outside, the coarser legacy
+    /// policy (preserve whenever the outer object context is non-permissive)
+    /// is kept and the downstream deep-widen compensates.
+    fn should_widen_object_property_literal(
+        &mut self,
+        value_type: TypeId,
+        property_context_type: Option<TypeId>,
+        had_object_context: bool,
+        has_non_widening_source: bool,
+    ) -> bool {
+        if self.ctx.in_const_assertion || has_non_widening_source {
+            return false;
+        }
+        if self.ctx.in_satisfies_operand {
+            // Fast path: skip the recursive `isLiteralOfContextualType` walk
+            // (and its scratch-set allocation) for property values that the
+            // widener would not transform anyway — functions, plain objects,
+            // the `any` intrinsic, etc. Only literals and unions are
+            // candidates for widening.
+            let value_is_widenable =
+                crate::query_boundaries::common::is_literal_type(self.ctx.types, value_type)
+                    || crate::query_boundaries::common::is_union_type(self.ctx.types, value_type);
+            if !value_is_widenable {
+                return false;
+            }
+            let preserves = property_context_type
+                .is_some_and(|ct| self.contextual_type_allows_literal(ct, value_type));
+            return !preserves;
+        }
+        if self.ctx.preserve_literal_types {
+            return false;
+        }
+        let property_context_preserves_literal =
+            property_context_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+        !property_context_preserves_literal && !had_object_context
+    }
+
     fn spread_source_is_unannotated_object_literal_binding(&self, expression: NodeIndex) -> bool {
         let expression = self.ctx.arena.skip_parenthesized_and_assertions(expression);
         let Some(node) = self.ctx.arena.get(expression) else {
@@ -1095,14 +1137,12 @@ impl<'a> CheckerState<'a> {
                             || self
                                 .object_literal_property_access_literal_type(prop.initializer)
                                 .is_some();
-                        let property_context_preserves_literal = property_context_type
-                            .is_some_and(|ct| !is_literal_permissive_context(ct));
-                        let widening_eligible = !self.ctx.in_const_assertion
-                            && !self.ctx.preserve_literal_types
-                            && !property_context_preserves_literal
-                            && !had_object_context
-                            && !value_has_non_widening_source;
-                        let final_type = if widening_eligible {
+                        let final_type = if self.should_widen_object_property_literal(
+                            value_type,
+                            property_context_type,
+                            had_object_context,
+                            value_has_non_widening_source,
+                        ) {
                             self.widen_literal_type(value_type)
                         } else {
                             value_type
@@ -1619,12 +1659,12 @@ impl<'a> CheckerState<'a> {
                         let shorthand_is_non_widening = shorthand_sym.is_some_and(|sym_id| {
                             self.sym_has_non_widening_declared_value_type(sym_id)
                         });
-                        if !self.ctx.in_const_assertion
-                            && !self.ctx.preserve_literal_types
-                            && property_context_type.is_none_or(is_literal_permissive_context)
-                            && !had_object_context
-                            && !shorthand_is_non_widening
-                        {
+                        if self.should_widen_object_property_literal(
+                            value_type,
+                            property_context_type,
+                            had_object_context,
+                            shorthand_is_non_widening,
+                        ) {
                             self.widen_literal_type(value_type)
                         } else {
                             value_type

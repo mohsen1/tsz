@@ -142,6 +142,7 @@ contextual_type_is_assertion = { lifetime = "FileLocalReset", reason = "checker-
 is_checking_statements = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 is_in_ambient_declaration_file = { lifetime = "DiagnosticsOnly", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 in_destructuring_target = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+in_satisfies_operand = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 preserve_destructuring_initializer_overload_diagnostics = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 skip_flow_narrowing = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 instantiation_depth = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

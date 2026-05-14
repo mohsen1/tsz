@@ -18191,30 +18191,27 @@ elem.addEventListener(handleMouse);
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let error_count = checker.ctx.diagnostics.len();
+    let ts2345_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345)
+        .count();
 
-    // Method bivariance is implemented! This test now passes with 0 errors.
-    // The event handler pattern relies on method bivariance to allow passing
-    // a MouseEvent handler to a function expecting an Event handler.
-    if error_count != 0 {
-        println!("=== Event Handler Pattern Diagnostics ===");
-        println!("Expected 0 errors (method bivariance implemented), got {error_count}");
-        for diag in &checker.ctx.diagnostics {
-            println!("[{}] {}", diag.start, diag.message_text);
-        }
-    }
-
+    // Method calls do not make function-type-literal callback parameters
+    // bivariant. `tsc --strictFunctionTypes` rejects `MouseEvent` here because
+    // the target callback may pass a plain `Event`.
     assert_eq!(
-        error_count, 0,
-        "Expected 0 errors - method bivariance allows event handler pattern: {:?}",
+        ts2345_count, 1,
+        "Expected TS2345 for stricter callback parameter, got: {:?}",
         checker.ctx.diagnostics
     );
 }
 
 /// TS Unsoundness #2: Function Bivariance - Callback in method parameter
 ///
-/// When a callback is passed as a method parameter, the callback itself
-/// benefits from method bivariance rules.
+/// Method-call syntax does not make a function-type-literal callback parameter
+/// bivariant under `--strictFunctionTypes`.
 ///
 #[test]
 fn test_callback_method_parameter_bivariance() {
@@ -18233,8 +18230,9 @@ function handleDog(dog: Dog): void {
 declare const processor: Processor;
 declare const dogs: Dog[];
 
-// Passing a Dog[] to Animal[] is covariant (allowed by #3)
-// Passing handleDog to callback is bivariant (should be allowed)
+// Passing a Dog[] to Animal[] is covariant (allowed by #3).
+// Passing handleDog to callback is rejected because the callback parameter type
+// is a function-type literal, not a method-shorthand signature.
 processor.process(dogs, handleDog);
 "#;
 
@@ -18260,20 +18258,16 @@ processor.process(dogs, handleDog);
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let error_count = checker.ctx.diagnostics.len();
-
-    // Method bivariance now implemented - callback parameters benefit from bivariance
-    if error_count != 0 {
-        println!("=== Callback Method Parameter Diagnostics ===");
-        println!("Expected 0 errors (method bivariance implemented), got {error_count}");
-        for diag in &checker.ctx.diagnostics {
-            println!("[{}] {}", diag.start, diag.message_text);
-        }
-    }
+    let ts2345_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345)
+        .count();
 
     assert_eq!(
-        error_count, 0,
-        "Expected 0 errors - callback bivariance works: {:?}",
+        ts2345_count, 1,
+        "Expected TS2345 for stricter callback parameter, got: {:?}",
         checker.ctx.diagnostics
     );
 }

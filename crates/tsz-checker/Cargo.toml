@@ -74,6 +74,10 @@ name = "array_subclass_inheritance_tests"
 path = "tests/array_subclass_inheritance_tests.rs"
 
 [[test]]
+name = "tuple_infer_mapped_recursive_tests"
+path = "tests/tuple_infer_mapped_recursive_tests.rs"
+
+[[test]]
 name = "tuple_rest_array_canonicalization_tests"
 path = "tests/tuple_rest_array_canonicalization_tests.rs"
 
@@ -180,6 +184,10 @@ path = "tests/ts1239_parameter_decorator_tests.rs"
 [[test]]
 name = "ts2636_method_bivariance_tests"
 path = "tests/ts2636_method_bivariance_tests.rs"
+
+[[test]]
+name = "function_bivariance"
+path = "tests/function_bivariance.rs"
 
 [[test]]
 name = "ts6133_unused_type_params_tests"
@@ -1152,6 +1160,10 @@ path = "tests/mapped_type_numeric_literal_key_tests.rs"
 [[test]]
 name = "ts2344_infer_positional_constraint_tests"
 path = "tests/ts2344_infer_positional_constraint_tests.rs"
+
+[[test]]
+name = "satisfies_generic_inference_literal_widening_tests"
+path = "tests/satisfies_generic_inference_literal_widening_tests.rs"
 
 [[test]]
 name = "nested_infer_extends_scope_tests"
