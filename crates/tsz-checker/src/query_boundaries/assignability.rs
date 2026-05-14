@@ -83,14 +83,32 @@ pub(crate) enum MissingPropertyMode {
 /// Encodes all the policy dimensions that affect how the checker interprets
 /// a relation result. The checker builds a request, invokes the boundary,
 /// and uses the result + failure info for diagnostics.
+///
+/// Current field ownership:
+/// - `source` and `target` are semantic solver inputs and diagnostic inputs.
+/// - `kind` is diagnostic/tracing context today; it does not alter solver flags.
+/// - `allow_erased_generic_signature_retry` is translated to a solver relation flag.
+/// - `source_is_fresh`, `excess_property_mode`, and `missing_property_mode` are
+///   request-level policy descriptors. They are preserved for callers and tests,
+///   but `execute_relation` does not yet branch on them; EPC and missing-property
+///   diagnostics still have caller-side checks.
 #[derive(Debug, Clone)]
 pub(crate) struct RelationRequest {
+    /// Prepared source type for the relation. This feeds the solver query,
+    /// failure analysis, weak-union detection, and property classification.
     pub source: TypeId,
+    /// Prepared target type for the relation. This feeds the same semantic and
+    /// diagnostic paths as `source`.
     pub target: TypeId,
+    /// Relation context for diagnostics and tracing. Currently advisory only.
     pub kind: RelationKind,
+    /// Requested excess-property policy. Currently advisory; object-literal EPC
+    /// emission still happens in caller-side diagnostic paths.
     pub excess_property_mode: ExcessPropertyMode,
+    /// Requested missing-property policy. Currently advisory; failure rendering
+    /// still decides how to present missing-property diagnostics.
     pub missing_property_mode: MissingPropertyMode,
-    /// Whether the source is a fresh object literal.
+    /// Whether the source is a fresh object literal. Currently advisory.
     pub source_is_fresh: bool,
     /// Whether failed contextual generic-signature inference may retry with
     /// erased signatures. This is a targeted interface property compatibility
@@ -602,9 +620,11 @@ pub(crate) struct RelationOutcome {
 /// 2. When not related, collects a structured failure reason.
 /// 3. Detects weak-union violations.
 ///
-/// All policy dimensions (freshness, excess-property mode, missing-property
-/// mode) are encoded in the `request`; the boundary translates them to
-/// solver-level knobs.
+/// The boundary currently translates only `allow_erased_generic_signature_retry`
+/// into solver flags. Freshness, excess-property mode, and missing-property mode
+/// are carried on `RelationRequest` as explicit policy descriptors for follow-up
+/// centralization, but existing caller-side EPC/missing-property diagnostics still
+/// own those decisions.
 pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     request: &RelationRequest,
     db: &dyn QueryDatabase,
