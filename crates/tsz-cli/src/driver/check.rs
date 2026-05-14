@@ -4213,6 +4213,35 @@ mod tests {
         .diagnostics
     }
 
+    fn collect_test_diagnostics_with_lib_files(
+        files: &[(&str, &str)],
+        lib_files: &[std::sync::Arc<tsz::binder::lib_loader::LibFile>],
+    ) -> Vec<Diagnostic> {
+        let compile_inputs = files
+            .iter()
+            .map(|(file_name, source)| ((*file_name).to_string(), (*source).to_string()))
+            .collect::<Vec<_>>();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            lib_files,
+        ));
+        let checker_libs = load_checker_libs(lib_files);
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &program,
+            &ResolvedCompilerOptions::default(),
+            std::path::Path::new("/"),
+            None,
+            &checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+            false,
+        )
+        .diagnostics
+    }
+
     fn default_cli_args_for_test() -> CliArgs {
         clap::Parser::try_parse_from(["tsz"]).expect("default args should parse")
     }
@@ -4231,6 +4260,64 @@ mod tests {
             resolved.checker.module = ModuleKind::ES2015;
         }
         resolved
+    }
+
+    #[test]
+    fn readonly_alias_annotation_survives_consumer_first_program_check() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5.d.ts must be available for this regression"
+        );
+        let files = [
+            (
+                "/p/b.ts",
+                r#"
+import { Factory } from "./a.js";
+
+Factory.cloneWith("x");
+"#,
+            ),
+            (
+                "/p/a.ts",
+                r#"
+import { freeze } from "./object-utils.js";
+
+type Factory = Readonly<{
+  create(name: string): string;
+  cloneWith(value: string): string;
+}>;
+
+export const Factory: Factory = freeze<Factory>({
+  create(name) {
+    return name;
+  },
+  cloneWith(value) {
+    return value;
+  },
+});
+"#,
+            ),
+            (
+                "/p/object-utils.ts",
+                r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value;
+}
+"#,
+            ),
+        ];
+
+        let diagnostics = collect_test_diagnostics_with_lib_files(&files, &lib_files);
+        let ts2339 = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2339)
+            .collect::<Vec<_>>();
+
+        assert!(
+            ts2339.is_empty(),
+            "Readonly alias annotations should not collapse to unknown in consumer-first program checks. Got: {ts2339:?}. All: {diagnostics:?}"
+        );
     }
 
     #[test]
