@@ -55,6 +55,9 @@ pub enum IRNode {
     /// Identifier: `foo`, `_bar`
     Identifier(Cow<'static, str>),
 
+    /// Runtime helper reference: `__helper` or `tslib_1.__helper`.
+    RuntimeHelper(Cow<'static, str>),
+
     /// This keyword: `this` or `_this` (for captures)
     This { captured: bool },
 

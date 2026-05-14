@@ -43,6 +43,26 @@ impl<'a> Printer<'a> {
         };
 
         self.write(" {");
+        if self.ctx.target_es5 {
+            self.write_line();
+            self.increase_indent();
+            self.write("return ");
+            self.write_helper("__asyncGenerator");
+            self.write("(this, arguments, ");
+            let inner_name = (!method_name.is_empty()).then(|| format!("{method_name}_1"));
+            self.emit_async_generator_es5_inner_function(
+                inner_name,
+                params,
+                body,
+                move_params_to_generator,
+            );
+            self.write(");");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            return;
+        }
+
         if body_is_empty_single_line || body_is_single_line {
             if !super_property_names.is_empty() {
                 self.write(" const _super = Object.create(null, {");

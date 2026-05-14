@@ -510,6 +510,21 @@ impl<'a> Printer<'a> {
             .arena
             .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         if is_async {
+            if method.asterisk_token
+                || self.source_header_before_body_has_generator_asterisk(method.body)
+            {
+                let property_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    method.name,
+                );
+                self.emit_async_generator_es5_object_method_value(
+                    &property_name,
+                    &method.parameters.nodes,
+                    method.body,
+                );
+                return;
+            }
+
             self.emit_async_function_es5_body(
                 "",
                 &method.parameters.nodes,
