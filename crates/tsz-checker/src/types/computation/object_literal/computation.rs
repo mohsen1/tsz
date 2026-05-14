@@ -1686,8 +1686,15 @@ impl<'a> CheckerState<'a> {
                     let method_context_type = contextual_type.and_then(|ctx_type| {
                         self.contextual_method_context_type_for_lookup(ctx_type, &name)
                     });
+                    let method_property_context_type = contextual_type.and_then(|ctx_type| {
+                        self.contextual_object_property_type_for_lookup(ctx_type, &name)
+                    });
                     let method_context_type = self.substitute_contextual_this_type(
                         method_context_type,
+                        contextual_receiver_this_type,
+                    );
+                    let method_property_context_type = self.substitute_contextual_this_type(
+                        method_property_context_type,
                         contextual_receiver_this_type,
                     );
                     let method_request = base_request.contextual_opt(
@@ -1926,7 +1933,18 @@ impl<'a> CheckerState<'a> {
                         method_type = refined_method_type;
                     }
 
-                    let method_type = jsdoc_declared_type.unwrap_or(method_type);
+                    let method_type = jsdoc_declared_type.unwrap_or_else(|| {
+                        if name == "return" || matches!(method_type, TypeId::ANY | TypeId::UNKNOWN)
+                        {
+                            method_property_context_type
+                                .filter(|&context_type| {
+                                    !matches!(context_type, TypeId::ANY | TypeId::UNKNOWN)
+                                })
+                                .unwrap_or(method_type)
+                        } else {
+                            method_type
+                        }
+                    });
 
                     let name_atom = self.ctx.types.intern_string(&name);
 

@@ -1069,6 +1069,42 @@ impl<'a> CheckerState<'a> {
                     {
                         let init_start = init_node.pos;
                         let init_end = init_node.end;
+                        let object_literal_method_name_spans: Vec<(u32, u32)> = if init_node.kind
+                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        {
+                            checker
+                                .ctx
+                                .arena
+                                .get_literal_expr(init_node)
+                                .map(|literal| {
+                                    literal
+                                        .elements
+                                        .nodes
+                                        .iter()
+                                        .filter_map(|&element_idx| {
+                                            let element_node =
+                                                checker.ctx.arena.get(element_idx)?;
+                                            if element_node.kind
+                                                != syntax_kind_ext::METHOD_DECLARATION
+                                            {
+                                                return None;
+                                            }
+                                            let method =
+                                                checker.ctx.arena.get_method_decl(element_node)?;
+                                            let name_node = checker.ctx.arena.get(method.name)?;
+                                            if name_node.kind
+                                                == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                            {
+                                                return None;
+                                            }
+                                            Some((name_node.pos, name_node.end))
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        };
                         checker.ctx.diagnostics.retain(|diag| {
                             diag.code
                                 == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
@@ -1106,8 +1142,20 @@ impl<'a> CheckerState<'a> {
                                 // `var x: T = new T()` reports both the
                                 // annotation and value-position lookups when `T`
                                 // is unresolved.
-                                || diag.code
+                                || (diag.code
                                     == crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                                    && !object_literal_method_name_spans
+                                        .iter()
+                                        .any(|&(start, end)| diag.start >= start && diag.start < end))
+                                // TS2322 diagnostics from the pre-contextual
+                                // assignment check can be stale for object
+                                // literal methods: contextual method typing may
+                                // supply the function shape that makes the final
+                                // object assignable. The contextual check below
+                                // re-emits real assignment failures.
+                                || (diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                                    && object_literal_method_name_spans.is_empty())
                                 // TS2538: "Type 'X' cannot be used as an index
                                 // type" is a structural error about the index
                                 // expression's shape; it doesn't depend on the
