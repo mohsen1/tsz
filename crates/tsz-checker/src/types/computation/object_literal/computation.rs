@@ -167,8 +167,23 @@ impl<'a> CheckerState<'a> {
             Entry::Occupied(mut slot) => {
                 if prop.optional {
                     let earlier = slot.get().clone();
-                    let merged_type = self.ctx.types.union2(earlier.type_id, prop.type_id);
-                    let merged_write = self.ctx.types.union2(earlier.write_type, prop.write_type);
+                    let (spread_type, spread_write_type) =
+                        if !self.ctx.exact_optional_property_types() && !earlier.optional {
+                            (
+                                crate::query_boundaries::common::remove_undefined(
+                                    self.ctx.types,
+                                    prop.type_id,
+                                ),
+                                crate::query_boundaries::common::remove_undefined(
+                                    self.ctx.types,
+                                    prop.write_type,
+                                ),
+                            )
+                        } else {
+                            (prop.type_id, prop.write_type)
+                        };
+                    let merged_type = self.ctx.types.union2(earlier.type_id, spread_type);
+                    let merged_write = self.ctx.types.union2(earlier.write_type, spread_write_type);
                     slot.insert(PropertyInfo {
                         name: prop.name,
                         type_id: merged_type,
@@ -2788,7 +2803,7 @@ impl<'a> CheckerState<'a> {
                                 // First union spread: fork from the main properties
                                 let mut branch = properties.clone();
                                 for prop in member_props {
-                                    branch.insert(prop.name, prop);
+                                    self.merge_spread_property(&mut branch, &prop);
                                 }
                                 new_branches.push(branch);
                             } else {
@@ -2796,7 +2811,7 @@ impl<'a> CheckerState<'a> {
                                 for existing in &union_spread_branches {
                                     let mut branch = existing.clone();
                                     for prop in &member_props {
-                                        branch.insert(prop.name, prop.clone());
+                                        self.merge_spread_property(&mut branch, prop);
                                     }
                                     new_branches.push(branch);
                                 }
