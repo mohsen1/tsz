@@ -9,3 +9,5 @@ description = "tsz project website — Eleventy static site deployed to tsz.dev"
 
 [lib]
 path = "rust/lib.rs"
+test = false
+doctest = false
