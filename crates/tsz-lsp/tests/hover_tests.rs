@@ -4,8 +4,12 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::LibContext;
+use tsz_checker::state::CheckerState;
 use tsz_common::position::LineMap;
+use tsz_parser::NodeIndex;
 use tsz_parser::ParserState;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_solver::TypeId;
 use tsz_solver::TypeInterner;
 
 /// Helper to set up hover infrastructure and get hover info at a position.
@@ -757,6 +761,90 @@ fn test_hover_const_assertion() {
         info.display_string.contains("arr"),
         "Should contain variable name, got: {}",
         info.display_string
+    );
+}
+
+#[test]
+fn test_hover_const_asserted_numeric_literal_not_error() {
+    let source = "const created = 201 as const;\ncreated;\ntype Status = typeof created;";
+
+    let decl_info = get_hover_at(source, 0, 6).expect("Should find hover for declaration");
+    assert_eq!(
+        decl_info.display_string, "const created: 201",
+        "Declaration hover should preserve the const-asserted literal type"
+    );
+
+    let ref_info = get_hover_at(source, 1, 0).expect("Should find hover for reference");
+    assert_eq!(
+        ref_info.display_string, "const created: 201",
+        "Reference hover should preserve the const-asserted literal type"
+    );
+
+    let type_query_info = get_hover_at(source, 2, 21).expect("Should find hover for type query");
+    assert_eq!(
+        type_query_info.display_string, "const created: 201",
+        "`typeof created` hover should preserve the value's const-asserted literal type"
+    );
+}
+
+#[test]
+fn test_hover_const_asserted_literal_recovers_from_error_cache() {
+    let source = "const created = 201 as const;\ntype Status = typeof created;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let interner = TypeInterner::new();
+    let line_map = LineMap::build(source);
+    let provider = HoverProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+
+    let var_decl_idx = parser
+        .get_arena()
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            let node_idx = NodeIndex(idx as u32);
+            let var_decl = parser.get_arena().get_variable_declaration(node)?;
+            (parser.get_arena().get_identifier_text(var_decl.name) == Some("created"))
+                .then_some(node_idx)
+        })
+        .expect("created declaration");
+    let var_decl = parser
+        .get_arena()
+        .get(var_decl_idx)
+        .and_then(|node| parser.get_arena().get_variable_declaration(node))
+        .expect("created declaration data");
+
+    let mut cache = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &interner,
+        "test.ts".to_string(),
+        Default::default(),
+    )
+    .extract_cache();
+    cache.node_types.insert(var_decl_idx.0, TypeId::ERROR);
+    cache
+        .node_types
+        .insert(var_decl.initializer.0, TypeId::ERROR);
+
+    let mut cache = Some(cache);
+    let info = provider
+        .get_hover(root, Position::new(1, 21), &mut cache)
+        .expect("Should find hover for type query with cached error placeholders");
+    assert_eq!(
+        info.display_string, "const created: 201",
+        "Hover should recompute a precise type when cached transient errors are present"
     );
 }
 
