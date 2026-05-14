@@ -2,7 +2,7 @@ use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_common::Atom;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{FunctionShape, TypeDatabase, TypeId};
+use tsz_solver::{FunctionShape, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn direct_round1_literal_index_key_type_params(
@@ -55,7 +55,7 @@ impl<'a> CheckerState<'a> {
 }
 
 fn type_param_feeds_sensitive_indexed_callback_param(
-    db: &dyn TypeDatabase,
+    db: &dyn tsz_solver::TypeDatabase,
     shape: &FunctionShape,
     sensitive_args: &[bool],
     type_param_name: Atom,
@@ -67,7 +67,7 @@ fn type_param_feeds_sensitive_indexed_callback_param(
 }
 
 fn type_contains_index_access_indexed_by_param(
-    db: &dyn TypeDatabase,
+    db: &dyn tsz_solver::TypeDatabase,
     type_id: TypeId,
     type_param_name: Atom,
     depth: usize,
