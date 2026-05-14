@@ -5273,6 +5273,12 @@ fn collect_functions_from_node(
 ///
 /// # Returns
 /// `CheckResult` with diagnostics from all functions
+///
+/// This is a reusable core/test-harness entry point, not the production CLI
+/// diagnostic scheduler. CLI semantic-diagnostic behavior is owned by
+/// `crates/tsz-cli/src/driver/check.rs::collect_diagnostics`, which also owns
+/// file scheduling, cache/watch invalidation, checker reuse, and diagnostic
+/// ordering.
 pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     ensure_rayon_global_pool();
 
@@ -5418,6 +5424,12 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 /// Diagnostics are sorted by `(start, code)` within each file and deduplicated
 /// by `(start, code)` after collection, ensuring deterministic output regardless
 /// of thread scheduling.
+///
+/// This helper remains lower-level reusable infrastructure. Production CLI
+/// diagnostics flow through `collect_diagnostics` in `tsz-cli` so the driver can
+/// preserve CLI diagnostics, cache invalidation, and file-session reuse policy.
+/// Feature and fidelity fixes for CLI checking should usually start in that
+/// scheduler before changing this helper.
 pub fn check_files_parallel(
     program: &MergedProgram,
     checker_options: &CheckerOptions,
