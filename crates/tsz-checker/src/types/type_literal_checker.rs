@@ -1045,7 +1045,6 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
-        let mut extra_string_indices = Vec::new();
         let mut extra_number_indices = Vec::new();
         let mut has_abstract_construct_sig = false;
         // Global member counter for preserving source declaration order across
@@ -1330,10 +1329,15 @@ impl<'a> CheckerState<'a> {
                         } else {
                             extra_number_indices.push(info);
                         }
-                    } else if string_index.is_none() {
-                        string_index = Some(info);
                     } else {
-                        extra_string_indices.push(info);
+                        match string_index.as_mut() {
+                            None => string_index = Some(info),
+                            Some(existing) => {
+                                super::interface_type::merge_string_index_by_union(
+                                    existing, info, factory,
+                                );
+                            }
+                        }
                     }
                 }
                 continue;
@@ -1546,13 +1550,6 @@ impl<'a> CheckerState<'a> {
                 symbol: None,
                 is_abstract: has_abstract_construct_sig,
             });
-            for idx in extra_string_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    string_index: Some(idx),
-                    ..ObjectShape::default()
-                });
-                result = self.ctx.types.intersect_types_raw2(result, member);
-            }
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),
@@ -1570,13 +1567,6 @@ impl<'a> CheckerState<'a> {
                 number_index,
                 ..ObjectShape::default()
             });
-            for idx in extra_string_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    string_index: Some(idx),
-                    ..ObjectShape::default()
-                });
-                result = self.ctx.types.intersect_types_raw2(result, member);
-            }
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),
