@@ -15,14 +15,27 @@ use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
-        let symbol_meta = self.get_cross_file_symbol(sym_id).map(|symbol| {
-            (
-                symbol.escaped_name.clone(),
-                symbol.flags,
-                symbol.declarations.clone(),
-                symbol.value_declaration,
-            )
-        });
+        let local_alias_symbol = self
+            .ctx
+            .resolve_dynamic_symbol_file_index(sym_id)
+            .is_none()
+            .then(|| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
+            })
+            .flatten();
+        let symbol_meta = local_alias_symbol
+            .or_else(|| self.get_cross_file_symbol(sym_id))
+            .map(|symbol| {
+                (
+                    symbol.escaped_name.clone(),
+                    symbol.flags,
+                    symbol.declarations.clone(),
+                    symbol.value_declaration,
+                )
+            });
 
         if let Some((name, flags, _, _)) = symbol_meta.as_ref() {
             tracing::debug!(
@@ -38,10 +51,18 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if self
-            .ctx
-            .resolve_symbol_file_index(sym_id)
-            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+        if let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
+            && file_idx != self.ctx.current_file_idx
+            && self
+                .ctx
+                .get_binder_for_file(file_idx)
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_none_or(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
             && let Some((result, _)) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
             self.ctx.leave_recursion();
@@ -861,12 +882,22 @@ impl<'a> CheckerState<'a> {
             .as_deref()
             .unwrap_or(&symbol.escaped_name);
 
-        // Use current_file_idx as the source for resolving relative specifiers,
-        // since locally-declared import symbols may not have decl_file_idx set.
-        let source_file_idx = self
+        // Local import aliases resolve relative to the current file even if a
+        // same-number cross-file target has already been registered for `sym_id`.
+        // SymbolIds are per binder, so imported aliases can collide numerically
+        // with their target after lib merging.
+        let source_file_idx = if self
             .ctx
-            .resolve_symbol_file_index(sym_id)
-            .unwrap_or(self.ctx.current_file_idx);
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|local| local.has_any_flags(symbol_flags::ALIAS))
+        {
+            self.ctx.current_file_idx
+        } else {
+            self.ctx
+                .resolve_symbol_file_index(sym_id)
+                .unwrap_or(self.ctx.current_file_idx)
+        };
 
         let target_idx = self
             .ctx
@@ -1241,10 +1272,18 @@ impl<'a> CheckerState<'a> {
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         use tsz_lowering::TypeLowering;
 
-        if self
-            .ctx
-            .resolve_symbol_file_index(sym_id)
-            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+        if let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
+            && file_idx != self.ctx.current_file_idx
+            && self
+                .ctx
+                .get_binder_for_file(file_idx)
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_none_or(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
             && let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
             return result;
@@ -1311,6 +1350,16 @@ impl<'a> CheckerState<'a> {
                                 .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
                             && let Some(result) =
                                 self.delegate_cross_arena_class_instance_type(target_sym_id)
+                        {
+                            return result;
+                        }
+                        if target_sym_id == sym_id
+                            && self
+                                .ctx
+                                .resolve_symbol_file_index(target_sym_id)
+                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                            && let Some(result) =
+                                self.delegate_cross_arena_symbol_resolution(target_sym_id)
                         {
                             return result;
                         }
