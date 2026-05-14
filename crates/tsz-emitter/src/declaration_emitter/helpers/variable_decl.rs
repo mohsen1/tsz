@@ -800,7 +800,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .expand_imported_indexed_access_type_text(&selected_type_text)
                     .unwrap_or(selected_type_text);
                 let selected_type_text = if has_initializer {
-                    self.add_returned_object_member_comments_to_type_text(
+                    self.add_initializer_object_member_comments_to_type_text(
                         initializer,
                         &selected_type_text,
                     )
