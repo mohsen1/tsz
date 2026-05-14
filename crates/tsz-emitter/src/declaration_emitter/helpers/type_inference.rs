@@ -765,6 +765,13 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_text: String,
     ) -> String {
+        let visible_aliases = self.visible_import_equals_type_alias_rewrites();
+        let type_text = visible_aliases
+            .into_iter()
+            .fold(type_text, |text, (target, alias)| {
+                Self::replace_qualified_type_reference_text(&text, &target, &alias)
+            });
+
         let aliases = self.exported_import_equals_type_alias_rewrites();
         if aliases.is_empty() {
             return type_text;
@@ -775,6 +782,176 @@ impl<'a> DeclarationEmitter<'a> {
             .fold(type_text, |text, (alias, target)| {
                 Self::replace_qualified_type_reference_text(&text, &alias, &target)
             })
+    }
+
+    fn visible_import_equals_type_alias_rewrites(&self) -> Vec<(String, String)> {
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return Vec::new();
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return Vec::new();
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return Vec::new();
+        };
+
+        let current_namespace_path = self.current_namespace_symbol_path();
+        let mut aliases = Vec::new();
+        self.collect_visible_import_equals_type_aliases(
+            &source_file.statements,
+            &mut Vec::new(),
+            &current_namespace_path,
+            &mut aliases,
+        );
+        aliases.sort_by_key(|(target, _)| std::cmp::Reverse(target.len()));
+        aliases.dedup();
+        aliases
+    }
+
+    fn current_namespace_symbol_path(&self) -> Vec<String> {
+        let (Some(binder), Some(mut current)) = (self.binder, self.enclosing_namespace_symbol)
+        else {
+            return Vec::new();
+        };
+
+        let mut path = Vec::new();
+        for _ in 0..20 {
+            let Some(symbol) = binder.symbols.get(current) else {
+                break;
+            };
+            if !symbol.escaped_name.starts_with("__") {
+                path.push(symbol.escaped_name.clone());
+            }
+            if !symbol.parent.is_some() {
+                break;
+            }
+            current = symbol.parent;
+        }
+        path.reverse();
+        path
+    }
+
+    fn collect_visible_import_equals_type_aliases(
+        &self,
+        statements: &NodeList,
+        namespace_path: &mut Vec<String>,
+        current_namespace_path: &[String],
+        aliases: &mut Vec<(String, String)>,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                self.collect_visible_import_equals_type_aliases_in_module(
+                    stmt_node,
+                    namespace_path,
+                    current_namespace_path,
+                    aliases,
+                );
+                continue;
+            }
+
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && namespace_path.as_slice() == current_namespace_path
+            {
+                self.collect_visible_import_equals_type_alias(stmt_idx, aliases);
+                continue;
+            }
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
+                && let Some(clause_node) = self.arena.get(export_decl.export_clause)
+            {
+                if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    self.collect_visible_import_equals_type_aliases_in_module(
+                        clause_node,
+                        namespace_path,
+                        current_namespace_path,
+                        aliases,
+                    );
+                } else if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    && namespace_path.as_slice() == current_namespace_path
+                {
+                    self.collect_visible_import_equals_type_alias(
+                        export_decl.export_clause,
+                        aliases,
+                    );
+                }
+            }
+        }
+    }
+
+    fn collect_visible_import_equals_type_aliases_in_module(
+        &self,
+        module_node: &Node,
+        namespace_path: &mut Vec<String>,
+        current_namespace_path: &[String],
+        aliases: &mut Vec<(String, String)>,
+    ) {
+        let Some(module) = self.arena.get_module(module_node) else {
+            return;
+        };
+        let Some(module_name) = self.entity_name_text(module.name) else {
+            return;
+        };
+
+        let old_len = namespace_path.len();
+        namespace_path.extend(module_name.split('.').map(ToString::to_string));
+
+        if current_namespace_path.starts_with(namespace_path.as_slice())
+            && let Some(body_node) = self.arena.get(module.body)
+        {
+            if self.arena.get_module(body_node).is_some() {
+                self.collect_visible_import_equals_type_aliases_in_module(
+                    body_node,
+                    namespace_path,
+                    current_namespace_path,
+                    aliases,
+                );
+            } else if let Some(block) = self.arena.get_module_block(body_node)
+                && let Some(statements) = block.statements.as_ref()
+            {
+                self.collect_visible_import_equals_type_aliases(
+                    statements,
+                    namespace_path,
+                    current_namespace_path,
+                    aliases,
+                );
+            }
+        }
+
+        namespace_path.truncate(old_len);
+    }
+
+    fn collect_visible_import_equals_type_alias(
+        &self,
+        import_idx: NodeIndex,
+        aliases: &mut Vec<(String, String)>,
+    ) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import_decl) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+        let Some(alias_name) = self.get_identifier_text(import_decl.import_clause) else {
+            return;
+        };
+        let Some(target_text) = self.entity_name_text(import_decl.module_specifier) else {
+            return;
+        };
+        if target_text == alias_name
+            || self
+                .arena
+                .get(import_decl.module_specifier)
+                .is_some_and(|node| node.kind == SyntaxKind::StringLiteral as u16)
+        {
+            return;
+        }
+
+        aliases.push((target_text, alias_name));
     }
 
     fn exported_import_equals_type_alias_rewrites(&self) -> Vec<(String, String)> {

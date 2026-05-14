@@ -257,10 +257,54 @@ impl<'a> DeclarationEmitter<'a> {
                 let access = self.arena.get_access_expr(expr_node)?;
                 let lhs = self.declaration_constructor_expression_text(access.expression)?;
                 let rhs = self.get_identifier_text(access.name_or_argument)?;
-                Some(format!("{lhs}.{rhs}"))
+                let reference_text = format!("{lhs}.{rhs}");
+                Some(self.current_namespace_relative_type_reference_text(&reference_text))
             }
             _ => None,
         }
+    }
+
+    fn current_namespace_relative_type_reference_text(&self, reference_text: &str) -> String {
+        let Some(enclosing_ns) = self.enclosing_namespace_symbol else {
+            return reference_text.to_string();
+        };
+        let Some(binder) = self.binder else {
+            return reference_text.to_string();
+        };
+
+        let mut namespace_parts = Vec::new();
+        let mut current = enclosing_ns;
+        while current != SymbolId::NONE {
+            let Some(symbol) = binder.symbols.get(current) else {
+                break;
+            };
+            if !symbol.escaped_name.starts_with('"')
+                && !symbol.escaped_name.starts_with("__")
+                && symbol
+                    .escaped_name
+                    .chars()
+                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            {
+                namespace_parts.push(symbol.escaped_name.as_str());
+            }
+            current = symbol.parent;
+        }
+        namespace_parts.reverse();
+        if namespace_parts.is_empty() {
+            return reference_text.to_string();
+        }
+
+        let reference_parts: Vec<&str> = reference_text.split('.').collect();
+        if reference_parts.len() <= namespace_parts.len()
+            || !reference_parts
+                .iter()
+                .zip(namespace_parts.iter())
+                .all(|(left, right)| left == right)
+        {
+            return reference_text.to_string();
+        }
+
+        reference_parts[namespace_parts.len()..].join(".")
     }
 
     pub(in crate::declaration_emitter) fn identifier_constructor_reference_text(

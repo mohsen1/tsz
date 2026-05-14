@@ -472,6 +472,97 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_type_text_for_declaration_emit(
+        &self,
+        type_text: &str,
+    ) -> String {
+        let portable = self.qualify_jsdoc_typeof_self_exports(type_text);
+        Self::format_jsdoc_object_type_text(&portable).unwrap_or(portable)
+    }
+
+    fn qualify_jsdoc_typeof_self_exports(&self, type_text: &str) -> String {
+        if !self.source_is_js_file
+            || !type_text.contains("typeof ")
+            || type_text.contains("typeof import(")
+        {
+            return type_text.to_string();
+        }
+
+        let mut result = type_text.to_string();
+        let mut export_names = self.top_level_self_exported_names();
+        export_names.extend(self.js_named_export_names.iter().cloned());
+        if export_names.is_empty() {
+            return result;
+        }
+
+        let mut names = export_names.iter().collect::<Vec<_>>();
+        names.sort_by_key(|name| std::cmp::Reverse(name.len()));
+        for name in names {
+            let needle = format!("typeof {name}");
+            let replacement = format!("typeof import(\".\").{name}");
+            result = Self::replace_jsdoc_typeof_identifier(&result, &needle, &replacement);
+        }
+        result
+    }
+
+    fn replace_jsdoc_typeof_identifier(text: &str, needle: &str, replacement: &str) -> String {
+        let mut result = String::new();
+        let mut cursor = 0usize;
+        while let Some(relative) = text[cursor..].find(needle) {
+            let start = cursor + relative;
+            let end = start + needle.len();
+            let before_ok = start == 0
+                || !text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(Self::is_jsdoc_identifier_part);
+            let after_ok = end == text.len()
+                || !text[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(Self::is_jsdoc_identifier_part);
+            result.push_str(&text[cursor..start]);
+            if before_ok && after_ok {
+                result.push_str(replacement);
+            } else {
+                result.push_str(&text[start..end]);
+            }
+            cursor = end;
+        }
+        result.push_str(&text[cursor..]);
+        result
+    }
+
+    const fn is_jsdoc_identifier_part(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+    }
+
+    fn format_jsdoc_object_type_text(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if inner.is_empty() || inner.contains('\n') {
+            return None;
+        }
+
+        let members = Self::split_jsdoc_params(inner);
+        if members.is_empty() {
+            return None;
+        }
+
+        let mut formatted = String::from("{\n");
+        for member in members {
+            let member = member.trim().trim_end_matches(';').trim();
+            if member.is_empty() || !member.contains(':') {
+                return None;
+            }
+            formatted.push_str("    ");
+            formatted.push_str(member);
+            formatted.push_str(";\n");
+        }
+        formatted.push('}');
+        Some(formatted)
+    }
+
     pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
         let normalized_legacy_generics = type_expr.trim().replace(".<", "<");
         let trimmed = normalized_legacy_generics.as_str();
@@ -676,6 +767,20 @@ impl<'a> DeclarationEmitter<'a> {
     /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
     fn normalize_jsdoc_type_atom(s: &str) -> String {
         let s = s.trim();
+        if let Some((base, args)) = Self::split_jsdoc_generic_atom(s) {
+            if args.trim().is_empty() {
+                return match base {
+                    "Array" => "any[]".to_string(),
+                    "Promise" => "Promise<any>".to_string(),
+                    _ => format!("{base}<>"),
+                };
+            }
+            let args = Self::split_jsdoc_params(args)
+                .into_iter()
+                .map(Self::normalize_jsdoc_type_expr)
+                .collect::<Vec<_>>();
+            return format!("{base}<{}>", args.join(", "));
+        }
         match s {
             "*" | "?" => "any".to_string(),
             // `Array<>` is the form after `normalize_jsdoc_type_expr` strips
@@ -688,6 +793,39 @@ impl<'a> DeclarationEmitter<'a> {
             "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
         }
+    }
+
+    fn split_jsdoc_generic_atom(s: &str) -> Option<(&str, &str)> {
+        let open = s.find('<')?;
+        if !s.ends_with('>') {
+            return None;
+        }
+        let base = s[..open].trim();
+        if base.is_empty()
+            || !base
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+
+        let mut depth = 0usize;
+        for (idx, ch) in s.char_indices().skip(open) {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 && idx != s.len() - 1 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if depth != 0 {
+            return None;
+        }
+        Some((base, &s[open + 1..s.len() - 1]))
     }
 
     /// Split JSDoc function parameters by commas, respecting nested parens.
@@ -864,7 +1002,13 @@ impl<'a> DeclarationEmitter<'a> {
                 member.push('?');
             }
             member.push_str(": ");
-            member.push_str(&prop_decl.type_text);
+            let type_text = if matches!(prop_decl.type_text.as_str(), "object" | "Object") {
+                self.jsdoc_object_param_nested_type_literal(&params, &qualified_name, 2)
+                    .unwrap_or_else(|| prop_decl.type_text.clone())
+            } else {
+                prop_decl.type_text.clone()
+            };
+            member.push_str(&type_text);
             if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
                 member.push_str(" | undefined");
             }
@@ -879,6 +1023,52 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|member| format!("{member_indent}{member}"))
             .collect();
         (!lines.is_empty()).then(|| format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
+    }
+
+    fn jsdoc_object_param_nested_type_literal(
+        &self,
+        params: &[JsdocParamDecl],
+        object_name: &str,
+        depth: u32,
+    ) -> Option<String> {
+        let prefix = format!("{object_name}.");
+        let mut members = Vec::new();
+        for prop_decl in params.iter().filter(|decl| decl.name.starts_with(&prefix)) {
+            let rest = &prop_decl.name[prefix.len()..];
+            if rest.is_empty() || rest.contains('.') {
+                continue;
+            }
+
+            let mut member = String::new();
+            member.push_str(rest);
+            if prop_decl.optional {
+                member.push('?');
+            }
+            member.push_str(": ");
+            let type_text = if matches!(prop_decl.type_text.as_str(), "object" | "Object") {
+                self.jsdoc_object_param_nested_type_literal(params, &prop_decl.name, depth + 1)
+                    .unwrap_or_else(|| prop_decl.type_text.clone())
+            } else {
+                prop_decl.type_text.clone()
+            };
+            member.push_str(&type_text);
+            if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
+                member.push_str(" | undefined");
+            }
+            member.push(';');
+            members.push(member);
+        }
+        if members.is_empty() {
+            return None;
+        }
+
+        let member_indent = "    ".repeat((self.indent_level + depth) as usize);
+        let closing_indent = "    ".repeat((self.indent_level + depth - 1) as usize);
+        let lines: Vec<String> = members
+            .into_iter()
+            .map(|member| format!("{member_indent}{member}"))
+            .collect();
+        Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
     }
 
     pub(crate) fn jsdoc_satisfies_param_decl_for_parameter(
@@ -2371,13 +2561,18 @@ impl<'a> DeclarationEmitter<'a> {
             && self.js_export_equals_names.is_empty();
 
         let mut decls = Vec::new();
+        let mut variable_decls = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
                 if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                    decls.push(decl);
+                    if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        variable_decls.push(decl);
+                    } else {
+                        decls.push(decl);
+                    }
                 }
             }
         }
@@ -2390,6 +2585,7 @@ impl<'a> DeclarationEmitter<'a> {
                 decls.push(decl);
             }
         }
+        decls.extend(variable_decls);
 
         for decl in decls {
             self.emit_rendered_jsdoc_type_alias(decl, exported);
