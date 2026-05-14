@@ -2635,12 +2635,31 @@ impl<'a> CheckerState<'a> {
                 has_string,
                 has_number,
             } => (wants_string && has_string) || (wants_number && (has_number || has_string)),
+            query::ElementIndexableKind::Union(members) if wants_number && !wants_string => members
+                .iter()
+                .all(|&member| self.is_union_member_number_indexable(member)),
             query::ElementIndexableKind::Union(members) => members
                 .iter()
                 .all(|&member| self.is_element_indexable(member, wants_string, wants_number)),
             query::ElementIndexableKind::Intersection(members) => members
                 .iter()
                 .any(|&member| self.is_element_indexable(member, wants_string, wants_number)),
+            query::ElementIndexableKind::Other => false,
+        }
+    }
+
+    fn is_union_member_number_indexable(&self, object_type: TypeId) -> bool {
+        match query::classify_element_indexable(self.ctx.types, object_type) {
+            query::ElementIndexableKind::Array
+            | query::ElementIndexableKind::Tuple
+            | query::ElementIndexableKind::StringLike => true,
+            query::ElementIndexableKind::ObjectWithIndex { has_number, .. } => has_number,
+            query::ElementIndexableKind::Union(members) => members
+                .iter()
+                .all(|&member| self.is_union_member_number_indexable(member)),
+            query::ElementIndexableKind::Intersection(members) => members
+                .iter()
+                .any(|&member| self.is_union_member_number_indexable(member)),
             query::ElementIndexableKind::Other => false,
         }
     }

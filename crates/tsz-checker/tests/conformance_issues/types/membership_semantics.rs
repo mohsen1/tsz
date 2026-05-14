@@ -102,6 +102,42 @@ function bar<K extends "foo">(key: K) {
 }
 
 #[test]
+fn test_union_numeric_index_requires_common_number_index_surface() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface StrIdx { [k: string]: string; }
+interface NumIdx { [k: number]: number; }
+interface NumIdx2 { [n: number]: boolean; }
+
+type MixedIdxUnion = StrIdx | NumIdx;
+type NumberIdxUnion = NumIdx | NumIdx2;
+
+declare const strIdx: StrIdx;
+declare const mixed: MixedIdxUnion;
+declare const numeric: NumberIdxUnion;
+
+strIdx[42];
+mixed["key"];
+mixed[42];
+numeric[42];
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
+    assert_eq!(
+        ts7053_count, 2,
+        "Expected TS7053 for both mixed union string and numeric index access, while preserving single string-index numeric access and all-number-index union access. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_nullish_and_logical_expressions_do_not_emit_false_ts2322() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

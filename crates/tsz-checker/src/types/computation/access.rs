@@ -1089,15 +1089,29 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if !number_keys.is_empty() {
-                    match self.get_element_access_type_for_literal_number_keys(
-                        object_type_for_access,
-                        &number_keys,
-                        skip_flow_narrowing,
-                    ) {
-                        Some(result) => types.push(result),
-                        None => {
-                            number_keys_ok = false;
-                            report_no_index = true;
+                    let number_keys_missing_index = number_keys.iter().any(|&key| {
+                        let key_type = self.ctx.types.literal_number(key);
+                        let key_index = self.get_numeric_index_from_number(key);
+                        self.should_report_no_index_signature(
+                            pre_resolution_object_type,
+                            key_type,
+                            key_index,
+                        )
+                    });
+                    if number_keys_missing_index {
+                        number_keys_ok = false;
+                        report_no_index = true;
+                    } else {
+                        match self.get_element_access_type_for_literal_number_keys(
+                            object_type_for_access,
+                            &number_keys,
+                            skip_flow_narrowing,
+                        ) {
+                            Some(result) => types.push(result),
+                            None => {
+                                number_keys_ok = false;
+                                report_no_index = true;
+                            }
                         }
                     }
                 }
@@ -1339,39 +1353,48 @@ impl<'a> CheckerState<'a> {
             && let Some(index) = literal_index
             && !self.is_array_like_type(object_type_for_access)
         {
-            let property_name = index.to_string();
-            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
-            result_type = match result {
-                PropertyAccessResult::Success {
-                    type_id,
-                    write_type,
-                    ..
-                } => {
-                    use_index_signature_check = false;
-                    // In write context (assignment target), prefer the setter type.
-                    Some(effective_write_result(type_id, write_type))
-                }
-                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                    use_index_signature_check = false;
-                    Some(property_type.unwrap_or(TypeId::ERROR))
-                }
-                PropertyAccessResult::IsUnknown => {
-                    if self.ctx.compiler_options.strict_null_checks {
+            let key_type = self.ctx.types.literal_number(index as f64);
+            if self.should_report_no_index_signature(
+                pre_resolution_object_type,
+                key_type,
+                Some(index),
+            ) {
+                report_no_index = true;
+            } else {
+                let property_name = index.to_string();
+                let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+                let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+                result_type = match result {
+                    PropertyAccessResult::Success {
+                        type_id,
+                        write_type,
+                        ..
+                    } => {
                         use_index_signature_check = false;
-                        // TS18046: 'x' is of type 'unknown'.
-                        // Without strictNullChecks, unknown is treated like any.
-                        if self.error_is_of_type_unknown(access.expression) {
-                            Some(TypeId::ERROR)
-                        } else {
-                            Some(TypeId::ANY)
-                        }
-                    } else {
-                        None
+                        // In write context (assignment target), prefer the setter type.
+                        Some(effective_write_result(type_id, write_type))
                     }
-                }
-                PropertyAccessResult::PropertyNotFound { .. } => None,
-            };
+                    PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                        use_index_signature_check = false;
+                        Some(property_type.unwrap_or(TypeId::ERROR))
+                    }
+                    PropertyAccessResult::IsUnknown => {
+                        if self.ctx.compiler_options.strict_null_checks {
+                            use_index_signature_check = false;
+                            // TS18046: 'x' is of type 'unknown'.
+                            // Without strictNullChecks, unknown is treated like any.
+                            if self.error_is_of_type_unknown(access.expression) {
+                                Some(TypeId::ERROR)
+                            } else {
+                                Some(TypeId::ANY)
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    PropertyAccessResult::PropertyNotFound { .. } => None,
+                };
+            }
         }
 
         // Handle non-integer numeric literals (e.g., c[1.1], c[-1]) as property name access.
