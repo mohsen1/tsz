@@ -499,8 +499,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         if let Some(sym_id) = sym_id {
             // If this is a fallback from a raw SymbolId-based DefId, check if there's
             // a proper DefId registered for this symbol and redirect through it.
-            if def_identity.is_none()
-                && self.def_to_symbol.borrow().get(&def_id).is_none()
+            if self.def_to_symbol.borrow().get(&def_id).is_none()
                 && let Some(real_def_id) = self.get_existing_def_id(sym_id)
                 && real_def_id != def_id
             {

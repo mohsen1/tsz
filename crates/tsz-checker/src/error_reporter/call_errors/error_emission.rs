@@ -99,6 +99,9 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
             return;
         }
+        if self.should_suppress_constraint_cascade_constructor_argument(arg_type, param_type) {
+            return;
+        }
 
         if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
             return;
@@ -285,6 +288,39 @@ impl<'a> CheckerState<'a> {
         };
 
         self.emit_render_request(idx, request);
+    }
+
+    fn should_suppress_constraint_cascade_constructor_argument(
+        &self,
+        arg_type: TypeId,
+        param_type: TypeId,
+    ) -> bool {
+        if !self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT)
+        {
+            return false;
+        }
+        if !crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, arg_type) {
+            return false;
+        }
+        if crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, param_type)
+            || crate::query_boundaries::common::is_callable_type(self.ctx.types, param_type)
+        {
+            return true;
+        }
+        crate::query_boundaries::common::union_members(self.ctx.types, param_type).is_some_and(
+            |members| {
+                members.iter().all(|&member| {
+                    crate::query_boundaries::common::is_constructor_like_type(
+                        self.ctx.types,
+                        member,
+                    ) || crate::query_boundaries::common::is_callable_type(self.ctx.types, member)
+                })
+            },
+        )
     }
 
     fn trim_single_unbalanced_trailing_type_arg_close(display: String) -> String {
