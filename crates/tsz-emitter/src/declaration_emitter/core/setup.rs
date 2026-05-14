@@ -38,6 +38,7 @@ impl<'a> DeclarationEmitter<'a> {
             arena_to_path: FxHashMap::default(),
             file_idx_to_path: FxHashMap::default(),
             global_symbol_arenas: FxHashMap::default(),
+            bundled_duplicate_global_var_types: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
@@ -142,6 +143,7 @@ impl<'a> DeclarationEmitter<'a> {
             arena_to_path: FxHashMap::default(),
             file_idx_to_path: FxHashMap::default(),
             global_symbol_arenas: FxHashMap::default(),
+            bundled_duplicate_global_var_types: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
@@ -311,6 +313,10 @@ impl<'a> DeclarationEmitter<'a> {
         global_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     ) {
         self.global_symbol_arenas = global_symbol_arenas;
+    }
+
+    pub fn set_bundled_duplicate_global_var_types(&mut self, types: FxHashMap<String, String>) {
+        self.bundled_duplicate_global_var_types = types;
     }
 
     pub const fn set_remove_comments(&mut self, remove: bool) {
