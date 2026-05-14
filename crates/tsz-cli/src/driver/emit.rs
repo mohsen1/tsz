@@ -120,19 +120,19 @@ pub(crate) fn emit_outputs(
         context.program,
         context.options.printer.preserve_const_enums,
     );
-    let bundled_duplicate_var_names = declaration_bundle_path
-        .is_some()
-        .then(|| collect_bundled_duplicate_var_names(context.program))
-        .unwrap_or_default();
-    let bundled_prior_duplicate_var_types = declaration_bundle_path
-        .is_some()
-        .then(|| {
-            build_bundled_prior_duplicate_var_types_by_file(
-                context.program,
-                &bundled_duplicate_var_names,
-            )
-        })
-        .unwrap_or_default();
+    let bundled_duplicate_var_names = if declaration_bundle_path.is_some() {
+        collect_bundled_duplicate_var_names(context.program)
+    } else {
+        Default::default()
+    };
+    let bundled_prior_duplicate_var_types = if declaration_bundle_path.is_some() {
+        build_bundled_prior_duplicate_var_types_by_file(
+            context.program,
+            &bundled_duplicate_var_names,
+        )
+    } else {
+        Default::default()
+    };
 
     // Build the set of JS output paths produced by TypeScript source files
     // (.ts/.tsx/.mts/.cts). When --allowJs is set and a JS input file (e.g.
@@ -525,7 +525,9 @@ pub(crate) fn emit_outputs(
                 // Run usage analysis and calculate required imports if we have type cache
                 if let Some(ref cache) = type_cache {
                     use rustc_hash::FxHashMap;
-                    use tsz::declaration_emitter::usage_analyzer::UsageAnalyzer;
+                    use tsz::declaration_emitter::usage_analyzer::{
+                        UsageAnalyzer, UsageAnalyzerConfig,
+                    };
                     use tsz_emitter::type_cache_view::TypeCacheView;
 
                     // Empty import_name_map for this usage (not needed for auto-import calculation)
@@ -539,20 +541,21 @@ pub(crate) fn emit_outputs(
                         def_to_name: cache.def_to_name.clone(),
                     };
 
-                    let mut analyzer = UsageAnalyzer::new(
-                        &file.arena,
-                        &binder,
-                        &cache_view,
-                        &context.program.type_interner,
-                        std::sync::Arc::clone(&file.arena),
-                        Some(file.file_name.clone()),
-                        &import_name_map,
-                        is_js_input,
-                        file.arena
+                    let mut analyzer = UsageAnalyzer::new(UsageAnalyzerConfig {
+                        arena: &file.arena,
+                        binder: &binder,
+                        type_cache: &cache_view,
+                        type_interner: &context.program.type_interner,
+                        current_arena: std::sync::Arc::clone(&file.arena),
+                        current_file_path: Some(file.file_name.clone()),
+                        import_name_map: &import_name_map,
+                        source_is_js_file: is_js_input,
+                        source_is_declaration_file: file
+                            .arena
                             .get(file.source_file)
                             .and_then(|node| file.arena.get_source_file(node))
                             .is_some_and(|source_file| source_file.is_declaration_file),
-                    );
+                    });
 
                     // Clone used_symbols before calling another method on analyzer
                     let used_symbols = analyzer.analyze(file.source_file).clone();

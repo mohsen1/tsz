@@ -66,21 +66,25 @@ impl<'a> DeclarationEmitter<'a> {
                     self.import_name_map
                 );
                 let mut analyzer = crate::declaration_emitter::usage_analyzer::UsageAnalyzer::new(
-                    self.arena,
-                    binder,
-                    cache,
-                    interner,
-                    std::sync::Arc::clone(current_arena),
-                    self.current_file_path.clone(),
-                    &self.import_name_map,
-                    self.arena
-                        .get(root_idx)
-                        .and_then(|node| self.arena.get_source_file(node))
-                        .is_some_and(|source_file| self.source_file_is_js(source_file)),
-                    self.arena
-                        .get(root_idx)
-                        .and_then(|node| self.arena.get_source_file(node))
-                        .is_some_and(|source_file| source_file.is_declaration_file),
+                    crate::declaration_emitter::usage_analyzer::UsageAnalyzerConfig {
+                        arena: self.arena,
+                        binder,
+                        type_cache: cache,
+                        type_interner: interner,
+                        current_arena: std::sync::Arc::clone(current_arena),
+                        current_file_path: self.current_file_path.clone(),
+                        import_name_map: &self.import_name_map,
+                        source_is_js_file: self
+                            .arena
+                            .get(root_idx)
+                            .and_then(|node| self.arena.get_source_file(node))
+                            .is_some_and(|source_file| self.source_file_is_js(source_file)),
+                        source_is_declaration_file: self
+                            .arena
+                            .get(root_idx)
+                            .and_then(|node| self.arena.get_source_file(node))
+                            .is_some_and(|source_file| source_file.is_declaration_file),
+                    },
                 );
                 let used = analyzer.analyze(root_idx).clone();
                 let foreign = analyzer.get_foreign_symbols();
