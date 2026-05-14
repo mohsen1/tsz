@@ -1,5 +1,4 @@
 use crate::call_checker::CallableContext;
-use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
@@ -168,25 +167,15 @@ impl<'a> CheckerState<'a> {
             {
                 self.clear_type_cache_recursive(func.body);
             }
-            let snap = self.ctx.snapshot_diagnostics();
-            let _ = self.compute_single_call_argument_type(
+            self.compute_callback_argument_type_rollback_unknown_body_diagnostics(
                 arg_idx,
-                Some(contextual_type),
+                contextual_type,
                 check_excess_properties,
                 index,
                 args.len(),
-                false,
                 callable_ctx,
+                &callback_body_spans,
             );
-            self.ctx.rollback_diagnostics_filtered(&snap, |diag| {
-                matches!(
-                    diag.code,
-                    diagnostic_codes::IS_OF_TYPE_UNKNOWN
-                        | diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
-                ) && callback_body_spans
-                    .iter()
-                    .any(|(start, end)| diag.start >= *start && diag.start < *end)
-            });
         }
     }
 
