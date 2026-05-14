@@ -313,5 +313,22 @@ mod tests {
         ] {
             assert!(phases.get(key).is_some(), "missing phase key: {key}");
         }
+
+        let counts = json["counts"]
+            .as_object()
+            .expect("counts serializes as an object");
+        for key in [
+            "files",
+            "root_files",
+            "lib_files",
+            "source_bytes",
+            "diagnostics",
+        ] {
+            assert!(counts.contains_key(key), "missing counts key: {key}");
+        }
+        assert_eq!(
+            counts["source_bytes"], 0,
+            "source_bytes is intentionally schema-visible but unpopulated until #7059"
+        );
     }
 }
