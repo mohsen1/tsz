@@ -1312,6 +1312,30 @@ x = 'hello';
 }
 
 #[test]
+fn template_literal_number_union_expands_to_string_literals() {
+    let source = r#"
+        type Digit = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+        type DigitString = `${Digit}`;
+        declare const digit: DigitString;
+        const check: "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" = digit;
+
+        type Prefixed = `prefix-${0 | 1}-suffix`;
+        declare const prefixed: Prefixed;
+        const prefixedCheck: "prefix-0-suffix" | "prefix-1-suffix" = prefixed;
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics_with_code(
+        &diagnostics,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    );
+    assert!(
+        ts2322.is_empty(),
+        "numeric template literal unions should expand to string literal unions, got: {ts2322:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_generator_yield_missing_value() {
     let source = r"
         interface IterableIterator<T> {}
