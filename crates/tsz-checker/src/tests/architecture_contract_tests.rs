@@ -2170,6 +2170,48 @@ fn test_emitter_must_not_import_checker_internals() {
     );
 }
 
+/// Track 9/10 ratchet: direct `tsz_solver` access from the emitter must not grow.
+///
+/// Existing declaration emit code still reaches into solver APIs while the
+/// `DeclarationSummary`/`PublicApiSummary` boundary is being introduced. This
+/// guard keeps that debt measurable and forces new emit/DTS work to either use a
+/// semantic summary/query boundary or explicitly lower this ceiling after
+/// removing old reach-through.
+#[test]
+fn test_emitter_direct_solver_access_does_not_grow() {
+    let emitter_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-emitter/src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&emitter_src, &mut files);
+
+    let mut direct_solver_lines = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("use tsz_solver") || line.contains("tsz_solver::") {
+                direct_solver_lines.push(format!("{}:{}", path.display(), line_num + 1));
+            }
+        }
+    }
+
+    const DIRECT_SOLVER_ACCESS_LINE_CEILING: usize = 461;
+    assert!(
+        direct_solver_lines.len() <= DIRECT_SOLVER_ACCESS_LINE_CEILING,
+        "Emitter direct solver access grew to {} lines (ceiling: {}). \
+         Route new emit/DTS semantic reads through a compiler semantic view, \
+         declaration summary, or query boundary before increasing this debt. \
+         Direct access lines:\n  {}",
+        direct_solver_lines.len(),
+        DIRECT_SOLVER_ACCESS_LINE_CEILING,
+        direct_solver_lines.join("\n  ")
+    );
+}
+
 /// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]
