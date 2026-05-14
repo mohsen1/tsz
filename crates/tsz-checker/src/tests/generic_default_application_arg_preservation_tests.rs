@@ -3,8 +3,8 @@
 //! with a `new Map()` value to the default-instantiated type must NOT produce
 //! a false TS2322. The underlying rule:
 //!
-//! When a generic body is a plain object type (no Conditional, IndexAccess,
-//! KeyOf, Mapped, or TemplateLiteral operations), Application-form type
+//! When a generic body is a plain object type (no `Conditional`, `IndexAccess`,
+//! `KeyOf`, `Mapped`, or `TemplateLiteral` operations), Application-form type
 //! arguments must be preserved during instantiation so the solver's variance
 //! fast path can fire during compatibility checks. Eagerly expanding
 //! `Map<string, unknown>` to its structural object form breaks the App-vs-App
