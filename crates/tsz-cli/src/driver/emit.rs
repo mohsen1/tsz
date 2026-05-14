@@ -498,7 +498,9 @@ pub(crate) fn emit_outputs(
                 // Run usage analysis and calculate required imports if we have type cache
                 if let Some(ref cache) = type_cache {
                     use rustc_hash::FxHashMap;
-                    use tsz::declaration_emitter::usage_analyzer::UsageAnalyzer;
+                    use tsz::declaration_emitter::usage_analyzer::{
+                        UsageAnalyzer, UsageAnalyzerSourceFlags,
+                    };
                     use tsz_emitter::type_cache_view::TypeCacheView;
 
                     // Empty import_name_map for this usage (not needed for auto-import calculation)
@@ -520,7 +522,14 @@ pub(crate) fn emit_outputs(
                         std::sync::Arc::clone(&file.arena),
                         Some(file.file_name.clone()),
                         &import_name_map,
-                        is_js_input,
+                        UsageAnalyzerSourceFlags {
+                            source_is_js_file: is_js_input,
+                            source_is_declaration_file: file
+                                .arena
+                                .get(file.source_file)
+                                .and_then(|node| file.arena.get_source_file(node))
+                                .is_some_and(|source_file| source_file.is_declaration_file),
+                        },
                     );
 
                     // Clone used_symbols before calling another method on analyzer
