@@ -100,39 +100,49 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(&initializer.0)
                 .copied()
                 .or_else(|| self.get_node_type_or_names(&[decl_idx, decl_name, initializer]));
-            if let Some(func_type_id) = func_type_id
-                && let Some(return_type_id) =
+            if let Some(func_type_id) = func_type_id {
+                if let Some(predicate_text) =
+                    self.function_type_predicate_text(func_type_id, func.type_parameters.as_ref())
+                {
+                    self.write(&predicate_text);
+                    return true;
+                } else if let Some(return_type_id) =
                     tsz_solver::type_queries::get_return_type(*interner, func_type_id)
-            {
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && func.body.is_some()
-                    && self.body_returns_void(func.body)
                 {
-                    self.write("void");
-                } else if let Some(type_text) = preferred_return_type_text.as_ref()
-                    && (self.should_prefer_source_return_type_text(type_text, return_type_id)
-                        || self.source_return_type_is_function_type_param(func, type_text))
-                {
-                    let (type_text, _) =
-                        self.function_return_type_text_for_declaration_scope(func, type_text);
-                    self.write(&type_text);
-                } else {
-                    let return_type_text = if let Some(ref type_params) = func.type_parameters
-                        && !type_params.nodes.is_empty()
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && func.body.is_some()
+                        && self.body_returns_void(func.body)
                     {
-                        self.print_type_id_with_outer_type_params(return_type_id, type_params)
+                        self.write("void");
+                    } else if let Some(type_text) = preferred_return_type_text.as_ref()
+                        && (self.should_prefer_source_return_type_text(type_text, return_type_id)
+                            || self.source_return_type_is_function_type_param(func, type_text))
+                    {
+                        let (type_text, _) =
+                            self.function_return_type_text_for_declaration_scope(func, type_text);
+                        self.write(&type_text);
                     } else {
-                        self.print_type_id(return_type_id)
-                    };
-                    let return_type_text = self
-                        .rewrite_returned_auto_accessor_parameter_unknowns(func, &return_type_text);
-                    let return_type_text = self.add_returned_object_member_comments_to_type_text(
-                        initializer,
-                        &return_type_text,
-                    );
-                    self.write(&return_type_text);
+                        let return_type_text = if let Some(ref type_params) = func.type_parameters
+                            && !type_params.nodes.is_empty()
+                        {
+                            self.print_type_id_with_outer_type_params(return_type_id, type_params)
+                        } else {
+                            self.print_type_id(return_type_id)
+                        };
+                        let return_type_text = self
+                            .rewrite_returned_auto_accessor_parameter_unknowns(
+                                func,
+                                &return_type_text,
+                            );
+                        let return_type_text = self
+                            .add_returned_object_member_comments_to_type_text(
+                                initializer,
+                                &return_type_text,
+                            );
+                        self.write(&return_type_text);
+                    }
+                    return true;
                 }
-                return true;
             }
         }
 
@@ -145,6 +155,34 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         true
+    }
+
+    pub(in crate::declaration_emitter) fn function_initializer_has_type_predicate(
+        &self,
+        decl_idx: NodeIndex,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) else {
+            return false;
+        };
+        cache
+            .node_types
+            .get(&initializer.0)
+            .copied()
+            .or_else(|| self.get_node_type_or_names(&[decl_idx, decl_name, initializer]))
+            .and_then(|func_type_id| {
+                tsz_solver::type_queries::flow::extract_predicate_signature(*interner, func_type_id)
+            })
+            .is_some()
     }
 
     pub(in crate::declaration_emitter) fn maybe_emit_non_portable_function_return_diagnostic(

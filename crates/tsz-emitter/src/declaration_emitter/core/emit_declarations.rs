@@ -1150,192 +1150,228 @@ impl<'a> DeclarationEmitter<'a> {
                 .copied()
                 .or_else(|| self.get_node_type_or_names(&[func_name]))
                 .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
-            if let Some(func_type_id) = func_type_id
-                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
-            {
-                let effective_return_type_id = if func_body.is_some() {
-                    self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
-                        .or_else(|| {
-                            self.refine_object_rest_return_type_from_identifier(
-                                func_body,
-                                return_type_id,
+            if let Some(func_type_id) = func_type_id {
+                if let Some(predicate_text) =
+                    self.function_type_predicate_text(func_type_id, func.type_parameters.as_ref())
+                {
+                    self.write(": ");
+                    self.write(&predicate_text);
+                    self.write(";");
+                    self.write_line();
+                    if should_emit_late_bound_namespace {
+                        self.emit_ts_late_bound_function_namespace_from_members(
+                            func.name,
+                            is_exported,
+                            &late_bound_members,
+                        );
+                    }
+                    if !self.emit_js_function_like_class_if_needed(
+                        func.name,
+                        &func.parameters,
+                        func.body,
+                        is_exported,
+                        func_idx,
+                    ) {
+                        self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+                    }
+                    self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+                    if let Some(body_node) = self.arena.get(func_body) {
+                        self.skip_comments_in_node(body_node.pos, body_node.end);
+                    }
+                    return;
+                }
+                if let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+                {
+                    let effective_return_type_id = if func_body.is_some() {
+                        self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
+                            .or_else(|| {
+                                self.refine_object_rest_return_type_from_identifier(
+                                    func_body,
+                                    return_type_id,
+                                )
+                            })
+                            .unwrap_or(return_type_id)
+                    } else {
+                        return_type_id
+                    };
+                    let (preferred_return, direct_function_return) =
+                        self.function_body_return_hint(func, func_body);
+                    let scoped_preferred_return = preferred_return.as_ref().map(|type_text| {
+                        let (type_text, substituted_parameter_type_query) =
+                            self.function_return_type_text_for_declaration_scope(func, type_text);
+                        (
+                            self.restore_mapped_return_type_param_constraints(func, &type_text),
+                            substituted_parameter_type_query,
+                        )
+                    });
+                    // If solver returned `any` OR `undefined` but the function body clearly
+                    // returns void (every control-flow exit is a bare `return;` or falls
+                    // off the end), prefer void. tsc's rule: an unannotated function whose
+                    // only return is `return;` (no expression) has return type `void`, not
+                    // `undefined` — the solver approximates it as `undefined` from the
+                    // runtime value, which we widen to `void` here. Matches
+                    // declFileTypeAnnotationBuiltInType.
+                    let solver_void_like = effective_return_type_id
+                        == tsz_solver::types::TypeId::ANY
+                        || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED
+                        || effective_return_type_id == tsz_solver::types::TypeId::NEVER;
+                    if solver_void_like && func_body.is_some() && self.body_returns_void(func_body)
+                    {
+                        self.write(": void");
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
+                            self.async_returned_function_initializer_promise_type_text(
+                                func, func_body,
                             )
                         })
-                        .unwrap_or(return_type_id)
-                } else {
-                    return_type_id
-                };
-                let (preferred_return, direct_function_return) =
-                    self.function_body_return_hint(func, func_body);
-                let scoped_preferred_return = preferred_return.as_ref().map(|type_text| {
-                    let (type_text, substituted_parameter_type_query) =
-                        self.function_return_type_text_for_declaration_scope(func, type_text);
-                    (
-                        self.restore_mapped_return_type_param_constraints(func, &type_text),
-                        substituted_parameter_type_query,
-                    )
-                });
-                // If solver returned `any` OR `undefined` but the function body clearly
-                // returns void (every control-flow exit is a bare `return;` or falls
-                // off the end), prefer void. tsc's rule: an unannotated function whose
-                // only return is `return;` (no expression) has return type `void`, not
-                // `undefined` — the solver approximates it as `undefined` from the
-                // runtime value, which we widen to `void` here. Matches
-                // declFileTypeAnnotationBuiltInType.
-                let solver_void_like = effective_return_type_id == tsz_solver::types::TypeId::ANY
-                    || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED
-                    || effective_return_type_id == tsz_solver::types::TypeId::NEVER;
-                if solver_void_like && func_body.is_some() && self.body_returns_void(func_body) {
-                    self.write(": void");
-                } else if let Some(type_text) = func_body
-                    .is_some()
-                    .then(|| {
-                        self.async_returned_function_initializer_promise_type_text(func, func_body)
-                    })
-                    .flatten()
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if let Some((type_text, substituted_parameter_type_query)) =
-                    scoped_preferred_return.as_ref()
-                    && let Some(func_name_text) = self.get_identifier_text(func_name)
-                    && let printed_return_type = self.print_type_id(effective_return_type_id)
-                    && (direct_function_return
-                        || printed_return_type == format!("ReturnType<typeof {func_name_text}>")
-                        || self.should_prefer_source_return_type_text(
-                            preferred_return.as_deref().unwrap_or(type_text),
-                            effective_return_type_id,
-                        )
-                        || self.source_return_type_is_function_type_param(func, type_text)
-                        || self.source_return_type_preserves_function_type_param(
-                            func,
-                            type_text,
-                            effective_return_type_id,
-                        )
-                        || (*substituted_parameter_type_query && !type_text.contains("typeof ")))
-                {
-                    self.write(": ");
-                    self.write(type_text);
-                } else if self.emit_single_nameable_new_return_type_if_solver_any(
-                    func,
-                    func_body,
-                    func_name,
-                    effective_return_type_id,
-                ) {
-                } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
-                    && let Some(type_text) = preferred_return
-                {
-                    let (type_text, _) =
-                        self.function_return_type_text_for_declaration_scope(func, &type_text);
-                    if let Some(returned_identifier) =
-                        self.function_body_unique_return_identifier(func_body)
-                        && let Some(return_type_id) =
-                            self.reference_declared_type_id(returned_identifier)
-                        && let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
+                        .flatten()
                     {
-                        self.check_non_portable_type_references(
-                            return_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    if let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
-                    {
-                        self.check_non_portable_type_references(
-                            effective_return_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                        let _ = self.emit_non_portable_import_type_text_diagnostics(
-                            &type_text,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
-                    && func_body.is_some()
-                    && self
-                        .get_identifier_text(func.name)
-                        .is_some_and(|name| self.function_body_returns_identifier(func_body, &name))
-                {
-                    self.write(": typeof ");
-                    self.emit_node(func.name);
-                } else {
-                    if func_body.is_some()
-                        && let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
-                    {
-                        self.check_non_portable_type_references(
-                            effective_return_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    self.write(": ");
-                    if let Some(ref tp) = func.type_parameters
-                        && !tp.nodes.is_empty()
-                    {
-                        let printed_type_text =
-                            self.inferred_function_return_type_text(func, effective_return_type_id);
-                        let printed_type_text = self
-                            .expand_rest_tuple_parameters_in_function_type_text(
-                                func_body,
-                                &printed_type_text,
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some((type_text, substituted_parameter_type_query)) =
+                        scoped_preferred_return.as_ref()
+                        && let Some(func_name_text) = self.get_identifier_text(func_name)
+                        && let printed_return_type = self.print_type_id(effective_return_type_id)
+                        && (direct_function_return
+                            || printed_return_type
+                                == format!("ReturnType<typeof {func_name_text}>")
+                            || self.should_prefer_source_return_type_text(
+                                preferred_return.as_deref().unwrap_or(type_text),
+                                effective_return_type_id,
                             )
-                            .unwrap_or(printed_type_text);
-                        self.write(&printed_type_text);
-                        if let Some(name_text) = self.get_identifier_text(func_name)
+                            || self.source_return_type_is_function_type_param(func, type_text)
+                            || self.source_return_type_preserves_function_type_param(
+                                func,
+                                type_text,
+                                effective_return_type_id,
+                            )
+                            || (*substituted_parameter_type_query
+                                && !type_text.contains("typeof ")))
+                    {
+                        self.write(": ");
+                        self.write(type_text);
+                    } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                        func,
+                        func_body,
+                        func_name,
+                        effective_return_type_id,
+                    ) {
+                    } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
+                        && let Some(type_text) = preferred_return
+                    {
+                        let (type_text, _) =
+                            self.function_return_type_text_for_declaration_scope(func, &type_text);
+                        if let Some(returned_identifier) =
+                            self.function_body_unique_return_identifier(func_body)
+                            && let Some(return_type_id) =
+                                self.reference_declared_type_id(returned_identifier)
+                            && let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
                             && let Some(file_path) = self.current_file_path.clone()
                         {
-                            let _ = self.emit_non_portable_import_type_text_diagnostics(
-                                &printed_type_text,
+                            self.check_non_portable_type_references(
+                                return_type_id,
                                 &name_text,
                                 &file_path,
                                 name_node.pos,
                                 name_node.end - name_node.pos,
                             );
                         }
-                    } else {
-                        let printed_type_text = self.print_type_id(effective_return_type_id);
-                        let printed_type_text = self
-                            .rewrite_returned_auto_accessor_parameter_unknowns(
-                                func,
-                                &printed_type_text,
-                            );
-                        let printed_type_text = self
-                            .expand_rest_tuple_parameters_in_function_type_text(
-                                func_body,
-                                &printed_type_text,
-                            )
-                            .unwrap_or(printed_type_text);
-                        self.write(&printed_type_text);
                         if let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
                             && let Some(file_path) = self.current_file_path.clone()
                         {
-                            let _ = self.emit_non_portable_import_type_text_diagnostics(
-                                &printed_type_text,
+                            self.check_non_portable_type_references(
+                                effective_return_type_id,
                                 &name_text,
                                 &file_path,
                                 name_node.pos,
                                 name_node.end - name_node.pos,
                             );
+                            let _ = self.emit_non_portable_import_type_text_diagnostics(
+                                &type_text,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
+                        && func_body.is_some()
+                        && self.get_identifier_text(func.name).is_some_and(|name| {
+                            self.function_body_returns_identifier(func_body, &name)
+                        })
+                    {
+                        self.write(": typeof ");
+                        self.emit_node(func.name);
+                    } else {
+                        if func_body.is_some()
+                            && let Some(name_text) = self.get_identifier_text(func_name)
+                            && let Some(name_node) = self.arena.get(func_name)
+                            && let Some(file_path) = self.current_file_path.clone()
+                        {
+                            self.check_non_portable_type_references(
+                                effective_return_type_id,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
+                        self.write(": ");
+                        if let Some(ref tp) = func.type_parameters
+                            && !tp.nodes.is_empty()
+                        {
+                            let printed_type_text = self
+                                .inferred_function_return_type_text(func, effective_return_type_id);
+                            let printed_type_text = self
+                                .expand_rest_tuple_parameters_in_function_type_text(
+                                    func_body,
+                                    &printed_type_text,
+                                )
+                                .unwrap_or(printed_type_text);
+                            self.write(&printed_type_text);
+                            if let Some(name_text) = self.get_identifier_text(func_name)
+                                && let Some(name_node) = self.arena.get(func_name)
+                                && let Some(file_path) = self.current_file_path.clone()
+                            {
+                                let _ = self.emit_non_portable_import_type_text_diagnostics(
+                                    &printed_type_text,
+                                    &name_text,
+                                    &file_path,
+                                    name_node.pos,
+                                    name_node.end - name_node.pos,
+                                );
+                            }
+                        } else {
+                            let printed_type_text = self.print_type_id(effective_return_type_id);
+                            let printed_type_text = self
+                                .rewrite_returned_auto_accessor_parameter_unknowns(
+                                    func,
+                                    &printed_type_text,
+                                );
+                            let printed_type_text = self
+                                .expand_rest_tuple_parameters_in_function_type_text(
+                                    func_body,
+                                    &printed_type_text,
+                                )
+                                .unwrap_or(printed_type_text);
+                            self.write(&printed_type_text);
+                            if let Some(name_text) = self.get_identifier_text(func_name)
+                                && let Some(name_node) = self.arena.get(func_name)
+                                && let Some(file_path) = self.current_file_path.clone()
+                            {
+                                let _ = self.emit_non_portable_import_type_text_diagnostics(
+                                    &printed_type_text,
+                                    &name_text,
+                                    &file_path,
+                                    name_node.pos,
+                                    name_node.end - name_node.pos,
+                                );
+                            }
                         }
                     }
                 }
