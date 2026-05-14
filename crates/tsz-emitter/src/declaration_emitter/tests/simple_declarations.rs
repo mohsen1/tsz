@@ -2678,6 +2678,73 @@ class Example {
 }
 
 #[test]
+fn test_js_object_namespace_yuidoc_overload_tags_emit_signatures() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const example1 = {
+  /**
+   * @overload Example1(value)
+   *   Creates Example1
+   *   @param value [String]
+   */
+  constructor: function Example1(value, options) {},
+};
+
+const example2 = {
+  /**
+   * Example 2
+   *
+   * @overload Example2(value)
+   *   Creates Example2
+   *   @param value [String]
+   *   @param secretAccessKey [String]
+   *   @param sessionToken [String]
+   * @overload Example2(options)
+   *   Creates Example2
+   *   @option options value [String]
+   */
+  constructor: function Example2() {},
+};
+
+const example3 = {
+  /**
+   * @overload evaluate(options = {}, [callback])
+   *   Evaluate something
+   *   @param options [map]
+   *   @return [string] returns evaluation result
+   */
+  evaluate: function evaluate(options, callback) {},
+};
+"#,
+    );
+
+    assert!(
+        output.contains("function constructor(value: any): any;"),
+        "Expected simple YUIDoc overload param to emit: {output}"
+    );
+    assert!(
+        output.contains(
+            "export function constructor_1(value: any, secretAccessKey: any, sessionToken: any): any;"
+        ),
+        "Expected documented YUIDoc params to emit under constructor alias: {output}"
+    );
+    assert!(
+        output.contains("export function constructor_1(): any;")
+            && output.contains("export { constructor_1 as constructor };"),
+        "Expected constructor overload alias export: {output}"
+    );
+    assert!(
+        output.contains("function evaluate(): any;"),
+        "Expected complex YUIDoc overload signature to emit as zero-arg any fallback: {output}"
+    );
+    assert!(
+        !output.contains("constructor(value: any, options: any)")
+            && !output.contains("evaluate(options: any"),
+        "Did not expect implementation signatures for YUIDoc overload members: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"

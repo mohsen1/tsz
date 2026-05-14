@@ -503,6 +503,11 @@ impl<'a> DeclarationEmitter<'a> {
                         let Some(func) = self.arena.get_function(init_node) else {
                             continue;
                         };
+                        if self.emit_js_namespace_function_member_overloads_if_possible(
+                            member_idx, prop.name,
+                        ) {
+                            continue;
+                        }
                         self.emit_js_namespace_function_member(
                             prop.name,
                             func.type_parameters.as_ref(),
@@ -543,6 +548,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+        self.emit_js_object_literal_namespace_member_type_aliases(&object);
         true
     }
 
@@ -2138,6 +2144,11 @@ impl<'a> DeclarationEmitter<'a> {
                         let Some(func) = self.arena.get_function(member_init_node) else {
                             continue;
                         };
+                        if self.emit_js_namespace_function_member_overloads_if_possible(
+                            member_idx, prop.name,
+                        ) {
+                            continue;
+                        }
                         self.emit_js_namespace_function_member(
                             prop.name,
                             func.type_parameters.as_ref(),
@@ -2175,6 +2186,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("}");
         self.write_line();
         self.emitted_module_indicator = true;
+        self.emit_js_object_literal_namespace_member_type_aliases(&object);
         true
     }
 
@@ -2885,6 +2897,97 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.write(";");
         self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_namespace_function_member_overloads_if_possible(
+        &mut self,
+        member_idx: NodeIndex,
+        name_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let jsdoc_chain =
+            self.leading_jsdoc_comment_chain_for_pos_preserving_inner_indent(member_node.pos);
+        let overloads = Self::jsdoc_overload_signatures_from_chain(&jsdoc_chain);
+        if overloads.is_empty() {
+            return false;
+        }
+
+        let name_text = self.get_identifier_text(name_idx);
+        let alias_text = if overloads.len() > 1 && name_text.as_deref() == Some("constructor") {
+            Some(self.generate_unique_name("constructor"))
+        } else {
+            None
+        };
+
+        for overload in &overloads {
+            self.emit_jsdoc_overload_comment(&overload.comment);
+            self.write_indent();
+            if alias_text.is_some() {
+                self.write("export ");
+            }
+            self.write("function ");
+            if let Some(alias) = alias_text.as_deref() {
+                self.write(alias);
+            } else {
+                self.emit_node(name_idx);
+            }
+            self.emit_jsdoc_template_parameters(&overload.type_params);
+            self.write("(");
+            for (idx, param) in overload.params.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                if param.rest {
+                    self.write("...");
+                }
+                self.write(&param.name);
+                if param.optional && !param.rest {
+                    self.write("?");
+                }
+                self.write(": ");
+                self.write(&param.type_text);
+            }
+            self.write("): ");
+            self.write(overload.return_type.as_deref().unwrap_or("any"));
+            self.write(";");
+            self.write_line();
+        }
+
+        if let Some(alias) = alias_text {
+            self.write_indent();
+            self.write("export { ");
+            self.write(&alias);
+            self.write(" as ");
+            self.emit_node(name_idx);
+            self.write(" };");
+            self.write_line();
+        }
+
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_member_type_aliases(
+        &mut self,
+        object: &tsz_parser::parser::node::LiteralExprData,
+    ) {
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let jsdoc_chain =
+                self.leading_jsdoc_comment_chain_for_pos_preserving_inner_indent(member_node.pos);
+            for jsdoc in jsdoc_chain {
+                let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) else {
+                    continue;
+                };
+                self.emit_rendered_jsdoc_type_alias(decl, false);
+            }
+        }
     }
 
     pub(in crate::declaration_emitter) fn emit_js_namespace_value_member(

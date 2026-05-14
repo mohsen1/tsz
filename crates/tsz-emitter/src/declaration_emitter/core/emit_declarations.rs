@@ -760,12 +760,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("/**");
         self.write_line();
         for line in jsdoc.trim().lines() {
+            let line = line.trim_end();
             self.write_indent();
-            if line.trim().is_empty() {
+            if line.trim_start().is_empty() {
                 self.write(" *");
             } else {
                 self.write(" * ");
-                self.write(line.trim());
+                self.write(line);
             }
             self.write_line();
         }

@@ -339,6 +339,88 @@ impl<'a> DeclarationEmitter<'a> {
             .collect()
     }
 
+    pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_pos_preserving_inner_indent(
+        &self,
+        pos: u32,
+    ) -> Vec<String> {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return Vec::new();
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let nearest = self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .filter(|comment| {
+                Self::jsdoc_attaches_through_var_prefix(&text[comment.end as usize..actual_start])
+            })
+            .max_by_key(|comment| comment.end);
+
+        let Some(nearest) = nearest else {
+            return Vec::new();
+        };
+
+        let mut chain = vec![Self::jsdoc_content_preserving_inner_indent(nearest, text)];
+        let mut current_start = nearest.pos as usize;
+        for comment in self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end <= nearest.pos)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            let between = &text[comment.end as usize..current_start];
+            if !between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                break;
+            }
+            chain.push(Self::jsdoc_content_preserving_inner_indent(comment, text));
+            current_start = comment.pos as usize;
+        }
+        chain.reverse();
+        chain
+    }
+
+    fn jsdoc_content_preserving_inner_indent(
+        comment: &tsz_common::comments::CommentRange,
+        text: &str,
+    ) -> String {
+        let raw = &text[comment.pos as usize..comment.end as usize];
+        let inner = raw
+            .strip_prefix("/**")
+            .and_then(|rest| rest.strip_suffix("*/"))
+            .unwrap_or(raw);
+
+        let mut lines = inner
+            .lines()
+            .map(|line| {
+                let line = line.trim_start();
+                let line = line.strip_prefix('*').unwrap_or(line);
+                let line = line.strip_prefix(' ').unwrap_or(line);
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>();
+        while lines.first().is_some_and(|line| line.is_empty()) {
+            lines.remove(0);
+        }
+        while lines.last().is_some_and(|line| line.is_empty()) {
+            lines.pop();
+        }
+        lines.join("\n")
+    }
+
     pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_pos_with_style(
         &self,
         pos: u32,
@@ -982,14 +1064,27 @@ impl<'a> DeclarationEmitter<'a> {
 
             let type_params = Self::parse_jsdoc_template_params(jsdoc);
             for (idx, &start) in overload_starts.iter().enumerate() {
+                let overload_line = &lines[start];
                 let end = overload_starts
                     .get(idx + 1)
                     .copied()
                     .unwrap_or_else(|| Self::jsdoc_last_overload_segment_end(&lines, start));
                 let segment = lines[start..end].join("\n");
-                let params = Self::parse_jsdoc_param_decls(&segment);
+                let simple_yuidoc_overload =
+                    Self::jsdoc_yuidoc_overload_has_simple_parameter_list(overload_line);
+                let params = {
+                    let parsed = Self::parse_jsdoc_param_decls(&segment);
+                    if parsed.is_empty() && simple_yuidoc_overload {
+                        Self::parse_jsdoc_yuidoc_param_decls(&segment)
+                    } else {
+                        parsed
+                    }
+                };
                 let return_type = Self::parse_jsdoc_return_type_text(&segment);
-                if params.is_empty() && return_type.is_none() {
+                if params.is_empty()
+                    && return_type.is_none()
+                    && Self::jsdoc_yuidoc_overload_signature_text(overload_line).is_none()
+                {
                     continue;
                 }
 
@@ -1002,6 +1097,54 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         overloads
+    }
+
+    fn jsdoc_yuidoc_overload_signature_text(line: &str) -> Option<&str> {
+        let rest = line.strip_prefix("@overload")?.trim();
+        (!rest.is_empty()).then_some(rest)
+    }
+
+    fn jsdoc_yuidoc_overload_has_simple_parameter_list(line: &str) -> bool {
+        let Some(signature) = Self::jsdoc_yuidoc_overload_signature_text(line) else {
+            return false;
+        };
+        let Some(open_idx) = signature.find('(') else {
+            return false;
+        };
+        let Some(close_idx) = signature.rfind(')') else {
+            return false;
+        };
+        if close_idx <= open_idx {
+            return false;
+        }
+
+        signature[open_idx + 1..close_idx]
+            .split(',')
+            .map(str::trim)
+            .all(|param| {
+                !param.is_empty()
+                    && param
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            })
+    }
+
+    fn parse_jsdoc_yuidoc_param_decls(jsdoc: &str) -> Vec<JsdocParamDecl> {
+        jsdoc
+            .lines()
+            .filter_map(|raw_line| {
+                let line = raw_line.trim_start_matches('*').trim();
+                let rest = line.strip_prefix("@param")?.trim();
+                let raw_name = rest.split_whitespace().next()?;
+                let (name, optional) = Self::normalize_jsdoc_param_name(raw_name);
+                (!name.is_empty()).then_some(JsdocParamDecl {
+                    name,
+                    type_text: "any".to_string(),
+                    optional,
+                    rest: false,
+                })
+            })
+            .collect()
     }
 
     fn jsdoc_last_overload_segment_end(lines: &[String], start: usize) -> usize {
@@ -1997,6 +2140,8 @@ impl<'a> DeclarationEmitter<'a> {
         let mut name = None;
         let mut params = Vec::new();
         let mut return_type = None;
+        let mut seen_callback = false;
+        let mut params_from_inline_callback = false;
 
         for raw_line in jsdoc.lines() {
             let line = raw_line.trim_start_matches('*').trim();
@@ -2005,14 +2150,24 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             if let Some(rest) = line.strip_prefix("@callback") {
-                let callback_name = rest.trim();
+                seen_callback = true;
+                let callback_name = rest.split_whitespace().next().unwrap_or_default();
                 if !callback_name.is_empty() {
                     name = Some(callback_name.to_string());
+                }
+                if params.is_empty()
+                    && let Some(param_names) = Self::jsdoc_callback_inline_param_names(rest)
+                {
+                    params.extend(param_names.into_iter().map(|param| format!("{param}: any")));
+                    params_from_inline_callback = true;
                 }
                 continue;
             }
 
             if let Some(rest) = line.strip_prefix("@param") {
+                if !seen_callback || params_from_inline_callback {
+                    continue;
+                }
                 let rest = rest.trim();
                 if rest.starts_with('{')
                     && let Some(end) = rest[1..].find('}')
@@ -2041,6 +2196,11 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         params.push(format!("{param_name}: {ts_type}"));
                     }
+                } else if let Some(param_name) = rest.split_whitespace().next() {
+                    let (param_name, _) = Self::normalize_jsdoc_param_name(param_name);
+                    if !param_name.is_empty() {
+                        params.push(format!("{param_name}: any"));
+                    }
                 }
                 continue;
             }
@@ -2066,6 +2226,53 @@ impl<'a> DeclarationEmitter<'a> {
         let name = name?;
         let return_type = return_type.unwrap_or_else(|| "any".to_string());
         Some((name, format!("({}) => {return_type}", params.join(", "))))
+    }
+
+    fn jsdoc_callback_inline_param_names(rest: &str) -> Option<Vec<String>> {
+        let open_idx = rest.find('(')?;
+        let close_idx = rest[open_idx + 1..].find(')')? + open_idx + 1;
+        let params = rest[open_idx + 1..close_idx]
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        (!params.is_empty()).then_some(params)
+    }
+
+    fn jsdoc_callback_inline_description_lines(jsdoc: &str) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut in_callback_description = false;
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_end();
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("@callback") {
+                let mut parts = rest.trim().splitn(2, char::is_whitespace);
+                let _name = parts.next();
+                if let Some(description) = parts.next().map(str::trim_start)
+                    && !description.is_empty()
+                {
+                    lines.push(description.to_string());
+                }
+                in_callback_description = true;
+                continue;
+            }
+
+            if !in_callback_description {
+                continue;
+            }
+            if trimmed.starts_with("@param")
+                || trimmed.starts_with("@return")
+                || trimmed.starts_with("@returns")
+                || trimmed.starts_with("@see")
+            {
+                break;
+            }
+            if !line.is_empty() {
+                lines.push(line.to_string());
+            }
+        }
+        lines
     }
 
     pub(crate) fn parse_jsdoc_template_params(jsdoc: &str) -> Vec<String> {
@@ -2535,6 +2742,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if let Some((name, type_text)) = Self::parse_jsdoc_callback_alias(jsdoc) {
+            let description_lines = if description_lines.is_empty() {
+                Self::jsdoc_callback_inline_description_lines(jsdoc)
+            } else {
+                description_lines
+            };
             return Some(JsdocTypeAliasDecl {
                 name,
                 type_params,
