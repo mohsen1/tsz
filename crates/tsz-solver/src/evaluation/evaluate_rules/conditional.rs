@@ -69,7 +69,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             let cond = &current_cond;
-
             // Cycle detection: if we've seen this exact conditional state before,
             // the tail-recursion loop is cycling. Return ERROR to break the loop.
             if tail_recursion_count > 0
@@ -2372,6 +2371,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let substituted_true = self.substitute_infer(cond.true_type, &bindings);
             return Some(self.evaluate(substituted_true));
         }
+        if self.application_infer_bases_match(check_type, cond.extends_type, &mut checker) {
+            return Some(self.evaluate(cond.false_type));
+        }
 
         // Last-chance recovery: reduce the source through generic-alias bodies
         // whose alias body is a conditional that yields an Application form
@@ -2411,6 +2413,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         None
+    }
+
+    fn application_infer_bases_match(
+        &self,
+        check_type: TypeId,
+        extends_type: TypeId,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let (
+            Some(TypeData::Application(check_app_id)),
+            Some(TypeData::Application(pattern_app_id)),
+        ) = (
+            self.interner().lookup(check_type),
+            self.interner().lookup(extends_type),
+        )
+        else {
+            return false;
+        };
+        let check_app = self.interner().type_application(check_app_id);
+        let pattern_app = self.interner().type_application(pattern_app_id);
+        check_app.args.len() == pattern_app.args.len()
+            && (check_app.base == pattern_app.base
+                || (checker.is_subtype_of(check_app.base, pattern_app.base)
+                    && checker.is_subtype_of(pattern_app.base, check_app.base)))
     }
 
     /// Cheap pre-check before `reduce_alias_body_to_application_form`: only
