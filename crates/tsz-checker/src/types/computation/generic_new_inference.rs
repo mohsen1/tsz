@@ -337,24 +337,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn default_current_infer_placeholders_to_unknown(&self, type_id: TypeId) -> TypeId {
-        let mut substitution = tsz_solver::TypeSubstitution::new();
-        for ty in common::collect_all_types(self.ctx.types, type_id) {
-            let Some(info) = common::type_param_info(self.ctx.types, ty) else {
-                continue;
-            };
-            let name = self.ctx.types.resolve_atom_ref(info.name);
-            if name.starts_with("__infer_") && !name.starts_with("__infer_src_") {
-                substitution.insert(info.name, TypeId::UNKNOWN);
-            }
-        }
-        if substitution.is_empty() {
-            type_id
-        } else {
-            common::instantiate_type(self.ctx.types, type_id, &substitution)
-        }
-    }
-
     pub(super) fn report_direct_constructor_type_param_constraint_mismatches(
         &mut self,
         shape: &tsz_solver::FunctionShape,

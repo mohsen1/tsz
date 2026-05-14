@@ -1426,53 +1426,6 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.in_const_assertion = prev_in_const_assertion;
 
-        if is_generic_new
-            && inferred_new_type_args.is_none()
-            && let Some(shape) = constructor_shape.as_ref()
-        {
-            let evaluated_shape = {
-                let new_params: Vec<_> = shape
-                    .params
-                    .iter()
-                    .map(|p| tsz_solver::ParamInfo {
-                        name: p.name,
-                        type_id: self.evaluate_type_with_env(p.type_id),
-                        optional: p.optional,
-                        rest: p.rest,
-                    })
-                    .collect();
-                tsz_solver::FunctionShape {
-                    params: new_params,
-                    return_type: shape.return_type,
-                    this_type: shape.this_type,
-                    type_params: shape.type_params.clone(),
-                    type_predicate: shape.type_predicate,
-                    is_constructor: shape.is_constructor,
-                    is_method: shape.is_method,
-                }
-            };
-            let mut substitution = {
-                let env = self.ctx.type_env.borrow();
-                call_checker::compute_contextual_types_with_context(
-                    self.ctx.types,
-                    &self.ctx,
-                    &env,
-                    &evaluated_shape,
-                    &arg_types,
-                    contextual_type,
-                )
-            };
-            self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
-            let type_args: Vec<TypeId> = shape
-                .type_params
-                .iter()
-                .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
-                .collect();
-            if self.new_type_args_are_applyable(shape, &type_args, &substitution) {
-                inferred_new_type_args = Some(type_args);
-            }
-        }
-
         // For generic constructors (without const type params), widen scalar literal
         // arg types for error display. During arg collection, preserve_literal_types
         // was true so that generic inference gets precise literal types (e.g., `true`
@@ -1480,29 +1433,23 @@ impl<'a> CheckerState<'a> {
         // type (`boolean`, not `true`). The function call path achieves this via its
         // multi-pass inference; here we widen explicitly post-collection.
         if is_generic_new && !has_const_type_params {
-            for arg_type in arg_types.iter_mut() {
-                *arg_type =
-                    tsz_solver::operations::widening::widen_literal_type(self.ctx.types, *arg_type);
+            let preserve_literals = constructor_shape
+                .as_ref()
+                .map(|shape| self.generic_new_literal_preservation_mask(shape, arg_types.len()))
+                .unwrap_or_default();
+            for (i, arg_type) in arg_types.iter_mut().enumerate() {
+                if !preserve_literals.get(i).copied().unwrap_or(false) {
+                    *arg_type = tsz_solver::operations::widening::widen_literal_type(
+                        self.ctx.types,
+                        *arg_type,
+                    );
+                }
             }
         }
         if let Some(type_args) = &inferred_new_type_args {
             constructor_type =
                 self.apply_type_argument_ids_to_constructor_type(constructor_type, type_args);
         }
-
-        let arg_types_for_resolution: Vec<TypeId> = if is_generic_new
-            && inferred_new_type_args.is_none()
-            && !has_const_type_params
-        {
-            arg_types
-                .iter()
-                .map(|&arg_type| {
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, arg_type)
-                })
-                .collect()
-        } else {
-            arg_types.clone()
-        };
 
         if is_generic_new && let Some(shape) = constructor_shape.as_ref() {
             self.report_direct_constructor_type_param_constraint_mismatches(
@@ -1511,7 +1458,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ensure_relation_input_ready(constructor_type);
-        self.ensure_relation_inputs_ready(&arg_types_for_resolution);
+        self.ensure_relation_inputs_ready(&arg_types);
 
         // When the constructor type is still a Lazy(DefId) reference (e.g., for
         // `declare var Proxy: ProxyConstructor` where ProxyConstructor's DefId→SymbolId
@@ -1562,19 +1509,16 @@ impl<'a> CheckerState<'a> {
         // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
         let result = self.resolve_new_with_checker_adapter(
             constructor_type,
-            &arg_types_for_resolution,
+            &arg_types,
             false,
             contextual_type,
         );
 
         match result {
             CallResult::Success(mut return_type) => {
-                if is_generic_new {
-                    return_type = self.default_current_infer_placeholders_to_unknown(return_type);
-                }
                 if let Some(fixed_return) = self.typed_array_length_constructor_return_type(
                     new_expr.expression,
-                    &arg_types_for_resolution,
+                    &arg_types,
                     return_type,
                 ) {
                     return_type = fixed_return;
