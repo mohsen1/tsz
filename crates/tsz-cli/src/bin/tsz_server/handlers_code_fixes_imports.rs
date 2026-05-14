@@ -112,14 +112,7 @@ impl Server {
                 )
             })
             .collect();
-        candidates.sort_by(|a, b| {
-            let a_segments = a.module_specifier.matches('/').count();
-            let b_segments = b.module_specifier.matches('/').count();
-            a_segments
-                .cmp(&b_segments)
-                .then_with(|| a.module_specifier.len().cmp(&b.module_specifier.len()))
-                .then_with(|| a.module_specifier.cmp(&b.module_specifier))
-        });
+        reorder_import_candidates_for_package_roots(&mut candidates);
         candidates.into_iter().next().map(|c| c.module_specifier)
     }
 
@@ -1285,7 +1278,7 @@ impl Server {
             if path == current_file_path {
                 continue;
             }
-            if !path.contains("/node_modules/.pnpm/") {
+            if !path.contains("/node_modules/") {
                 continue;
             }
             for missing_name in missing_names {

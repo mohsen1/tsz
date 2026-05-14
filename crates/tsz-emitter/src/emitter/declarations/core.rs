@@ -206,6 +206,8 @@ impl<'a> Printer<'a> {
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
+        let prev_async_generator_shadowed_parameter_names =
+            std::mem::take(&mut self.ctx.async_generator_shadowed_parameter_names);
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
@@ -220,6 +222,8 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.ctx.arguments_capture_name = prev_arguments_capture_name;
+        self.ctx.async_generator_shadowed_parameter_names =
+            prev_async_generator_shadowed_parameter_names;
         self.ctx.flags.in_generator = prev_in_generator;
         if self.function_has_recovered_pre_body_token(node, func.body) {
             self.write_line();

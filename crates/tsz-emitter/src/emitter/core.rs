@@ -415,6 +415,13 @@ pub struct Printer<'a> {
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
 
+    /// Per-file counters for lowered async-generator inner function names.
+    pub(crate) async_generator_inner_name_counts: FxHashMap<String, u32>,
+
+    /// Environment names reserved for top-level using sub-blocks before hoisted
+    /// function declarations are emitted.
+    pub(crate) reserved_disposable_env_names: FxHashMap<NodeIndex, (String, String, String)>,
+
     /// When set, a block-level using-lowering try/catch is active. `using` variable
     /// statements should emit `const x = __addDisposableResource(env, expr, async)`
     /// instead of their own try/catch wrapper. The tuple is (`env_name`, `is_async`).
@@ -590,6 +597,13 @@ pub struct Printer<'a> {
     /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
     pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
 
+    /// Pending `super` capture declarations for lowered async arrows in a method body.
+    pub(crate) pending_lowered_async_arrow_super_capture: Option<(
+        crate::transforms::emit_utils::AsyncMethodSuperCapture,
+        Option<String>,
+        Option<String>,
+    )>,
+
     /// Current nesting depth of function/method/constructor scopes.
     /// Used to determine if we're inside a function scope (depth > 0) or at top level (0).
     pub(crate) function_scope_depth: u32,
@@ -737,6 +751,12 @@ pub struct Printer<'a> {
     /// Temporary base-class alias for outer static `super` while emitting a static field
     /// initializer. This is cleared at the same nested scope boundaries as static `this`.
     pub(crate) scoped_static_super_base_alias: Option<Arc<str>>,
+
+    /// Temporary helper for async-method `super[expr]` capture.
+    pub(crate) scoped_static_super_index_alias: Option<Arc<str>>,
+
+    /// When true, async-method `super[expr]` capture emits through `.value`.
+    pub(crate) scoped_static_super_index_value_access: bool,
 
     /// Temporary alias for named class expressions that are wrapped in a comma
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
@@ -930,6 +950,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
+            pending_lowered_async_arrow_super_capture: None,
             function_scope_depth: 0,
             arrow_function_scope_depth: 0,
             first_for_of_emitted: false,
@@ -946,6 +967,8 @@ impl<'a> Printer<'a> {
             anonymous_default_export_name: None,
             next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
+            async_generator_inner_name_counts: FxHashMap::default(),
+            reserved_disposable_env_names: FxHashMap::default(),
             block_using_env: None,
             in_top_level_using_scope: false,
             metadata_class_type_params: None,
@@ -1019,6 +1042,8 @@ impl<'a> Printer<'a> {
             scoped_static_this_alias: None,
             scoped_static_super_direct_access: false,
             scoped_static_super_base_alias: None,
+            scoped_static_super_index_alias: None,
+            scoped_static_super_index_value_access: false,
             scoped_class_expression_self_alias: None,
             tagged_template_var_map: FxHashMap::default(),
         }
@@ -1370,15 +1395,21 @@ impl<'a> Printer<'a> {
         let prev_this_alias = self.scoped_static_this_alias.clone();
         let prev_super_direct_access = self.scoped_static_super_direct_access;
         let prev_super_alias = self.scoped_static_super_base_alias.clone();
+        let prev_super_index_alias = self.scoped_static_super_index_alias.clone();
+        let prev_super_index_value = self.scoped_static_super_index_value_access;
 
         self.scoped_static_this_alias = this_alias.map(Arc::from);
         self.scoped_static_super_direct_access = super_direct_access;
         self.scoped_static_super_base_alias = super_base_alias.map(Arc::from);
+        self.scoped_static_super_index_alias = None;
+        self.scoped_static_super_index_value_access = false;
 
         self.emit_expression(idx);
         self.scoped_static_this_alias = prev_this_alias;
         self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
+        self.scoped_static_super_index_alias = prev_super_index_alias;
+        self.scoped_static_super_index_value_access = prev_super_index_value;
     }
 
     pub(in crate::emitter) fn with_scoped_static_initializer_context_cleared<R>(
@@ -1388,11 +1419,16 @@ impl<'a> Printer<'a> {
         let prev_this_alias = self.scoped_static_this_alias.take();
         let prev_super_direct_access = self.scoped_static_super_direct_access;
         let prev_super_alias = self.scoped_static_super_base_alias.take();
+        let prev_super_index_alias = self.scoped_static_super_index_alias.take();
+        let prev_super_index_value = self.scoped_static_super_index_value_access;
         self.scoped_static_super_direct_access = false;
+        self.scoped_static_super_index_value_access = false;
         let result = f(self);
         self.scoped_static_this_alias = prev_this_alias;
         self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
+        self.scoped_static_super_index_alias = prev_super_index_alias;
+        self.scoped_static_super_index_value_access = prev_super_index_value;
         result
     }
 

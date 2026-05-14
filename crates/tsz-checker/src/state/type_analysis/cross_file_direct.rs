@@ -4,7 +4,8 @@ use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
     CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
-    DirectCrossFileInterfaceLoweringOutcome, record_direct_actual_lib_alias_body_outcome,
+    DirectActualLibIntlInterfaceOutcome, DirectCrossFileInterfaceLoweringOutcome,
+    record_direct_actual_lib_alias_body_outcome, record_direct_actual_lib_intl_interface_outcome,
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
@@ -25,11 +26,14 @@ fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
         name,
         "DecoratorMetadata"
             | "DecoratorMetadataObject"
+            | "FlatArray"
+            | "IteratorResult"
             | "LocalesArgument"
             | "NumberFormatOptionsCurrencyDisplay"
             | "NumberFormatOptionsSignDisplay"
             | "NumberFormatOptionsStyle"
             | "NumberFormatOptionsUseGrouping"
+            | "Partial"
             | "PropertyKey"
             | "Readonly"
             | "Record"
@@ -155,6 +159,10 @@ fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
     )
+}
+
+fn is_direct_actual_intl_interface_candidate_name(name: &str) -> bool {
+    is_direct_actual_intl_lib_interface_name(name) || name.ends_with("Info")
 }
 
 fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
@@ -401,12 +409,18 @@ impl<'a> CheckerState<'a> {
 
         let symbol = self.get_cross_file_symbol(sym_id)?.clone();
         let name = symbol.escaped_name.clone();
+        let intl_candidate = is_direct_actual_intl_interface_candidate_name(&name);
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
         if symbol.has_any_flags(symbol_flags::VALUE)
             && !is_direct_actual_lib_value_interface_name(&name)
         {
+            if intl_candidate {
+                record_direct_actual_lib_intl_interface_outcome(
+                    DirectActualLibIntlInterfaceOutcome::ValueInterfaceNotAdmitted,
+                );
+            }
             return None;
         }
         // Only proof-backed aliases admitted by policy return here; other
@@ -431,8 +445,14 @@ impl<'a> CheckerState<'a> {
         if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
             && !allow_actual_lib_declaration_proof_bypass(&name)
         {
+            if intl_candidate {
+                record_direct_actual_lib_intl_interface_outcome(
+                    DirectActualLibIntlInterfaceOutcome::DeclarationNotProven,
+                );
+            }
             return None;
         }
+        let mut intl_success_outcome = None;
         let (direct_type, params) = if should_resolve_actual_lib_interface_with_params(&name) {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
             if let Some(direct_type) = direct_type {
@@ -445,22 +465,60 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
         } else {
-            let direct_type = self.resolve_lib_type_by_name(&name).or_else(|| {
+            let direct_type = if let Some(direct_type) = self.resolve_lib_type_by_name(&name) {
+                if is_direct_actual_intl_lib_interface_name(&name) {
+                    intl_success_outcome = Some(DirectActualLibIntlInterfaceOutcome::SuccessByName);
+                }
+                direct_type
+            } else {
                 if !is_direct_actual_intl_lib_interface_name(&name) {
+                    if intl_candidate {
+                        record_direct_actual_lib_intl_interface_outcome(
+                            DirectActualLibIntlInterfaceOutcome::IntlNameNotAdmitted,
+                        );
+                    }
                     return None;
                 }
-                let namespace_sym_id = self.resolve_lib_namespace_export_symbol("Intl", &name)?;
+                let Some(namespace_sym_id) =
+                    self.resolve_lib_namespace_export_symbol("Intl", &name)
+                else {
+                    record_direct_actual_lib_intl_interface_outcome(
+                        DirectActualLibIntlInterfaceOutcome::MissingNamespaceExport,
+                    );
+                    return None;
+                };
                 if namespace_sym_id != sym_id {
+                    record_direct_actual_lib_intl_interface_outcome(
+                        DirectActualLibIntlInterfaceOutcome::NamespaceSymbolMismatch,
+                    );
                     return None;
                 }
                 let cache_name = format!("Intl.{name}");
-                self.resolve_lib_interface_type_by_symbol(&cache_name, namespace_sym_id)
-            })?;
+                let Some(direct_type) =
+                    self.resolve_lib_interface_type_by_symbol(&cache_name, namespace_sym_id)
+                else {
+                    record_direct_actual_lib_intl_interface_outcome(
+                        DirectActualLibIntlInterfaceOutcome::MissingNamespaceInterfaceType,
+                    );
+                    return None;
+                };
+                intl_success_outcome =
+                    Some(DirectActualLibIntlInterfaceOutcome::SuccessNamespaceExport);
+                direct_type
+            };
             let params = self.get_type_params_for_symbol(sym_id);
             (direct_type, params)
         };
         if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
+            if is_direct_actual_intl_lib_interface_name(&name) {
+                record_direct_actual_lib_intl_interface_outcome(
+                    DirectActualLibIntlInterfaceOutcome::UnknownOrError,
+                );
+            }
             return None;
+        }
+        if let Some(outcome) = intl_success_outcome {
+            record_direct_actual_lib_intl_interface_outcome(outcome);
         }
         self.ctx.symbol_types.insert(sym_id, direct_type);
         self.ctx
@@ -1625,75 +1683,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_actual_lib_symbol_type_leaves_partial_on_fallback() {
-        let lib_files = load_lib_files(&["es5.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        let sym_id = state
-            .ctx
-            .binder
-            .file_locals
-            .get("Partial")
-            .expect("Partial should resolve to a lib symbol");
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-        let symbol = state
-            .get_cross_file_symbol(sym_id)
-            .expect("Partial symbol should be available")
-            .clone();
-
-        let proof = state
-            .direct_actual_lib_type_alias_body(
-                sym_id,
-                &symbol,
-                "Partial",
-                delegate_arena.expect("Partial should have a delegate arena"),
-            )
-            .expect("Partial should have a proven actual-lib alias body");
-        assert_eq!(proof.outcome, DirectActualLibAliasBodyOutcome::GenericAlias);
-        assert_eq!(proof.type_params.len(), 1, "Partial should expose T");
-
-        assert!(
-            state
-                .direct_actual_lib_symbol_type(
-                    sym_id,
-                    CrossArenaSymbolMissSource::SymbolArena,
-                    delegate_arena,
-                    false,
-                )
-                .is_none(),
-            "Partial should stay on the existing fallback path",
-        );
-    }
-
-    #[test]
     fn direct_actual_lib_symbol_type_handles_record_generic_alias_body_query() {
         let lib_files = load_lib_files(&["es5.d.ts"]);
         let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
@@ -1926,7 +1915,7 @@ mod tests {
 
     #[test]
     fn direct_actual_lib_alias_proof_matches_mapped_utility_fallback_bodies() {
-        let lib_files = load_lib_files(&["es5.d.ts"]);
+        let lib_files = load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts", "es2019.array.d.ts"]);
         let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
         let root = parser.parse_source_file();
         let mut binder = BinderState::new();
@@ -1953,8 +1942,14 @@ mod tests {
         state.ctx.set_actual_lib_file_count(lib_files.len());
 
         for (name, expected_param_count, expected_outcome) in [
+            ("FlatArray", 2, DirectActualLibAliasBodyOutcome::Success),
+            (
+                "IteratorResult",
+                2,
+                DirectActualLibAliasBodyOutcome::Success,
+            ),
             ("Record", 2, DirectActualLibAliasBodyOutcome::Success),
-            ("Partial", 1, DirectActualLibAliasBodyOutcome::GenericAlias),
+            ("Partial", 1, DirectActualLibAliasBodyOutcome::Success),
             ("Readonly", 1, DirectActualLibAliasBodyOutcome::Success),
         ] {
             let sym_id = state

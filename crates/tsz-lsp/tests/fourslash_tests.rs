@@ -2196,7 +2196,7 @@ fn linked_editing_non_jsx() {
 
 #[test]
 fn code_actions_whole_file() {
-    let t = FourslashTest::new(
+    let mut t = FourslashTest::new(
         "
         const x: number = 42;
     ",
@@ -2207,7 +2207,7 @@ fn code_actions_whole_file() {
 
 #[test]
 fn code_actions_at_marker() {
-    let t = FourslashTest::new(
+    let mut t = FourslashTest::new(
         "
         const /*x*/x = 42;
     ",
@@ -2217,7 +2217,7 @@ fn code_actions_at_marker() {
 
 #[test]
 fn code_actions_on_function_no_crash() {
-    let t = FourslashTest::new(
+    let mut t = FourslashTest::new(
         "
         function /*f*/add(a: number, b: number) {
             return a + b;
@@ -2229,7 +2229,7 @@ fn code_actions_on_function_no_crash() {
 
 #[test]
 fn code_actions_on_type_error_no_crash() {
-    let t = FourslashTest::new(
+    let mut t = FourslashTest::new(
         "
         const x: number = /*e*/'hello';
     ",
@@ -2239,7 +2239,7 @@ fn code_actions_on_type_error_no_crash() {
 
 #[test]
 fn code_actions_on_inline_type_no_crash() {
-    let t = FourslashTest::new(
+    let mut t = FourslashTest::new(
         "
         function process(data: /*t*/{ name: string; age: number }) {}
     ",

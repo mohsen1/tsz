@@ -303,8 +303,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut any_reversed = false;
 
         for prop in &source_obj.properties {
-            // Substitute the iteration parameter K with the property name literal
-            let key_literal = self.interner.literal_string_atom(prop.name);
+            // Substitute the iteration parameter K with the property-key literal.
+            // Bare numeric names (`{ 1: ... }`) substitute as `Number(1)`, not `"1"`.
+            let key_literal = crate::utils::literal_key_for_property_name(
+                self.interner,
+                prop.name,
+                prop.is_string_named,
+            );
             let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, template, &subst);
 
@@ -960,8 +965,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.reverse_mapped_visited.borrow_mut().insert(pair);
 
                 for prop in &source_props {
-                    // Instantiate the mapped template with the concrete key
-                    let key_literal = self.interner.literal_string_atom(prop.name);
+                    // Instantiate the mapped template with the concrete key.
+                    // Numeric-named properties contribute `Number(n)`, not `"n"`.
+                    let key_literal = crate::utils::literal_key_for_property_name(
+                        self.interner,
+                        prop.name,
+                        prop.is_string_named,
+                    );
                     let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                     let instantiated_template =
                         instantiate_type(self.interner, mapped.template, &subst);

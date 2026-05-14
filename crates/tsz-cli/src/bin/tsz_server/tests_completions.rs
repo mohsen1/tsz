@@ -4449,6 +4449,85 @@ fn test_completion_info_auto_import_dependency_filter_allows_require_usage() {
     );
 }
 
+#[test]
+fn test_get_code_fixes_import_nested_package_manifest_inside_package() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/project/app.tsx".to_string(),
+        "const state = useMemo(() => 'Hello', []);".to_string(),
+    );
+    server.open_files.insert(
+        "/project/component.tsx".to_string(),
+        "import { useEffect } from \"preact/hooks\";".to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/package.json".to_string(),
+        r#"{"name":"preact","types":"src/index.d.ts"}"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/hooks/package.json".to_string(),
+        r#"{"name":"hooks","types":"src/index.d.ts"}"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+        "export declare function useEffect(): void;\nexport declare function useMemo(): void;\n"
+            .to_string(),
+    );
+
+    let req = make_request(
+        "getCodeFixes",
+        serde_json::json!({
+            "file": "/project/app.tsx",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 1,
+            "errorCodes": [2304],
+            "preferences": {}
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let fixes = resp
+        .body
+        .expect("getCodeFixes should return a body")
+        .as_array()
+        .expect("getCodeFixes body should be an array")
+        .clone();
+
+    let new_texts: Vec<String> = fixes
+        .iter()
+        .filter(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .flat_map(|fix| {
+            fix.get("changes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|change| {
+                    change
+                        .get("textChanges")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                })
+                .filter_map(|text_change| {
+                    text_change
+                        .get("newText")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    assert!(
+        new_texts
+            .iter()
+            .any(|text| text.contains("import { useMemo } from \"preact/hooks\";")),
+        "expected exact useMemo import fix from preact/hooks, got {new_texts:#?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Issue #3955: tsserver protocol distinguishes the legacy `completions` body
 // from `completionInfo` and the full-protocol `completions-full` body. The

@@ -589,8 +589,8 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Collect all `infer` type parameter names from a type node.
-    /// This is used to add inferred type parameters to the scope when checking conditional types.
+    /// Collect every `infer` type parameter name reachable from `type_idx`,
+    /// including ones nested inside another infer's `extends` constraint.
     pub(crate) fn collect_infer_type_parameters(&self, type_idx: NodeIndex) -> Vec<String> {
         let mut params = Vec::new();
         self.collect_infer_type_parameters_inner(type_idx, &mut params);
@@ -631,6 +631,7 @@ impl<'a> CheckerState<'a> {
                         param.constraint,
                         infer.type_parameter,
                     ));
+                    self.collect_infer_params_with_constraints_inner(infer.type_parameter, params);
                 }
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
@@ -825,6 +826,7 @@ impl<'a> CheckerState<'a> {
                     if !params.contains(&name) {
                         params.push(name);
                     }
+                    self.collect_infer_type_parameters_inner(infer.type_parameter, params);
                 }
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {

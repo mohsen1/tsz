@@ -58,6 +58,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 
+#[path = "async_es5_ir_bindings.rs"]
+mod bindings;
+
 /// State for tracking async function transformation
 #[derive(Debug, Default)]
 pub struct AsyncTransformState {
@@ -155,6 +158,12 @@ pub struct AsyncES5Transformer<'a> {
     lexical_this_capture: Cell<bool>,
     capture_this_references: Cell<bool>,
     loop_exit_placeholder_counter: Cell<u32>,
+    /// Whether this async body is emitted inside a derived ES5 class method.
+    pub(super) class_has_super: bool,
+    /// Generated super parameter name for the surrounding ES5 class IIFE.
+    pub(super) class_super_name: String,
+    /// Whether the surrounding class member is static.
+    pub(super) class_super_is_static: bool,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -171,11 +180,26 @@ impl<'a> AsyncES5Transformer<'a> {
             lexical_this_capture: Cell::new(false),
             capture_this_references: Cell::new(false),
             loop_exit_placeholder_counter: Cell::new(0),
+            class_has_super: false,
+            class_super_name: "_super".to_string(),
+            class_super_is_static: false,
         }
     }
 
     pub const fn set_source_text(&mut self, source_text: &'a str) {
         self.source_text = Some(source_text);
+    }
+
+    pub fn with_class_super_context(
+        mut self,
+        has_super: bool,
+        super_name: String,
+        is_static: bool,
+    ) -> Self {
+        self.class_has_super = has_super;
+        self.class_super_name = super_name;
+        self.class_super_is_static = is_static;
+        self
     }
 
     pub(crate) fn set_lexical_this_capture(&self, capture: bool) {
@@ -221,213 +245,6 @@ impl<'a> AsyncES5Transformer<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
-    }
-
-    fn emit_arguments_capture_decl(&self, body: &mut Vec<IRNode>) {
-        if self.state.captures_arguments {
-            body.push(IRNode::VarDecl {
-                name: self.state.arguments_capture_name.clone().into(),
-                initializer: Some(Box::new(IRNode::Raw("arguments".to_string().into()))),
-            });
-        }
-    }
-
-    fn fresh_arguments_capture_name(&self, body_idx: NodeIndex, params: &[String]) -> String {
-        let mut binding_names = params.to_vec();
-        self.collect_body_binding_names(body_idx, &mut binding_names);
-
-        let mut suffix = 1usize;
-        loop {
-            let candidate = format!("arguments_{suffix}");
-            if !binding_names.iter().any(|name| name == &candidate) {
-                return candidate;
-            }
-            suffix += 1;
-        }
-    }
-
-    fn collect_parameter_binding_names(
-        &self,
-        params: &tsz_parser::parser::NodeList,
-        names: &mut Vec<String>,
-    ) {
-        for &param_idx in &params.nodes {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                continue;
-            };
-            self.collect_binding_name(param.name, names);
-        }
-    }
-
-    fn collect_body_binding_names(&self, idx: NodeIndex, names: &mut Vec<String>) {
-        if idx.is_none() {
-            return;
-        }
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-        if let Some(source_file) = self.arena.get_source_file(node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                self.collect_body_binding_names(stmt_idx, names);
-            }
-            return;
-        }
-
-        match node.kind {
-            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
-                if let Some(block) = self.arena.get_block(node) {
-                    for &stmt_idx in &block.statements.nodes {
-                        self.collect_body_binding_names(stmt_idx, names);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT
-                || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                || k == syntax_kind_ext::VARIABLE_DECLARATION =>
-            {
-                self.collect_variable_binding_names(idx, names);
-            }
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = self.arena.get_function(node) {
-                    self.collect_binding_name(func.name, names);
-                }
-            }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = self.arena.get_class(node) {
-                    self.collect_binding_name(class.name, names);
-                }
-            }
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_data) = self.arena.get_enum(node) {
-                    self.collect_binding_name(enum_data.name, names);
-                }
-            }
-            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                if let Some(module) = self.arena.get_module(node) {
-                    self.collect_binding_name(module.name, names);
-                }
-            }
-            k if k == syntax_kind_ext::IF_STATEMENT => {
-                if let Some(if_stmt) = self.arena.get_if_statement(node) {
-                    self.collect_body_binding_names(if_stmt.then_statement, names);
-                    self.collect_body_binding_names(if_stmt.else_statement, names);
-                }
-            }
-            k if k == syntax_kind_ext::FOR_STATEMENT
-                || k == syntax_kind_ext::WHILE_STATEMENT
-                || k == syntax_kind_ext::DO_STATEMENT =>
-            {
-                if let Some(loop_data) = self.arena.get_loop(node) {
-                    self.collect_variable_binding_names(loop_data.initializer, names);
-                    self.collect_body_binding_names(loop_data.statement, names);
-                }
-            }
-            k if k == syntax_kind_ext::FOR_IN_STATEMENT
-                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
-            {
-                if let Some(for_in_of) = self.arena.get_for_in_of(node) {
-                    self.collect_variable_binding_names(for_in_of.initializer, names);
-                    self.collect_body_binding_names(for_in_of.statement, names);
-                }
-            }
-            k if k == syntax_kind_ext::TRY_STATEMENT => {
-                if let Some(try_stmt) = self.arena.get_try(node) {
-                    self.collect_body_binding_names(try_stmt.try_block, names);
-                    self.collect_body_binding_names(try_stmt.catch_clause, names);
-                    self.collect_body_binding_names(try_stmt.finally_block, names);
-                }
-            }
-            k if k == syntax_kind_ext::CATCH_CLAUSE => {
-                if let Some(catch_clause) = self.arena.get_catch_clause(node) {
-                    self.collect_variable_binding_names(catch_clause.variable_declaration, names);
-                    self.collect_body_binding_names(catch_clause.block, names);
-                }
-            }
-            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
-                if let Some(switch_stmt) = self.arena.get_switch(node) {
-                    self.collect_body_binding_names(switch_stmt.case_block, names);
-                }
-            }
-            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
-                if let Some(clause) = self.arena.get_case_clause(node) {
-                    for &stmt_idx in &clause.statements.nodes {
-                        self.collect_body_binding_names(stmt_idx, names);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::LABELED_STATEMENT => {
-                if let Some(labeled) = self.arena.get_labeled_statement(node) {
-                    self.collect_body_binding_names(labeled.statement, names);
-                }
-            }
-            k if k == syntax_kind_ext::WITH_STATEMENT => {
-                if let Some(with_stmt) = self.arena.get_with_statement(node) {
-                    self.collect_body_binding_names(with_stmt.then_statement, names);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn collect_variable_binding_names(&self, idx: NodeIndex, names: &mut Vec<String>) {
-        if idx.is_none() {
-            return;
-        }
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-
-        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            if let Some(decl) = self.arena.get_variable_declaration(node) {
-                self.collect_binding_name(decl.name, names);
-            }
-            return;
-        }
-
-        if let Some(var_data) = self.arena.get_variable(node) {
-            for &decl_idx in &var_data.declarations.nodes {
-                self.collect_variable_binding_names(decl_idx, names);
-            }
-        }
-    }
-
-    fn collect_binding_name(&self, name_idx: NodeIndex, names: &mut Vec<String>) {
-        if name_idx.is_none() {
-            return;
-        }
-        let Some(name_node) = self.arena.get(name_idx) else {
-            return;
-        };
-
-        if name_node.is_identifier() {
-            if let Some(name) = crate::transforms::emit_utils::identifier_text(self.arena, name_idx)
-                && !names.contains(&name)
-            {
-                names.push(name);
-            }
-            return;
-        }
-
-        match name_node.kind {
-            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
-            {
-                if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
-                    for &elem_idx in &pattern.elements.nodes {
-                        self.collect_binding_name(elem_idx, names);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::BINDING_ELEMENT => {
-                if let Some(elem) = self.arena.get_binding_element(name_node) {
-                    self.collect_binding_name(elem.name, names);
-                }
-            }
-            _ => {}
-        }
     }
 
     /// Get the helpers needed after transformation
@@ -965,6 +782,16 @@ impl<'a> AsyncES5Transformer<'a> {
                     if skipped_statements.contains(&stmt_idx) {
                         continue;
                     }
+                    if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                        let actual_start = super::emit_utils::skip_trivia_forward(
+                            self.source_text,
+                            stmt_node.pos,
+                            stmt_node.end,
+                        );
+                        if let Some(comment) = self.extract_preceding_line_comment(actual_start) {
+                            current_statements.push(IRNode::Raw(comment.into()));
+                        }
+                    }
                     self.process_async_statement(
                         stmt_idx,
                         cases,
@@ -1240,6 +1067,10 @@ impl<'a> AsyncES5Transformer<'a> {
             return;
         };
 
+        if self.lower_destructuring_assignment_expression(idx, current_statements) {
+            return;
+        }
+
         // Check for await expression
         if node.kind == self.suspension_kind() {
             self.process_await_expression(idx, cases, current_statements, current_label);
@@ -1284,6 +1115,114 @@ impl<'a> AsyncES5Transformer<'a> {
         // For other expressions, convert to IR and add as expression statement
         let ir = self.expression_to_ir(idx);
         current_statements.push(IRNode::ExpressionStatement(Box::new(ir)));
+    }
+
+    fn lower_destructuring_assignment_expression(
+        &self,
+        idx: NodeIndex,
+        current_statements: &mut Vec<IRNode>,
+    ) -> bool {
+        let target_idx = self.unwrap_parenthesized_expression(idx);
+        let Some(node) = self.arena.get(target_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(bin) = self.arena.get_binary_expr(node) else {
+            return false;
+        };
+        if self.get_operator_text(bin.operator_token) != "=" {
+            return false;
+        }
+        let Some(left_node) = self.arena.get(bin.left) else {
+            return false;
+        };
+        if left_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_literal_expr(left_node) else {
+            return false;
+        };
+        if pattern.elements.nodes.is_empty() {
+            return false;
+        }
+
+        let source = self.expression_to_ir(bin.right);
+        for &elem_idx in &pattern.elements.nodes {
+            let Some(assignment) = self.destructuring_object_assignment(elem_idx, source.clone())
+            else {
+                return false;
+            };
+            current_statements.push(IRNode::ExpressionStatement(Box::new(
+                IRNode::Parenthesized(Box::new(assignment)),
+            )));
+        }
+        true
+    }
+
+    fn unwrap_parenthesized_expression(&self, mut idx: NodeIndex) -> NodeIndex {
+        while let Some(node) = self.arena.get(idx)
+            && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            idx = paren.expression;
+        }
+        idx
+    }
+
+    fn destructuring_object_assignment(
+        &self,
+        elem_idx: NodeIndex,
+        source: IRNode,
+    ) -> Option<IRNode> {
+        let elem_node = self.arena.get(elem_idx)?;
+        match elem_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let prop = self.arena.get_property_assignment(elem_node)?;
+                let target = self.expression_to_ir(prop.initializer);
+                let value = self.destructuring_object_property_value(source, prop.name)?;
+                Some(IRNode::assign(target, value))
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                let prop = self.arena.get_shorthand_property(elem_node)?;
+                let name =
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, prop.name);
+                let target = IRNode::id(name.clone());
+                let value = IRNode::prop(source, name);
+                Some(IRNode::assign(target, value))
+            }
+            _ => None,
+        }
+    }
+
+    fn destructuring_object_property_value(
+        &self,
+        source: IRNode,
+        name_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.arena.get_computed_property(name_node)?;
+            return Some(IRNode::elem(
+                source,
+                self.expression_to_ir(computed.expression),
+            ));
+        }
+        if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let name =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, name_idx);
+            return Some(IRNode::prop(source, name));
+        }
+        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+            let lit = self.arena.get_literal(name_node)?;
+            return Some(IRNode::elem(source, IRNode::string(lit.text.clone())));
+        }
+        if name_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16 {
+            let lit = self.arena.get_literal(name_node)?;
+            return Some(IRNode::elem(source, IRNode::number(lit.text.clone())));
+        }
+        None
     }
 
     fn emit_nested_suspension(

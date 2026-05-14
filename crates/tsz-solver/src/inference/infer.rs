@@ -1291,6 +1291,26 @@ impl<'a> InferenceContext<'a> {
         })
     }
 
+    /// Returns `true` if `type_id` is a **call-local** bare inference placeholder —
+    /// a bare `__infer_*` `TypeParameter` whose name-atom is registered in this
+    /// context's `type_params`. Placeholders from outer generic call scopes have
+    /// atoms that are not in `type_params` and must not be filtered: they carry
+    /// real cross-call inference evidence (e.g. a recursive call's argument type
+    /// constrained by the outer function's unresolved type parameter).
+    pub(crate) fn is_local_inference_placeholder(&self, type_id: TypeId) -> bool {
+        if !crate::type_queries::data::is_bare_current_infer_placeholder_db(self.interner, type_id)
+        {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            // `TypeData::Infer` nodes are always created within the current context.
+            Some(TypeData::TypeParameter(tp)) => {
+                self.type_params.iter().any(|(atom, _, _)| *atom == tp.name)
+            }
+            _ => true,
+        }
+    }
+
     /// Check whether an inference variable has any contravariant candidates that are
     /// usable for resolution. Call-local inference placeholders like `__infer_*`
     /// are excluded, but higher-order source placeholders (`__infer_src_*`) and real
@@ -1298,13 +1318,51 @@ impl<'a> InferenceContext<'a> {
     pub fn has_usable_contra_candidates(
         &mut self,
         var: InferenceVar,
-        db: &dyn crate::caches::db::TypeDatabase,
+        _db: &dyn crate::caches::db::TypeDatabase,
     ) -> bool {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
-        info.contra_candidates.iter().any(|c| {
-            !crate::type_queries::data::is_bare_current_infer_placeholder_db(db, c.type_id)
-        })
+        info.contra_candidates
+            .iter()
+            .any(|c| !self.is_local_inference_placeholder(c.type_id))
+    }
+
+    /// Returns `true` when `candidate` should be kept as a concrete
+    /// contra-variance candidate. Call-local `__infer_*` placeholders are
+    /// excluded; foreign bare placeholders and composite types that contain
+    /// real type parameters are kept.
+    pub(crate) fn is_concrete_contra_candidate(&self, type_id: TypeId) -> bool {
+        if self.is_local_inference_placeholder(type_id) {
+            return false;
+        }
+        if crate::type_queries::data::is_bare_current_infer_placeholder_db(self.interner, type_id) {
+            return true;
+        }
+        // Composite types built entirely from local placeholders are stale.
+        if crate::type_queries::data::contains_current_infer_placeholder_db(self.interner, type_id)
+            && !crate::type_queries::data::contains_non_infer_type_parameters_db(
+                self.interner,
+                type_id,
+            )
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Returns `true` if any covariant candidate for `var` is or contains an
+    /// `IndexAccess` type (`T[K]` pattern). The circular-inference guard uses
+    /// this to distinguish true circular inference (passing `T[K]` to `T`)
+    /// from legitimate outer-`TypeParameter` forwarding (passing `T_outer` to
+    /// `T_inner` where they happen to resolve to the same `TypeParameter`).
+    pub fn has_index_access_covariant_candidate(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let db = self.interner;
+        self.table
+            .probe_value(root)
+            .candidates
+            .iter()
+            .any(|c| type_contains_index_access(db, c.type_id))
     }
 
     /// Check whether a variable's inference came exclusively from contravariant positions.
@@ -1383,6 +1441,21 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
         let info = self.table.probe_value(root);
         info.candidates.iter().any(|c| c.source_is_type_annotation)
+    }
+}
+
+/// Returns `true` when `ty` is or structurally contains an `IndexAccess` type.
+fn type_contains_index_access(db: &dyn crate::TypeDatabase, ty: TypeId) -> bool {
+    if ty.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(ty) {
+        Some(TypeData::IndexAccess(_, _)) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&m| type_contains_index_access(db, m)),
+        _ => false,
     }
 }
 

@@ -14,6 +14,38 @@ use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
+    fn should_delegate_dynamic_type_alias_owner(&self, sym_id: SymbolId, file_idx: usize) -> bool {
+        if file_idx == self.ctx.current_file_idx {
+            return false;
+        }
+
+        let Some(target_symbol) = self
+            .ctx
+            .get_binder_for_file(file_idx)
+            .and_then(|binder| binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+        if !target_symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return false;
+        }
+
+        let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+        if local_symbol.has_any_flags(symbol_flags::ALIAS) {
+            return true;
+        }
+
+        if let Some(local_def) = self.ctx.symbol_to_def.borrow().get(&sym_id).copied()
+            && let Some(local_def_name) = self.ctx.definition_store.get_name(local_def)
+        {
+            return self.ctx.types.resolve_atom(local_def_name) != local_symbol.escaped_name;
+        }
+
+        local_symbol.escaped_name != target_symbol.escaped_name
+    }
+
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
         let local_alias_symbol = self
             .ctx
@@ -52,17 +84,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
-            && file_idx != self.ctx.current_file_idx
-            && self
-                .ctx
-                .get_binder_for_file(file_idx)
-                .and_then(|binder| binder.get_symbol(sym_id))
-                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
-            && self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .is_none_or(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
+            && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
             && let Some((result, _)) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
             self.ctx.leave_recursion();
@@ -1273,17 +1295,7 @@ impl<'a> CheckerState<'a> {
         use tsz_lowering::TypeLowering;
 
         if let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
-            && file_idx != self.ctx.current_file_idx
-            && self
-                .ctx
-                .get_binder_for_file(file_idx)
-                .and_then(|binder| binder.get_symbol(sym_id))
-                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
-            && self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .is_none_or(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
+            && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
             && let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
             return result;
@@ -1777,9 +1789,19 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| symbol.primary_declaration().unwrap_or(NodeIndex::NONE));
 
                 if decl_idx.is_some() {
-                    // Try user arena first (fast path for user-defined type aliases)
+                    // Try user arena first (fast path for user-defined type aliases).
+                    // The name check is required: a lib symbol's primary_declaration()
+                    // NodeIndex may coincide with a user-arena node at the same slot
+                    // (the arenas are independent Vec-backed structures). Without the
+                    // check, a user-defined type alias at that slot would be used as the
+                    // body/params for the lib type, corrupting generic instantiation.
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+                        && self
+                            .ctx
+                            .arena
+                            .get_identifier_text(type_alias.name)
+                            .is_some_and(|n| n == symbol.escaped_name.as_str())
                     {
                         let (params, updates) =
                             self.push_type_parameters(&type_alias.type_parameters);

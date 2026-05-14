@@ -449,6 +449,30 @@ impl<'a> BinaryOpEvaluator<'a> {
                 .interner
                 .intersection2(narrowed, self.interner.object(vec![]));
         }
+
+        // Distribute over union members: NonNullable<D | E> = (D & {}) | (E & {})
+        // where each unconstrained type param gets the & {} treatment.
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(narrowed) {
+            let members = self.interner.type_list(list_id);
+            let has_unconstrained = members
+                .iter()
+                .any(|&m| self.is_unconstrained_type_parameter(m));
+            if has_unconstrained {
+                let empty_obj = self.interner.object(vec![]);
+                let transformed: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        if self.is_unconstrained_type_parameter(m) {
+                            self.interner.intersection2(m, empty_obj)
+                        } else {
+                            m
+                        }
+                    })
+                    .collect();
+                return self.interner.union(transformed);
+            }
+        }
+
         if narrowed != original {
             return narrowed;
         }

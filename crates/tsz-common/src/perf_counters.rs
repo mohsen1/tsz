@@ -552,6 +552,44 @@ impl DirectActualLibAliasBodyOutcome {
     }
 }
 
+/// Outcome buckets for direct actual-lib Intl interface attempts in
+/// `direct_actual_lib_symbol_type`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum DirectActualLibIntlInterfaceOutcome {
+    SuccessByName = 0,
+    SuccessNamespaceExport = 1,
+    ValueInterfaceNotAdmitted = 2,
+    DeclarationNotProven = 3,
+    IntlNameNotAdmitted = 4,
+    MissingNamespaceExport = 5,
+    NamespaceSymbolMismatch = 6,
+    MissingNamespaceInterfaceType = 7,
+    UnknownOrError = 8,
+}
+
+pub const DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT: usize = 9;
+
+pub const DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES: [&str;
+    DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT] = [
+    "success_by_name",
+    "success_namespace_export",
+    "value_interface_not_admitted",
+    "declaration_not_proven",
+    "intl_name_not_admitted",
+    "missing_namespace_export",
+    "namespace_symbol_mismatch",
+    "missing_namespace_interface_type",
+    "unknown_or_error",
+];
+
+impl DirectActualLibIntlInterfaceOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Outcome buckets for the simple local-interface object shortcut in
 /// `compute_type_of_symbol`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -819,6 +857,48 @@ fn delegate_declaration_file_miss_residues()
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT:
     usize = 128;
 
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUE_LIMIT:
+    usize = 128;
+
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_DECLARATION_PROVENANCE_RESIDUE_LIMIT:
+    usize = 128;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue {
+    pub kind: &'static str,
+    pub interface: Option<String>,
+    pub property: Option<String>,
+    pub count: u64,
+}
+
+static COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUES: OnceLock<
+    Mutex<Vec<ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue>>,
+> = OnceLock::new();
+
+fn compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+-> &'static Mutex<Vec<ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue>> {
+    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUES
+        .get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue {
+    pub outcome: &'static str,
+    pub symbol: Option<String>,
+    pub declaration_count: u64,
+    pub count: u64,
+}
+
+static COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_DECLARATION_PROVENANCE_RESIDUES: OnceLock<
+    Mutex<Vec<ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue>>,
+> = OnceLock::new();
+
+fn compute_type_of_symbol_interface_simple_object_declaration_provenance_residues()
+-> &'static Mutex<Vec<ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue>> {
+    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_DECLARATION_PROVENANCE_RESIDUES
+        .get_or_init(|| Mutex::new(Vec::new()))
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue {
     pub name: String,
@@ -871,6 +951,9 @@ pub struct PerfCounters {
     /// Outcome buckets for direct actual-lib alias-body attempts.
     pub direct_actual_lib_alias_body_outcome:
         [AtomicU64; DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
+    /// Outcome buckets for direct actual-lib Intl interface attempts.
+    pub direct_actual_lib_intl_interface_outcome:
+        [AtomicU64; DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
     /// Why each `cached_cross_file_*` reader returned `None`. See
     /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
     /// all buckets equals the flat miss count for the four reader
@@ -998,6 +1081,8 @@ impl PerfCounters {
                 DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
             direct_actual_lib_alias_body_outcome: [const { AtomicU64::new(0) };
                 DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
+            direct_actual_lib_intl_interface_outcome: [const { AtomicU64::new(0) };
+                DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };
@@ -1622,6 +1707,117 @@ pub fn record_compute_type_of_symbol_interface_simple_object_non_primitive_annot
     .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record bounded source-level residue for non-primitive annotations rejected
+/// by the simple local-interface object shortcut.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residue(
+    kind: ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind,
+    interface: Option<&str>,
+    property: Option<&str>,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let kind_name =
+        COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_NAMES
+            [kind.as_index()];
+    let mut rows =
+        compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.kind == kind_name
+            && row.interface.as_deref() == interface
+            && row.property.as_deref() == property
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len()
+        < COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUE_LIMIT
+    {
+        rows.push(
+            ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue {
+                kind: kind_name,
+                interface: interface.map(str::to_owned),
+                property: property.map(str::to_owned),
+                count: 1,
+            },
+        );
+    } else if let Some(row) = rows
+        .iter_mut()
+        .find(|row| row.interface.as_deref() == Some("__truncated__"))
+    {
+        row.count += 1;
+    } else {
+        rows.push(
+            ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue {
+                kind: "overflow",
+                interface: Some("__truncated__".to_string()),
+                property: None,
+                count: 1,
+            },
+        );
+    }
+}
+
+/// Record bounded symbol-level residue for declaration/provenance guards
+/// rejected by the simple local-interface object shortcut.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_simple_object_declaration_provenance_residue(
+    outcome: ComputeTypeOfSymbolInterfaceSimpleObjectOutcome,
+    symbol: Option<&str>,
+    declaration_count: usize,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let outcome_name =
+        COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_OUTCOME_NAMES[outcome.as_index()];
+    let declaration_count = declaration_count as u64;
+    let mut rows = compute_type_of_symbol_interface_simple_object_declaration_provenance_residues()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.outcome == outcome_name
+            && row.symbol.as_deref() == symbol
+            && row.declaration_count == declaration_count
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len()
+        < COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_DECLARATION_PROVENANCE_RESIDUE_LIMIT
+    {
+        rows.push(
+            ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue {
+                outcome: outcome_name,
+                symbol: symbol.map(str::to_owned),
+                declaration_count,
+                count: 1,
+            },
+        );
+    } else if let Some(row) = rows
+        .iter_mut()
+        .find(|row| row.symbol.as_deref() == Some("__truncated__"))
+    {
+        row.count += 1;
+    } else {
+        rows.push(
+            ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue {
+                outcome: "overflow",
+                symbol: Some("__truncated__".to_string()),
+                declaration_count: 0,
+                count: 1,
+            },
+        );
+    }
+}
+
 /// Record attribution for why a `type_reference` annotation was still rejected
 /// by the simple local-interface object shortcut.
 #[inline]
@@ -1919,6 +2115,17 @@ pub fn record_direct_actual_lib_alias_body_outcome(outcome: DirectActualLibAlias
     c.direct_actual_lib_alias_body_outcome[outcome.as_index()].fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
+pub fn record_direct_actual_lib_intl_interface_outcome(
+    outcome: DirectActualLibIntlInterfaceOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.direct_actual_lib_intl_interface_outcome[outcome.as_index()].fetch_add(1, Ordering::Relaxed);
+}
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -2022,6 +2229,12 @@ impl PerfCounters {
             snap.resolver.package_json_reads,
             snap.resolver.candidate_paths_total,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
+            + &Self::dump_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(
+                &snap.compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues,
+            )
+            + &Self::dump_compute_type_of_symbol_interface_simple_object_declaration_provenance_residues(
+                &snap.compute_type_of_symbol_interface_simple_object_declaration_provenance_residues,
+            )
             + &Self::dump_compute_type_of_symbol_interface_simple_object_type_reference_reject_residues(
                 &snap.compute_type_of_symbol_interface_simple_object_type_reference_reject_residues,
             )
@@ -2029,6 +2242,7 @@ impl PerfCounters {
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
             + &Self::dump_direct_actual_lib_alias_body_outcomes()
+            + &Self::dump_direct_actual_lib_intl_interface_outcomes()
             + &Self::dump_delegate_declaration_file_miss_residues(
                 &snap.delegate_declaration_file_miss_residues,
             )
@@ -2197,6 +2411,50 @@ impl PerfCounters {
         out
     }
 
+    fn dump_compute_type_of_symbol_interface_simple_object_declaration_provenance_residues(
+        rows: &[ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue],
+    ) -> String {
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from(
+            "\ncompute_type_of_symbol interface simple-object declaration provenance residues:\n",
+        );
+        for row in rows {
+            out.push_str(&format!(
+                "  {:<36} {:<32} {:>8} {:>8}\n",
+                row.outcome,
+                row.symbol.as_deref().unwrap_or("<unknown>"),
+                row.declaration_count,
+                row.count,
+            ));
+        }
+        out
+    }
+
+    fn dump_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(
+        rows: &[ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue],
+    ) -> String {
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from(
+            "\ncompute_type_of_symbol interface simple-object non-primitive annotation residues:\n",
+        );
+        for row in rows {
+            out.push_str(&format!(
+                "  {:<28} {:<32} {:<32} {:>8}\n",
+                row.kind,
+                row.interface.as_deref().unwrap_or("<unknown>"),
+                row.property.as_deref().unwrap_or("<unknown>"),
+                row.count,
+            ));
+        }
+        out
+    }
+
     fn dump_cross_arena_symbol_miss_classification() -> String {
         let c = counters();
         let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
@@ -2320,6 +2578,31 @@ impl PerfCounters {
             .enumerate()
         {
             let count = load(&c.direct_actual_lib_alias_body_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<36} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
+    fn dump_direct_actual_lib_intl_interface_outcomes() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .direct_actual_lib_intl_interface_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDirect actual-lib Intl interface outcomes:\n");
+        for (idx, name) in DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count = load(&c.direct_actual_lib_intl_interface_outcome[idx]);
             if count > 0 {
                 out.push_str(&format!("  {name:<36} {count:>12}\n"));
             }
@@ -2502,6 +2785,26 @@ pub struct PerfCounterSnapshot {
     /// order.
     pub compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kinds:
         Vec<NamedCount>,
+    /// Bounded source-level attribution for
+    /// `compute_type_of_symbol_interface_simple_object_outcomes.reject_non_primitive_annotation`.
+    ///
+    /// Captures at most
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUE_LIMIT`
+    /// distinct `(kind, interface, property)` rows in perf-counter mode. This
+    /// names the sparse non-primitive residue before widening the guarded
+    /// shortcut.
+    pub compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues:
+        Vec<ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue>,
+    /// Bounded symbol-level attribution for declaration/provenance guards in
+    /// the simple local-interface object shortcut.
+    ///
+    /// Captures at most
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_DECLARATION_PROVENANCE_RESIDUE_LIMIT`
+    /// distinct `(outcome, symbol, declaration_count)` rows in perf-counter
+    /// mode. This names the sparse `reject_out_of_arena_decl` /
+    /// `reject_missing_interface_decl` residue before any behavior change.
+    pub compute_type_of_symbol_interface_simple_object_declaration_provenance_residues:
+        Vec<ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue>,
     /// Attribution split for `type_reference` rows within
     /// `compute_type_of_symbol_interface_simple_object_outcomes.reject_non_primitive_annotation`.
     ///
@@ -2540,6 +2843,13 @@ pub struct PerfCounterSnapshot {
     /// helper, rejected by the current conservative name gate, or rejected
     /// because the resolver/definition-store proof was incomplete.
     pub direct_actual_lib_alias_body_outcomes: Vec<NamedCount>,
+    /// Outcome buckets for direct actual-lib Intl interface attempts.
+    ///
+    /// Always `DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT` long, in
+    /// `DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES` order. This splits
+    /// success/fallback reasons for the Intl value-interface lane so
+    /// declaration-file miss residues can be traced to a specific gate.
+    pub direct_actual_lib_intl_interface_outcomes: Vec<NamedCount>,
     /// Why each `cached_cross_file_*` reader returned `None`.
     ///
     /// Always `CROSS_FILE_CACHE_MISS_CAUSE_COUNT` long, in
@@ -2892,6 +3202,10 @@ impl PerfCounters {
                     ),
                 })
                 .collect(),
+            compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues:
+                Self::snapshot_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(),
+            compute_type_of_symbol_interface_simple_object_declaration_provenance_residues:
+                Self::snapshot_compute_type_of_symbol_interface_simple_object_declaration_provenance_residues(),
             compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes: (0
                 ..COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -2915,6 +3229,13 @@ impl PerfCounters {
                 .map(|i| NamedCount {
                     name: DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_NAMES[i],
                     count: load(&c.direct_actual_lib_alias_body_outcome[i]),
+                })
+                .collect(),
+            direct_actual_lib_intl_interface_outcomes: (0
+                ..DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES[i],
+                    count: load(&c.direct_actual_lib_intl_interface_outcome[i]),
                 })
                 .collect(),
             cross_file_cache_miss_causes: (0..CROSS_FILE_CACHE_MISS_CAUSE_COUNT)
@@ -2967,6 +3288,40 @@ impl PerfCounters {
         rows
     }
 
+    fn snapshot_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+    -> Vec<ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue> {
+        let mut rows =
+            compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+        rows.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.kind.cmp(b.kind))
+                .then_with(|| a.interface.cmp(&b.interface))
+                .then_with(|| a.property.cmp(&b.property))
+        });
+        rows
+    }
+
+    fn snapshot_compute_type_of_symbol_interface_simple_object_declaration_provenance_residues()
+    -> Vec<ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue> {
+        let mut rows =
+            compute_type_of_symbol_interface_simple_object_declaration_provenance_residues()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+        rows.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.outcome.cmp(b.outcome))
+                .then_with(|| a.symbol.cmp(&b.symbol))
+                .then_with(|| a.declaration_count.cmp(&b.declaration_count))
+        });
+        rows
+    }
+
     /// Serialize a [`PerfCounterSnapshot`] to `path` using an atomic
     /// rename so a partial write can't poison the bench harness's `jq`
     /// consumer.
@@ -3015,9 +3370,14 @@ mod json_tests {
             "compute_type_of_symbol_interface_fastpath_outcomes",
             "compute_type_of_symbol_interface_callsite_outcomes",
             "compute_type_of_symbol_interface_simple_object_outcomes",
+            "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kinds",
+            "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues",
+            "compute_type_of_symbol_interface_simple_object_declaration_provenance_residues",
+            "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes",
             "compute_type_of_symbol_interface_simple_object_type_reference_reject_residues",
             "direct_interface_lowering_outcomes",
             "direct_actual_lib_alias_body_outcomes",
+            "direct_actual_lib_intl_interface_outcomes",
             "cross_file_cache_miss_causes",
             "source_file_symbol_arena_cache_eligibility_outcomes",
         ] {
@@ -3646,6 +4006,107 @@ mod json_tests {
     }
 
     #[test]
+    fn compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues_lock_field_shape()
+     {
+        let unique_interface = format!(
+            "__test_simple_object_non_primitive_interface_{}__",
+            std::process::id()
+        );
+        let unique_property = format!(
+            "__test_simple_object_non_primitive_property_{}__",
+            std::process::id()
+        );
+        {
+            let mut rows =
+                compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(
+                ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue {
+                    kind: "union_or_intersection",
+                    interface: Some(unique_interface.clone()),
+                    property: Some(unique_property.clone()),
+                    count: 7,
+                },
+            );
+        }
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json
+            ["compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues"]
+            .as_array()
+            .expect(
+                "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues is array",
+            );
+        let row = rows
+            .iter()
+            .find(|row| row["interface"] == unique_interface)
+            .expect("test residue row is present");
+        let obj = row.as_object().expect("row is object");
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> = ["kind", "interface", "property", "count"]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues row field shape drifted",
+        );
+        assert_eq!(row["kind"], "union_or_intersection");
+        assert_eq!(row["property"], unique_property);
+        assert_eq!(row["count"], 7);
+    }
+
+    #[test]
+    fn compute_type_of_symbol_interface_simple_object_declaration_provenance_residues_lock_field_shape()
+     {
+        let unique_symbol = format!(
+            "__test_simple_object_declaration_provenance_{}__",
+            std::process::id()
+        );
+        {
+            let mut rows =
+                compute_type_of_symbol_interface_simple_object_declaration_provenance_residues()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(
+                ComputeTypeOfSymbolInterfaceSimpleObjectDeclarationProvenanceResidue {
+                    outcome: "reject_out_of_arena_decl",
+                    symbol: Some(unique_symbol.clone()),
+                    declaration_count: 3,
+                    count: 5,
+                },
+            );
+        }
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json
+            ["compute_type_of_symbol_interface_simple_object_declaration_provenance_residues"]
+            .as_array()
+            .expect(
+                "compute_type_of_symbol_interface_simple_object_declaration_provenance_residues is array",
+            );
+        let row = rows
+            .iter()
+            .find(|row| row["symbol"] == unique_symbol)
+            .expect("test residue row is present");
+        let obj = row.as_object().expect("row is object");
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> =
+            ["outcome", "symbol", "declaration_count", "count"]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            actual, expected,
+            "compute_type_of_symbol_interface_simple_object_declaration_provenance_residues row field shape drifted",
+        );
+        assert_eq!(row["outcome"], "reject_out_of_arena_decl");
+        assert_eq!(row["declaration_count"], 3);
+        assert_eq!(row["count"], 5);
+    }
+
+    #[test]
     fn direct_interface_lowering_outcomes_locks_to_names_array() {
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -3691,6 +4152,31 @@ mod json_tests {
             assert!(
                 row["count"].is_u64(),
                 "direct_actual_lib_alias_body_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
+    fn direct_actual_lib_intl_interface_outcomes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["direct_actual_lib_intl_interface_outcomes"]
+            .as_array()
+            .expect("direct_actual_lib_intl_interface_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT,
+            "direct_actual_lib_intl_interface_outcomes length must match \
+             DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES[i],
+                "direct_actual_lib_intl_interface_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "direct_actual_lib_intl_interface_outcomes[{i}].count should be a number",
             );
         }
     }
@@ -3898,6 +4384,7 @@ mod json_tests {
         let sfsa_idx = SourceFileSymbolArenaCacheEligibilityOutcome::Cacheable.as_index();
         let dilo_idx = DirectCrossFileInterfaceLoweringOutcome::Success.as_index();
         let dalabo_idx = DirectActualLibAliasBodyOutcome::Success.as_index();
+        let daliio_idx = DirectActualLibIntlInterfaceOutcome::SuccessByName.as_index();
         let ctos_source_idx = ComputeTypeOfSymbolSourceOutcome::GlobalSymbol.as_index();
         let ctos_kind_idx = ComputeTypeOfSymbolKindOutcome::Interface.as_index();
         let ctos_fastpath_idx =
@@ -3927,6 +4414,8 @@ mod json_tests {
             c.direct_cross_file_interface_lowering_outcome[dilo_idx].load(Ordering::Relaxed);
         let before_dalabo =
             c.direct_actual_lib_alias_body_outcome[dalabo_idx].load(Ordering::Relaxed);
+        let before_daliio =
+            c.direct_actual_lib_intl_interface_outcome[daliio_idx].load(Ordering::Relaxed);
         let before_ctos_source =
             c.compute_type_of_symbol_source_outcome[ctos_source_idx].load(Ordering::Relaxed);
         let before_ctos_kind =
@@ -3961,6 +4450,7 @@ mod json_tests {
             .fetch_add(1, Ordering::Relaxed);
         c.direct_cross_file_interface_lowering_outcome[dilo_idx].fetch_add(1, Ordering::Relaxed);
         c.direct_actual_lib_alias_body_outcome[dalabo_idx].fetch_add(1, Ordering::Relaxed);
+        c.direct_actual_lib_intl_interface_outcome[daliio_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_source_outcome[ctos_source_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_kind_outcome[ctos_kind_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_fastpath_outcome[ctos_fastpath_idx]
@@ -4047,6 +4537,16 @@ mod json_tests {
         assert!(
             dalabo_row["count"].as_u64().unwrap_or(0) > before_dalabo,
             "direct_actual_lib_alias_body_outcomes[success] did not reflect the bump",
+        );
+
+        let daliio = json["direct_actual_lib_intl_interface_outcomes"]
+            .as_array()
+            .expect("direct_actual_lib_intl_interface_outcomes is array");
+        let daliio_row = &daliio[daliio_idx];
+        assert_eq!(daliio_row["name"], "success_by_name");
+        assert!(
+            daliio_row["count"].as_u64().unwrap_or(0) > before_daliio,
+            "direct_actual_lib_intl_interface_outcomes[success_by_name] did not reflect the bump",
         );
 
         let ctos_source = json["compute_type_of_symbol_source_outcomes"]

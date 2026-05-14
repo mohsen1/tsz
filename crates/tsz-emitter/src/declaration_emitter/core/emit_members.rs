@@ -265,47 +265,37 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
-            if let Some(method_type_id) = method_type_id
-                && let Some(return_type_id) =
+            if let Some(method_type_id) = method_type_id {
+                if let Some(predicate_text) = self
+                    .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
+                {
+                    self.write(": ");
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
-            {
-                if (return_type_id == tsz_solver::types::TypeId::ANY
-                    || return_type_id == tsz_solver::types::TypeId::NEVER)
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
                 {
-                    self.write(": void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
-                    && method.type_annotation.is_none()
-                    && method_body.is_none()
-                {
-                    // Ambient methods without explicit return type: tsc emits `any`
-                    self.write(": any");
-                } else {
-                    self.write(": ");
-                    self.write(&self.print_type_id(return_type_id));
-                }
-            } else if let Some(method_type_id) = method_type_id {
-                if method_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
-                {
-                    self.write(": void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else {
-                    self.write(": ");
-                    self.write(&self.print_type_id(method_type_id));
+                    if (return_type_id == tsz_solver::types::TypeId::ANY
+                        || return_type_id == tsz_solver::types::TypeId::NEVER)
+                        && method_body.is_some()
+                        && self.body_returns_void(method_body)
+                    {
+                        self.write(": void");
+                    } else if method_body.is_some()
+                        && let Some(type_text) =
+                            self.function_body_preferred_return_type_text(method_body)
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
+                        && method.type_annotation.is_none()
+                        && method_body.is_none()
+                    {
+                        // Ambient methods without explicit return type: tsc emits `any`
+                        self.write(": any");
+                    } else {
+                        self.write(": ");
+                        self.write(&self.print_type_id(return_type_id));
+                    }
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -372,38 +362,28 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
-            if let Some(method_type_id) = method_type_id
-                && let Some(return_type_id) =
+            if let Some(method_type_id) = method_type_id {
+                if let Some(predicate_text) = self
+                    .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
+                {
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
-            {
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
                 {
-                    self.write("void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write_type_text_with_current_indent(&type_text);
-                } else {
-                    let type_text = self.print_type_id(return_type_id);
-                    self.write_type_text_with_current_indent(&type_text);
-                }
-            } else if let Some(method_type_id) = method_type_id {
-                if method_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
-                {
-                    self.write("void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write_type_text_with_current_indent(&type_text);
-                } else {
-                    let type_text = self.print_type_id(method_type_id);
-                    self.write_type_text_with_current_indent(&type_text);
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && method_body.is_some()
+                        && self.body_returns_void(method_body)
+                    {
+                        self.write("void");
+                    } else if method_body.is_some()
+                        && let Some(type_text) =
+                            self.function_body_preferred_return_type_text(method_body)
+                    {
+                        self.write_type_text_with_current_indent(&type_text);
+                    } else {
+                        let type_text = self.print_type_id(return_type_id);
+                        self.write_type_text_with_current_indent(&type_text);
+                    }
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -1606,6 +1586,11 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(param) = self.arena.get_parameter(param_node) else {
                 continue;
             };
+            let comment_pos = self
+                .arena
+                .get(param.name)
+                .map_or(param_node.pos, |name_node| name_node.pos);
+            self.emit_inline_parameter_comment(comment_pos);
             self.emit_member_modifiers(&param.modifiers);
             if param.dot_dot_dot_token {
                 self.write("...");

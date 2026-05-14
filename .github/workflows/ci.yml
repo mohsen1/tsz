@@ -30,6 +30,7 @@ jobs:
       should_run: ${{ steps.gate.outputs.should_run }}
       full_run: ${{ steps.gate.outputs.full_run }}
       rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
+      required_summary: ${{ steps.gate.outputs.required_summary }}
     steps:
       - id: gate
         env:
@@ -39,6 +40,7 @@ jobs:
           set -euo pipefail
           should_run=true
           full_run=true
+          required_summary=true
           rust_cache_refresh=false
           cache_key_changed=false
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -50,11 +52,13 @@ jobs:
                   && "${{ github.event.label.name }}" != "ci-approved" ]]; then
               echo "Label '${{ github.event.label.name }}' is not 'ci-approved' — skipping redundant run."
               should_run=false
+              required_summary=false
             fi
             if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
               # Draft PRs still run the light CI suite (lint, build, unit).
               # Heavy suites wait until the PR is marked ready for review.
               full_run=false
+              required_summary=false
             fi
             # Docs-only PRs cannot affect cargo build/test/conformance, so
             # skip CI jobs when every changed path matches
@@ -115,6 +119,7 @@ jobs:
               else
                 echo "Skipping self-hosted CI for fork PRs (add 'ci-approved' label to enable)."
                 should_run=false
+                required_summary=false
               fi
             fi
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -171,24 +176,36 @@ jobs:
               pr_head_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
                 --jq '.head.sha' 2>/dev/null || true)
               if [[ -n "$pr_head_sha" ]]; then
-                ci_passed=0
+                latest_ci_run_id=""
+                latest_ci_conclusion=""
                 for attempt in 1 2 3 4 5 6; do
-                  ci_passed=$(gh api \
+                  latest_ci_run=$(gh api \
                     "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${pr_head_sha}&event=pull_request&per_page=20" \
-                    --jq '[.workflow_runs[] | select(.conclusion == "success")] | length' 2>/dev/null || echo "0")
-                  if [[ "${ci_passed}" -gt 0 ]]; then
+                    --jq '[.workflow_runs[] | select(.status == "completed")] | sort_by(.created_at) | last | [.id, .conclusion] | @tsv' \
+                    2>/dev/null || true)
+                  latest_ci_run_id=$(printf '%s' "${latest_ci_run}" | cut -f1)
+                  latest_ci_conclusion=$(printf '%s' "${latest_ci_run}" | cut -f2)
+                  if [[ -n "${latest_ci_conclusion}" ]]; then
                     break
                   fi
                   if [[ "$attempt" -lt 6 ]]; then
-                    echo "No passing CI run for PR #${pr_number} head ${pr_head_sha} is visible yet (attempt ${attempt}/6); retrying."
+                    echo "No completed CI run for PR #${pr_number} head ${pr_head_sha} is visible yet (attempt ${attempt}/6); retrying."
                     sleep 5
                   fi
                 done
-                if [[ "${ci_passed}" -gt 0 ]]; then
-                  echo "PR #${pr_number} head ${pr_head_sha} already validated — skipping redundant main CI"
-                  should_run=false
+                if [[ "${latest_ci_conclusion}" == "success" ]]; then
+                  required_summary_passed=$(gh api \
+                    "repos/${{ github.repository }}/actions/runs/${latest_ci_run_id}/jobs?per_page=100" \
+                    --jq '[.jobs[] | select(.name == "CI Summary" and .conclusion == "success")] | length' \
+                    2>/dev/null || echo "0")
+                  if [[ "${required_summary_passed}" -gt 0 ]]; then
+                    echo "Latest required PR CI summary for #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
+                    should_run=false
+                  else
+                    echo "Latest PR CI for #${pr_number} head ${pr_head_sha} passed without a required CI Summary — running main CI"
+                  fi
                 else
-                  echo "No passing CI run for PR #${pr_number} head ${pr_head_sha} — running main CI"
+                  echo "Latest PR CI for #${pr_number} head ${pr_head_sha} is '${latest_ci_conclusion:-missing}' — running main CI"
                 fi
               fi
             fi
@@ -199,6 +216,7 @@ jobs:
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
           echo "full_run=${full_run}" >> "$GITHUB_OUTPUT"
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
+          echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
 
   lint:
     name: lint
@@ -553,7 +571,7 @@ jobs:
         run: scripts/ci/github-suite.sh fourslash-aggregate
 
   ci-summary:
-    name: CI Summary
+    name: ${{ needs.gate.outputs.required_summary == 'true' && 'CI Summary' || 'CI Light Summary' }}
     needs:
       - gate
       - lint

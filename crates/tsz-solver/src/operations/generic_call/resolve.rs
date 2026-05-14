@@ -1492,6 +1492,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let should_defer_to_other_param =
                 appears_in_other_params && (has_covariant_candidates || saw_deferred_arg);
             if !should_defer_to_other_param {
+                let direct_rest_tuple = self
+                    .interner
+                    .lookup(tuple_type)
+                    .and_then(|data| match data {
+                        TypeData::Tuple(elements_id) => Some(self.interner.tuple_list(elements_id)),
+                        _ => None,
+                    })
+                    .is_some_and(|elements| elements.iter().all(|element| !element.rest));
+                let was_type_annotation = infer_ctx.source_is_type_annotation;
+                if direct_rest_tuple {
+                    infer_ctx.source_is_type_annotation = true;
+                }
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,
@@ -1499,6 +1511,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     target_type,
                     crate::types::InferencePriority::NakedTypeVariable,
                 );
+                infer_ctx.source_is_type_annotation = was_type_annotation;
             }
         }
 
@@ -2638,6 +2651,55 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // Circular-inference guard for unconstrained type parameters.
+        //
+        // When an unconstrained T_inner is inferred as a composite type that
+        // structurally CONTAINS a foreign outer-scope placeholder (e.g.
+        // `T_outer & object`), the final argument assignability check becomes
+        // tautological: `T_outer & object <: T_outer & object` trivially passes,
+        // so TS2345 is never emitted even though the expression is unsound.
+        //
+        // tsc detects this and emits TS2345. We match that behaviour by
+        // reverting `final_subst[T_inner.name]` back to the call-local
+        // placeholder TypeId whenever all four conditions hold:
+        //   1. The type parameter has no constraint (unconstrained).
+        //   2. Inference produced usable contra-variance candidates (meaning the
+        //      outer call constrained the parameter; prevents false positives for
+        //      independent generic calls like `identity(value[key])`).
+        //   3. At least one covariant candidate is an IndexAccess type (the
+        //      structural marker of `T[K]` being passed to `T`). Pure outer-T
+        //      forwarding (`T_outer[]` → `T_inner`) never has an IndexAccess
+        //      covariant candidate and must not be reverted.
+        //   4. The inferred type structurally contains a foreign TypeParameter
+        //      (from an outer scope), making the post-substitution check
+        //      tautological.
+        for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
+            // Condition 1: type parameter is unconstrained.
+            if tp.constraint.is_some() {
+                continue;
+            }
+            let Some(inferred_ty) = final_subst.get(tp.name) else {
+                continue;
+            };
+            // Condition 2: had usable contra candidates during inference.
+            if !infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database()) {
+                continue;
+            }
+            // Condition 3: at least one covariant candidate is an IndexAccess type.
+            if !infer_ctx.has_index_access_covariant_candidate(var) {
+                continue;
+            }
+            // Condition 4: the inferred type structurally contains a foreign TypeParameter.
+            if !self.type_contains_any_foreign_type_param(inferred_ty, &var_map) {
+                continue;
+            }
+            // Revert to the call-local placeholder so the argument check is
+            // non-tautological and TS2345 can fire.
+            if let Some((&pid, _)) = var_map.iter().find(|(_, v)| **v == var) {
+                final_subst.insert(tp.name, pid);
+            }
+        }
+
         // Check if the rest param's type parameter was explicitly replaced by
         // its constraint during the fallback path above. This only matches when
         // the constraint check FAILED and the code fell through to the fallback
@@ -3111,6 +3173,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
             }
         }
+
         tracing::debug!("Final check succeeded");
 
         // Instantiate the type predicate if present, so the checker can use it
@@ -3210,6 +3273,53 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         if changed {
             instantiated_rest_param.type_id = self.interner.tuple(elements);
+        }
+    }
+
+    /// Returns `true` when `ty` is or structurally contains a `TypeParameter` that
+    /// does not belong to the current generic call (i.e. is absent from `var_map`).
+    ///
+    /// "Foreign" covers two cases:
+    ///  - A bare `__infer_*` placeholder from an enclosing call scope.
+    ///  - The original, user-named `TypeParameter` (e.g. `T`) from the enclosing
+    ///    function — which appears when `generic_function_shape_for_inference`
+    ///    renames the callee's type params but the argument type still carries
+    ///    the outer scope's unsubstituted `TypeParameter`.
+    ///
+    /// Intrinsic and concrete types (primitives, objects, etc.) are never foreign.
+    /// The caller is responsible for ensuring `has_usable_contra_candidates` is
+    /// true before using this result, to prevent false positives for independent
+    /// generic calls like `identity(value[key])`.
+    fn type_contains_any_foreign_type_param(
+        &self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(ty) {
+            // Any TypeParameter not registered in this call's var_map is foreign.
+            Some(TypeData::TypeParameter(_)) => !var_map.contains_key(&ty),
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .any(|&m| self.type_contains_any_foreign_type_param(m, var_map)),
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                self.type_contains_any_foreign_type_param(obj, var_map)
+                    || self.type_contains_any_foreign_type_param(idx, var_map)
+            }
+            Some(TypeData::Array(elem)) => self.type_contains_any_foreign_type_param(elem, var_map),
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                self.type_contains_any_foreign_type_param(app.base, var_map)
+                    || app
+                        .args
+                        .iter()
+                        .any(|&a| self.type_contains_any_foreign_type_param(a, var_map))
+            }
+            _ => false,
         }
     }
 

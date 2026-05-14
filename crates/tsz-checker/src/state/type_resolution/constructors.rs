@@ -998,7 +998,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn instantiate_base_instance_type_with_args(
+    pub(super) fn instantiate_base_instance_type_with_args(
         &mut self,
         base_instance_type: TypeId,
         base_type_params: &[tsz_solver::TypeParamInfo],
@@ -1083,6 +1083,19 @@ impl<'a> CheckerState<'a> {
                         .insert(expr_idx, None);
                 }
                 return None;
+            }
+
+            if let Some(array_base) =
+                self.array_base_instance_type_for_heritage(base_sym_id, type_arguments)
+            {
+                let resolved = Some(array_base);
+                if should_cache {
+                    self.ctx
+                        .base_instance_expr_cache
+                        .borrow_mut()
+                        .insert(expr_idx, resolved);
+                }
+                return resolved;
             }
 
             if let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
@@ -1227,15 +1240,7 @@ impl<'a> CheckerState<'a> {
         number_index: &mut Option<tsz_solver::IndexSignature>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        // Resolve Lazy types so the classifier can see the actual structure.
-        let base_instance_type = {
-            let resolved = self.resolve_lazy_type(base_instance_type);
-            if resolved != base_instance_type {
-                resolved
-            } else {
-                base_instance_type
-            }
-        };
+        let base_instance_type = self.normalize_base_instance_type_for_merge(base_instance_type);
         if !visited.insert(base_instance_type) {
             return;
         }

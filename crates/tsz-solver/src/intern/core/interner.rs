@@ -537,6 +537,10 @@ pub struct TypeInterner {
     /// Kept as `OnceLock` since params don't contain `DefIds` and are stable
     /// across checkers (the interner allocates `TypeParam` `TypeIds` centrally).
     pub(super) array_base_type_params: OnceLock<Vec<TypeParamInfo>>,
+    /// The global ReadonlyArray base type (e.g., `ReadonlyArray<T>` from lib.d.ts).
+    /// Used by property access resolution to correctly reject mutating methods
+    /// (`push`, `pop`, etc.) on `readonly T[]` types.
+    pub(super) readonly_array_base_type: AtomicU32,
     /// Boxed interface types for primitives (e.g., String interface for `string`).
     /// Registered from lib.d.ts during primordial type setup.
     pub(super) boxed_types: DashMap<IntrinsicKind, TypeId, FxBuildHasher>,
@@ -657,6 +661,7 @@ impl TypeInterner {
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
+            readonly_array_base_type: AtomicU32::new(u32::MAX),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
             this_type_marker_def_ids: DashMap::with_hasher(FxBuildHasher),
@@ -722,6 +727,23 @@ impl TypeInterner {
     pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
         self.array_base_type.store(type_id.0, Ordering::Relaxed);
         let _ = self.array_base_type_params.set(params);
+    }
+
+    /// Set the global `ReadonlyArray<T>` base type from lib.d.ts.
+    pub fn set_readonly_array_base_type(&self, type_id: TypeId) {
+        self.readonly_array_base_type
+            .store(type_id.0, Ordering::Relaxed);
+    }
+
+    /// Get the global `ReadonlyArray<T>` base type, if it has been set.
+    #[inline]
+    pub fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        let raw = self.readonly_array_base_type.load(Ordering::Relaxed);
+        if raw == u32::MAX {
+            None
+        } else {
+            Some(TypeId(raw))
+        }
     }
 
     /// Set the Array base type used for display-order-sensitive queries.

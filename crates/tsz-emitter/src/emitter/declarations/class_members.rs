@@ -277,6 +277,39 @@ impl<'a> Printer<'a> {
             self.emit_method_async_lowered_body(method.body, &method.parameters.nodes);
         } else {
             self.write(" ");
+            let lowered_async_arrow_super_capture = if self.ctx.needs_async_lowering {
+                crate::transforms::emit_utils::collect_lowered_async_arrow_super_capture(
+                    self.arena,
+                    method.body,
+                )
+            } else {
+                crate::transforms::emit_utils::AsyncMethodSuperCapture::default()
+            };
+            let has_lowered_async_arrow_super_capture =
+                !lowered_async_arrow_super_capture.property_names.is_empty()
+                    || lowered_async_arrow_super_capture.needs_element_index;
+            let prev_pending_lowered_async_arrow_super_capture =
+                self.pending_lowered_async_arrow_super_capture.take();
+            if has_lowered_async_arrow_super_capture {
+                let source_text = self.source_text.unwrap_or_default();
+                let super_alias_text = (!lowered_async_arrow_super_capture
+                    .property_names
+                    .is_empty())
+                .then(|| crate::transforms::emit_utils::hygienic_temp_name("_super", source_text));
+                let super_index_alias_text = lowered_async_arrow_super_capture
+                    .needs_element_index
+                    .then(|| {
+                        crate::transforms::emit_utils::hygienic_temp_name(
+                            "_superIndex",
+                            source_text,
+                        )
+                    });
+                self.pending_lowered_async_arrow_super_capture = Some((
+                    lowered_async_arrow_super_capture,
+                    super_alias_text,
+                    super_index_alias_text,
+                ));
+            }
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
             self.function_scope_depth += 1;
@@ -293,6 +326,8 @@ impl<'a> Printer<'a> {
             self.ctx.flags.in_generator = prev_in_generator;
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
+            self.pending_lowered_async_arrow_super_capture =
+                prev_pending_lowered_async_arrow_super_capture;
         }
     }
 
@@ -383,35 +418,74 @@ impl<'a> Printer<'a> {
 
         // Issue #3759: Emit `super` capture before entering the generator. tsc
         // pre-binds each referenced `super.<name>` via an `Object.create` block so
-        // the generator body can reach them through `_super.<name>.call(this, …)`
-        // — `super` is not lexically valid inside a nested generator function.
-        let super_property_names = if body_is_empty_single_line {
-            Vec::new()
+        // the generator body can reach captured aliases — `super` is not
+        // lexically valid inside a nested generator function.
+        let super_capture = if body_is_empty_single_line {
+            crate::transforms::emit_utils::AsyncMethodSuperCapture::default()
         } else {
-            crate::transforms::emit_utils::collect_async_method_super_property_names(
-                self.arena, body,
-            )
+            crate::transforms::emit_utils::collect_async_method_super_capture(self.arena, body)
         };
-        let super_alias = if super_property_names.is_empty() {
+        let source_text = self.source_text.unwrap_or_default();
+        let super_alias_text = if super_capture.property_names.is_empty() {
             None
         } else {
-            Some(std::sync::Arc::<str>::from("_super"))
+            Some(crate::transforms::emit_utils::hygienic_temp_name(
+                "_super",
+                source_text,
+            ))
         };
+        let super_index_alias_text = if super_capture.needs_element_index {
+            Some(crate::transforms::emit_utils::hygienic_temp_name(
+                "_superIndex",
+                source_text,
+            ))
+        } else {
+            None
+        };
+        let super_alias = super_alias_text.as_deref().map(std::sync::Arc::<str>::from);
+        let super_index_alias = super_index_alias_text
+            .as_deref()
+            .map(std::sync::Arc::<str>::from);
 
         self.write(" {");
         self.write_line();
         self.increase_indent();
 
-        if !super_property_names.is_empty() {
-            self.write("const _super = Object.create(null, {");
+        if let Some(index_alias) = super_index_alias_text.as_deref() {
+            self.write("const ");
+            self.write(index_alias);
+            if super_capture.needs_writable_element_index {
+                self.write(" = (function (geti, seti) {");
+                self.write_line();
+                self.increase_indent();
+                self.write("const cache = Object.create(null);");
+                self.write_line();
+                self.write("return name => cache[name] || (cache[name] = { get value() { return geti(name); }, set value(v) { seti(name, v); } });");
+                self.write_line();
+                self.decrease_indent();
+                self.write("})(name => super[name], (name, value) => super[name] = value);");
+            } else {
+                self.write(" = name => super[name];");
+            }
+            self.write_line();
+        }
+        if let Some(super_alias_name) = super_alias_text.as_deref() {
+            self.write("const ");
+            self.write(super_alias_name);
+            self.write(" = Object.create(null, {");
             self.write_line();
             self.increase_indent();
-            for (i, name) in super_property_names.iter().enumerate() {
+            for (i, name) in super_capture.property_names.iter().enumerate() {
                 self.write(name);
                 self.write(": { get: () => super.");
                 self.write(name);
+                if super_capture.writable_property_names.contains(name) {
+                    self.write(", set: v => super.");
+                    self.write(name);
+                    self.write(" = v");
+                }
                 self.write(" }");
-                if i + 1 < super_property_names.len() {
+                if i + 1 < super_capture.property_names.len() {
                     self.write(",");
                 }
                 self.write_line();
@@ -453,28 +527,44 @@ impl<'a> Printer<'a> {
 
         // Emit function body with await→yield substitution and (issue #3759)
         // an active `_super` capture alias when the body references super.
+        let saved_yield = self.ctx.emit_await_as_yield;
         self.ctx.emit_await_as_yield = true;
         let prev_super_alias = self.scoped_static_super_base_alias.take();
         let prev_super_direct = self.scoped_static_super_direct_access;
+        let prev_super_index_alias = self.scoped_static_super_index_alias.take();
+        let prev_super_index_value = self.scoped_static_super_index_value_access;
+        let prev_function_scope_depth = self.function_scope_depth;
         if let Some(alias) = super_alias {
             self.scoped_static_super_base_alias = Some(alias);
             self.scoped_static_super_direct_access = true;
         }
+        if let Some(alias) = super_index_alias {
+            self.scoped_static_super_index_alias = Some(alias);
+            self.scoped_static_super_index_value_access =
+                super_capture.needs_writable_element_index;
+        }
+        self.function_scope_depth += 1;
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
-            for &stmt in &block.statements.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt) {
-                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                    self.emit_comments_before_pos(actual_start);
+            let statements = block.statements.clone();
+            if !self.emit_statement_list_with_using_scope(&statements) {
+                for &stmt in &statements.nodes {
+                    if let Some(stmt_node) = self.arena.get(stmt) {
+                        let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                        self.emit_comments_before_pos(actual_start);
+                    }
+                    self.emit(stmt);
+                    self.write_line();
                 }
-                self.emit(stmt);
-                self.write_line();
             }
         }
+        self.function_scope_depth = prev_function_scope_depth;
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_direct_access = prev_super_direct;
-        self.ctx.emit_await_as_yield = false;
+        self.scoped_static_super_index_alias = prev_super_index_alias;
+        self.scoped_static_super_index_value_access = prev_super_index_value;
+        self.ctx.emit_await_as_yield = saved_yield;
 
         self.decrease_indent();
         self.write("});");
