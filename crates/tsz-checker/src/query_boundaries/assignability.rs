@@ -699,8 +699,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         classify_object_properties(db.as_type_database(), request.source, request.target);
 
     // Suppress ExcessProperty failure when the target has structural features
-    // that make EPC inapplicable. This centralizes the policy that was previously
-    // duplicated in `analyze_assignability_failure`.
+    // that make EPC inapplicable.
     let failure =
         suppress_excess_property_failure_if_needed(failure, db.as_type_database(), request.target);
 
@@ -725,8 +724,6 @@ fn suppress_excess_property_failure_if_needed(
     db: &dyn TypeDatabase,
     target: TypeId,
 ) -> Option<super::relation_types::RelationFailure> {
-    use super::common::is_type_parameter_like;
-
     let is_excess = matches!(
         &failure,
         Some(super::relation_types::RelationFailure::ExcessProperty { .. })
@@ -735,21 +732,68 @@ fn suppress_excess_property_failure_if_needed(
         return failure;
     }
 
-    // Check for deferred conditional members.
-    if tsz_solver::has_deferred_conditional_member(db, target) {
-        return None;
-    }
-
-    // Check for non-EPC intersection members (primitives/type-params).
-    if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target)
-        && members.iter().any(|member| {
-            tsz_solver::is_primitive_type(db, *member) || is_type_parameter_like(db, *member)
-        })
-    {
+    if target_suppresses_excess_property_failure(db, [target], |member| member) {
         return None;
     }
 
     failure
+}
+
+/// Apply the boundary-owned `ExcessProperty` suppression policy to raw failure
+/// analysis collected outside [`execute_relation`].
+///
+/// Some legacy callers still use [`check_assignable_gate_with_overrides`] for
+/// structured failure analysis. They may need checker-specific type evaluation
+/// before inspecting intersection members, so the boundary owns the decision
+/// while callers provide the member normalization callback.
+pub(crate) fn suppress_raw_excess_property_failure_if_needed<I, F>(
+    mut analysis: AssignabilityFailureAnalysis,
+    db: &dyn TypeDatabase,
+    target_candidates: I,
+    normalize_member: F,
+) -> AssignabilityFailureAnalysis
+where
+    I: IntoIterator<Item = TypeId>,
+    F: FnMut(TypeId) -> TypeId,
+{
+    if matches!(
+        &analysis.failure_reason,
+        Some(SubtypeFailureReason::ExcessProperty { .. })
+    ) && target_suppresses_excess_property_failure(db, target_candidates, normalize_member)
+    {
+        analysis.failure_reason = None;
+    }
+
+    analysis
+}
+
+fn target_suppresses_excess_property_failure<I, F>(
+    db: &dyn TypeDatabase,
+    target_candidates: I,
+    mut normalize_member: F,
+) -> bool
+where
+    I: IntoIterator<Item = TypeId>,
+    F: FnMut(TypeId) -> TypeId,
+{
+    use super::common::is_type_parameter_like;
+
+    for target in target_candidates {
+        if tsz_solver::has_deferred_conditional_member(db, target) {
+            return true;
+        }
+
+        if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target)
+            && members.iter().any(|member| {
+                let member = normalize_member(*member);
+                tsz_solver::is_primitive_type(db, member) || is_type_parameter_like(db, member)
+            })
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------

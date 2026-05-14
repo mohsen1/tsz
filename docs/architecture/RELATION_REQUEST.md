@@ -28,6 +28,13 @@ The active boundary path is:
 checker-only assignability failure analysis. That post-check is intentionally
 outside the solver boundary today because it depends on checker-only state.
 
+Legacy diagnostic callers that still collect raw
+`AssignabilityFailureAnalysis` through `check_assignable_gate_with_overrides`
+route `ExcessProperty` suppression through
+`suppress_raw_excess_property_failure_if_needed`. The caller supplies
+checker-specific member normalization, but the decision about which target
+shapes suppress EPC now lives in the assignability boundary.
+
 ## Field Map
 
 | Field | Constructors / builders | Current consumers | Effect today |
@@ -71,6 +78,10 @@ work can centralize one policy decision at a time.
 - computing canonical object property classification for failed relations;
 - suppressing excess-property failure reasons when the target shape makes EPC
   inapplicable.
+
+The boundary also exposes `suppress_raw_excess_property_failure_if_needed` for
+the remaining raw-analysis path, so callers do not duplicate the target-shape
+EPC suppression policy while that path is being migrated.
 
 It does not yet own:
 
