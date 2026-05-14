@@ -544,16 +544,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let evaluated = evaluated_result.result;
                 if evaluated != TypeId::ERROR
                     && evaluated != indexed_type
-                    && object_is_type_query_node
-                {
-                    return evaluated;
-                }
-                if evaluated != TypeId::ERROR
-                    && evaluated != indexed_type
                     && let Some(parent_enum_type) =
                         self.full_enum_member_union_parent_type(evaluated)
                 {
                     return parent_enum_type;
+                }
+                if evaluated != TypeId::ERROR
+                    && evaluated != indexed_type
+                    && object_is_type_query_node
+                {
+                    return evaluated;
                 }
             }
 
