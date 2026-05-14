@@ -6,26 +6,30 @@
 - `docs/plan/ROADMAP.md` is the single living roadmap. Before starting
   conformance, emit, performance, architecture, LSP/WASM, Sound Mode, or DRY
   cleanup work, read it and keep your work aligned with it.
-- Update `docs/plan/ROADMAP.md` in the same PR when your work changes roadmap
-  status, metrics, sequencing, risks, active priorities, or invalidates a plan
-  assumption. Do not create new roadmap files under `docs/plan/`; update the
-  living roadmap instead.
+- Do **not** update `docs/plan/ROADMAP.md` for routine status, small fixes,
+  ordinary cleanup, or PR bookkeeping. That creates avoidable conflicts across
+  parallel PRs. Keep those details in draft PR bodies, PR comments, issues, or
+  review comments.
+- Update `docs/plan/ROADMAP.md` only when the work changes durable direction:
+  public metrics, release gates, track sequencing, accepted architecture,
+  active priorities, or a roadmap assumption that future agents would otherwise
+  rely on incorrectly. Do not create new roadmap files under `docs/plan/`;
+  update the living roadmap instead when a roadmap change is truly warranted.
 - To avoid duplicate work, roadmap-adjacent implementation must be visible
-  before coding starts: inspect open GitHub issues, draft PRs, and `WIP`
-  labels/titles for overlapping work. If no existing claim covers the task,
-  create or update a GitHub issue for the scope, mark it `WIP`, create a
-  branch, then open a draft PR with the GitHub label `WIP`. Use a title like
-  `[WIP] <scope>: <intent>`.
+  before coding starts: inspect open draft PRs, open PRs, recent merged PRs,
+  and relevant GitHub issues for overlapping work. A GitHub issue is optional;
+  a draft PR with a clear title/body is enough to claim active work.
 - Do not add `[codex]` to PR titles. PR titles should follow the repository
   convention, e.g. `fix(checker): ...`, `chore(lsp-tests): ...`, or `[WIP]
   <scope>: <intent>` while the work is still WIP.
-- While working, keep the GitHub issue current with new facts, root-cause
-  discoveries, and scope changes. Other agents use those issue updates and
-  WIP PRs to decide whether their task duplicates active work.
+- While working, keep the draft PR current with new facts, root-cause
+  discoveries, scope changes, and coordination notes. Other agents use draft
+  PRs, PR comments, and review comments to decide whether their task duplicates
+  active work.
 - Never merge WIP branches. A branch is WIP if its PR is draft, has the `WIP`
   label, has a `[WIP]` title prefix, or the PR/branch description says it is
   WIP. Remove the label/prefix and mark the PR ready only after implementation,
-  verification, and roadmap status updates are complete.
+  verification, and any justified roadmap update are complete.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
   emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
@@ -258,8 +262,9 @@ them as TSZ repo skills.
   must include your AgentName so humans (and other agents) can tell who did it.
 - **Shared GitHub identity.** All agents push as the same GitHub user
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
-  account — check WIP claims, draft PRs, and open issues before starting work,
-  and address other agents by their AgentName when relevant.
+  account — check draft PRs, open PRs, recent merged PRs, and relevant issues
+  before starting work, and address other agents by their AgentName when
+  relevant.
 - **Use `gh` for GitHub operations.** The GitHub CLI is available in this
   workspace and should be preferred over connector/integration tools for
   inspecting PRs/issues, creating or updating PRs, and checking CI status.
@@ -324,6 +329,41 @@ scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
 # Debug memory usage
 scripts/safe-run.sh --verbose -- cargo build
 ```
+
+## 20.8) Disk-Space And Worktree Hygiene
+- **Do not burn tokens or terminal output on broad disk archaeology.** Avoid
+  `du -sh *`, recursive `du`, or giant sorted size dumps unless a targeted
+  cleanup needs exact ownership. Start with compact checks:
+  ```bash
+  df -h .
+  scripts/setup/disk-worktree-guard.sh
+  ```
+- Before creating a new worktree, check reusable worktrees first:
+  ```bash
+  scripts/setup/disk-worktree-guard.sh
+  git worktree list
+  ```
+- New worktrees must be created adjacent to this checkout, as sister
+  directories under the parent of `tsz`, not nested inside the repo. Example:
+  `git worktree add ../tsz-<short-scope> <branch>`.
+- Prefer reusing an existing sister worktree that has been inactive for at
+  least 4 hours. The guard script prints compact reuse candidates and excludes
+  build/cache directories from its activity check.
+- If disk is nearly full, do not destroy useful caches first. Run the
+  cache-preserving cleanup path:
+  ```bash
+  scripts/setup/disk-worktree-guard.sh --auto-prune
+  scripts/setup/clean.sh --quiet
+  ```
+  This prunes old Cargo incremental directories and normal debris while keeping
+  `.target`, `.target-bench`, `target` artifacts, and the checked-in tsc cache
+  unless `--full` is explicitly chosen.
+- Use `scripts/setup/clean.sh --full` only as a deliberate last resort after
+  confirming the repo/worktree is not being used for an active build.
+- When a run fails immediately after a main merge or branch switch, rule out a
+  stale binary before assuming a source regression. Prefer harnesses that
+  already rebuild stale binaries, such as `scripts/emit/run.sh`; otherwise
+  rebuild the narrow binary once and rerun the focused command.
 
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.
