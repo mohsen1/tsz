@@ -45,11 +45,8 @@ impl<'a> DeclarationEmitter<'a> {
         outer_type_params: Option<&NodeList>,
     ) -> Option<String> {
         let interner = self.type_interner?;
-        let tsz_solver::types::TypeData::Intersection(list_id) = interner.lookup(type_id)? else {
-            return None;
-        };
-        let members = interner.type_list(list_id);
-        let [left, right] = members.as_ref() else {
+        let members = tsz_solver::type_queries::get_intersection_members(interner, type_id)?;
+        let [left, right] = members.as_slice() else {
             return None;
         };
 
@@ -62,15 +59,12 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         };
 
-        let tsz_solver::types::TypeData::Union(union_id) = interner.lookup(union_type)? else {
-            return None;
-        };
-        let union_members = interner.type_list(union_id);
+        let union_members = tsz_solver::type_queries::get_union_members(interner, union_type)?;
         let has_undefined = union_members.contains(&tsz_solver::types::TypeId::UNDEFINED);
         let has_empty_object = union_members
             .iter()
             .copied()
-            .any(|member| self.type_id_is_empty_object(member));
+            .any(|member| tsz_solver::type_queries::is_empty_object_type(interner, member));
         if !has_undefined || !has_empty_object {
             return None;
         }
@@ -80,22 +74,5 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|type_params| self.print_type_id_with_outer_type_params(type_param, type_params))
             .unwrap_or_else(|| self.print_type_id(type_param));
         Some(format!("{type_param_text} & ({{}} | undefined)"))
-    }
-
-    fn type_id_is_empty_object(&self, type_id: tsz_solver::types::TypeId) -> bool {
-        let Some(interner) = self.type_interner else {
-            return false;
-        };
-        if type_id.is_intrinsic() {
-            return false;
-        }
-        tsz_solver::visitor::object_shape_id(interner, type_id)
-            .map(|shape_id| interner.object_shape(shape_id))
-            .is_some_and(|shape| {
-                shape.properties.is_empty()
-                    && shape.string_index.is_none()
-                    && shape.number_index.is_none()
-                    && shape.symbol.is_none()
-            })
     }
 }
