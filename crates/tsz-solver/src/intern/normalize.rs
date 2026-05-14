@@ -718,6 +718,20 @@ impl TypeInterner {
                 continue;
             };
 
+            // Intersections cannot contain the same property as both public and
+            // private/protected. TypeScript reduces these to never because the
+            // restricted member's identity cannot be satisfied by a public
+            // property with the same name.
+            if prop.visibility != other.visibility
+                && (matches!(prop.visibility, Visibility::Private | Visibility::Protected)
+                    || matches!(
+                        other.visibility,
+                        Visibility::Private | Visibility::Protected
+                    ))
+            {
+                return true;
+            }
+
             // If BOTH are optional, the object intersection is NOT never
             // (the property itself just becomes never).
             if prop.optional && other.optional {
