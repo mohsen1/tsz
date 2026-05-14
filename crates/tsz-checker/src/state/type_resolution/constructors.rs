@@ -1240,18 +1240,7 @@ impl<'a> CheckerState<'a> {
         number_index: &mut Option<tsz_solver::IndexSignature>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        // Evaluate generic base applications (for example `Array<T>`) and
-        // resolve Lazy types so the classifier can see the actual instance
-        // structure before merging inherited members.
-        let base_instance_type = {
-            let evaluated = self.evaluate_application_type(base_instance_type);
-            let resolved = self.resolve_lazy_type(evaluated);
-            if resolved != base_instance_type {
-                resolved
-            } else {
-                evaluated
-            }
-        };
+        let base_instance_type = self.normalize_base_instance_type_for_merge(base_instance_type);
         if !visited.insert(base_instance_type) {
             return;
         }

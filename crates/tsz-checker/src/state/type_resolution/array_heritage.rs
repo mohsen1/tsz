@@ -4,6 +4,19 @@ use tsz_parser::parser::NodeList;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn normalize_base_instance_type_for_merge(
+        &mut self,
+        base_instance_type: TypeId,
+    ) -> TypeId {
+        let evaluated = self.evaluate_application_type(base_instance_type);
+        let resolved = self.resolve_lazy_type(evaluated);
+        if resolved != base_instance_type {
+            resolved
+        } else {
+            evaluated
+        }
+    }
+
     pub(super) fn array_base_instance_type_for_heritage(
         &mut self,
         base_sym_id: SymbolId,
