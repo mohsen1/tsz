@@ -11,6 +11,33 @@
 //! The bench harness invokes the perf build and consumes the JSON via `jq`
 //! rather than scraping shell text. The schema is documented in the plan and
 //! versioned via the `schema_version` field; bumping it is a breaking change.
+//!
+//! Field population inventory for `PerfDiagnosticsReport`:
+//!
+//! - Entire report: feature-gated behind `perf-tools` because the module, CLI
+//!   flag, and call site compile out of default builds.
+//! - `schema_version`: populated from `SCHEMA_VERSION`.
+//! - `mode`: populated as `"timing"` until attribution mode exists.
+//! - `tsz.version`: populated from Cargo package metadata.
+//! - `tsz.commit`: populated from `TSZ_BUILD_COMMIT` when build metadata
+//!   provides it; otherwise `null`.
+//! - `tsz.profile`: populated from the active Rust build profile.
+//! - `fixture.name`, `fixture.repo`, `fixture.ref`,
+//!   `fixture.actual_commit`, and `fixture.path`: populated from
+//!   `TSZ_BENCH_FIXTURE_*` environment variables when the bench harness
+//!   provides them; otherwise `null`.
+//! - `fixture.local_override`: populated from `TSZ_BENCH_ALLOW_LOCAL_FIXTURE`.
+//! - `command_line`: populated from the process arguments passed to
+//!   `build_report`.
+//! - `phases_ms.*`: populated from `CompilationResult::phase_timings`; fields
+//!   whose driver attribution has not landed yet remain explicit zeroes from
+//!   `PhaseTimings`.
+//! - `counts.files`, `counts.root_files`, `counts.lib_files`, and
+//!   `counts.diagnostics`: populated from `CompilationResult`.
+//! - `counts.source_bytes`: nullable. Until source byte accounting lands in
+//!   the driver, this is `null` rather than a placeholder zero.
+//! - `rss_peak_bytes`: platform-dependent; populated on supported targets when
+//!   resident-set data is available, otherwise `null`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -21,7 +48,7 @@ use crate::driver::CompilationResult;
 
 /// Stable schema version for `PerfDiagnosticsReport`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Top-level diagnostics JSON document. Field shape mirrors
 /// `PERFORMANCE_PLAN.md` §3 / "Diagnostics JSON".
@@ -81,7 +108,10 @@ pub struct Counts {
     pub files: u64,
     pub root_files: u64,
     pub lib_files: u64,
-    pub source_bytes: u64,
+    /// Total source input bytes once the driver owns a reliable count. `None`
+    /// serializes as JSON `null`; emitting `0` would incorrectly claim the run
+    /// had zero input bytes.
+    pub source_bytes: Option<u64>,
     pub diagnostics: u64,
 }
 
@@ -116,7 +146,7 @@ pub fn build_report(result: &CompilationResult, raw_args: &[OsString]) -> PerfDi
             files: result.files_read.len() as u64,
             root_files: count_root_files(result),
             lib_files: count_lib_files(result),
-            source_bytes: 0, // populated by a later PR; bytes aren't tracked yet
+            source_bytes: None,
             diagnostics: result.diagnostics.len() as u64,
         },
         rss_peak_bytes: read_peak_rss_bytes(),
@@ -256,10 +286,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_one() {
+    fn schema_version_is_two() {
         // Bumping schema_version is a breaking change for the bench harness;
         // the test exists to make that intent explicit.
-        assert_eq!(SCHEMA_VERSION, 1);
+        assert_eq!(SCHEMA_VERSION, 2);
     }
 
     #[test]
@@ -294,7 +324,7 @@ mod tests {
             rss_peak_bytes: Some(1024),
         };
         let json = serde_json::to_value(&report).expect("serializes");
-        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["schema_version"], 2);
         assert_eq!(json["mode"], "timing");
         assert_eq!(json["tsz"]["version"], "test");
         assert_eq!(json["fixture"]["local_override"], false);
@@ -313,5 +343,22 @@ mod tests {
         ] {
             assert!(phases.get(key).is_some(), "missing phase key: {key}");
         }
+
+        let counts = json["counts"]
+            .as_object()
+            .expect("counts serializes as an object");
+        for key in [
+            "files",
+            "root_files",
+            "lib_files",
+            "source_bytes",
+            "diagnostics",
+        ] {
+            assert!(counts.contains_key(key), "missing counts key: {key}");
+        }
+        assert!(
+            counts["source_bytes"].is_null(),
+            "source_bytes must stay null until the driver supplies a reliable byte count"
+        );
     }
 }
