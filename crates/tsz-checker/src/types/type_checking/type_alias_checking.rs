@@ -261,7 +261,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.symbol_types.insert(alias_sid, registered_type);
                 self.ctx
                     .register_resolved_type(alias_sid, registered_type, type_params);
-                self.ctx.env_eval_cache.borrow_mut().clear();
+                self.ctx.clear_env_eval_cache();
             }
         }
         if self.type_node_produces_too_large_tuple(alias.type_node) {
