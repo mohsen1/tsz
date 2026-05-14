@@ -2224,21 +2224,6 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let union_object_type = self.resolve_lazy_type(object_type);
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, union_object_type)
-            && keys.iter().any(|&value| {
-                self.get_numeric_index_from_number(value)
-                    .is_some_and(|index| {
-                        members.iter().any(|&member| {
-                            !self.union_member_supports_numeric_literal_key(member, index)
-                        })
-                    })
-            })
-        {
-            return None;
-        }
-
         let mut types = Vec::with_capacity(keys.len());
         for &value in keys {
             if let Some(index) = self.get_numeric_index_from_number(value) {
@@ -2673,9 +2658,6 @@ impl<'a> CheckerState<'a> {
                 has_string,
                 has_number,
             } => (wants_string && has_string) || (wants_number && (has_number || has_string)),
-            query::ElementIndexableKind::Union(members) if wants_number && !wants_string => members
-                .iter()
-                .all(|&member| self.is_union_member_number_indexable(member)),
             query::ElementIndexableKind::Union(members) => members
                 .iter()
                 .all(|&member| self.is_element_indexable(member, wants_string, wants_number)),
