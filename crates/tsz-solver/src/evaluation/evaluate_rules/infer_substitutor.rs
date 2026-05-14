@@ -261,19 +261,12 @@ impl<'a> InferSubstitutor<'a> {
                 let mapped = self.interner.get_mapped(mapped_id);
                 let constraint = self.substitute(mapped.constraint);
                 let (name_type, template) =
-                    if let Some(masked) = self.bindings.remove(&mapped.type_param.name) {
-                        let result = (
-                            mapped.name_type.map(|n| self.substitute(n)),
-                            self.substitute(mapped.template),
-                        );
-                        self.bindings.insert(mapped.type_param.name, masked);
-                        result
-                    } else {
+                    self.with_shadowed_binding(mapped.type_param.name, |substitutor| {
                         (
-                            mapped.name_type.map(|n| self.substitute(n)),
-                            self.substitute(mapped.template),
+                            mapped.name_type.map(|n| substitutor.substitute(n)),
+                            substitutor.substitute(mapped.template),
                         )
-                    };
+                    });
                 let unchanged = constraint == mapped.constraint
                     && name_type == mapped.name_type
                     && template == mapped.template;
@@ -573,6 +566,21 @@ impl<'a> InferSubstitutor<'a> {
         };
 
         self.visiting.insert(type_id, result);
+        result
+    }
+
+    fn with_shadowed_binding<T>(&mut self, name: Atom, f: impl FnOnce(&mut Self) -> T) -> T {
+        let masked = self.bindings.remove(&name);
+        // `visiting` entries are only valid for the current binding environment.
+        // The mapped binder shadows an outer infer binding with the same name in
+        // `name_type` and `template`, so cached substitutions from the constraint
+        // must not leak across this scope boundary.
+        let outer_visiting = std::mem::take(&mut self.visiting);
+        let result = f(self);
+        self.visiting = outer_visiting;
+        if let Some(masked) = masked {
+            self.bindings.insert(name, masked);
+        }
         result
     }
 }
