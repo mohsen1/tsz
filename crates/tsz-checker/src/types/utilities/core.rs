@@ -2516,6 +2516,21 @@ impl<'a> CheckerState<'a> {
 
         let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, check_type);
 
+        if wants_string
+            && let Some(string_index) =
+                crate::query_boundaries::common::IndexSignatureResolver::new(self.ctx.types)
+                    .get_index_info(unwrapped_type)
+                    .string_index
+                    .as_ref()
+            && !crate::query_boundaries::index_signature::index_key_type_satisfies_index_signature(
+                self.ctx.types,
+                index_type,
+                string_index.key_type,
+            )
+        {
+            return true;
+        }
+
         !self.is_element_indexable(unwrapped_type, wants_string, wants_number)
     }
 
