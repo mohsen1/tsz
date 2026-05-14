@@ -193,7 +193,35 @@ pub struct TypeCacheView {
 }
 ```
 
-### 6.4 Guardrail Ratchets
+### 6.4 Declaration Summary Boundary
+
+Declaration emit should converge on a precomputed
+`DeclarationSummary`/`PublicApiSummary` boundary instead of asking the emitter
+to rediscover semantic facts while printing. The summary is produced before
+printing from binder, checker, and solver facts; declaration emit is only a
+consumer.
+
+The summary boundary owns these facts:
+
+- Exported declarations and their stable symbols.
+- Declaration nameability and portability decisions.
+- Import dependencies, module specifiers, aliases, and type-only/value usage.
+- Inferred declaration display requests for types without source annotations.
+- JSDoc-derived declaration facts after structured JSDoc parsing.
+- Visibility and accessibility facts needed for declaration diagnostics.
+
+Declaration emit must not add fresh relation checks, raw `TypeData` matching,
+or usage walks over inferred `TypeId`s to compensate for a missing summary fact.
+When a `.d.ts` fix needs one of those facts, add it to the summary producer or a
+query-boundary helper first, then keep printing as a deterministic formatting
+step.
+
+Temporary fallbacks are allowed only when the PR names the owning summary fact,
+the structural condition that makes the fallback safe, and the removal
+condition. Text-based import usage and late type display recovery are migration
+debt, not the shape of new declaration emit work.
+
+### 6.5 Guardrail Ratchets
 
 Track 9/10 guardrails treat current emitter/DTS reach-through as measurable
 migration debt, not precedent for new work. Guardrail tests should ratchet these
