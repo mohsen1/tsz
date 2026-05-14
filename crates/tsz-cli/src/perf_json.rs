@@ -11,6 +11,32 @@
 //! The bench harness invokes the perf build and consumes the JSON via `jq`
 //! rather than scraping shell text. The schema is documented in the plan and
 //! versioned via the `schema_version` field; bumping it is a breaking change.
+//!
+//! Field population inventory for `PerfDiagnosticsReport`:
+//!
+//! - Entire report: feature-gated behind `perf-tools` because the module, CLI
+//!   flag, and call site compile out of default builds.
+//! - `schema_version`: populated from `SCHEMA_VERSION`.
+//! - `mode`: populated as `"timing"` until attribution mode exists.
+//! - `tsz.version`: populated from Cargo package metadata.
+//! - `tsz.commit`: populated from `TSZ_BUILD_COMMIT` when build metadata
+//!   provides it; otherwise `null`.
+//! - `tsz.profile`: populated from the active Rust build profile.
+//! - `fixture.name`, `fixture.repo`, `fixture.ref`,
+//!   `fixture.actual_commit`, and `fixture.path`: populated from
+//!   `TSZ_BENCH_FIXTURE_*` environment variables when the bench harness
+//!   provides them; otherwise `null`.
+//! - `fixture.local_override`: populated from `TSZ_BENCH_ALLOW_LOCAL_FIXTURE`.
+//! - `command_line`: populated from the process arguments passed to
+//!   `build_report`.
+//! - `phases_ms.*`: populated from `CompilationResult::phase_timings`; fields
+//!   whose driver attribution has not landed yet remain explicit zeroes from
+//!   `PhaseTimings`.
+//! - `counts.files`, `counts.root_files`, `counts.lib_files`, and
+//!   `counts.diagnostics`: populated from `CompilationResult`.
+//! - `counts.source_bytes`: placeholder zero until source byte accounting lands.
+//! - `rss_peak_bytes`: platform-dependent; populated on supported targets when
+//!   resident-set data is available, otherwise `null`.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
