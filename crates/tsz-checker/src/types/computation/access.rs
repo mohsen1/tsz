@@ -235,6 +235,11 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = true;
         let index_type = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
         self.ctx.preserve_literal_types = prev_preserve;
+        let index_type_for_access = literal_string
+            .as_deref()
+            .filter(|_| numeric_string_index.is_none())
+            .map(|name| self.ctx.types.literal_string(name))
+            .unwrap_or(index_type);
 
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
@@ -1652,7 +1657,11 @@ impl<'a> CheckerState<'a> {
             {
                 return element.type_id;
             }
-            self.get_element_access_type(object_type_for_access, index_type, literal_index)
+            self.get_element_access_type(
+                object_type_for_access,
+                index_type_for_access,
+                literal_index,
+            )
         });
 
         // NOTE: noUncheckedIndexedAccess `| undefined` addition is handled by
@@ -1744,7 +1753,7 @@ impl<'a> CheckerState<'a> {
             && !is_fresh_object_literal
             && self.should_report_no_index_signature(
                 object_type_for_access,
-                index_type,
+                index_type_for_access,
                 literal_index,
             )
         {
@@ -1799,17 +1808,15 @@ impl<'a> CheckerState<'a> {
 
         if !report_no_index
             && use_index_signature_check
-            && (result_type == TypeId::UNDEFINED
-                || crate::query_boundaries::common::is_index_access_type(
-                    self.ctx.types,
-                    result_type,
-                ))
             && crate::query_boundaries::common::intersection_members(
                 self.ctx.types,
                 pre_resolution_object_type,
             )
             .is_none()
-            && self.narrow_string_index_signature_rejects_index(object_type_for_access, index_type)
+            && self.narrow_string_index_signature_rejects_index(
+                object_type_for_access,
+                index_type_for_access,
+            )
         {
             report_no_index = true;
         }
@@ -1818,7 +1825,7 @@ impl<'a> CheckerState<'a> {
             && use_index_signature_check
             && self.union_has_missing_concrete_element_access(
                 object_type_for_access,
-                index_type,
+                index_type_for_access,
                 literal_index,
             )
         {
