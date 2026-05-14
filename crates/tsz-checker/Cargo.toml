@@ -682,6 +682,10 @@ name = "ts2315_explicit_any_type_alias_tests"
 path = "tests/ts2315_explicit_any_type_alias_tests.rs"
 
 [[test]]
+name = "generic_type_alias_deferred_eval_tests"
+path = "tests/generic_type_alias_deferred_eval_tests.rs"
+
+[[test]]
 name = "ts2344_widen_literal_arg_display_tests"
 path = "tests/ts2344_widen_literal_arg_display_tests.rs"
 
