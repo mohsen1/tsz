@@ -1817,12 +1817,15 @@ impl FourslashTest {
     }
 
     /// Get code actions for a range at a marker.
-    pub fn code_actions(&self, file: &str) -> CodeActionsResult {
+    pub fn code_actions(&mut self, file: &str) -> CodeActionsResult {
         let range = Range {
             start: Position::new(0, 0),
             end: Position::new(u32::MAX, 0),
         };
-        let actions = self.project.get_code_actions(file, range, vec![], None);
+        let diagnostics = self.project.get_diagnostics(file).unwrap_or_default();
+        let actions = self
+            .project
+            .get_code_actions(file, range, diagnostics, None);
         CodeActionsResult { actions }
     }
 
@@ -1952,7 +1955,7 @@ impl FourslashTest {
     }
 
     /// Get code actions at a marker position (with range from marker to end of line).
-    pub fn code_actions_at(&self, marker_name: &str) -> CodeActionsResult {
+    pub fn code_actions_at(&mut self, marker_name: &str) -> CodeActionsResult {
         let m = self.markers.get(marker_name).unwrap_or_else(|| {
             panic!("Marker '{marker_name}' not found");
         });
@@ -1960,7 +1963,10 @@ impl FourslashTest {
             start: Position::new(m.line, m.character),
             end: Position::new(m.line, u32::MAX),
         };
-        let actions = self.project.get_code_actions(&m.file, range, vec![], None);
+        let diagnostics = self.project.get_diagnostics(&m.file).unwrap_or_default();
+        let actions = self
+            .project
+            .get_code_actions(&m.file, range, diagnostics, None);
         CodeActionsResult { actions }
     }
 
