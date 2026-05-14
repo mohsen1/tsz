@@ -1947,3 +1947,14 @@ fn test_readonly_array_no_lib_falls_back_gracefully() {
         "length should succeed even without lib. Got: {result:?}"
     );
 }
+
+#[test]
+fn test_readonly_array_no_lib_push_not_found() {
+    // Even when no ReadonlyArray lib type is registered, readonly arrays must
+    // not expose built-in Array mutators.
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let readonly_num = interner.readonly_array(TypeId::NUMBER);
+    assert_property_not_found(&evaluator.resolve_property_access(readonly_num, "push"));
+}

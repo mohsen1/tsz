@@ -13,6 +13,21 @@ use crate::types::{
     TypeParamInfo,
 };
 
+fn is_array_mutating_method(prop_name: &str) -> bool {
+    matches!(
+        prop_name,
+        "copyWithin"
+            | "fill"
+            | "pop"
+            | "push"
+            | "reverse"
+            | "shift"
+            | "sort"
+            | "splice"
+            | "unshift"
+    )
+}
+
 impl<'a> PropertyAccessEvaluator<'a> {
     #[inline]
     fn instantiate_type_cached(&self, type_id: TypeId, substitution: &TypeSubstitution) -> TypeId {
@@ -1312,6 +1327,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+
+        if is_array_mutating_method(prop_name) {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: readonly_type,
+                property_name: prop_atom,
+            };
+        }
 
         if prop_name == "length" {
             if let Some(length_type) = self.compute_tuple_length_type(inner) {
