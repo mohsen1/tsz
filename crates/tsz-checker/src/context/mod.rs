@@ -31,7 +31,6 @@ mod parse_health;
 pub use parse_health::ParseHealth;
 mod import_extension_flags;
 mod lib_queries;
-mod lifetime_scopes;
 mod module_entity;
 mod request_cache;
 mod resolver;
@@ -41,12 +40,6 @@ mod strict_mode;
 mod symbol_file_targets;
 pub mod typing_request;
 pub use aliases::*;
-// NOTE: `lifetime_scopes` is a stillborn parallel of `lifetime_shells` (see
-// PR #6022, merged as `[WIP]`). Its `FileSession` / `WorkerContext` collide
-// with the canonical types re-exported above and broke the wasm build with
-// E0252 (`WorkerContext` reimported here). Leave the module declared (its
-// internal self-test exercises the `WorkerContext` re-exported above) but
-// do not re-export the duplicates from here.
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
 use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
