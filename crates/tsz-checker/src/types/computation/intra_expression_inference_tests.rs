@@ -170,7 +170,9 @@ createMappingComponent({
     let messages = check_source_code_messages(source);
     let ts2322 = messages
         .iter()
-        .find_map(|(code, message)| (*code == 2322).then_some(message))
+        .find_map(|(code, message)| {
+            (*code == 2322 && message.contains("=> Unwrap<")).then_some(message)
+        })
         .unwrap_or_else(|| panic!("expected TS2322 diagnostic, got: {messages:#?}"));
 
     assert!(
@@ -232,7 +234,9 @@ buildComp({
     let messages = check_source_code_messages(source);
     let ts2322 = messages
         .iter()
-        .find_map(|(code, message)| (*code == 2322).then_some(message))
+        .find_map(|(code, message)| {
+            (*code == 2322 && message.contains("=> Open<")).then_some(message)
+        })
         .unwrap_or_else(|| panic!("expected TS2322 diagnostic, got: {messages:#?}"));
 
     assert!(
