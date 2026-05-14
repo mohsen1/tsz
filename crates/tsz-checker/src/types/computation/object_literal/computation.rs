@@ -1934,11 +1934,16 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let method_type = jsdoc_declared_type.unwrap_or_else(|| {
-                        method_property_context_type
-                            .filter(|&context_type| {
-                                !matches!(context_type, TypeId::ANY | TypeId::UNKNOWN)
-                            })
-                            .unwrap_or(method_type)
+                        if name == "return" || matches!(method_type, TypeId::ANY | TypeId::UNKNOWN)
+                        {
+                            method_property_context_type
+                                .filter(|&context_type| {
+                                    !matches!(context_type, TypeId::ANY | TypeId::UNKNOWN)
+                                })
+                                .unwrap_or(method_type)
+                        } else {
+                            method_type
+                        }
                     });
 
                     let name_atom = self.ctx.types.intern_string(&name);
