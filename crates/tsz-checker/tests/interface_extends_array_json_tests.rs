@@ -38,7 +38,7 @@ fn load_website_libs(names: &[&str]) -> Vec<Arc<LibFile>> {
 /// The binary's `PrinterOptions` defaults to `ScriptTarget::ES2024`, which resolves
 /// to `lib.es2024.full.d.ts`. That file references: es2024, dom, webworker.importscripts,
 /// scripthost, dom.iterable, dom.asynciterable — exactly what this list covers.
-/// Unlike ESNext, ES2024 does NOT include `lib.esnext.iterator.d.ts` (which adds
+/// Unlike `ESNext`, ES2024 does NOT include `lib.esnext.iterator.d.ts` (which adds
 /// `map`/`filter`/etc. to `IteratorObject`). The missing `esnext.iterator` is what
 /// causes `ArrayIterator` to be modelled differently and triggers the false TS2322.
 fn website_libs() -> &'static Vec<Arc<LibFile>> {
@@ -286,7 +286,7 @@ const json: JSONValue = {
     );
 }
 
-/// Same rule with a different alias name — must not be hardcoded to "JSONValue".
+/// Same rule with a different alias name — must not be hardcoded to `JSONValue`.
 #[test]
 fn json_value_different_alias_name_no_false_ts2322() {
     let source = r#"
@@ -314,7 +314,7 @@ const d: DataValue = {
     );
 }
 
-/// string[] is directly assignable to a union containing JSONArray.
+/// string[] is directly assignable to a union containing `JSONArray`.
 #[test]
 fn string_array_assignable_to_json_value_union() {
     let source = r#"
@@ -332,7 +332,7 @@ const arr: JSONValue = ["a", "b", "c"];
     );
 }
 
-/// number[] is assignable to JSONValue (number is a union member).
+/// number[] is assignable to `JSONValue` (number is a union member).
 #[test]
 fn number_array_assignable_to_json_value_union() {
     let source = r#"
@@ -350,7 +350,7 @@ const arr: JSONValue = [1, 2, 3];
     );
 }
 
-/// Nested arrays are also valid JSONValue.
+/// Nested arrays are also valid `JSONValue`.
 #[test]
 fn nested_array_assignable_to_json_value() {
     let source = r#"
@@ -368,7 +368,7 @@ const arr: JSONValue = [[1, 2], ["a", "b"], [true, false]];
     );
 }
 
-/// Mixed array with objects is valid JSONValue.
+/// Mixed array with objects is valid `JSONValue`.
 #[test]
 fn mixed_array_with_objects_assignable_to_json_value() {
     let source = r#"
@@ -386,7 +386,7 @@ const arr: JSONValue = [1, "two", true, null, { key: "value" }];
     );
 }
 
-/// Variable annotation case: variable typed as JSONValue holding a string array.
+/// Variable annotation case: variable typed as `JSONValue` holding a string array.
 #[test]
 fn variable_string_array_to_json_value_no_ts2322() {
     let source = r#"
@@ -502,7 +502,7 @@ const json: JSONValue = {
     );
 }
 
-/// Direct string[] assignment to JSONValue — must pass with website libs.
+/// Direct string[] assignment to `JSONValue` — must pass with website libs.
 #[test]
 fn string_array_website_libs_no_false_ts2322() {
     let libs = website_libs();
