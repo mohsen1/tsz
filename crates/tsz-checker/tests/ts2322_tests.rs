@@ -6673,6 +6673,10 @@ class Driver implements DatabaseConnection {
     };
 
     const tediousIsolationLevel = mapper[isolationLevel];
+    if (tediousIsolationLevel === undefined) {
+      throw new Error(`Unknown isolation level: ${isolationLevel}`);
+    }
+
     return tediousIsolationLevel;
   }
 }

@@ -165,6 +165,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if method.type_annotation.is_none() {
+            return_type = self.maybe_evaluate_inferred_return_contribution(return_type, None);
+        }
+
         // Wrap unannotated generator/async method return types (matching get_type_of_function).
         let has_annotation = method.type_annotation.is_some();
         let is_generator = method.asterisk_token;
