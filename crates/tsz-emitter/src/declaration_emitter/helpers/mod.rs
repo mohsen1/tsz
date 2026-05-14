@@ -222,6 +222,7 @@ mod portability_export_paths;
 mod portability_resolve;
 mod returned_function_initializer;
 mod synthetic_dependencies;
+mod synthetic_public_api_dependencies;
 mod type_inference;
 mod type_inference_accessor_property;
 mod type_inference_class_expression;
