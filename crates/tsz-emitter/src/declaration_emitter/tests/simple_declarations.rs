@@ -1616,6 +1616,41 @@ fn test_js_variable_jsdoc_redirected_type_names_emit_tsc_forms() {
 }
 
 #[test]
+fn test_js_commonjs_named_exports_hoist_exported_jsdoc_typedefs() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {'parseHTML'|'styleLayout'} TaskGroupIds */
+/**
+ * @typedef TaskGroup
+ * @property {TaskGroupIds} id
+ * @property {string} label
+ */
+/**
+ * @type {{[P in TaskGroupIds]: {id: P, label: string}}}
+ */
+const taskGroups = {
+  parseHTML: { id: "parseHTML", label: "Parse HTML" },
+  styleLayout: { id: "styleLayout", label: "Style" },
+};
+module.exports = { taskGroups };
+"#,
+    );
+
+    assert!(
+        output.starts_with(
+            "export type TaskGroupIds = \"parseHTML\" | \"styleLayout\";\nexport type TaskGroup = {"
+        ),
+        "Expected CommonJS named export typedefs to be emitted as exported aliases before values: {output}"
+    );
+    assert!(
+        output.contains(
+            "/**\n * @type {{[P in TaskGroupIds]: {id: P, label: string}}}\n */\nexport const taskGroups: { [P in TaskGroupIds]: {\n    id: P;\n    label: string;\n}; };"
+        ),
+        "Expected mapped JSDoc @type comment and formatted type literal on exported value: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_variable_strips_jsdoc_satisfies_comment() {
     let output = emit_js_dts(
         r#"

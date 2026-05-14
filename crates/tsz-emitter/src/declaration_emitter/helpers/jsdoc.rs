@@ -535,6 +535,9 @@ impl<'a> DeclarationEmitter<'a> {
         if trimmed.is_empty() {
             return "any".to_string();
         }
+        if let Some(type_literal) = Self::normalize_jsdoc_type_literal(trimmed) {
+            return type_literal;
+        }
         if let Some(index_signature) = Self::normalize_jsdoc_object_index_type(trimmed) {
             return index_signature;
         }
@@ -579,6 +582,52 @@ impl<'a> DeclarationEmitter<'a> {
             return generic;
         }
         Self::normalize_jsdoc_type_atom(trimmed)
+    }
+
+    fn normalize_jsdoc_type_literal(type_expr: &str) -> Option<String> {
+        let inner = type_expr.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if inner.is_empty() {
+            return Some("{}".to_string());
+        }
+
+        if let Some(mapped_member) = Self::normalize_jsdoc_mapped_type_member(inner) {
+            return Some(format!("{{ {mapped_member}; }}"));
+        }
+
+        let members = Self::split_jsdoc_params(inner);
+        if members.is_empty() {
+            return None;
+        }
+
+        let mut rendered_members = Vec::new();
+        for member in members {
+            let colon = Self::find_top_level_colon(member)?;
+            let name = member[..colon].trim();
+            let value = member[colon + 1..].trim();
+            if name.is_empty() || value.is_empty() {
+                return None;
+            }
+            rendered_members.push(format!(
+                "    {name}: {};",
+                Self::normalize_jsdoc_type_expr(value)
+            ));
+        }
+
+        Some(format!("{{\n{}\n}}", rendered_members.join("\n")))
+    }
+
+    fn normalize_jsdoc_mapped_type_member(type_expr: &str) -> Option<String> {
+        let close = type_expr.find(']')?;
+        let key = type_expr[..=close].trim();
+        if !key.starts_with('[') || !key.contains(" in ") {
+            return None;
+        }
+        let rest = type_expr[close + 1..].trim();
+        let value = rest.strip_prefix(':')?.trim();
+        if value.is_empty() {
+            return None;
+        }
+        Some(format!("{key}: {}", Self::normalize_jsdoc_type_expr(value)))
     }
 
     fn normalize_jsdoc_generic_type_reference(type_expr: &str) -> Option<String> {
@@ -1447,7 +1496,12 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some((name, base_type)) = Self::parse_jsdoc_typedef_alias(&jsdoc)
                 && name == type_text
             {
-                return Some(Self::normalize_jsdoc_type_text(&base_type, false));
+                let base_type = base_type.trim();
+                return Some(if base_type.starts_with('{') {
+                    base_type.to_string()
+                } else {
+                    Self::normalize_jsdoc_type_text(base_type, false)
+                });
             }
             cursor = comment.pos as usize;
         }
@@ -2474,7 +2528,7 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(JsdocTypeAliasDecl {
                 name,
                 type_params,
-                type_text,
+                type_text: Self::normalize_jsdoc_type_text(&type_text, false),
                 description_lines,
                 render_verbatim: false,
             });
@@ -2573,6 +2627,15 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn jsdoc_type_aliases_exported_in_source_file(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        self.js_export_equals_names.is_empty()
+            && (self.source_file_has_module_syntax(source_file)
+                || !self.js_named_export_names.is_empty())
+    }
+
     pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32) {
         if !self.source_is_js_file {
             return;
@@ -2581,8 +2644,9 @@ impl<'a> DeclarationEmitter<'a> {
             .current_source_file_idx
             .and_then(|source_file_idx| self.arena.get(source_file_idx))
             .and_then(|node| self.arena.get_source_file(node))
-            .is_some_and(|source_file| self.source_file_has_module_syntax(source_file))
-            && self.js_export_equals_names.is_empty();
+            .is_some_and(|source_file| {
+                self.jsdoc_type_aliases_exported_in_source_file(source_file)
+            });
         if !exported {
             return;
         }
@@ -2757,7 +2821,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
             if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                self.emit_rendered_jsdoc_type_alias(decl, self.js_export_equals_names.is_empty());
+                let exported = self.jsdoc_type_aliases_exported_in_source_file(source_file);
+                self.emit_rendered_jsdoc_type_alias(decl, exported);
             }
         }
     }
@@ -2769,8 +2834,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file {
             return;
         }
-        let exported = self.source_file_has_module_syntax(source_file)
-            && self.js_export_equals_names.is_empty();
+        let exported = self.jsdoc_type_aliases_exported_in_source_file(source_file);
 
         let mut decls = Vec::new();
         let mut variable_decls = Vec::new();
@@ -2780,7 +2844,7 @@ impl<'a> DeclarationEmitter<'a> {
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
                 if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                    if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                    if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT && !exported {
                         variable_decls.push(decl);
                     } else {
                         decls.push(decl);

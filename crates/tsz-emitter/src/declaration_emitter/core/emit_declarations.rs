@@ -324,6 +324,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_hoisted_js_export_default_statements(source_file);
         }
 
+        if self.source_is_js_file
+            && self.js_export_equals_names.is_empty()
+            && !self.js_named_export_names.is_empty()
+        {
+            self.emit_pending_top_level_jsdoc_type_aliases(source_file);
+        }
+
         if self.source_is_js_file {
             for &stmt_idx in &source_file.statements.nodes {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1016,7 +1023,9 @@ impl<'a> DeclarationEmitter<'a> {
             );
             let mut filtered = styled_chain
                 .into_iter()
-                .filter(|(jsdoc, _)| !Self::jsdoc_contains_type_tag(jsdoc))
+                .filter(|(jsdoc, _)| {
+                    !has_jsdoc_type_function_signature || !Self::jsdoc_contains_type_tag(jsdoc)
+                })
                 .collect::<Vec<_>>();
             if suppress_jsdoc_type_alias_comments {
                 filtered.retain(|(jsdoc, _)| !Self::jsdoc_contains_type_alias_tag(jsdoc));
