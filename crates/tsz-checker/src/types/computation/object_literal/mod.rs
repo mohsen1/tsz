@@ -8,6 +8,7 @@
 //! - `computation` — the main `get_type_of_object_literal_with_request` function
 
 mod computation;
+mod conditional_mapped_annotation;
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
