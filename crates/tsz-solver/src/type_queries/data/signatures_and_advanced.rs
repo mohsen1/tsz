@@ -703,6 +703,36 @@ pub fn classify_body_for_arg_preservation(
     BodyArgPreservation::EvaluateAll
 }
 
+/// Returns `true` if the generic body type contains structural type operations
+/// that require type arguments to be in their concrete (expanded, non-Application)
+/// form for correct evaluation.
+///
+/// When this returns `false`, Application-form type arguments can be safely
+/// preserved during generic instantiation. Preserving the Application form
+/// maintains generic identity so the solver's variance fast path can fire
+/// during compatibility checks (e.g., `Map<any,any> <: Map<string,unknown>`
+/// checks the type args via variance rather than expanding both to structural
+/// objects and doing a deep property comparison).
+///
+/// Operations requiring concrete args:
+/// - `Conditional`: `T extends Map<K,V> ? ... : ...` (needs T's structure)
+/// - `IndexAccess`: `T[K]` (needs T's property shape)
+/// - `KeyOf`: `keyof T` (needs T's property names)
+/// - `Mapped`: `{ [P in keyof T]: ... }` (needs T's key space)
+/// - `TemplateLiteral`: `` `${T}` `` (needs T to be string-like)
+pub fn body_arg_requires_concrete_form(db: &dyn TypeDatabase, body_type: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(db, body_type, |key| {
+        matches!(
+            key,
+            TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_)
+                | TypeData::Mapped(_)
+                | TypeData::TemplateLiteral(_)
+        )
+    })
+}
+
 /// Get the mapped type info for a mapped type.
 ///
 /// Returns None if the type is not a Mapped type.

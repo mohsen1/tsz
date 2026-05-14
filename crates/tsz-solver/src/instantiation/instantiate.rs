@@ -2477,9 +2477,8 @@ pub fn substitute_this_type_cached(
 /// specialization needs the **deep** [`substitute_this_type`] entry which
 /// walks Object internals. The two forms split here.
 ///
-/// See `docs/plan/claims/investigation-intersection-this-eager-bind.md`
-/// for the full failure profile this fixes (chained `extend({a}).extend({b})`
-/// pattern in `intersectionThisTypes.ts`).
+/// This fixes the chained `extend({a}).extend({b})` pattern in
+/// `intersectionThisTypes.ts`.
 pub fn substitute_this_type_at_return_position(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,
