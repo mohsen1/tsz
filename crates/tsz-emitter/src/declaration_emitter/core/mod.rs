@@ -4,6 +4,7 @@
 mod emit_declaration_class_helpers;
 mod emit_declarations;
 mod emit_members;
+mod js_class_static;
 mod js_commonjs_constructor;
 mod js_emit;
 mod preamble;

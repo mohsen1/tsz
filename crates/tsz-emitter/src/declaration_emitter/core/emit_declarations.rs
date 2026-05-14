@@ -1582,26 +1582,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);
-            if let Some(name) = self.get_identifier_text(class.name)
-                && let Some(methods) = self.js_class_like_prototype_members.get(&name).cloned()
-            {
-                let mut declared_names = class
-                    .members
-                    .nodes
-                    .iter()
-                    .filter_map(|&member_idx| self.get_member_name_idx(member_idx))
-                    .filter_map(|name_idx| self.get_identifier_text(name_idx))
-                    .collect::<FxHashSet<_>>();
-                for (method_name, initializer) in methods {
-                    let Some(method_name_text) = self.get_identifier_text(method_name) else {
-                        continue;
-                    };
-                    if !declared_names.insert(method_name_text) {
-                        continue;
-                    }
-                    self.emit_js_synthetic_class_method(method_name, initializer);
-                }
-            }
+            self.emit_js_class_like_prototype_members_for_declared_class(
+                class.name,
+                &class.members,
+            );
         }
         self.decrease_indent();
         self.write_indent();
