@@ -235,7 +235,13 @@ impl<'a> CheckerState<'a> {
             body_type
         };
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
-        let body_evaluation_too_complex = if has_deferred_self_reference {
+        let has_type_params = alias
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty());
+        // Generic aliases are checked at declaration time, but their bodies are
+        // not fully instantiated until concrete type arguments are supplied.
+        let body_evaluation_too_complex = if has_deferred_self_reference || has_type_params {
             false
         } else {
             let _ = self.evaluate_type_with_env_uncached(body_type);
