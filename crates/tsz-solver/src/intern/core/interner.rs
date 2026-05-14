@@ -237,6 +237,13 @@ pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
 type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InternedTypeLimitContext {
+    pub(crate) current_count: usize,
+    pub(crate) max_interned_types: usize,
+    pub(crate) fallback_type: TypeId,
+}
+
 /// Cached data for a union member, pre-fetched to avoid redundant DashMap/arena
 /// lookups during sort comparisons. Each field corresponds to a lookup that
 /// `compare_union_members` would otherwise perform per comparison.
@@ -1878,9 +1885,32 @@ impl TypeInterner {
     }
 
     #[inline]
+    fn interned_type_limit_context(&self) -> InternedTypeLimitContext {
+        InternedTypeLimitContext {
+            current_count: self.approximate_count(),
+            max_interned_types: MAX_INTERNED_TYPES,
+            fallback_type: TypeId::ERROR,
+        }
+    }
+
+    #[inline]
     fn poison_due_to_interned_type_limit(&self) -> TypeId {
-        self.poisoned.store(true, Ordering::Relaxed);
-        TypeId::ERROR
+        let context = self.interned_type_limit_context();
+        if self
+            .poisoned
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            tracing::warn!(
+                target: "tsz::solver::interner",
+                interned_type_count = context.current_count,
+                max_interned_types = context.max_interned_types,
+                fallback_type_id = context.fallback_type.0,
+                fallback_type = "TypeId::ERROR",
+                "interned type limit exceeded; poisoning type interner"
+            );
+        }
+        context.fallback_type
     }
 
     /// Consume evaluation fuel and return whether fuel is exhausted.
@@ -1965,6 +1995,14 @@ mod tests {
             .store((MAX_INTERNED_TYPES + 1) as u32, Ordering::Relaxed);
 
         assert!(interner.interned_type_limit_exceeded());
+        assert_eq!(
+            interner.interned_type_limit_context(),
+            InternedTypeLimitContext {
+                current_count: MAX_INTERNED_TYPES + 1,
+                max_interned_types: MAX_INTERNED_TYPES,
+                fallback_type: TypeId::ERROR,
+            }
+        );
         assert_eq!(interner.poison_due_to_interned_type_limit(), TypeId::ERROR);
         assert!(interner.poisoned.load(Ordering::Relaxed));
     }
