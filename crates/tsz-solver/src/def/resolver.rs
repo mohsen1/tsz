@@ -816,6 +816,11 @@ impl TypeEnvironment {
         self.def_types.clone()
     }
 
+    /// Snapshot the local class DefId -> instance TypeId cache for cross-checker merge-back.
+    pub fn snapshot_class_instance_types(&self) -> FxHashMap<u32, TypeId> {
+        self.class_instance_types.clone()
+    }
+
     /// Snapshot the local DefId -> type params cache for downstream consumers like declaration emit.
     pub fn snapshot_def_type_params(&self) -> FxHashMap<u32, Vec<TypeParamInfo>> {
         self.def_type_params.clone()
