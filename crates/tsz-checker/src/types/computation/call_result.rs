@@ -25,19 +25,6 @@ pub(super) struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
-    fn is_generic_indexed_access_surface(&self, type_id: TypeId) -> bool {
-        self.generic_indexed_access_surface_inner(type_id)
-            || self
-                .ctx
-                .types
-                .get_display_alias(type_id)
-                .is_some_and(|alias| self.generic_indexed_access_surface_inner(alias))
-    }
-
-    fn generic_indexed_access_surface_inner(&self, type_id: TypeId) -> bool {
-        common::contains_generic_indexed_access_surface(self.ctx.types, type_id)
-    }
-
     fn correlated_union_call_recovery_return(
         &mut self,
         callee_type: TypeId,
@@ -1247,6 +1234,11 @@ impl<'a> CheckerState<'a> {
                         index,
                         actual,
                     );
+                    let suppress_cascading_constraint_mismatch = self
+                        .callable_mismatch_cascades_from_constraint_diagnostic(
+                            reported_actual,
+                            reported_expected,
+                        );
                     let resolved_reported_actual = self.resolve_lazy_type(reported_actual);
                     let evaluated_reported_expected =
                         self.evaluate_type_with_env(reported_expected);
@@ -1264,6 +1256,7 @@ impl<'a> CheckerState<'a> {
                             });
                     if !suppress_weak
                         && !elaborated
+                        && !suppress_cascading_constraint_mismatch
                         && !suppress_correlated_index_access_never_mismatch
                     {
                         let spread_rest_tuple_display = (!aggregate_rest_mismatch)
