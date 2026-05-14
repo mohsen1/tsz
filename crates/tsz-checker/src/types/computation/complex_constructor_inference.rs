@@ -3,6 +3,73 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn generic_new_literal_preservation_mask(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+        arg_count: usize,
+    ) -> Vec<bool> {
+        (0..arg_count)
+            .map(|i| {
+                Self::generic_new_param_type_for_arg(shape, i)
+                    .is_some_and(|param_type| self.generic_new_param_preserves_literal(param_type))
+            })
+            .collect()
+    }
+
+    fn generic_new_param_type_for_arg(
+        shape: &tsz_solver::FunctionShape,
+        i: usize,
+    ) -> Option<TypeId> {
+        shape.params.get(i).map(|p| p.type_id).or_else(|| {
+            let last = shape.params.last()?;
+            last.rest.then_some(last.type_id)
+        })
+    }
+
+    fn generic_new_param_preserves_literal(&mut self, param_type: TypeId) -> bool {
+        let Some(info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, param_type)
+        else {
+            return false;
+        };
+        let Some(constraint) = info.constraint else {
+            return false;
+        };
+
+        Self::generic_new_constraint_preserves_literals(self.ctx.types, constraint) || {
+            let evaluated = self.evaluate_type_with_env(constraint);
+            evaluated != constraint
+                && Self::generic_new_constraint_preserves_literals(self.ctx.types, evaluated)
+        }
+    }
+
+    fn generic_new_constraint_preserves_literals(
+        db: &dyn tsz_solver::QueryDatabase,
+        ty: TypeId,
+    ) -> bool {
+        if matches!(
+            ty,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
+        ) {
+            return true;
+        }
+        if matches!(
+            crate::query_boundaries::common::classify_literal_type(db, ty),
+            crate::query_boundaries::common::LiteralTypeKind::String(_)
+                | crate::query_boundaries::common::LiteralTypeKind::Number(_)
+                | crate::query_boundaries::common::LiteralTypeKind::BigInt(_)
+                | crate::query_boundaries::common::LiteralTypeKind::Boolean(_)
+        ) {
+            return true;
+        }
+        crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
+            members
+                .iter()
+                .copied()
+                .any(|member| Self::generic_new_constraint_preserves_literals(db, member))
+        })
+    }
+
     pub(super) fn seed_new_literal_constraint_type_args(
         &mut self,
         substitution: &mut tsz_solver::TypeSubstitution,
@@ -239,51 +306,6 @@ impl<'a> CheckerState<'a> {
                 )
             })
             .collect()
-    }
-
-    pub(super) fn constructor_inferred_type_args_satisfy_constraints(
-        &mut self,
-        type_params: &[tsz_solver::TypeParamInfo],
-        type_args: &[TypeId],
-    ) -> bool {
-        if type_params.len() != type_args.len() {
-            return false;
-        }
-
-        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
-        for (tp, &type_arg) in type_params.iter().zip(type_args.iter()) {
-            substitution.insert(tp.name, type_arg);
-        }
-
-        for (tp, &type_arg) in type_params.iter().zip(type_args.iter()) {
-            if crate::query_boundaries::common::contains_infer_types(self.ctx.types, type_arg)
-                || crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    type_arg,
-                )
-            {
-                return false;
-            }
-
-            if type_arg == TypeId::ANY || type_arg == TypeId::UNKNOWN || type_arg == TypeId::ERROR {
-                continue;
-            }
-
-            let Some(constraint) = tp.constraint else {
-                continue;
-            };
-            let instantiated_constraint = crate::query_boundaries::common::instantiate_type(
-                self.ctx.types,
-                constraint,
-                &substitution,
-            );
-            let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
-            if !self.is_assignable_to_with_env(type_arg, evaluated_constraint) {
-                return false;
-            }
-        }
-
-        true
     }
 
     pub(super) fn seed_substitution_from_partial_function_returns(

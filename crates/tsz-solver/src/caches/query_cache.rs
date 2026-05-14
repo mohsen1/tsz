@@ -1099,6 +1099,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.get_display_alias(type_id)
     }
 
+    fn mark_conditional_alias_base(&self, base: TypeId) {
+        self.interner.mark_conditional_alias_base(base);
+    }
+
+    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        self.interner.is_conditional_alias_base(base)
+    }
+
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         self.interner
             .store_union_origin(union_type_id, origin_members);

@@ -1336,9 +1336,17 @@ impl<'a> CheckerState<'a> {
         // type (`boolean`, not `true`). The function call path achieves this via its
         // multi-pass inference; here we widen explicitly post-collection.
         if is_generic_new && !has_const_type_params {
-            for arg_type in arg_types.iter_mut() {
-                *arg_type =
-                    tsz_solver::operations::widening::widen_literal_type(self.ctx.types, *arg_type);
+            let preserve_literals = constructor_shape
+                .as_ref()
+                .map(|shape| self.generic_new_literal_preservation_mask(shape, arg_types.len()))
+                .unwrap_or_default();
+            for (i, arg_type) in arg_types.iter_mut().enumerate() {
+                if !preserve_literals.get(i).copied().unwrap_or(false) {
+                    *arg_type = tsz_solver::operations::widening::widen_literal_type(
+                        self.ctx.types,
+                        *arg_type,
+                    );
+                }
             }
         }
         if let Some(type_args) = &inferred_new_type_args {
