@@ -2,8 +2,7 @@
 
 Attribution-mode evidence captured on `origin/main` at `8f086b29c6`
 (`fix(solver): detect circular inference when T[K] is passed to unconstrained
-T`). The PR branch was then rebased onto `28ec6cb6a3` after main moved through
-emitter-only changes for this `--noEmit` fixture.
+T`). The PR branch was then kept rebased as main moved.
 
 ## Reproducer
 
