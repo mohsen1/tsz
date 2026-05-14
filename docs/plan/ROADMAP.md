@@ -245,7 +245,8 @@ correctness blocker.
 Track these as counters or periodic audit bullets. They are more useful than
 subjective "cleanup" language.
 
-1. Number of checker `source_text.contains` / file-name / rendered-message
+1. `CheckerContext` field count, currently pinned at `234`, plus the number of
+   checker `source_text.contains` / file-name / rendered-message
    diagnostic decisions.
 2. Number of post-check `rewrite_*_fingerprints` passes still active.
 3. Direct `is_assignable_to` call sites on `TS2322`/`TS2345`/`TS2416` paths

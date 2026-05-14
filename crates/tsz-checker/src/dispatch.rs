@@ -795,9 +795,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // `satisfies` expression handler behavior.
                         let satisfies_request =
                             request.read().normal_origin().contextual(satisfies_type);
+                        let prev_in_satisfies_operand = self.checker.ctx.in_satisfies_operand;
+                        self.checker.ctx.in_satisfies_operand = true;
                         let expr_type = self
                             .checker
                             .get_type_of_node_with_request(paren.expression, &satisfies_request);
+                        self.checker.ctx.in_satisfies_operand = prev_in_satisfies_operand;
                         // Ensure types are fully resolved (evaluate applications like
                         // Record<K,V>, Partial<T>, etc.) before assignability checks.
                         self.checker.ensure_relation_input_ready(expr_type);
@@ -964,10 +967,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         if preserve_for_satisfies {
                             self.checker.ctx.preserve_literal_types = true;
                         }
+                        let prev_in_satisfies_operand = self.checker.ctx.in_satisfies_operand;
+                        if is_satisfies {
+                            self.checker.ctx.in_satisfies_operand = true;
+                        }
                         // Always type-check the expression for side effects / diagnostics.
                         let expr_type = self
                             .checker
                             .get_type_of_node_with_request(assertion.expression, &request);
+                        if is_satisfies {
+                            self.checker.ctx.in_satisfies_operand = prev_in_satisfies_operand;
+                        }
                         if preserve_for_satisfies {
                             self.checker.ctx.preserve_literal_types = prev_preserve_literals;
                         }
