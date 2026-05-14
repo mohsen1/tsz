@@ -211,43 +211,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
-        let key_set = match self
-            .try_extract_keyof_keys_for_mapped_iteration(constraint)
-            .or_else(|| self.extract_mapped_keys(keys))
+        let key_set = if constraint == TypeId::ANY
+            && mapped.name_type.is_none()
+            && mapped.template == TypeId::NEVER
         {
-            Some(mut keys) => {
-                // Deduplicate string literals to handle overlapping enum members
-                // (e.g. `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
-                // produce key "cat") while preserving the original declaration
-                // order from the constraint. tsc walks the constraint union in
-                // source order, so the resulting mapped type's property order —
-                // and therefore the type printer's output for `T[keyof T]` —
-                // must follow that same order.
-                let mut seen: FxHashSet<Atom> = FxHashSet::default();
-                keys.keys.retain(|k| seen.insert(k.name));
-                keys
+            MappedKeys {
+                keys: Vec::new(),
+                has_string: true,
+                has_number: true,
+                template_literals: Vec::new(),
+                symbol_keys: Vec::new(),
             }
-            None => {
-                // When key extraction fails but the mapped type has an `as` clause
-                // and the constraint is a concrete union (of non-literal types like
-                // objects), we can still evaluate by iterating over the constraint
-                // members directly. Each member is substituted into both the `as`
-                // clause (to derive the property name) and the template (to get the
-                // property type).
-                //
-                // Example: { [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }
-                // → { a: {name:"a"}, b: {name:"b"} }
-                if mapped.name_type.is_some()
-                    && let Some(result) =
-                        self.try_evaluate_mapped_with_as_over_non_literal_constraint(mapped, keys)
-                {
-                    return result;
+        } else {
+            match self
+                .try_extract_keyof_keys_for_mapped_iteration(constraint)
+                .or_else(|| self.extract_mapped_keys(keys))
+            {
+                Some(mut keys) => {
+                    // Deduplicate string literals to handle overlapping enum members
+                    // (e.g. `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
+                    // produce key "cat") while preserving the original declaration
+                    // order from the constraint. tsc walks the constraint union in
+                    // source order, so the resulting mapped type's property order —
+                    // and therefore the type printer's output for `T[keyof T]` —
+                    // must follow that same order.
+                    let mut seen: FxHashSet<Atom> = FxHashSet::default();
+                    keys.keys.retain(|k| seen.insert(k.name));
+                    keys
                 }
-                tracing::trace!(
-                    keys_lookup = ?self.interner().lookup(keys),
-                    "evaluate_mapped: DEFERRED - could not extract concrete keys"
-                );
-                return self.interner().mapped(*mapped);
+                None => {
+                    // When key extraction fails but the mapped type has an `as` clause
+                    // and the constraint is a concrete union (of non-literal types like
+                    // objects), we can still evaluate by iterating over the constraint
+                    // members directly. Each member is substituted into both the `as`
+                    // clause (to derive the property name) and the template (to get the
+                    // property type).
+                    //
+                    // Example: { [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }
+                    // → { a: {name:"a"}, b: {name:"b"} }
+                    if mapped.name_type.is_some()
+                        && let Some(result) = self
+                            .try_evaluate_mapped_with_as_over_non_literal_constraint(mapped, keys)
+                    {
+                        return result;
+                    }
+                    tracing::trace!(
+                        keys_lookup = ?self.interner().lookup(keys),
+                        "evaluate_mapped: DEFERRED - could not extract concrete keys"
+                    );
+                    return self.interner().mapped(*mapped);
+                }
             }
         };
 
