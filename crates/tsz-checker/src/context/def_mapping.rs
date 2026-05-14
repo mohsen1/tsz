@@ -247,7 +247,7 @@ impl<'a> CheckerContext<'a> {
     /// a symbol both flags (e.g. `class Component` plus an interface augmentation);
     /// such a symbol is semantically still a class. Symbols that match none of the
     /// known flags (type parameters, etc.) default to `TypeAlias`.
-    fn def_kind_for_symbol(symbol: &tsz_binder::Symbol) -> tsz_solver::def::DefKind {
+    const fn def_kind_for_symbol(symbol: &tsz_binder::Symbol) -> tsz_solver::def::DefKind {
         use tsz_binder::symbol_flags;
         use tsz_solver::def::DefKind;
 
