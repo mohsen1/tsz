@@ -1085,22 +1085,10 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            if self
-                .ctx
-                .binder
-                .get_symbol(base_sym_id)
-                .is_some_and(|symbol| symbol.escaped_name == "Array")
-                && self.ctx.symbol_is_from_actual_or_cloned_lib(base_sym_id)
-                && let Some(array_base) =
-                    tsz_solver::TypeResolver::get_array_base_type(self.ctx.types)
+            if let Some(array_base) =
+                self.array_base_instance_type_for_heritage(base_sym_id, type_arguments)
             {
-                let array_params =
-                    tsz_solver::TypeResolver::get_array_base_type_params(self.ctx.types).to_vec();
-                let resolved = Some(self.instantiate_base_instance_type_with_args(
-                    array_base,
-                    &array_params,
-                    type_arguments,
-                ));
+                let resolved = Some(array_base);
                 if should_cache {
                     self.ctx
                         .base_instance_expr_cache
