@@ -1098,6 +1098,10 @@ name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
 
 [[test]]
+name = "string_iterable_overload_matching_tests"
+path = "tests/string_iterable_overload_matching_tests.rs"
+
+[[test]]
 name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
 
