@@ -669,10 +669,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
             let def_kind = self.resolver.get_def_kind(def_id);
             let is_type_alias_def = matches!(def_kind, Some(crate::def::DefKind::TypeAlias));
-            let prefer_application_display_alias = is_type_alias_def
-                && resolved.is_some_and(|body| {
-                    !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
-                });
+            let resolved_has_conditional_body = resolved.is_some_and(|body| {
+                matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            });
+            if is_type_alias_def && resolved_has_conditional_body {
+                self.interner.mark_conditional_alias_base(app.base);
+            }
+            let prefer_application_display_alias =
+                is_type_alias_def && !resolved_has_conditional_body;
 
             tracing::trace!(
                 ?def_id,
