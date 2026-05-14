@@ -121,6 +121,72 @@ v.toUpperCase();
 }
 
 #[test]
+fn unannotated_asserts_this_receiver_emits_ts2775_and_does_not_narrow() {
+    let codes = check_source_strict_codes(
+        r#"
+class Validator {
+    value: unknown;
+
+    constructor(value: unknown) {
+        this.value = value;
+    }
+
+    assertIsNumber(): asserts this is Validator & { value: number } {
+        if (typeof this.value !== "number") throw "";
+    }
+}
+
+function useThisAssert() {
+    const v = new Validator(42);
+    v.assertIsNumber();
+    const n: number = v.value;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2775),
+        "expected TS2775 for assertion method receiver without explicit declaration type, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&2322),
+        "invalid assertion method call must not narrow receiver value, got {codes:?}"
+    );
+}
+
+#[test]
+fn annotated_asserts_this_receiver_narrows_without_ts2775() {
+    let codes = check_source_strict_codes(
+        r#"
+class Validator {
+    value: unknown;
+
+    constructor(value: unknown) {
+        this.value = value;
+    }
+
+    assertIsNumber(): asserts this is Validator & { value: number } {
+        if (typeof this.value !== "number") throw "";
+    }
+}
+
+function useThisAssert() {
+    const v: Validator = new Validator(42);
+    v.assertIsNumber();
+    const n: number = v.value;
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2775),
+        "did not expect TS2775 for explicitly annotated assertion receiver, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "explicitly annotated assertion receiver should narrow value, got {codes:?}"
+    );
+}
+
+#[test]
 fn type_predicate_target_must_name_function_parameter() {
     let codes = check_source_codes(
         r#"
@@ -168,7 +234,7 @@ a[0](true);
 }
 
 #[test]
-fn asserts_this_method_does_not_require_receiver_annotation() {
+fn asserts_this_for_of_variable_from_annotated_iterable_does_not_emit_ts2775() {
     let codes = check_source_codes(
         r#"
 class Test {
@@ -183,7 +249,28 @@ function f(items: Test[]) {
     );
     assert!(
         !codes.contains(&2775),
-        "asserts-this methods should not require a receiver annotation, got {codes:?}"
+        "asserts-this for-of variables from annotated iterables should not require a receiver annotation, got {codes:?}"
+    );
+}
+
+#[test]
+fn asserts_this_for_of_variable_from_inferred_iterable_emits_ts2775() {
+    let codes = check_source_codes(
+        r#"
+class Test {
+    assertIsTest(): asserts this is Test {}
+}
+function f() {
+    const items = [new Test()];
+    for (let item of items) {
+        item.assertIsTest();
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2775),
+        "expected TS2775 for asserts-this for-of variable from inferred iterable, got {codes:?}"
     );
 }
 
