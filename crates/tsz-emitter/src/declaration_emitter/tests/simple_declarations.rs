@@ -1423,6 +1423,34 @@ const send = handlers => Promise.resolve(handlers);
 }
 
 #[test]
+fn test_js_multiline_typedef_preserves_unstarred_source_lines() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ * @typedef {{
+  value: {
+    [K in keyof T]?: Box<T[K]>[]
+  }
+}} Box<T> */
+/** @type {Box<{foo:string}>} */
+const p = {};
+"#,
+    );
+
+    assert!(
+        output.starts_with(
+            "/**\n * @template T\n * @typedef {{\n  value: {\n    [K in keyof T]?: Box<T[K]>[]\n  }\n}} Box<T> */\n/** @type {Box<{foo:string}>} */\ndeclare const p: Box<{"
+        ),
+        "Expected unstarred typedef lines and following @type comment to preserve source text: {output}"
+    );
+    assert!(
+        output.contains("type Box<T> = {\n    value: { [K in keyof T]?: Box<T[K]>[]; };\n};"),
+        "Expected generic typedef name suffix to be folded into type parameters: {output}"
+    );
+}
+
+#[test]
 fn test_js_multiline_typedef_before_export_equals_function_variable_is_emitted() {
     let source = r#"
 /**
