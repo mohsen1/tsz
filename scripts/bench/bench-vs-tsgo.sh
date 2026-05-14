@@ -245,6 +245,40 @@ run_with_timeout() {
     return "$exit_code"
 }
 
+capture_diagnostic_lines() {
+    local label="$1"
+    local timeout_secs="$2"
+    shift 2
+
+    { run_with_timeout "$timeout_secs" "$@" 2>&1 || true; } \
+        | awk -v label="$label" '
+            {
+                sub(/\r$/, "")
+                if ($0 ~ /^[[:space:]]*$/) {
+                    next
+                }
+                print label ": " $0
+                seen += 1
+                if (seen >= 20) {
+                    exit
+                }
+            }
+        '
+}
+
+append_diagnostic_delta() {
+    local existing="$1"
+    local addition="$2"
+
+    if [ -z "$addition" ]; then
+        printf '%s' "$existing"
+    elif [ -z "$existing" ]; then
+        printf '%s' "$addition"
+    else
+        printf '%s\n%s' "$existing" "$addition"
+    fi
+}
+
 hyperfine_mean_for() {
     local json_file="$1"
     local command_name="$2"
@@ -625,12 +659,17 @@ const toNumber = (value) => {
 };
 
 const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
+const diagnosticDeltas = delta
+  .split(/\r?\n/)
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .slice(0, 20);
 const row = {
   name: process.env.COMPAT_NAME || "",
   exit_class: process.env.COMPAT_EXIT_CLASS || "unknown",
   phase: process.env.COMPAT_PHASE || "unknown",
   diagnostic_status: process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown",
-  diagnostic_deltas: delta ? [delta].slice(0, 20) : [],
+  diagnostic_deltas: diagnosticDeltas,
   files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
   peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
 };
@@ -875,12 +914,12 @@ run_project_benchmark() {
             else
                 status="tsc fixture error"
                 if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-                    tsc_error="$(run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                    tsc_error="$(capture_diagnostic_lines "tsc" "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig")"
                 else
-                    tsc_error="$(run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                    tsc_error="$(capture_diagnostic_lines "tsc" "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig")"
                 fi
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
-                echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
+                echo -e "  ${CYAN}tsc error:${NC} $(printf '%s' "$tsc_error" | head -1)" >&2
             fi
             record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
@@ -936,12 +975,12 @@ run_project_benchmark() {
             tsz_ms="ERR"
             local tsz_error
             if [ "${#tsz_prefix[@]}" -gt 0 ]; then
-                tsz_error="$(run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                tsz_error="$(capture_diagnostic_lines "tsz" "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig")"
             else
-                tsz_error="$(run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                tsz_error="$(capture_diagnostic_lines "tsz" "$project_timeout" "$TSZ" --noEmit -p "$tsconfig")"
             fi
-            diagnostic_delta="tsz: $tsz_error"
-            echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
+            diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsz_error")"
+            echo -e "  ${CYAN}tsz error:${NC} $(printf '%s' "$tsz_error" | head -1)" >&2
         fi
 
         if [ "$tsgo_check" -eq 124 ]; then
@@ -954,12 +993,12 @@ run_project_benchmark() {
             tsgo_ms="ERR"
             local tsgo_error
             if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-                tsgo_error="$(run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                tsgo_error="$(capture_diagnostic_lines "tsgo" "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig")"
             else
-                tsgo_error="$(run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                tsgo_error="$(capture_diagnostic_lines "tsgo" "$project_timeout" "$TSGO" --noEmit -p "$tsconfig")"
             fi
-            diagnostic_delta="${diagnostic_delta:+${diagnostic_delta}; }tsgo: $tsgo_error"
-            echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
+            diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsgo_error")"
+            echo -e "  ${CYAN}tsgo error:${NC} $(printf '%s' "$tsgo_error" | head -1)" >&2
         fi
 
         if [ "$name" != "nextjs" ]; then
