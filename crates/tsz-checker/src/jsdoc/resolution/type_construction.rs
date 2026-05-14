@@ -654,6 +654,16 @@ impl<'a> CheckerState<'a> {
             }
             let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
             if body_type == TypeId::ERROR {
+                if !type_args.is_empty() && !type_params.is_empty() {
+                    let base_type = self.ctx.create_lazy_type_ref(sym_id);
+                    let instantiated = self
+                        .ctx
+                        .types
+                        .factory()
+                        .application(base_type, type_args.clone());
+                    self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
+                    return Some(instantiated);
+                }
                 return None;
             }
             if type_args.is_empty() {
@@ -716,6 +726,16 @@ impl<'a> CheckerState<'a> {
         };
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
         if body_type == TypeId::ERROR {
+            if !type_args.is_empty() && !type_params.is_empty() {
+                let base_type = self.ctx.create_lazy_type_ref(sym_id);
+                let instantiated = self
+                    .ctx
+                    .types
+                    .factory()
+                    .application(base_type, type_args.clone());
+                self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
+                return Some(instantiated);
+            }
             return None;
         }
         if type_args.is_empty() {

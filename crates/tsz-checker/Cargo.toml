@@ -326,6 +326,10 @@ name = "ts2322_literal_source_display_tests"
 path = "tests/ts2322_literal_source_display_tests.rs"
 
 [[test]]
+name = "ts2322_destructuring_obj_literal_tests"
+path = "tests/ts2322_destructuring_obj_literal_tests.rs"
+
+[[test]]
 name = "union_target_literal_primitive_mismatch_tests"
 path = "tests/union_target_literal_primitive_mismatch_tests.rs"
 
@@ -1106,6 +1110,10 @@ name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
 
 [[test]]
+name = "abstract_parameter_property_impl_tests"
+path = "tests/abstract_parameter_property_impl_tests.rs"
+
+[[test]]
 name = "self_module_augmentation_isolation_tests"
 path = "tests/self_module_augmentation_isolation_tests.rs"
 
@@ -1116,6 +1124,10 @@ path = "tests/simple_local_interface_fastpath_tests.rs"
 [[test]]
 name = "mapped_type_numeric_literal_key_tests"
 path = "tests/mapped_type_numeric_literal_key_tests.rs"
+
+[[test]]
+name = "ts2344_infer_positional_constraint_tests"
+path = "tests/ts2344_infer_positional_constraint_tests.rs"
 
 [lints]
 workspace = true

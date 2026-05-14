@@ -86,6 +86,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut properties = Vec::with_capacity(interface.members.nodes.len());
+        let interface_name = if tsz_common::perf_counters::enabled_fast() {
+            self.simple_local_interface_entity_name_text(interface.name)
+        } else {
+            None
+        };
         for (member_order, &member_idx) in interface.members.nodes.iter().enumerate() {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
@@ -105,15 +110,13 @@ impl<'a> CheckerState<'a> {
                 );
                 return None;
             };
-            let name_atom = self
-                .get_property_name_resolved(sig.name)
-                .map(|name| self.ctx.types.intern_string(&name));
-            let Some(name_atom) = name_atom else {
+            let Some(property_name) = self.get_property_name_resolved(sig.name) else {
                 tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                     Outcome::RejectUnresolvedPropertyName,
                 );
                 return None;
             };
+            let name_atom = self.ctx.types.intern_string(&property_name);
             let type_id = if sig.type_annotation.is_some() {
                 if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
                     tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
@@ -125,6 +128,11 @@ impl<'a> CheckerState<'a> {
                         );
                     tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind(
                         annotation_kind,
+                    );
+                    tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residue(
+                        annotation_kind,
+                        interface_name.as_deref(),
+                        Some(&property_name),
                     );
                     if annotation_kind == AnnotationKind::TypeReference
                         && tsz_common::perf_counters::enabled_fast()

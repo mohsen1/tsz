@@ -44,7 +44,7 @@ pub(crate) struct MappedKeys {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
-    /// Partition `properties` from `collect_properties` into string and symbol key buckets.
+    /// Partition `properties` from `collect_properties` into string, numeric, and symbol key buckets.
     /// Reuses the existing `unique_symbol_ref_from_symbol_named_atom` helper to avoid
     /// duplicating `__unique_N` / well-known-symbol atom conversion logic.
     fn collect_props_into_keys(&self, keys: &mut MappedKeys, properties: Vec<PropertyInfo>) {

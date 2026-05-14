@@ -1394,7 +1394,21 @@ impl<'a> Printer<'a> {
             self.write("(");
         }
 
-        if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
+        let has_generator_asterisk = func.asterisk_token
+            || self
+                .source_text
+                .and_then(|text| {
+                    let start = (node.pos as usize).min(text.len());
+                    let end = self
+                        .arena
+                        .get(func.body)
+                        .map_or(node.end as usize, |body| body.pos as usize)
+                        .min(text.len());
+                    (start < end).then(|| &text[start..end])
+                })
+                .is_some_and(|prefix| prefix.contains('*'));
+
+        if func.is_async && self.ctx.needs_async_lowering && !has_generator_asterisk {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
             } else {
@@ -1408,7 +1422,7 @@ impl<'a> Printer<'a> {
         }
 
         // Async generator: async function* f() → function f() { return __asyncGenerator(...) }
-        if func.is_async && self.ctx.needs_es2018_lowering && func.asterisk_token {
+        if func.is_async && self.ctx.needs_es2018_lowering && has_generator_asterisk {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
             } else {

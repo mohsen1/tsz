@@ -1259,6 +1259,17 @@ Decision record:
 Claim:
 [`claims/perf-delegate-actual-lib-record-2026-05-14.md`](claims/perf-delegate-actual-lib-record-2026-05-14.md).
 
+**2026-05-14 Partial alias follow-up:** an eighth narrow slice admits
+`Partial` in the existing direct actual-lib alias-body allowlist. On
+monorepo-006 this drops `DelegateCrossArenaSymbol` children from 5 to 4,
+`delegate.misses` from 5 to 4, and `checker.with_parent_cache_constructed`
+from 5 to 4 with unchanged diagnostics (`10,198`). Declaration-file residue
+row removed: `Partial` (count `1`).
+Decision record:
+[`perf-runs/2026-05-14-delegate-actual-lib-partial.md`](perf-runs/2026-05-14-delegate-actual-lib-partial.md).
+Claim:
+[`claims/perf-delegate-actual-lib-partial-2026-05-14.md`](claims/perf-delegate-actual-lib-partial-2026-05-14.md).
+
 **2026-05-13 `compute_type_of_symbol` interface fast path:** for local
 single-declaration interfaces, we now skip three high-frequency costs when not
 needed: computed-name precompute maps, member type-parameter prewarm scans, and
@@ -1371,6 +1382,18 @@ target is now the two remaining concrete rows:
 `union_or_intersection=1` and `array_or_tuple=1`. Decision record:
 [`perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md`](perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md).
 
+**2026-05-14 simple-object nonprimitive residue names:** the follow-up adds a
+bounded
+`compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues`
+table and reruns regenerated monorepo-006. Diagnostics remain `10,198`,
+simple-object hits remain `24,760`, and the only live non-primitive reject
+rows are now named: `TextInfo.direction` is the single
+`union_or_intersection` row, and `WeekInfo.weekend` is the single
+`array_or_tuple` row. This is attribution-only; it does not admit any new
+annotation kind. The subsequent residual-annotation admission consumes both
+named rows. Decision record:
+[`perf-runs/2026-05-14-simple-object-nonprimitive-residues.md`](perf-runs/2026-05-14-simple-object-nonprimitive-residues.md).
+
 **2026-05-14 simple-object residual annotation admission:** the next slice
 admits recursively simple union/intersection, array, and tuple annotations when
 every child annotation is already accepted by the same local shortcut guard.
@@ -1384,6 +1407,15 @@ declaration/provenance guards (`reject_out_of_arena_decl=6`,
 `reject_missing_interface_decl=7`). No timing claim is made from this
 attribution-mode run. Decision record:
 [`perf-runs/2026-05-14-simple-object-residual-annotations.md`](perf-runs/2026-05-14-simple-object-residual-annotations.md).
+
+**2026-05-14 composite/array attribution companion:** a follow-up attribution
+record for the same guarded union/intersection, array, and tuple admission
+shows the remaining annotation-kind buckets (`union_or_intersection`,
+`array_or_tuple`) at `0`. In that run, `checker.with_parent_cache_constructed`
+and `delegate.misses` drop from `11` to `5`; the remaining declaration-file
+residue is `FlatArray` (2), `IteratorResult` (2), and `Partial` (1). This
+attribution run is not a timing claim. Decision record:
+[`perf-runs/2026-05-14-simple-object-composite-array-tuple.md`](perf-runs/2026-05-14-simple-object-composite-array-tuple.md).
 
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
 any more aliases, add `direct_actual_lib_alias_body_outcomes` to the perf

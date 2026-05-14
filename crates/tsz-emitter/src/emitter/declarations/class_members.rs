@@ -168,10 +168,23 @@ impl<'a> Printer<'a> {
         let is_async = self
             .arena
             .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
+        let has_generator_asterisk = method.asterisk_token
+            || self
+                .source_text
+                .and_then(|text| {
+                    let start = (node.pos as usize).min(text.len());
+                    let end = self
+                        .arena
+                        .get(method.body)
+                        .map_or(node.end as usize, |body| body.pos as usize)
+                        .min(text.len());
+                    (start < end).then(|| &text[start..end])
+                })
+                .is_some_and(|prefix| prefix.contains('*'));
         let needs_async_lowering =
-            is_async && self.ctx.needs_async_lowering && !method.asterisk_token;
+            is_async && self.ctx.needs_async_lowering && !has_generator_asterisk;
         let needs_async_generator_lowering =
-            is_async && self.ctx.needs_es2018_lowering && method.asterisk_token;
+            is_async && self.ctx.needs_es2018_lowering && has_generator_asterisk;
 
         if needs_async_lowering || needs_async_generator_lowering {
             // Emit static modifier if present
@@ -184,7 +197,7 @@ impl<'a> Printer<'a> {
         }
 
         // Emit generator asterisk (skip for async generators being lowered)
-        if method.asterisk_token && !needs_async_generator_lowering {
+        if has_generator_asterisk && !needs_async_generator_lowering {
             self.write("*");
         }
 
@@ -277,7 +290,7 @@ impl<'a> Printer<'a> {
             self.push_temp_scope();
             let prev_declared = std::mem::take(&mut self.declared_namespace_names);
             self.prepare_logical_assignment_value_temps(method.body);
-            self.ctx.flags.in_generator = method.asterisk_token;
+            self.ctx.flags.in_generator = has_generator_asterisk;
             self.emit(method.body);
             self.declared_namespace_names = prev_declared;
             self.pop_temp_scope();
@@ -372,6 +385,29 @@ impl<'a> Printer<'a> {
                 }
             })
             .unwrap_or(false);
+
+        if self.ctx.target_es5 && self.method_body_prefix_contains_generator_asterisk(body) {
+            let property_name = self.method_name_before_body(body).unwrap_or_default();
+            self.write(" {");
+            self.write_line();
+            self.increase_indent();
+            self.write("return ");
+            self.write_helper("__asyncGenerator");
+            self.write("(this, arguments, ");
+            let inner_name = (!property_name.is_empty()).then(|| format!("{property_name}_1"));
+            let move_params_to_generator = self.async_generator_params_need_forwarding(params);
+            self.emit_async_generator_es5_inner_function(
+                inner_name,
+                params,
+                body,
+                move_params_to_generator,
+            );
+            self.write(");");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            return;
+        }
 
         // Issue #3759: Emit `super` capture before entering the generator. tsc
         // pre-binds each referenced `super.<name>` via an `Object.create` block so
@@ -522,6 +558,27 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    fn method_body_prefix_contains_generator_asterisk(&self, body: NodeIndex) -> bool {
+        self.source_header_before_body_has_generator_asterisk(body)
+    }
+
+    fn method_name_before_body(&self, body: NodeIndex) -> Option<String> {
+        let text = self.source_text?;
+        let body_node = self.arena.get(body)?;
+        let end = (body_node.pos as usize).min(text.len());
+        let open_paren = text[..end].rfind('(')?;
+        let before_paren = text[..open_paren].trim_end();
+        let mut start = before_paren.len();
+        for (idx, ch) in before_paren.char_indices().rev() {
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                start = idx;
+            } else {
+                break;
+            }
+        }
+        (start < before_paren.len()).then(|| before_paren[start..].to_string())
     }
 
     pub(in crate::emitter) fn emit_property_declaration(&mut self, node: &Node) {

@@ -206,9 +206,6 @@ impl<'a> LoweringPass<'a> {
                     {
                         if method.asterisk_token {
                             // Async generator method: needs __asyncGenerator + __await
-                            if self.ctx.target_es5 {
-                                self.mark_async_helpers();
-                            }
                             self.mark_async_generator_helpers();
                         } else {
                             // Non-generator async method: needs __awaiter

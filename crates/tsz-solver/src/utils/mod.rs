@@ -31,7 +31,7 @@ pub(crate) fn is_numeric_property_name(interner: &dyn TypeDatabase, name: Atom) 
 
 /// Build the literal `TypeId` to use as the key for a property declared with
 /// the given name + `is_string_named` flag. Symbol-named keys must be handled
-/// by the caller — `unique-symbol` resolution requires resolver context that
+/// by the caller: `unique-symbol` resolution requires resolver context that
 /// this free helper does not have.
 ///
 /// A bare numeric name (`{ 1: ... }`) produces a `LiteralValue::Number(n)`
@@ -43,16 +43,18 @@ pub(crate) fn literal_key_for_property_name(
     name: Atom,
     is_string_named: bool,
 ) -> TypeId {
-    if !is_string_named && is_numeric_property_name(interner, name) {
-        let resolved = interner.resolve_atom_ref(name);
-        // `is_numeric_property_name` gates on `js_number_to_string` round-trip, so
-        // a finite/Infinity/NaN value always parses back. The fallback is a
-        // defensive guard against future drift in that contract.
-        if let Ok(n) = resolved.parse::<f64>() {
-            return interner.literal_number(n);
-        }
+    if !is_string_named && let Some(n) = atom_as_numeric_key(interner, name) {
+        return interner.literal_number(n);
     }
     interner.literal_string_atom(name)
+}
+
+/// If `atom` is a numeric property name, returns the parsed `f64` value.
+/// Returns `None` for string-named atoms, `NaN`/`Infinity` identifiers used as property names,
+/// and any atom that is not a valid JavaScript numeric literal.
+pub(crate) fn atom_as_numeric_key(db: &dyn TypeDatabase, atom: Atom) -> Option<f64> {
+    let name = db.resolve_atom_ref(atom);
+    tsz_common::numeric::parse_numeric_literal_value(name.as_ref())
 }
 
 /// Returns `true` if `name` is a synthetic private-brand marker that the

@@ -819,6 +819,27 @@ fn delegate_declaration_file_miss_residues()
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT:
     usize = 128;
 
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUE_LIMIT:
+    usize = 128;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue {
+    pub kind: &'static str,
+    pub interface: Option<String>,
+    pub property: Option<String>,
+    pub count: u64,
+}
+
+static COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUES: OnceLock<
+    Mutex<Vec<ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue>>,
+> = OnceLock::new();
+
+fn compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+-> &'static Mutex<Vec<ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue>> {
+    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUES
+        .get_or_init(|| Mutex::new(Vec::new()))
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue {
     pub name: String,
@@ -1622,6 +1643,62 @@ pub fn record_compute_type_of_symbol_interface_simple_object_non_primitive_annot
     .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record bounded source-level residue for non-primitive annotations rejected
+/// by the simple local-interface object shortcut.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residue(
+    kind: ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind,
+    interface: Option<&str>,
+    property: Option<&str>,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let kind_name =
+        COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_NAMES
+            [kind.as_index()];
+    let mut rows =
+        compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.kind == kind_name
+            && row.interface.as_deref() == interface
+            && row.property.as_deref() == property
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len()
+        < COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUE_LIMIT
+    {
+        rows.push(
+            ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue {
+                kind: kind_name,
+                interface: interface.map(str::to_owned),
+                property: property.map(str::to_owned),
+                count: 1,
+            },
+        );
+    } else if let Some(row) = rows
+        .iter_mut()
+        .find(|row| row.interface.as_deref() == Some("__truncated__"))
+    {
+        row.count += 1;
+    } else {
+        rows.push(
+            ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue {
+                kind: "overflow",
+                interface: Some("__truncated__".to_string()),
+                property: None,
+                count: 1,
+            },
+        );
+    }
+}
+
 /// Record attribution for why a `type_reference` annotation was still rejected
 /// by the simple local-interface object shortcut.
 #[inline]
@@ -2022,6 +2099,9 @@ impl PerfCounters {
             snap.resolver.package_json_reads,
             snap.resolver.candidate_paths_total,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
+            + &Self::dump_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(
+                &snap.compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues,
+            )
             + &Self::dump_compute_type_of_symbol_interface_simple_object_type_reference_reject_residues(
                 &snap.compute_type_of_symbol_interface_simple_object_type_reference_reject_residues,
             )
@@ -2192,6 +2272,28 @@ impl PerfCounters {
             out.push_str(&format!(
                 "  {:<32} {:<36} {:>8}\n",
                 row.name, row.outcome, row.count,
+            ));
+        }
+        out
+    }
+
+    fn dump_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(
+        rows: &[ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue],
+    ) -> String {
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from(
+            "\ncompute_type_of_symbol interface simple-object non-primitive annotation residues:\n",
+        );
+        for row in rows {
+            out.push_str(&format!(
+                "  {:<28} {:<32} {:<32} {:>8}\n",
+                row.kind,
+                row.interface.as_deref().unwrap_or("<unknown>"),
+                row.property.as_deref().unwrap_or("<unknown>"),
+                row.count,
             ));
         }
         out
@@ -2502,6 +2604,16 @@ pub struct PerfCounterSnapshot {
     /// order.
     pub compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kinds:
         Vec<NamedCount>,
+    /// Bounded source-level attribution for
+    /// `compute_type_of_symbol_interface_simple_object_outcomes.reject_non_primitive_annotation`.
+    ///
+    /// Captures at most
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_RESIDUE_LIMIT`
+    /// distinct `(kind, interface, property)` rows in perf-counter mode. This
+    /// names the sparse non-primitive residue before widening the guarded
+    /// shortcut.
+    pub compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues:
+        Vec<ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue>,
     /// Attribution split for `type_reference` rows within
     /// `compute_type_of_symbol_interface_simple_object_outcomes.reject_non_primitive_annotation`.
     ///
@@ -2892,6 +3004,8 @@ impl PerfCounters {
                     ),
                 })
                 .collect(),
+            compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues:
+                Self::snapshot_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(),
             compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes: (0
                 ..COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -2967,6 +3081,23 @@ impl PerfCounters {
         rows
     }
 
+    fn snapshot_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+    -> Vec<ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue> {
+        let mut rows =
+            compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+        rows.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.kind.cmp(b.kind))
+                .then_with(|| a.interface.cmp(&b.interface))
+                .then_with(|| a.property.cmp(&b.property))
+        });
+        rows
+    }
+
     /// Serialize a [`PerfCounterSnapshot`] to `path` using an atomic
     /// rename so a partial write can't poison the bench harness's `jq`
     /// consumer.
@@ -3015,6 +3146,8 @@ mod json_tests {
             "compute_type_of_symbol_interface_fastpath_outcomes",
             "compute_type_of_symbol_interface_callsite_outcomes",
             "compute_type_of_symbol_interface_simple_object_outcomes",
+            "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kinds",
+            "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues",
             "compute_type_of_symbol_interface_simple_object_type_reference_reject_residues",
             "direct_interface_lowering_outcomes",
             "direct_actual_lib_alias_body_outcomes",
@@ -3643,6 +3776,58 @@ mod json_tests {
         );
         assert_eq!(row["outcome"], "identifier_not_found_symbol");
         assert_eq!(row["count"], 11);
+    }
+
+    #[test]
+    fn compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues_lock_field_shape()
+     {
+        let unique_interface = format!(
+            "__test_simple_object_non_primitive_interface_{}__",
+            std::process::id()
+        );
+        let unique_property = format!(
+            "__test_simple_object_non_primitive_property_{}__",
+            std::process::id()
+        );
+        {
+            let mut rows =
+                compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(
+                ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationResidue {
+                    kind: "union_or_intersection",
+                    interface: Some(unique_interface.clone()),
+                    property: Some(unique_property.clone()),
+                    count: 7,
+                },
+            );
+        }
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json
+            ["compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues"]
+            .as_array()
+            .expect(
+                "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues is array",
+            );
+        let row = rows
+            .iter()
+            .find(|row| row["interface"] == unique_interface)
+            .expect("test residue row is present");
+        let obj = row.as_object().expect("row is object");
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> = ["kind", "interface", "property", "count"]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues row field shape drifted",
+        );
+        assert_eq!(row["kind"], "union_or_intersection");
+        assert_eq!(row["property"], unique_property);
+        assert_eq!(row["count"], 7);
     }
 
     #[test]

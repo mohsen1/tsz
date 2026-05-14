@@ -401,6 +401,9 @@ mod narrowing_comprehensive_tests;
 #[path = "../tests/narrowing_discriminant_tests.rs"]
 mod narrowing_discriminant_tests;
 #[cfg(test)]
+#[path = "../tests/numeric_keyof_tests.rs"]
+mod numeric_keyof_tests;
+#[cfg(test)]
 #[path = "../tests/property_helpers_tests.rs"]
 mod property_helpers_tests;
 #[cfg(test)]

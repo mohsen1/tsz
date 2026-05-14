@@ -42,15 +42,7 @@ impl<'a> CheckerState<'a> {
         };
         let heritage_sym_id = self.resolve_heritage_symbol(h_expr_idx);
 
-        // Collect implemented members from the derived class
-        let mut implemented_members = rustc_hash::FxHashSet::default();
-        for &member_idx in &class_data.members.nodes {
-            if let Some(name) = self.get_member_name(member_idx)
-                && !self.member_is_abstract(member_idx)
-            {
-                implemented_members.insert(name);
-            }
-        }
+        let implemented_members = self.collect_concrete_member_names_for_abstract_impl(class_data);
 
         // Prefer the resolved heritage symbol for nominal/merged lib classes like
         // `Iterator`, then fall back to the merged instance type walk for mixins and

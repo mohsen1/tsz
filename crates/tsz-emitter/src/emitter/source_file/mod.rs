@@ -245,6 +245,33 @@ mod tests {
     }
 
     #[test]
+    fn es5_async_generator_uses_generator_state_machine_without_awaiter() {
+        let source = "var f1 = async function* () {};\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("__awaiter"),
+            "ES5 async generators should not request the async-function helper.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return __asyncGenerator(this, arguments, function () {\n        return __generator(this, function (_a) {"),
+            "Async generator function expressions should use an ES5 generator state machine.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_static_class_expression_uses_comma_initializer_alias() {
         let source = "var v = class C {\n    static a = 1;\n    static c = { x: \"hi\" };\n    static d = C.c.x + \" world\";\n};\n";
 

@@ -546,16 +546,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Collect implemented members from derived class
-        let mut implemented_members = rustc_hash::FxHashSet::default();
-        for &member_idx in &class_data.members.nodes {
-            if let Some(name) = self.get_member_name(member_idx) {
-                // Check if this member is not abstract (i.e., it's an implementation)
-                if !self.member_is_abstract(member_idx) {
-                    implemented_members.insert(name);
-                }
-            }
-        }
+        let mut implemented_members =
+            self.collect_concrete_member_names_for_abstract_impl(class_data);
 
         // TSC also considers members provided through declaration merging
         // (class + interface with same name).  Look up the class symbol and

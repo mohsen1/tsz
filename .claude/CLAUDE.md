@@ -10,9 +10,9 @@
   status, metrics, sequencing, risks, active priorities, or invalidates a plan
   assumption. Do not create new roadmap files under `docs/plan/`; update the
   living roadmap instead.
-- To avoid duplicate work, roadmap-adjacent implementation should be visible
+- To avoid duplicate work, roadmap-adjacent implementation must be visible
   before coding starts: inspect open GitHub issues, draft PRs, and `WIP`
-  labels/titles for overlapping work. If no existing issue covers the task,
+  labels/titles for overlapping work. If no existing claim covers the task,
   create or update a GitHub issue for the scope, mark it `WIP`, create a
   branch, then open a draft PR with the GitHub label `WIP`. Use a title like
   `[WIP] <scope>: <intent>`.
@@ -206,7 +206,7 @@ into hard errors. Both bite often enough to keep in mind upfront:
   surface — `clippy::print_stdout` is allowed today but `clippy::dbg_macro`
   is denied; if you add a temporary `dbg!`, remove it before committing.
 - Run `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  locally before pushing. The pre-commit hook runs this; CI runs it too.
+  locally before pushing when the change needs lint feedback. CI runs it too.
 
 ## 20) Skills (Operational)
 Available skills and triggers:

@@ -239,7 +239,7 @@ impl Server {
             // tsc returns no fixes when the request span does not overlap any
             // diagnostic. Don't fall back to all matching diagnostics in the
             // file once the span filter is empty (issue #3832).
-            let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
+            let mut filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
                 .iter()
                 .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
                 .filter(|d| {
@@ -252,6 +252,22 @@ impl Server {
                 })
                 .map(to_lsp_diag)
                 .collect();
+            if filtered_diagnostics.is_empty()
+                && error_codes
+                    .contains(&tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                && request_span.is_some_and(|(start, end)| {
+                    start == end && start.line == 0 && start.character == 0
+                })
+            {
+                filtered_diagnostics.extend(
+                    diagnostics
+                        .iter()
+                        .filter(|d| {
+                            d.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                        })
+                        .map(to_lsp_diag),
+                );
+            }
             let auto_import_file_exclude_patterns =
                 Self::extract_auto_import_file_exclude_patterns(request)
                     .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
@@ -2988,7 +3004,12 @@ impl Server {
                     if prev.is_some_and(|b| matches!(*b as char, '.' | '\'' | '"' | '`' | '#')) {
                         continue;
                     }
-                    if !name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                    let is_call_expression = line
+                        .get(i..)
+                        .is_some_and(|rest| rest.trim_start().starts_with('('));
+                    if !name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                        && !is_call_expression
+                    {
                         continue;
                     }
                     if !is_identifier(name) {
