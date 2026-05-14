@@ -761,6 +761,66 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-size: 0.9rem;
 }
 
+.compat-dashboard {
+  margin: 2.5rem 0;
+}
+
+.compat-summary {
+  margin: 0.15rem 0 0.65rem;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.compat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.compat-item {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.compat-item a {
+  font-weight: 600;
+}
+
+.compat-state {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.compat-state.green {
+  color: var(--success);
+}
+
+.compat-state.yellow {
+  color: var(--scanner-color);
+}
+
+.compat-state.red {
+  color: var(--solver-color);
+}
+
+.compat-state.gray {
+  color: var(--text-secondary);
+}
+
+.compat-detail {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
 .benchmark-mean-card {
   margin: 1.25rem 0 2rem;
 }

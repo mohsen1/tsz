@@ -5,9 +5,10 @@
 
 use super::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::operations::expression_ops::normalize_fresh_object_literal_union_members;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShapeId, TupleListId, TypeData, TypeId,
-    TypeListId,
+    IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShapeId, TupleListId, TypeData,
+    TypeId, TypeListId, Visibility,
 };
 use crate::visitor::TypeVisitor;
 use tsz_common::interner::Atom;
@@ -149,6 +150,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         // Check explicit properties first
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
+            && !self.is_private_identifier_property_name(prop_name, prop.visibility)
         {
             let read_type =
                 self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
@@ -176,6 +178,11 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if !prop_name.starts_with("__unique_")
             && resolver.has_index_signature(obj_type, IndexKind::String)
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
+            && resolver
+                .get_index_info(obj_type)
+                .string_index
+                .as_ref()
+                .is_none_or(|idx| self.string_index_signature_accepts_property(idx, prop_name))
         {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(
@@ -221,6 +228,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         // Check explicit properties first
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
+            && !self.is_private_identifier_property_name(prop_name, prop.visibility)
         {
             let read_type =
                 self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
@@ -256,6 +264,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         // Check string index signature (skip for symbol-keyed properties)
         if !prop_name.starts_with("__unique_")
             && let Some(ref idx) = shape.string_index
+            && self.string_index_signature_accepts_property(idx, prop_name)
         {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(idx.value_type),
@@ -360,6 +369,26 @@ impl<'a> PropertyAccessEvaluator<'a> {
     // Helper methods to call visitor logic from &self context
     // These contain the actual implementation that the TypeVisitor trait methods delegate to
 
+    fn string_index_signature_accepts_property(
+        &self,
+        index: &IndexSignature,
+        prop_name: &str,
+    ) -> bool {
+        if matches!(index.key_type, TypeId::STRING | TypeId::SYMBOL) {
+            return true;
+        }
+
+        let prop_type = self.interner().literal_string(prop_name);
+        let mut checker = SubtypeChecker::new(self.interner());
+        checker.is_subtype_of(prop_type, index.key_type)
+    }
+
+    fn is_private_identifier_property_name(&self, prop_name: &str, visibility: Visibility) -> bool {
+        prop_name.starts_with('#')
+            && visibility == Visibility::Private
+            && !self.allow_private_identifier_properties()
+    }
+
     fn is_typed_array_like_shape(&self, shape: &crate::types::ObjectShape) -> bool {
         if shape.number_index.is_none() {
             return false;
@@ -415,6 +444,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Check explicit properties first
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
+            && !self.is_private_identifier_property_name(prop_name, prop.visibility)
         {
             let read_type =
                 self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
@@ -446,6 +476,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if !prop_name.starts_with("__unique_")
             && resolver.has_index_signature(obj_type, IndexKind::String)
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
+            && resolver
+                .get_index_info(obj_type)
+                .string_index
+                .as_ref()
+                .is_none_or(|idx| self.string_index_signature_accepts_property(idx, prop_name))
         {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(
@@ -496,6 +531,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Check explicit properties first
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
+            && !self.is_private_identifier_property_name(prop_name, prop.visibility)
         {
             let read_type =
                 self.bind_object_receiver_this(obj_type, self.optional_property_type(prop));
@@ -535,6 +571,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // as distinct from string keys for index signature purposes.
         if !prop_name.starts_with("__unique_")
             && let Some(ref idx) = shape.string_index
+            && self.string_index_signature_accepts_property(idx, prop_name)
         {
             let bound = self.bind_object_receiver_this(obj_type, idx.value_type);
             return Some(self.index_signature_result_with_nuia_write_type(bound));
@@ -796,6 +833,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if !prop_name.starts_with("__unique_")
                 && resolver.has_index_signature(obj_type, IndexKind::String)
                 && let Some(value_type) = resolver.resolve_string_index(obj_type)
+                && resolver
+                    .get_index_info(obj_type)
+                    .string_index
+                    .as_ref()
+                    .is_none_or(|idx| self.string_index_signature_accepts_property(idx, prop_name))
             {
                 return Some(PropertyAccessResult::from_index(
                     self.add_undefined_if_unchecked(value_type),

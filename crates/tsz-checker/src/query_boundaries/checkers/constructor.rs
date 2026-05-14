@@ -3,6 +3,7 @@ use tsz_solver::{TypeDatabase, TypeId};
 pub(crate) use super::super::common::has_construct_signatures;
 pub(crate) use tsz_solver::type_queries::{
     AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
+    construct_return_type_for_type,
 };
 
 pub(crate) fn classify_for_instance_type(
@@ -40,5 +41,5 @@ pub(crate) fn construct_return_type_for_display(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
-    tsz_solver::type_queries::data::construct_return_type_for_type(db, type_id)
+    construct_return_type_for_type(db, type_id)
 }

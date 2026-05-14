@@ -11,7 +11,6 @@
 //! - `compiler_options` - Compiler option accessors and solver config derivation
 //! - `lib_queries` - Library/global type availability queries
 //! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
-
 mod aliases;
 mod caches;
 mod compiler_options;
@@ -22,6 +21,7 @@ pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
 mod constructors;
 mod core;
 mod cross_file_query;
+mod env_eval_cache;
 mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
@@ -31,7 +31,6 @@ mod parse_health;
 pub use parse_health::ParseHealth;
 mod import_extension_flags;
 mod lib_queries;
-mod lifetime_scopes;
 mod module_entity;
 mod request_cache;
 mod resolver;
@@ -41,12 +40,6 @@ mod strict_mode;
 mod symbol_file_targets;
 pub mod typing_request;
 pub use aliases::*;
-// NOTE: `lifetime_scopes` is a stillborn parallel of `lifetime_shells` (see
-// PR #6022, merged as `[WIP]`). Its `FileSession` / `WorkerContext` collide
-// with the canonical types re-exported above and broke the wasm build with
-// E0252 (`WorkerContext` reimported here). Leave the module declared (its
-// internal self-test exercises the `WorkerContext` re-exported above) but
-// do not re-export the duplicates from here.
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
 use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
@@ -1282,6 +1275,11 @@ pub struct CheckerContext<'a> {
     /// When true, we're inside a const assertion (as const) and should preserve literal types.
     /// This prevents widening of literal types in object/array literals.
     pub in_const_assertion: bool,
+
+    /// True while checking a `satisfies T` operand. Object-literal property
+    /// widening then uses tsc's exact `isLiteralOfContextualType` per-property
+    /// gate instead of tsz's normal coarser policy.
+    pub in_satisfies_operand: bool,
 
     /// When true, preserve literal types instead of widening.
     /// Set during evaluation of compound expression branches (conditional `?:`,

@@ -3428,6 +3428,207 @@ function g(e: E): number {
     );
 }
 
+/// Issue #6823: an exhaustive numeric-enum switch must narrow the discriminant
+/// to `never` in the `default` clause. The standard exhaustiveness pattern
+/// (`const _: never = op`) must type-check without TS2322.
+#[test]
+fn test_ts2322_not_emitted_for_exhaustive_enum_switch_default_clause() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+enum Operation {
+    Add,
+    Subtract,
+    Multiply
+}
+function calculate(op: Operation, a: number, b: number): number {
+    switch (op) {
+        case Operation.Add: return a + b;
+        case Operation.Subtract: return a - b;
+        case Operation.Multiply: return a * b;
+        default:
+            const _exhaustive: never = op;
+            return _exhaustive;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Exhaustive enum switch default must narrow to never; got TS2322: {ts2322:?}",
+    );
+}
+
+/// Issue #6823 adjacent: renamed enum / numeric initialisers must behave the
+/// same. The structural rule depends on enum nominal identity, not on
+/// the spelling of member names.
+#[test]
+fn test_ts2322_not_emitted_for_exhaustive_renamed_enum_switch_default() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+enum Direction {
+    Up = 1, Down = 2, Left = 3, Right = 4
+}
+function handle(dir: Direction): string {
+    switch (dir) {
+        case Direction.Up: return "up";
+        case Direction.Down: return "down";
+        case Direction.Left: return "left";
+        case Direction.Right: return "right";
+        default:
+            const exhaustive: never = dir;
+            return exhaustive;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Renamed enum exhaustive switch default must narrow to never; got TS2322: {ts2322:?}",
+    );
+}
+
+/// Issue #6823 adjacent: string-enum variant.
+#[test]
+fn test_ts2322_not_emitted_for_exhaustive_string_enum_switch_default() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+enum Color {
+    Red = "red",
+    Green = "green",
+    Blue = "blue"
+}
+function describe(c: Color): string {
+    switch (c) {
+        case Color.Red: return "r";
+        case Color.Green: return "g";
+        case Color.Blue: return "b";
+        default:
+            const exhaustive: never = c;
+            return exhaustive;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "String enum exhaustive switch default must narrow to never; got TS2322: {ts2322:?}",
+    );
+}
+
+/// Issue #6823 negative: a NON-exhaustive enum switch must NOT narrow to never.
+/// This ensures the fix doesn't over-narrow.
+#[test]
+fn test_ts2322_emitted_for_non_exhaustive_enum_switch_default() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+enum Operation {
+    Add,
+    Subtract,
+    Multiply
+}
+function calculate(op: Operation): number {
+    switch (op) {
+        case Operation.Add: return 1;
+        case Operation.Subtract: return 2;
+        // Multiply intentionally not handled
+        default:
+            const _exhaustive: never = op;
+            return _exhaustive;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Non-exhaustive enum switch default must NOT narrow to never; expected TS2322 but got none. Diagnostics: {:?}",
+        checker.ctx.diagnostics,
+    );
+}
+
 /// Exhaustive enum switch assignments should satisfy definite-assignment checks.
 #[test]
 fn test_ts2454_not_emitted_for_exhaustive_enum_switch_assignment() {

@@ -245,7 +245,8 @@ correctness blocker.
 Track these as counters or periodic audit bullets. They are more useful than
 subjective "cleanup" language.
 
-1. Number of checker `source_text.contains` / file-name / rendered-message
+1. `CheckerContext` field count, currently pinned at `234`, plus the number of
+   checker `source_text.contains` / file-name / rendered-message
    diagnostic decisions.
 2. Number of post-check `rewrite_*_fingerprints` passes still active.
 3. Direct `is_assignable_to` call sites on `TS2322`/`TS2345`/`TS2416` paths
@@ -446,6 +447,8 @@ Acceptance:
 
 ### Track 9: Emit Robustness, DTS Boundary, LSP, And WASM Consumers
 
+Current owner: M4-T9-10.
+
 Scope: JS emit, declaration emit, LSP, WASM, and compiler-service facade work.
 Emit/DTS has enough failures and architectural risk to be its own recovery
 campaign inside this track, not a bucket of baseline whack-a-mole. LSP/WASM
@@ -484,6 +487,8 @@ Acceptance:
    not infer malformed syntax behavior by scanning substrings.
 
 ### Track 10: Guardrails, Tooling, Residency, And Performance Substrate
+
+Current owner: M4-T9-10.
 
 Scope: large-repo memory/runtime, stable skeleton indexes, bounded arena
 residency, project graph reuse, compiler-service orchestration, incremental

@@ -591,6 +591,37 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
 }
 
 #[test]
+fn test_env_eval_cache_access_routes_through_context_helpers() {
+    let mut checker_rs_files = Vec::new();
+    collect_checker_rs_files_recursive(Path::new("src"), &mut checker_rs_files);
+
+    let mut violations = Vec::new();
+    for path in checker_rs_files {
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+            || path.starts_with("src/context")
+        {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        if source.contains("ctx.env_eval_cache.")
+            || source.contains("ctx.env_eval_cache\n")
+            || source.contains("ctx.env_eval_cache\r\n")
+        {
+            violations.push(path.display().to_string());
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "env_eval_cache callers should use CheckerContext helper methods; violations: {}",
+        violations.join(", ")
+    );
+}
+
+#[test]
 fn test_assignability_checker_routes_relation_queries_through_query_boundaries() {
     let assignability_source = fs::read_to_string("src/assignability/assignability_checker.rs")
         .expect("failed to read src/assignability/assignability_checker.rs for architecture guard");
@@ -4179,6 +4210,25 @@ fn test_cli_must_not_import_checker_internals() {
          Use `tsz_checker::diagnostics` for diagnostic codes and types. \
          Violations found:\n{}",
         violations.join("\n")
+    );
+}
+
+/// Guard that the retired constructor boundary shortcut does not return.
+#[test]
+fn test_constructor_boundary_avoids_retired_construct_return_data_shortcut() {
+    let source = fs::read_to_string("src/query_boundaries/checkers/constructor.rs")
+        .expect("failed to read query_boundaries/checkers/constructor.rs");
+
+    assert!(
+        !source.contains("type_queries::data::construct_return_type_for_type"),
+        "constructor query boundary must not call the retired solver data shortcut. \
+         Use tsz_solver::type_queries::construct_return_type_for_type so the solver \
+         query layer owns construct-return access."
+    );
+    assert!(
+        source.contains("construct_return_type_for_type(db, type_id)"),
+        "constructor query boundary must keep construct-return access routed through \
+         its display helper."
     );
 }
 

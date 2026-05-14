@@ -19,9 +19,9 @@
   before coding starts: inspect open draft PRs, open PRs, recent merged PRs,
   and relevant GitHub issues for overlapping work. A GitHub issue is optional;
   a draft PR with a clear title/body is enough to claim active work.
-- Do not add `[codex]` to PR titles. PR titles should follow the repository
-  convention, e.g. `fix(checker): ...`, `chore(lsp-tests): ...`, or `[WIP]
-  <scope>: <intent>` while the work is still WIP.
+- Important: do not add `[codex]` to PR titles. PR titles should follow the
+  repository convention, e.g. `fix(checker): ...`, `chore(lsp-tests): ...`,
+  or `[WIP] <scope>: <intent>` while the work is still WIP.
 - While working, keep the draft PR current with new facts, root-cause
   discoveries, scope changes, and coordination notes. Other agents use draft
   PRs, PR comments, and review comments to decide whether their task duplicates

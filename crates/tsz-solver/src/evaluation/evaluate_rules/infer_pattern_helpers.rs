@@ -2180,6 +2180,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    fn is_template_infer_span(&self, span: Option<&TemplateSpan>) -> bool {
+        span.is_some_and(|span| {
+            matches!(span, TemplateSpan::Type(type_id) if matches!(self.interner().lookup(*type_id), Some(TypeData::Infer(_))))
+        })
+    }
+
+    fn next_char_end(source: &str, pos: usize) -> Option<usize> {
+        if pos >= source.len() {
+            return None;
+        }
+        Some(
+            source[pos..]
+                .char_indices()
+                .nth(1)
+                .map_or(source.len(), |(idx, _)| pos + idx),
+        )
+    }
+
     fn candidate_template_capture_ends(
         &self,
         source: &str,
@@ -2191,19 +2209,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return vec![source.len()];
         }
 
+        if self.is_template_infer_span(pattern.get(index))
+            && matches!(
+                pattern.get(index + 1),
+                Some(TemplateSpan::Type(TypeId::STRING))
+            )
+            && self.is_template_infer_span(pattern.get(index + 2))
+        {
+            return Self::next_char_end(source, pos).into_iter().collect();
+        }
+
         if pattern
             .get(index + 1)
             .is_some_and(|s| matches!(s, TemplateSpan::Type(type_id) if matches!(self.interner().lookup(*type_id), Some(TypeData::Infer(_)))))
         {
-            if pos >= source.len() {
-                return Vec::new();
-            }
-            return vec![
-                source[pos..]
-                    .char_indices()
-                    .nth(1)
-                    .map_or(source.len(), |(idx, _)| pos + idx),
-            ];
+            return Self::next_char_end(source, pos).into_iter().collect();
         }
 
         if let Some(next_text) = pattern[index + 1..].iter().find_map(|span| match span {
