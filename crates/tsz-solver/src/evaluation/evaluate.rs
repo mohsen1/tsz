@@ -191,6 +191,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Matches TypeScript's instantiation depth limit that triggers TS2589.
     const MAX_DEF_DEPTH: u32 = 100;
 
+    /// When the structural per-`TypeId` recursion guard hits its depth limit,
+    /// surface it as TS2589 only if some DefId has been recursively expanded at
+    /// least this many times — otherwise treat the bailout as the stack-protection
+    /// cost of legitimate finite recursion and leave the type opaque.
+    ///
+    /// Calibration: empirically, `Permutation<U>` with `|U| ≤ 3` peaks around
+    /// `def_depth ≈ 33` when it hits the structural limit, while unbounded
+    /// patterns like `type Foo<T,B> = { "true": Foo<T, Foo<T,B>> }[T]` saturate
+    /// near `def_depth ≈ 50`.
+    const REAL_INSTANTIATION_BAILOUT_THRESHOLD: u32 = 40;
+
     /// Create a new evaluator with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         TypeEvaluator {
@@ -474,8 +485,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             });
             if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
                 GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                self.guard.mark_exceeded();
-                return TypeId::ERROR;
+                // Cross-evaluator stack protection: leave `type_id` opaque
+                // rather than propagating ERROR. The outer evaluator can
+                // proceed at a shallower depth without inheriting a sticky
+                // exceeded flag. See the analogous DepthExceeded arm below.
+                return type_id;
             }
             let result = self.evaluate_guarded(type_id);
             GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
@@ -548,8 +562,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return type_id;
             }
             RecursionResult::DepthExceeded => {
-                self.cache.insert(type_id, TypeId::ERROR);
-                return TypeId::ERROR;
+                // The per-`TypeId` guard's depth limit is structural — it caps the
+                // type-tree walk to protect the stack, not the instantiation chain.
+                // tsc's `instantiationDepth` (the source of TS2589) is mirrored by
+                // `def_depth`, so consult that to decide whether the bailout is a
+                // real runaway (escalate) or just the structural cost of legitimate
+                // finite recursion like the type-challenges `Permutation<U>` /
+                // `Combination<U>` patterns (silently leave `type_id` opaque).
+                let max_def_depth = self.def_depth.values().copied().max().unwrap_or(0);
+                if max_def_depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
+                    self.cache.insert(type_id, TypeId::ERROR);
+                    return TypeId::ERROR;
+                }
+                self.guard.clear_exceeded();
+                self.cache.insert(type_id, type_id);
+                return type_id;
             }
             RecursionResult::IterationExceeded => {
                 self.cache.insert(type_id, type_id);
