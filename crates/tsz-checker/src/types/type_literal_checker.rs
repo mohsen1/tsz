@@ -561,6 +561,15 @@ impl<'a> CheckerState<'a> {
                 if required_count > 0 {
                     return TypeId::ERROR;
                 }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class && type_params.is_empty() {
+                    return self.type_reference_symbol_type(sym_id);
+                }
                 // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
                 // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
                 // Without this, bare Lazy(DefId) misses the default instantiation and causes false
@@ -611,6 +620,15 @@ impl<'a> CheckerState<'a> {
                     .count();
                 if required_count > 0 {
                     return TypeId::ERROR;
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class && type_params.is_empty() {
+                    return self.type_reference_symbol_type(sym_id);
                 }
                 if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
                     let default_args: Vec<TypeId> =
