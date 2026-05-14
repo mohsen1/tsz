@@ -183,3 +183,39 @@ const _: T = "hello";
         "TrimRight<\"hello   \"> should be \"hello\"; got: {diags:#?}"
     );
 }
+
+// ─── Adjacent infer / string wildcard spans ────────────────────────────────
+
+/// `${infer F}${string}${infer L}` should bind the first infer before the
+/// string wildcard consumes its minimal character.
+#[test]
+fn infer_before_string_wildcard_captures_first_character() {
+    let diags = check(
+        r#"
+type Test<T extends string> = T extends `${infer F}${string}${infer L}` ? [F, L] : never;
+type T1 = Test<"hello">;
+const result: T1 = ["h", "llo"];
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Test<\"hello\"> should be [\"h\", \"llo\"]; got: {diags:#?}"
+    );
+}
+
+/// The same pattern needs at least two characters: one for the leading infer
+/// and one for the `${string}` wildcard.
+#[test]
+fn infer_string_infer_pattern_rejects_single_character_source() {
+    let diags = check(
+        r#"
+type Test<T extends string> = T extends `${infer F}${string}${infer L}` ? [F, L] : never;
+type T1 = Test<"a">;
+const result: T1 = ["", ""];
+"#,
+    );
+    assert!(
+        error_codes(&diags).contains(&2322),
+        "Test<\"a\"> should be never and reject tuple assignment; got: {diags:#?}"
+    );
+}
