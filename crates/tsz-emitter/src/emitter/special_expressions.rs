@@ -56,7 +56,9 @@ impl<'a> Printer<'a> {
             }
 
             if self.arena.get(unary.expression).is_none() {
-                self.write(" ");
+                self.write(" yield ");
+                self.write_helper("__await");
+                self.write("(void 0)");
                 return;
             }
 

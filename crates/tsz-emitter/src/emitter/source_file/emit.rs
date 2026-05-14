@@ -82,6 +82,8 @@ impl<'a> Printer<'a> {
             self.wrapped_export_module_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.async_generator_inner_name_counts.clear();
+        self.reserved_disposable_env_names.clear();
         self.node_esm_create_require_names = None;
         self.commonjs_tslib_import_binding = "tslib_1".to_string();
         self.ctx.arguments_capture_counter = 0;

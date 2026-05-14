@@ -524,6 +524,7 @@ impl<'a> Printer<'a> {
 
         // Emit function body with await→yield substitution and (issue #3759)
         // an active `_super` capture alias when the body references super.
+        let saved_yield = self.ctx.emit_await_as_yield;
         self.ctx.emit_await_as_yield = true;
         let prev_super_alias = self.scoped_static_super_base_alias.take();
         let prev_super_direct = self.scoped_static_super_direct_access;
@@ -543,13 +544,16 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
-            for &stmt in &block.statements.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt) {
-                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                    self.emit_comments_before_pos(actual_start);
+            let statements = block.statements.clone();
+            if !self.emit_statement_list_with_using_scope(&statements) {
+                for &stmt in &statements.nodes {
+                    if let Some(stmt_node) = self.arena.get(stmt) {
+                        let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                        self.emit_comments_before_pos(actual_start);
+                    }
+                    self.emit(stmt);
+                    self.write_line();
                 }
-                self.emit(stmt);
-                self.write_line();
             }
         }
         self.function_scope_depth = prev_function_scope_depth;
@@ -557,7 +561,7 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_direct_access = prev_super_direct;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
-        self.ctx.emit_await_as_yield = false;
+        self.ctx.emit_await_as_yield = saved_yield;
 
         self.decrease_indent();
         self.write("});");
