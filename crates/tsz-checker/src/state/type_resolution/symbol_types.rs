@@ -58,11 +58,6 @@ impl<'a> CheckerState<'a> {
                 .get_binder_for_file(file_idx)
                 .and_then(|binder| binder.get_symbol(sym_id))
                 .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
-            && self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .is_none_or(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
             && let Some((result, _)) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
             self.ctx.leave_recursion();
@@ -1279,11 +1274,6 @@ impl<'a> CheckerState<'a> {
                 .get_binder_for_file(file_idx)
                 .and_then(|binder| binder.get_symbol(sym_id))
                 .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
-            && self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .is_none_or(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
             && let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
             return result;
