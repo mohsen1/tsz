@@ -159,6 +159,9 @@ pub struct DeclarationEmitter<'a> {
     /// JS `export default <Identifier>` statements already hoisted ahead of their
     /// declaration so the original statement is suppressed when the loop reaches it.
     pub(super) emitted_js_export_default_names: FxHashSet<String>,
+    /// Exported JS statements that were hoisted together with an `export default`
+    /// identifier so the source-order loop does not emit them a second time.
+    pub(super) js_hoisted_default_intervening_export_statements: FxHashSet<NodeIndex>,
     /// Stable aliases for local declarations that shadow a JS export-equals root name.
     pub(super) js_shadowed_export_equals_local_aliases: FxHashMap<String, String>,
     /// JS namespace-like alias exports synthesized from expando assignments such

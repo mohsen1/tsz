@@ -1365,6 +1365,8 @@ impl<'a> DeclarationEmitter<'a> {
             let (type_expr, _) = Self::parse_jsdoc_braced_type_and_name(rest)?;
             let text = if type_expr.trim() == "?" {
                 "unknown".to_string()
+            } else if type_expr.trim().starts_with("module:") {
+                "any".to_string()
             } else {
                 Self::normalize_jsdoc_type_text(type_expr, false)
             };

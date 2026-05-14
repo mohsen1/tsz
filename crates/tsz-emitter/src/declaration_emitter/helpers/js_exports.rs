@@ -238,6 +238,167 @@ impl<'a> DeclarationEmitter<'a> {
         names
     }
 
+    fn js_export_default_referenced_declaration_order(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        name: &str,
+    ) -> Option<usize> {
+        for (order, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if self.extract_declaration_name(stmt_idx).as_deref() == Some(name) {
+                return Some(order);
+            }
+            if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            continue;
+                        };
+                        if self.get_identifier_text(decl.name).as_deref() == Some(name) {
+                            return Some(order);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn js_export_default_intervening_public_statement_indices(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        declaration_order: usize,
+        export_order: usize,
+    ) -> Vec<NodeIndex> {
+        let (start, end) = if declaration_order < export_order {
+            (declaration_order + 1, export_order)
+        } else {
+            (export_order + 1, declaration_order)
+        };
+        source_file.statements.nodes[start..end]
+            .iter()
+            .copied()
+            .filter(|&stmt_idx| self.js_statement_is_public_export(stmt_idx))
+            .collect()
+    }
+
+    fn js_statement_is_public_export(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+            return true;
+        }
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            return self
+                .arena
+                .get_export_decl(stmt_node)
+                .is_none_or(|export| !export.is_default_export);
+        }
+        if let Some(func) = self.arena.get_function(stmt_node) {
+            return self
+                .arena
+                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
+        }
+        if let Some(class) = self.arena.get_class(stmt_node) {
+            return self
+                .arena
+                .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword);
+        }
+        if let Some(iface) = self.arena.get_interface(stmt_node) {
+            return self
+                .arena
+                .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword);
+        }
+        if let Some(alias) = self.arena.get_type_alias(stmt_node) {
+            return self
+                .arena
+                .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword);
+        }
+        if let Some(enum_data) = self.arena.get_enum(stmt_node) {
+            return self
+                .arena
+                .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
+        }
+        if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+            return self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
+        }
+        if let Some(module) = self.arena.get_module(stmt_node) {
+            return self
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
+        }
+
+        false
+    }
+
+    fn js_attached_jsdoc_comment_start_index_for_pos(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        pos: u32,
+    ) -> Option<usize> {
+        let text = source_file.text.as_ref();
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let mut nearest_idx = None;
+        for (idx, comment) in source_file.comments.iter().enumerate() {
+            if comment.end as usize > actual_start {
+                break;
+            }
+            if !is_jsdoc_comment(comment, text) {
+                continue;
+            }
+            let between = &text[comment.end as usize..actual_start];
+            if between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                nearest_idx = Some(idx);
+            }
+        }
+
+        let nearest_idx = nearest_idx?;
+        let mut start_idx = nearest_idx;
+        let mut current_start = source_file.comments[nearest_idx].pos as usize;
+        while start_idx > 0 {
+            let prev_idx = start_idx - 1;
+            let prev = &source_file.comments[prev_idx];
+            if !is_jsdoc_comment(prev, text) {
+                break;
+            }
+            let between = &text[prev.end as usize..current_start];
+            if !between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                break;
+            }
+            start_idx = prev_idx;
+            current_start = prev.pos as usize;
+        }
+        Some(start_idx)
+    }
+
     pub(in crate::declaration_emitter) fn js_module_exports_assignment_initializer(
         &self,
         stmt_idx: NodeIndex,
@@ -2839,7 +3000,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file {
             return;
         }
-        for &stmt_idx in &source_file.statements.nodes {
+        for (export_order, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
@@ -2869,6 +3030,36 @@ impl<'a> DeclarationEmitter<'a> {
                 .insert(ident.escaped_text.clone())
             {
                 continue;
+            }
+            if let Some(declaration_order) = self
+                .js_export_default_referenced_declaration_order(source_file, &ident.escaped_text)
+            {
+                for intervening_stmt_idx in self
+                    .js_export_default_intervening_public_statement_indices(
+                        source_file,
+                        declaration_order,
+                        export_order,
+                    )
+                {
+                    if self
+                        .js_hoisted_default_intervening_export_statements
+                        .insert(intervening_stmt_idx)
+                    {
+                        let saved_comment_emit_idx = self.comment_emit_idx;
+                        if let Some(intervening_node) = self.arena.get(intervening_stmt_idx)
+                            && let Some(attached_start_idx) = self
+                                .js_attached_jsdoc_comment_start_index_for_pos(
+                                    source_file,
+                                    intervening_node.pos,
+                                )
+                            && attached_start_idx > self.comment_emit_idx
+                        {
+                            self.comment_emit_idx = attached_start_idx;
+                        }
+                        self.emit_statement(intervening_stmt_idx);
+                        self.comment_emit_idx = saved_comment_emit_idx;
+                    }
+                }
             }
             self.write_indent();
             self.write("export default ");

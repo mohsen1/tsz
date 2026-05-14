@@ -6227,6 +6227,46 @@ export default Test;
 }
 
 #[test]
+fn test_js_export_default_class_preserves_intervening_export_order() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @module A */
+class A {}
+
+/**
+ * Target element
+ * @type {module:A}
+ */
+export let el = null;
+
+export default A;
+"#,
+    );
+    let trimmed = output.trim();
+    let variable_pos = trimmed
+        .find("export let el: any;")
+        .unwrap_or_else(|| panic!("expected JSDoc module reference to emit `any`: {trimmed}"));
+    let default_pos = trimmed
+        .find("export default A;")
+        .unwrap_or_else(|| panic!("expected default export: {trimmed}"));
+    let class_pos = trimmed
+        .find("declare class A")
+        .unwrap_or_else(|| panic!("expected dependent class declaration: {trimmed}"));
+    let module_comment_pos = trimmed.find("@module A").unwrap_or_else(|| {
+        panic!("expected class JSDoc to stay with class declaration: {trimmed}")
+    });
+
+    assert!(
+        variable_pos < default_pos && default_pos < class_pos,
+        "Expected exported variable, default export, then class declaration: {trimmed}"
+    );
+    assert!(
+        default_pos < module_comment_pos && module_comment_pos < class_pos,
+        "Expected class JSDoc to stay with the deferred class declaration: {trimmed}"
+    );
+}
+
+#[test]
 fn test_js_default_typedef_after_default_identifier_export_uses_export_name() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

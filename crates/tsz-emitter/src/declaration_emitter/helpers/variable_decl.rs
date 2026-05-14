@@ -318,6 +318,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": typeof globalThis");
             } else if keyword != "const"
                 && has_initializer
+                && !js_has_jsdoc_type
                 && self
                     .arena
                     .get(initializer)
