@@ -2,6 +2,7 @@
 
 mod indexed_callback;
 mod return_context;
+mod unknown_callback;
 
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
@@ -782,6 +783,36 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         contextuals
+    }
+
+    pub(crate) fn compute_callback_argument_type_rollback_unknown_body_diagnostics(
+        &mut self,
+        arg_idx: NodeIndex,
+        contextual_type: TypeId,
+        check_excess_properties: bool,
+        index: usize,
+        args_len: usize,
+        callable_ctx: CallableContext,
+        callback_body_spans: &[(u32, u32)],
+    ) {
+        let snap = self.ctx.snapshot_diagnostics();
+        let _ = self.compute_single_call_argument_type(
+            arg_idx,
+            Some(contextual_type),
+            check_excess_properties,
+            index,
+            args_len,
+            false,
+            callable_ctx,
+        );
+        self.ctx.rollback_diagnostics_filtered(&snap, |diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::IS_OF_TYPE_UNKNOWN | diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
+            ) && callback_body_spans
+                .iter()
+                .any(|(start, end)| diag.start >= *start && diag.start < *end)
+        });
     }
 
     pub(crate) fn refine_generic_function_args_against_instantiated_params(
