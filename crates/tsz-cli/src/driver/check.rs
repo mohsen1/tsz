@@ -192,6 +192,9 @@ fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> boo
     // program has a real syntax error, but it still reports declaration-name
     // diagnostics such as TS2427/TS2457 alongside parse errors because the parser
     // accepts those names and defers validation to the checker.
+    if code == 1315 {
+        return false;
+    }
     code < 2000
         || tsz::checker::diagnostics::is_js_grammar_diagnostic(code)
         || is_reserved_type_name_declaration_diagnostic(code)
