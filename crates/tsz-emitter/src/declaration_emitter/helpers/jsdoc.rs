@@ -676,6 +676,20 @@ impl<'a> DeclarationEmitter<'a> {
     /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
     fn normalize_jsdoc_type_atom(s: &str) -> String {
         let s = s.trim();
+        if let Some((base, args)) = Self::split_jsdoc_generic_atom(s) {
+            let args = Self::split_jsdoc_params(args)
+                .into_iter()
+                .map(Self::normalize_jsdoc_type_expr)
+                .collect::<Vec<_>>();
+            if args.is_empty() {
+                return match base {
+                    "Array" => "any[]".to_string(),
+                    "Promise" => "Promise<any>".to_string(),
+                    _ => format!("{base}<>"),
+                };
+            }
+            return format!("{base}<{}>", args.join(", "));
+        }
         match s {
             "*" | "?" => "any".to_string(),
             // `Array<>` is the form after `normalize_jsdoc_type_expr` strips
@@ -688,6 +702,39 @@ impl<'a> DeclarationEmitter<'a> {
             "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
         }
+    }
+
+    fn split_jsdoc_generic_atom(s: &str) -> Option<(&str, &str)> {
+        let open = s.find('<')?;
+        if !s.ends_with('>') {
+            return None;
+        }
+        let base = s[..open].trim();
+        if base.is_empty()
+            || !base
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+
+        let mut depth = 0usize;
+        for (idx, ch) in s.char_indices().skip(open) {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 && idx != s.len() - 1 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if depth != 0 {
+            return None;
+        }
+        Some((base, &s[open + 1..s.len() - 1]))
     }
 
     /// Split JSDoc function parameters by commas, respecting nested parens.
@@ -864,7 +911,13 @@ impl<'a> DeclarationEmitter<'a> {
                 member.push('?');
             }
             member.push_str(": ");
-            member.push_str(&prop_decl.type_text);
+            let type_text = if matches!(prop_decl.type_text.as_str(), "object" | "Object") {
+                self.jsdoc_object_param_nested_type_literal(&params, &qualified_name, 2)
+                    .unwrap_or_else(|| prop_decl.type_text.clone())
+            } else {
+                prop_decl.type_text.clone()
+            };
+            member.push_str(&type_text);
             if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
                 member.push_str(" | undefined");
             }
@@ -879,6 +932,52 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|member| format!("{member_indent}{member}"))
             .collect();
         (!lines.is_empty()).then(|| format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
+    }
+
+    fn jsdoc_object_param_nested_type_literal(
+        &self,
+        params: &[JsdocParamDecl],
+        object_name: &str,
+        depth: u32,
+    ) -> Option<String> {
+        let prefix = format!("{object_name}.");
+        let mut members = Vec::new();
+        for prop_decl in params.iter().filter(|decl| decl.name.starts_with(&prefix)) {
+            let rest = &prop_decl.name[prefix.len()..];
+            if rest.is_empty() || rest.contains('.') {
+                continue;
+            }
+
+            let mut member = String::new();
+            member.push_str(rest);
+            if prop_decl.optional {
+                member.push('?');
+            }
+            member.push_str(": ");
+            let type_text = if matches!(prop_decl.type_text.as_str(), "object" | "Object") {
+                self.jsdoc_object_param_nested_type_literal(params, &prop_decl.name, depth + 1)
+                    .unwrap_or_else(|| prop_decl.type_text.clone())
+            } else {
+                prop_decl.type_text.clone()
+            };
+            member.push_str(&type_text);
+            if prop_decl.optional && !Self::type_text_has_undefined_branch(&prop_decl.type_text) {
+                member.push_str(" | undefined");
+            }
+            member.push(';');
+            members.push(member);
+        }
+        if members.is_empty() {
+            return None;
+        }
+
+        let member_indent = "    ".repeat((self.indent_level + depth) as usize);
+        let closing_indent = "    ".repeat((self.indent_level + depth - 1) as usize);
+        let lines: Vec<String> = members
+            .into_iter()
+            .map(|member| format!("{member_indent}{member}"))
+            .collect();
+        Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
     }
 
     pub(crate) fn jsdoc_satisfies_param_decl_for_parameter(
