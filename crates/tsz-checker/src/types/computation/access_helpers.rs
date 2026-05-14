@@ -1,6 +1,7 @@
 //! Element access helper methods: index type validation, generic index detection,
 //! numeric index extraction, and union/tuple diagnostic support.
 
+use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -189,6 +190,97 @@ impl<'a> CheckerState<'a> {
             );
             member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED
         })
+    }
+
+    pub(crate) fn union_has_no_common_numeric_index_surface(
+        &self,
+        object_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> bool {
+        if literal_index.is_none() {
+            return false;
+        }
+
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+
+        // Array and tuple unions have positional semantics and their own diagnostics.
+        // Keep this helper focused on object index signatures.
+        if members
+            .iter()
+            .any(|&member| self.is_array_like_type(member))
+        {
+            return false;
+        }
+
+        let mut all_have_string_surface = true;
+        let mut all_have_number_surface = true;
+        let mut saw_indexed_member = false;
+
+        for &member in &members {
+            if !self.is_index_signature_only_member(member) {
+                return false;
+            }
+            let Some((has_string, has_number)) = self.numeric_index_surfaces(member) else {
+                return false;
+            };
+            saw_indexed_member = true;
+            all_have_string_surface &= has_string;
+            all_have_number_surface &= has_number;
+        }
+
+        saw_indexed_member && !all_have_string_surface && !all_have_number_surface
+    }
+
+    fn numeric_index_surfaces(&self, object_type: TypeId) -> Option<(bool, bool)> {
+        match query::classify_element_indexable(self.ctx.types, object_type) {
+            query::ElementIndexableKind::ObjectWithIndex {
+                has_string,
+                has_number,
+            } => Some((has_string, has_number)),
+            query::ElementIndexableKind::Intersection(members) => {
+                let mut has_string = false;
+                let mut has_number = false;
+                for member in members {
+                    if let Some((member_string, member_number)) =
+                        self.numeric_index_surfaces(member)
+                    {
+                        has_string |= member_string;
+                        has_number |= member_number;
+                    }
+                }
+                (has_string || has_number).then_some((has_string, has_number))
+            }
+            query::ElementIndexableKind::Union(members) => {
+                let mut all_have_string_surface = true;
+                let mut all_have_number_surface = true;
+                let mut saw_indexed_member = false;
+
+                for member in members {
+                    let (has_string, has_number) = self.numeric_index_surfaces(member)?;
+                    saw_indexed_member = true;
+                    all_have_string_surface &= has_string;
+                    all_have_number_surface &= has_number;
+                }
+
+                saw_indexed_member.then_some((all_have_string_surface, all_have_number_surface))
+            }
+            query::ElementIndexableKind::Array
+            | query::ElementIndexableKind::Tuple
+            | query::ElementIndexableKind::StringLike
+            | query::ElementIndexableKind::Other => None,
+        }
+    }
+
+    fn is_index_signature_only_member(&self, object_type: TypeId) -> bool {
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+            .is_some_and(|shape| {
+                shape.properties.is_empty()
+                    && (shape.string_index.is_some() || shape.number_index.is_some())
+            })
     }
 
     /// Check if a type is a union of tuples where ALL members are out of bounds
