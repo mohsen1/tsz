@@ -987,23 +987,13 @@ impl<'a> CheckerState<'a> {
                     let tracked_type_params: FxHashSet<tsz_common::Atom> =
                         type_param_names.iter().copied().collect();
 
-                    let mut direct_literal_conflict_type_params = self
-                        .direct_round1_literal_conflict_type_params(
+                    let direct_literal_conflict_type_params = self
+                        .direct_round1_literal_preservation_type_params(
                             &shape,
                             args,
                             &round1_arg_types,
                             &sensitive_args,
                         );
-                    let direct_literal_index_key_type_params = self
-                        .direct_round1_literal_index_key_type_params(
-                            &shape,
-                            args,
-                            &round1_arg_types,
-                            &sensitive_args,
-                        );
-                    for (&name, &type_id) in direct_literal_index_key_type_params.map() {
-                        direct_literal_conflict_type_params.insert(name, type_id);
-                    }
                     if !direct_literal_conflict_type_params.is_empty() {
                         direct_literal_conflict_substitution =
                             Some(direct_literal_conflict_type_params.clone());
