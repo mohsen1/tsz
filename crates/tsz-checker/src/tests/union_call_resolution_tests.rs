@@ -7,8 +7,6 @@
 //! emitted TS2684 instead of TS2349 when no compatible signature pair existed.
 //! tsc routes the `no-compat` case through TS2349 unconditionally, like the
 //! `==1` branch already did. This test file locks the fixed behavior.
-//!
-//! See `docs/plan/claims/fix-solver-union-multi-overload-no-compat-emits-ts2349.md`.
 
 use crate::test_utils::check_source_diagnostics;
 

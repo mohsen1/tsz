@@ -5,6 +5,7 @@
 
 mod bindings;
 mod bindings_assignment;
+mod bindings_for_of;
 mod bindings_patterns;
 mod helpers;
 mod helpers_async;

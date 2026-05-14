@@ -40,7 +40,8 @@ default_cargo_build_jobs() {
     unit|unit-archive|unit-shard)
       # Unit builds compile large lib-test targets concurrently with downstream
       # crates; keep more headroom than dist/wasm to avoid rustc SIGKILLs.
-      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-12288}"
+      # On the 32 GiB GitHub runners, this intentionally caps unit builds at 1.
+      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-16384}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"

@@ -282,6 +282,15 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn disposable_env_names_for_node(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> (String, String, String) {
+        self.reserved_disposable_env_names
+            .remove(&node_idx)
+            .unwrap_or_else(|| self.next_disposable_env_names())
+    }
+
     /// Count effective (non-omitted) bindings in a destructuring pattern
     pub(in crate::emitter) fn count_effective_bindings(
         &self,
