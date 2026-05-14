@@ -350,6 +350,8 @@ pub struct CheckerContext<'a> {
     pub types_extending_array: FxHashSet<TypeId>,
 
     // --- Caches ---
+    // Ownership and reset behavior for these fields is inventoried in
+    // docs/architecture/CHECKER_CONTEXT_CACHE_OWNERSHIP.md.
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).
     pub symbol_types: SymbolTypeCache,
 
