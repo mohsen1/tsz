@@ -2,7 +2,7 @@
 
 Attribution-mode evidence captured on `origin/main` at `eb72db3709`
 (`perf(checker): admit actual-lib IteratorResult alias`). The PR branch was
-then rebased onto `21f0d5989c` after main moved.
+then kept rebased as main moved.
 
 ## Reproducer
 
