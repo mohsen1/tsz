@@ -65,6 +65,16 @@ impl<'a> DeclarationEmitter<'a> {
                     self.import_name_map.len(),
                     self.import_name_map
                 );
+                let source_is_js_file = self
+                    .arena
+                    .get(root_idx)
+                    .and_then(|node| self.arena.get_source_file(node))
+                    .is_some_and(|source_file| self.source_file_is_js(source_file));
+                let source_is_declaration_file = self
+                    .arena
+                    .get(root_idx)
+                    .and_then(|node| self.arena.get_source_file(node))
+                    .is_some_and(|source_file| source_file.is_declaration_file);
                 let mut analyzer = crate::declaration_emitter::usage_analyzer::UsageAnalyzer::new(
                     self.arena,
                     binder,
@@ -73,10 +83,10 @@ impl<'a> DeclarationEmitter<'a> {
                     std::sync::Arc::clone(current_arena),
                     self.current_file_path.clone(),
                     &self.import_name_map,
-                    self.arena
-                        .get(root_idx)
-                        .and_then(|node| self.arena.get_source_file(node))
-                        .is_some_and(|source_file| self.source_file_is_js(source_file)),
+                    crate::declaration_emitter::usage_analyzer::UsageAnalyzerSourceFlags {
+                        source_is_js_file,
+                        source_is_declaration_file,
+                    },
                 );
                 let used = analyzer.analyze(root_idx).clone();
                 let foreign = analyzer.get_foreign_symbols();
