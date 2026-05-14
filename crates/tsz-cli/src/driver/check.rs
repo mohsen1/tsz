@@ -119,7 +119,15 @@ fn parallel_file_session_reuse_requested() -> bool {
         return enabled;
     }
 
-    std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some()
+    if std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some() {
+        return false;
+    }
+
+    // `TSZ_FILE_SESSION_REUSE` used to opt into this path explicitly.
+    // Keep treating it as an accepted compatibility knob while defaulting
+    // to reuse when the global disable knob is not set.
+    let _legacy_opt_in = std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some();
+    true
 }
 
 const FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE: usize = 8;
@@ -1479,9 +1487,8 @@ pub(super) fn collect_diagnostics(
             // and re-targets it across files via
             // `CheckerContext::switch_to_file` instead of constructing
             // one per file. `TSZ_DISABLE_FILE_SESSION_REUSE=1` opts out.
-            // Gated on the sequential branch because the parallel branch
-            // needs per-thread state, which the sequential reuse path
-            // doesn't model.
+            // This flag applies to the sequential branch here; the
+            // parallel branch below has its own chunked worker-reuse path.
             // `extract_type_cache=true` (set when `--emit` or
             // `--declaration` is on) consumes the `CheckerState` per
             // file via `extract_cache(self)`. The reuse path holds
@@ -1514,6 +1521,9 @@ pub(super) fn collect_diagnostics(
                 && !extract_type_cache
                 && parallel_file_session_reuse_requested()
             {
+                // T2.1.C follow-up: reuse is now also default-on in the
+                // parallel no-emit lane, with `TSZ_DISABLE_FILE_SESSION_REUSE=1`
+                // as the shared opt-out across sequential + parallel paths.
                 tsz::parallel::ensure_rayon_global_pool();
                 check_files_in_parallel_chunks_with_reuse(
                     &work_items,
