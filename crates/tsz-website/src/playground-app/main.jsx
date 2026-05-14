@@ -235,6 +235,37 @@ function PlaygroundApp() {
     return [];
   }
 
+  function getDiagnosticIdentity(diagnostic) {
+    return JSON.stringify({
+      start: diagnostic.start ?? 0,
+      length: diagnostic.length ?? 0,
+      code: diagnostic.code,
+      messageText: diagnostic.messageText || "",
+      category: diagnostic.category,
+    });
+  }
+
+  function withSoundDiagnosticDisplayCodes(soundDiagnostics, baselineDiagnostics, forcedDisplayCode = null) {
+    const baselineIdentities = new Set(baselineDiagnostics.map(getDiagnosticIdentity));
+
+    return soundDiagnostics.map(diagnostic => {
+      if (!forcedDisplayCode && baselineIdentities.has(getDiagnosticIdentity(diagnostic))) {
+        return diagnostic;
+      }
+
+      return {
+        ...diagnostic,
+        displayCode: forcedDisplayCode || "TSZ3006",
+        originalCode: `TS${diagnostic.code}`,
+        domain: "sound",
+      };
+    });
+  }
+
+  function formatDiagnosticCode(diagnostic) {
+    return diagnostic.displayCode || `TS${diagnostic.code}`;
+  }
+
   function toLspPosition(position) {
     return {
       line: Math.max(0, position.lineNumber - 1),
@@ -405,7 +436,22 @@ function PlaygroundApp() {
     try {
       const program = createCheckProgram(codeRef.current, options);
       const parsedDiagnostics = normalizeDiagnostics(program, codeRef.current);
-      const userDiagnostics = parsedDiagnostics.filter(diagnostic => !(diagnostic.code === 2318 && diagnostic.start === 0));
+      let userDiagnostics = parsedDiagnostics.filter(diagnostic => !(diagnostic.code === 2318 && diagnostic.start === 0));
+      if (options.soundMode) {
+        const selectedExample = getExampleByKey(selectedExampleKey);
+        const baselineOptions = { ...options, soundMode: false };
+        const baselineProgram = createCheckProgram(codeRef.current, baselineOptions);
+        const baselineDiagnostics = normalizeDiagnostics(baselineProgram, codeRef.current)
+          .filter(diagnostic => !(diagnostic.code === 2318 && diagnostic.start === 0));
+        userDiagnostics = withSoundDiagnosticDisplayCodes(
+          userDiagnostics,
+          baselineDiagnostics,
+          selectedExample?.soundDiagnosticCode
+        );
+        if (typeof baselineProgram.dispose === "function") {
+          baselineProgram.dispose();
+        }
+      }
       const elapsed = `${(performance.now() - startedAt).toFixed(0)}ms`;
 
       debugDiagnosticsLog("runCheck:raw-diagnostics", parsedDiagnostics);
@@ -439,7 +485,7 @@ function PlaygroundApp() {
           startColumn: start.column,
           endLineNumber: end.lineNumber,
           endColumn: end.column,
-          code: `TS${diagnostic.code}`,
+          code: formatDiagnosticCode(diagnostic),
         };
       });
       monacoRef.current.editor.setModelMarkers(model, "tsz", markers);
@@ -798,7 +844,6 @@ function PlaygroundApp() {
     <>
       <div className="playground-toolbar">
         <div className="toolbar-left">
-          <span className="toolbar-title">Playground</span>
           <select value={selectedExampleKey} onChange={handleExampleChange}>
             {Object.entries(groupedExamples).map(([category, examples]) => (
               <optgroup key={category} label={category}>
@@ -861,12 +906,12 @@ function PlaygroundApp() {
                 const category = diagnostic.category === 1 ? "error" : diagnostic.category === 0 ? "warning" : "suggestion";
                 return (
                   <div
-                    key={`${diagnostic.code}-${diagnostic.start}-${diagnostic.length}`}
+                    key={`${formatDiagnosticCode(diagnostic)}-${diagnostic.code}-${diagnostic.start}-${diagnostic.length}`}
                     className="diag-item"
                     onClick={() => handleDiagnosticClick(diagnostic.start)}
                   >
                     <div className="diag-header">
-                      <span className={`diag-code ${category}`}>TS{diagnostic.code}</span>
+                      <span className={`diag-code ${category}`}>{formatDiagnosticCode(diagnostic)}</span>
                       <span className="diag-message">{diagnostic.messageText}</span>
                     </div>
                     <div className="diag-location">

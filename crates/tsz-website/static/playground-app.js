@@ -24775,15 +24775,15 @@ export class UserStore<T extends User> {
   },
   {
     key: "sound_mode",
-    title: "Sound Mode: Assignment",
+    title: "Sound Mode: Sticky Freshness",
     category: "diagnostics",
     description: "Fresh object literals stay exact after a variable assignment.",
+    soundDiagnosticCode: "TSZ3006",
     source: `// Sound Mode is experimental.
 // Uncheck "sound" to compare current tsc-compatible behavior.
 
-// Today the playground demonstrates one real Sound Mode prototype:
-// sticky freshness. Object literals keep their excess-property signal
-// after being assigned to a variable.
+// Sticky freshness keeps object-literal excess-property checks alive
+// after the literal has been assigned to a variable.
 interface Point2D { x: number; y: number }
 
 const point3d = { x: 1, y: 2, z: 3 };
@@ -24792,30 +24792,42 @@ const point: Point2D = point3d;
   },
   {
     key: "sound_mode_argument",
-    title: "Sound Mode: Function Argument",
+    title: "Sound Mode: Method Bivariance",
     category: "diagnostics",
-    description: "Freshness follows a variable into a function call.",
+    description: "Method implementations cannot narrow a parameter unsafely.",
+    soundDiagnosticCode: "TSZ2002",
     source: `// Sound Mode is experimental.
 // Uncheck "sound" to compare current tsc-compatible behavior.
 
-interface Point2D { x: number; y: number }
-const point3d = { x: 1, y: 2, z: 3 };
-function draw(point: Point2D) {}
-draw(point3d);
+interface EventSink {
+  handle(value: string | number): void;
+}
+
+class StringOnlySink implements EventSink {
+  handle(value: string) {
+    value.toUpperCase();
+  }
+}
 `
   },
   {
     key: "sound_mode_array",
-    title: "Sound Mode: Array Element",
+    title: "Sound Mode: Any Escape",
     category: "diagnostics",
-    description: "Freshness is checked when a variable enters a typed array.",
+    description: "Nested any cannot quietly satisfy a more precise shape.",
+    soundDiagnosticCode: "TSZ1001",
     source: `// Sound Mode is experimental.
 // Uncheck "sound" to compare current tsc-compatible behavior.
 
-interface Point2D { x: number; y: number }
+interface Payload {
+  name: string;
+}
 
-const point3d = { x: 1, y: 2, z: 3 };
-const points: Point2D[] = [point3d];
+function parsePayload(): { name: any } {
+  return JSON.parse('{"name":{"firstName":"Alan","lastName":"Turing"}}');
+}
+
+const payload: Payload = parsePayload();
 `
   },
   {
@@ -25051,6 +25063,32 @@ function PlaygroundApp() {
     });
     return [];
   }
+  function getDiagnosticIdentity(diagnostic) {
+    return JSON.stringify({
+      start: diagnostic.start ?? 0,
+      length: diagnostic.length ?? 0,
+      code: diagnostic.code,
+      messageText: diagnostic.messageText || "",
+      category: diagnostic.category
+    });
+  }
+  function withSoundDiagnosticDisplayCodes(soundDiagnostics, baselineDiagnostics, forcedDisplayCode = null) {
+    const baselineIdentities = new Set(baselineDiagnostics.map(getDiagnosticIdentity));
+    return soundDiagnostics.map((diagnostic) => {
+      if (!forcedDisplayCode && baselineIdentities.has(getDiagnosticIdentity(diagnostic))) {
+        return diagnostic;
+      }
+      return {
+        ...diagnostic,
+        displayCode: forcedDisplayCode || "TSZ3006",
+        originalCode: `TS${diagnostic.code}`,
+        domain: "sound"
+      };
+    });
+  }
+  function formatDiagnosticCode(diagnostic) {
+    return diagnostic.displayCode || `TS${diagnostic.code}`;
+  }
   function toLspPosition(position) {
     return {
       line: Math.max(0, position.lineNumber - 1),
@@ -25196,7 +25234,21 @@ function PlaygroundApp() {
     try {
       const program = createCheckProgram(codeRef.current, options);
       const parsedDiagnostics = normalizeDiagnostics(program, codeRef.current);
-      const userDiagnostics = parsedDiagnostics.filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+      let userDiagnostics = parsedDiagnostics.filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+      if (options.soundMode) {
+        const selectedExample = getExampleByKey(selectedExampleKey);
+        const baselineOptions = { ...options, soundMode: false };
+        const baselineProgram = createCheckProgram(codeRef.current, baselineOptions);
+        const baselineDiagnostics = normalizeDiagnostics(baselineProgram, codeRef.current).filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+        userDiagnostics = withSoundDiagnosticDisplayCodes(
+          userDiagnostics,
+          baselineDiagnostics,
+          selectedExample?.soundDiagnosticCode
+        );
+        if (typeof baselineProgram.dispose === "function") {
+          baselineProgram.dispose();
+        }
+      }
       const elapsed = `${(performance.now() - startedAt).toFixed(0)}ms`;
       debugDiagnosticsLog("runCheck:raw-diagnostics", parsedDiagnostics);
       setDiagnostics(userDiagnostics);
@@ -25221,7 +25273,7 @@ function PlaygroundApp() {
           startColumn: start.column,
           endLineNumber: end.lineNumber,
           endColumn: end.column,
-          code: `TS${diagnostic.code}`
+          code: formatDiagnosticCode(diagnostic)
         };
       });
       monacoRef.current.editor.setModelMarkers(model, "tsz", markers);
@@ -25530,7 +25582,6 @@ function PlaygroundApp() {
   ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "playground-toolbar", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "toolbar-left", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-title", children: "Playground" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedExampleKey, onChange: handleExampleChange, children: Object.entries(groupedExamples).map(([category, examples]) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("optgroup", { label: category, children: examples.map((example) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: example.key, children: example.title }, example.key)) }, category)) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toolbar-check", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: strictMode, onChange: handleStrictChange }),
@@ -25589,10 +25640,7 @@ function PlaygroundApp() {
               onClick: () => handleDiagnosticClick(diagnostic.start),
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "diag-header", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: `diag-code ${category}`, children: [
-                    "TS",
-                    diagnostic.code
-                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `diag-code ${category}`, children: formatDiagnosticCode(diagnostic) }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "diag-message", children: diagnostic.messageText })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "diag-location", children: [
@@ -25603,7 +25651,7 @@ function PlaygroundApp() {
                 ] })
               ]
             },
-            `${diagnostic.code}-${diagnostic.start}-${diagnostic.length}`
+            `${formatDiagnosticCode(diagnostic)}-${diagnostic.code}-${diagnostic.start}-${diagnostic.length}`
           );
         }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `output-panel${activePanel === "js" ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "js-output-editor", ref: jsContainerRef, "data-output": jsOutput }) }),

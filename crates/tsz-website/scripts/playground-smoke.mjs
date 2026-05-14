@@ -67,11 +67,16 @@ try {
   assert(initialErrors.count >= 3, `expected at least 3 diagnostics on errors example, got ${initialErrors.count}`);
 
   for (const key of soundModeExampleKeys) {
+    const example = playgroundExamples.find(entry => entry.key === key);
     await selectExample(page, key);
     const soundOn = await getDiagnosticsSummary(page);
     console.log(`${key} sound on`, soundOn);
     assert(soundOn.soundChecked, `expected sound checkbox to be checked on ${key}`);
     assert(soundOn.count >= 1, `expected sound diagnostics on ${key}, got ${soundOn.count}`);
+    assert(
+      soundOn.markers.some(marker => marker.code === example.soundDiagnosticCode),
+      `expected a ${example.soundDiagnosticCode} marker on ${key}, got ${JSON.stringify(soundOn.markers)}`
+    );
   }
 
   await selectExample(page, "sound_mode");

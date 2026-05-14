@@ -283,15 +283,15 @@ export class UserStore<T extends User> {
   },
   {
     key: "sound_mode",
-    title: "Sound Mode: Assignment",
+    title: "Sound Mode: Sticky Freshness",
     category: "diagnostics",
     description: "Fresh object literals stay exact after a variable assignment.",
+    soundDiagnosticCode: "TSZ3006",
     source: `// Sound Mode is experimental.
 // Uncheck "sound" to compare current tsc-compatible behavior.
 
-// Today the playground demonstrates one real Sound Mode prototype:
-// sticky freshness. Object literals keep their excess-property signal
-// after being assigned to a variable.
+// Sticky freshness keeps object-literal excess-property checks alive
+// after the literal has been assigned to a variable.
 interface Point2D { x: number; y: number }
 
 const point3d = { x: 1, y: 2, z: 3 };
@@ -300,30 +300,42 @@ const point: Point2D = point3d;
   },
   {
     key: "sound_mode_argument",
-    title: "Sound Mode: Function Argument",
+    title: "Sound Mode: Method Bivariance",
     category: "diagnostics",
-    description: "Freshness follows a variable into a function call.",
+    description: "Method implementations cannot narrow a parameter unsafely.",
+    soundDiagnosticCode: "TSZ2002",
     source: `// Sound Mode is experimental.
 // Uncheck "sound" to compare current tsc-compatible behavior.
 
-interface Point2D { x: number; y: number }
-const point3d = { x: 1, y: 2, z: 3 };
-function draw(point: Point2D) {}
-draw(point3d);
+interface EventSink {
+  handle(value: string | number): void;
+}
+
+class StringOnlySink implements EventSink {
+  handle(value: string) {
+    value.toUpperCase();
+  }
+}
 `,
   },
   {
     key: "sound_mode_array",
-    title: "Sound Mode: Array Element",
+    title: "Sound Mode: Any Escape",
     category: "diagnostics",
-    description: "Freshness is checked when a variable enters a typed array.",
+    description: "Nested any cannot quietly satisfy a more precise shape.",
+    soundDiagnosticCode: "TSZ1001",
     source: `// Sound Mode is experimental.
 // Uncheck "sound" to compare current tsc-compatible behavior.
 
-interface Point2D { x: number; y: number }
+interface Payload {
+  name: string;
+}
 
-const point3d = { x: 1, y: 2, z: 3 };
-const points: Point2D[] = [point3d];
+function parsePayload(): { name: any } {
+  return JSON.parse('{"name":{"firstName":"Alan","lastName":"Turing"}}');
+}
+
+const payload: Payload = parsePayload();
 `,
   },
   {
