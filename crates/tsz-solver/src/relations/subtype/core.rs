@@ -165,6 +165,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Whether optional properties are exact (exclude implicit `undefined`).
     /// Default: false (legacy TS behavior).
     pub exact_optional_property_types: bool,
+    /// Strict identity mode for the readonly modifier. When true, two
+    /// otherwise-structurally-equal types whose readonly state differs are
+    /// treated as non-related. This is asymmetric to ordinary assignability,
+    /// which is permissive about readonly. Toggled inside the bidirectional
+    /// identity check used by conditional `extends` clause comparison
+    /// (the `IfEquals` pattern), where `{ readonly x: T }` and `{ x: T }` must
+    /// be observably distinct.
+    /// Default: false.
+    pub strict_readonly_identity: bool,
     /// Whether null/undefined are treated as separate types.
     /// Default: true (strict null checks).
     pub strict_null_checks: bool,
@@ -300,6 +309,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             allow_bivariant_rest: false,
             allow_bivariant_param_count: false,
             exact_optional_property_types: false,
+            strict_readonly_identity: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
@@ -347,6 +357,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             allow_bivariant_rest: false,
             allow_bivariant_param_count: false,
             exact_optional_property_types: false,
+            strict_readonly_identity: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
@@ -526,6 +537,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - bit 5: `allow_void_return`
     /// - bit 6: `allow_bivariant_rest`
     /// - bit 7: `allow_bivariant_param_count`
+    /// - bit 15: `strict_readonly_identity`
     pub(crate) const fn apply_flags(mut self, flags: u16) -> Self {
         self.strict_null_checks = (flags & (1 << 0)) != 0;
         self.strict_function_types = (flags & (1 << 1)) != 0;
@@ -535,6 +547,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.allow_void_return = (flags & (1 << 5)) != 0;
         self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
         self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
+        self.strict_readonly_identity = (flags & (1 << 15)) != 0;
         self.erase_generics = (flags & crate::RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
         self.allow_erased_generic_signature_retry =
             (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;

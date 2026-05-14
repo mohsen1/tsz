@@ -1686,7 +1686,8 @@ impl<'a> InferenceContext<'a> {
         {
             for span in spans.iter() {
                 if let TemplateSpan::Type(type_id) = span
-                    && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                    && let Some(TypeData::Infer(param_info) | TypeData::TypeParameter(param_info)) =
+                        self.interner.lookup(*type_id)
                     && let Some(var) = self.find_type_param(param_info.name)
                 {
                     // Source is `any` or `string`, so infer that for all variables
@@ -1798,9 +1799,12 @@ impl<'a> InferenceContext<'a> {
                 }
 
                 TemplateSpan::Type(type_id) => {
-                    // Check if this is an infer variable. Intrinsics are never Infer.
+                    // Match both `infer T` (conditional) and generic `T` (type parameter).
+                    // Intrinsics are never Infer or TypeParameter.
                     if !type_id.is_intrinsic()
-                        && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                        && let Some(
+                            TypeData::Infer(param_info) | TypeData::TypeParameter(param_info),
+                        ) = self.interner.lookup(*type_id)
                         && let Some(var) = self.find_type_param(param_info.name)
                     {
                         if is_last {

@@ -180,6 +180,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.exact_optional_property_types {
             flags |= RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES;
         }
+        if self.strict_readonly_identity {
+            flags |= RelationFlags::STRICT_READONLY_IDENTITY;
+        }
         if self.no_unchecked_indexed_access {
             flags |= RelationFlags::NO_UNCHECKED_INDEXED_ACCESS;
         }
