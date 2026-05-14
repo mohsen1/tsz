@@ -642,3 +642,97 @@ type Perm3 = Permutation<"A" | "B" | "C">;
         "Should NOT emit TS2799 for Permutation<\"A\" | \"B\" | \"C\">: {diags3:?}"
     );
 }
+
+/// Concrete instantiations of infinitely-recursive conditional aliases must emit TS2589.
+/// Covers the sort-like multi-parameter pattern from issue #6614.
+#[test]
+fn infinite_recursive_conditional_alias_with_concrete_args_emits_ts2589_sort_pattern() {
+    // Param names T / Sorted — exact repro from issue #6614
+    let source_t = r#"
+type Sort<T extends number[], Sorted extends boolean = true> =
+  T extends [infer A extends number, infer B extends number, ...infer R extends number[]]
+    ? A extends B
+      ? Sort<[A, ...Sort<[B, ...R]>], Sorted>
+      : `${A}` extends `${B}${string}`
+        ? Sort<[B, A, ...R], false>
+        : Sort<[A, ...Sort<[B, ...R]>], Sorted>
+    : Sorted extends true ? T : Sort<T>;
+type S = Sort<[3, 1, 2]>;
+"#;
+    let diags_t = get_diagnostics(source_t);
+    assert!(
+        diags_t.iter().any(|d| d.0 == 2589),
+        "Must emit TS2589 for infinite recursive sort-like alias. Got: {diags_t:?}"
+    );
+
+    // Renamed params (U / Done) — rule must not be tied to the spelling 'T' or 'Sorted'
+    let source_u = r#"
+type Bubble<U extends number[], Done extends boolean = true> =
+  U extends [infer X extends number, infer Y extends number, ...infer Rest extends number[]]
+    ? X extends Y
+      ? Bubble<[X, ...Bubble<[Y, ...Rest]>], Done>
+      : `${X}` extends `${Y}${string}`
+        ? Bubble<[Y, X, ...Rest], false>
+        : Bubble<[X, ...Bubble<[Y, ...Rest]>], Done>
+    : Done extends true ? U : Bubble<U>;
+type B = Bubble<[5, 2, 8]>;
+"#;
+    let diags_u = get_diagnostics(source_u);
+    assert!(
+        diags_u.iter().any(|d| d.0 == 2589),
+        "Must emit TS2589 for infinite recursive sort-like alias (renamed params). Got: {diags_u:?}"
+    );
+}
+
+/// Concrete instantiations of simple infinite tail-recursive aliases must emit TS2589.
+#[test]
+fn infinite_tail_recursive_conditional_alias_with_concrete_args_emits_ts2589() {
+    // Param name: T
+    let source_t = r#"
+type Cycle<T> = T extends any ? Cycle<T> : never;
+type X = Cycle<number>;
+"#;
+    let diags_t = get_diagnostics(source_t);
+    assert!(
+        diags_t.iter().any(|d| d.0 == 2589),
+        "Must emit TS2589 for infinite tail-recursive alias. Got: {diags_t:?}"
+    );
+
+    // Param name: U — proves the rule is not tied to the spelling 'T'
+    let source_u = r#"
+type Forever<U> = U extends string | number ? Forever<U> : never;
+type Y = Forever<42>;
+"#;
+    let diags_u = get_diagnostics(source_u);
+    assert!(
+        diags_u.iter().any(|d| d.0 == 2589),
+        "Must emit TS2589 for infinite tail-recursive alias (renamed param). Got: {diags_u:?}"
+    );
+}
+
+/// Terminating concrete instantiations of recursive aliases must NOT emit TS2589.
+/// These converge in a bounded number of steps regardless of input.
+#[test]
+fn terminating_recursive_alias_with_concrete_args_no_ts2589() {
+    // Length counter: Len<[1,2,3]> converges in 4 steps
+    let source_len = r#"
+type Len<T extends any[]> = T extends [any, ...infer R] ? Len<R> : 0;
+type L = Len<[1, 2, 3]>;
+"#;
+    let diags_len = get_diagnostics(source_len);
+    assert!(
+        !diags_len.iter().any(|d| d.0 == 2589),
+        "Len<[1,2,3]> is bounded; must NOT emit TS2589. Got: {diags_len:?}"
+    );
+
+    // String trimming: TrimRight<"hello   "> terminates when no trailing space remains
+    let source_trim = r#"
+type TrimRight<S extends string> = S extends `${infer R} ` ? TrimRight<R> : S;
+type T = TrimRight<"hello   ">;
+"#;
+    let diags_trim = get_diagnostics(source_trim);
+    assert!(
+        !diags_trim.iter().any(|d| d.0 == 2589),
+        "TrimRight<\"hello   \"> is bounded; must NOT emit TS2589. Got: {diags_trim:?}"
+    );
+}

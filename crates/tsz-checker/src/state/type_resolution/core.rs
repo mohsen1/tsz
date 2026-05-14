@@ -254,6 +254,18 @@ impl<'a> CheckerState<'a> {
                     // `Foo<[...Elements, "abc"]>`) need depth detection even with type params.
                     let should_check_depth = is_class || !args_have_type_params;
                     if should_check_depth {
+                        // During symbol resolution, ensure_relation_input_ready is skipped,
+                        // leaving the alias body unregistered in the TypeEnvironment. Without
+                        // it the evaluator returns the Application unchanged and TS2589 is missed.
+                        if let Some(base_def_id) =
+                            crate::query_boundaries::common::get_application_lazy_def_id(
+                                self.ctx.types,
+                                type_id,
+                            )
+                        {
+                            let _ = self.resolve_and_insert_def_type(base_def_id);
+                        }
+
                         self.ctx.depth_exceeded.set(false);
                         // Use the regular evaluator for ordinary type-reference
                         // probes. The TS2589-specific evaluator treats any repeated
