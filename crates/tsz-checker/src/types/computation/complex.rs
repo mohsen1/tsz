@@ -1372,8 +1372,28 @@ impl<'a> CheckerState<'a> {
                 self.apply_type_argument_ids_to_constructor_type(constructor_type, type_args);
         }
 
+        let arg_types_for_resolution: Vec<TypeId> = if is_generic_new
+            && inferred_new_type_args.is_none()
+            && !has_const_type_params
+        {
+            arg_types
+                .iter()
+                .map(|&arg_type| {
+                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, arg_type)
+                })
+                .collect()
+        } else {
+            arg_types.clone()
+        };
+
+        if is_generic_new && let Some(shape) = constructor_shape.as_ref() {
+            self.report_direct_constructor_type_param_constraint_mismatches(
+                shape, args, &arg_types,
+            );
+        }
+
         self.ensure_relation_input_ready(constructor_type);
-        self.ensure_relation_inputs_ready(&arg_types);
+        self.ensure_relation_inputs_ready(&arg_types_for_resolution);
 
         // When the constructor type is still a Lazy(DefId) reference (e.g., for
         // `declare var Proxy: ProxyConstructor` where ProxyConstructor's DefId→SymbolId
@@ -1420,15 +1440,29 @@ impl<'a> CheckerState<'a> {
         // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
         let result = self.resolve_new_with_checker_adapter(
             constructor_type,
-            &arg_types,
+            &arg_types_for_resolution,
             false,
             contextual_type,
         );
         match result {
             CallResult::Success(mut return_type) => {
+                if let Some(shape) = constructor_shape.as_ref()
+                    && let Some(fallback_return) =
+                        self.generic_constructor_nested_constraint_failure_return(shape, &arg_types)
+                {
+                    self.error_at_node(
+                        new_expr.expression,
+                        "No overload matches this call.",
+                        diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
+                    );
+                    return fallback_return;
+                }
+                if is_generic_new {
+                    return_type = self.default_current_infer_placeholders_to_unknown(return_type);
+                }
                 if let Some(fixed_return) = self.typed_array_length_constructor_return_type(
                     new_expr.expression,
-                    &arg_types,
+                    &arg_types_for_resolution,
                     return_type,
                 ) {
                     return_type = fixed_return;
