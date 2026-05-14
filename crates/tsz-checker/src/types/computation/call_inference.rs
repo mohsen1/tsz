@@ -1,5 +1,6 @@
 //! Generic-call inference and round-2 contextual typing helpers.
 
+mod indexed_callback;
 mod return_context;
 
 use crate::call_checker::CallableContext;

@@ -1387,4 +1387,55 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             filtered
         }
     }
+
+    pub(super) fn add_never_candidates_for_excluded_union_placeholders(
+        &self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        all_targets: &[TypeId],
+        selected_targets: &[TypeId],
+        priority: crate::types::InferencePriority,
+    ) {
+        if selected_targets.len() >= all_targets.len() {
+            return;
+        }
+
+        let selected_target_set: FxHashSet<TypeId> = selected_targets.iter().copied().collect();
+        let selected_vars = self.placeholder_vars_in_types(var_map, selected_targets);
+        let mut emitted = FxHashSet::default();
+
+        for &target in all_targets {
+            if selected_target_set.contains(&target) {
+                continue;
+            }
+            for var in self.placeholder_vars_in_type(var_map, target) {
+                if !selected_vars.contains(&var) && emitted.insert(var) {
+                    ctx.add_candidate(var, TypeId::NEVER, priority);
+                }
+            }
+        }
+    }
+
+    fn placeholder_vars_in_types(
+        &self,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        types: &[TypeId],
+    ) -> FxHashSet<crate::inference::infer::InferenceVar> {
+        let mut vars = FxHashSet::default();
+        for &ty in types {
+            vars.extend(self.placeholder_vars_in_type(var_map, ty));
+        }
+        vars
+    }
+
+    fn placeholder_vars_in_type(
+        &self,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        ty: TypeId,
+    ) -> FxHashSet<crate::inference::infer::InferenceVar> {
+        crate::visitor::collect_all_types(self.interner.as_type_database(), ty)
+            .into_iter()
+            .filter_map(|nested| var_map.get(&nested).copied())
+            .collect()
+    }
 }

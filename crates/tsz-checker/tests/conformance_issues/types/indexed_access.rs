@@ -1173,3 +1173,49 @@ function test2<T extends [number] | readonly [string]>(args: T) {
         "Expected TS2322, got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_generic_callback_context_keeps_specific_indexed_access_key() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function map<T extends object, K extends keyof T, U>(
+  obj: T,
+  key: K,
+  fn: (val: T[K]) => U
+): U {
+  return fn(obj[key]);
+}
+
+const person = { name: "John", age: 30 };
+
+const result1 = map(person, "name", (n) => n.toUpperCase());
+const result2 = map(person, "age", (a) => a * 2);
+
+function pluck<R extends object, P extends keyof R, V>(
+  record: R,
+  prop: P,
+  visit: (value: R[P]) => V
+): V {
+  return visit(record[prop]);
+}
+
+const book = { title: "TS", pages: 200 };
+const title = pluck(book, "title", (s) => s.toLowerCase());
+const pages = pluck(book, "pages", (n) => n.toFixed());
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Expected callback parameter for key \"name\" to be string, not T[keyof T]. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2362),
+        "Expected callback parameter for key \"age\" to be number, not T[keyof T]. Actual diagnostics: {diagnostics:#?}"
+    );
+}

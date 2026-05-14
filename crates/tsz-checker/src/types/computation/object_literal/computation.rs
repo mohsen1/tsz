@@ -96,6 +96,30 @@ fn is_single_quoted_string_property_name_node(
 }
 
 impl<'a> CheckerState<'a> {
+    fn object_literal_property_is_typed_variable_initializer(
+        &self,
+        property_elem_idx: NodeIndex,
+    ) -> bool {
+        let Some(object_idx) = self.ctx.arena.parent_of(property_elem_idx) else {
+            return false;
+        };
+        let Some(parent_idx) = self.ctx.arena.parent_of(object_idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_variable_declaration(parent_node)
+            .is_some_and(|var_decl| {
+                var_decl.initializer == object_idx && var_decl.type_annotation.is_some()
+            })
+    }
+
     /// Decide whether an object-literal property value's literal type should
     /// be widened to its primitive. Inside a `satisfies T` operand we apply
     /// tsc's exact `isLiteralOfContextualType` per-property gate (via
@@ -1147,6 +1171,35 @@ impl<'a> CheckerState<'a> {
                         } else {
                             value_type
                         };
+
+                        let recheck_key_remapped_property = if let Some(ctx_type) = contextual_type
+                        {
+                            let mut evaluate = |ty| self.evaluate_contextual_type(ty);
+                            self.object_literal_property_is_typed_variable_initializer(elem_idx)
+                                && crate::query_boundaries::type_origin::originates_from_remapped_mapped_type_with_evaluator(
+                                        self.ctx.types,
+                                        ctx_type,
+                                        &mut evaluate,
+                                    )
+                        } else {
+                            false
+                        };
+
+                        if recheck_key_remapped_property
+                            && let Some(check_target) = property_context_type
+                            && value_type != TypeId::ERROR
+                            && value_type != TypeId::ANY
+                            && check_target != TypeId::ERROR
+                            && check_target != TypeId::ANY
+                            && !self.is_assignable_to(value_type, check_target)
+                        {
+                            let _ = self.check_assignable_or_report_at_exact_anchor(
+                                value_type,
+                                check_target,
+                                prop.initializer,
+                                prop.name,
+                            );
+                        }
 
                         // Freshness model: record the literal property value from
                         // the AST for display in error messages. The canonical

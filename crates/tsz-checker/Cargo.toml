@@ -462,6 +462,10 @@ name = "keyof_array_literal_diagnostic_tests"
 path = "tests/keyof_array_literal_diagnostic_tests.rs"
 
 [[test]]
+name = "keyof_mapped_as_clause_tests"
+path = "tests/keyof_mapped_as_clause_tests.rs"
+
+[[test]]
 name = "commonjs_constructor_diagnostics_tests"
 path = "tests/commonjs_constructor_diagnostics_tests.rs"
 
