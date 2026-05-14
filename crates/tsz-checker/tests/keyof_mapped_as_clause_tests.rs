@@ -114,6 +114,41 @@ const wrongObj: Obj = { name: 123, age: "wrong", active: "yes" };
 }
 
 #[test]
+fn conditional_mapped_object_literal_reports_all_property_mismatches() {
+    let source = r#"
+type IsArray<T> = T extends any[] ? true : false;
+type ArrayFlags<T> = { [K in keyof T]: IsArray<T[K]> };
+
+interface Foo {
+  arr: number[];
+  str: string;
+}
+
+type FooFlags = ArrayFlags<Foo>;
+const bad: FooFlags = { arr: false, str: true };
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
+    assert_eq!(
+        ts2322_count, 2,
+        "Expected one TS2322 per mismatching conditional mapped property, got: {diagnostics:#?}"
+    );
+
+    for expected in [
+        "Type 'false' is not assignable to type 'true'.",
+        "Type 'true' is not assignable to type 'false'.",
+    ] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2322 && diag.message_text.contains(expected)),
+            "Missing expected diagnostic `{expected}` in {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
 fn non_homomorphic_mapped_type_solver_delegation() {
     // Non-homomorphic mapped types (constraint is a literal union, not keyof T)
     // should be evaluated by the solver's evaluator via evaluate_type_with_env,

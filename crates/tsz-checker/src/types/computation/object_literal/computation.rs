@@ -1184,8 +1184,17 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
+                        let recheck_contextual_property = (self
+                            .object_literal_property_has_conditional_mapped_annotation(elem_idx)
+                            || self.object_literal_property_has_conditional_annotation(elem_idx))
+                            && property_context_type.is_some()
+                            && original_contextual_type == contextual_type
+                            && !self.ctx.arena.get(prop.name).is_some_and(|name| {
+                                name.kind
+                                    == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            });
 
-                        if recheck_key_remapped_property
+                        if (recheck_key_remapped_property || recheck_contextual_property)
                             && let Some(check_target) = property_context_type
                             && value_type != TypeId::ERROR
                             && value_type != TypeId::ANY
