@@ -998,7 +998,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn instantiate_base_instance_type_with_args(
+    pub(super) fn instantiate_base_instance_type_with_args(
         &mut self,
         base_instance_type: TypeId,
         base_type_params: &[tsz_solver::TypeParamInfo],
