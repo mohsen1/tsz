@@ -2433,6 +2433,36 @@ var local = 123;
 }
 
 #[test]
+fn test_js_commonjs_define_property_function_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function fn() {}
+
+Object.defineProperty(module.exports, "fn", { value: fn });
+Object.defineProperty(module.exports, "alias", { value: module.exports.fn });
+Object.defineProperty(module.exports.fn, "self", { value: module.exports.fn });
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn(): void;"),
+        "Expected local function defineProperty export: {output}"
+    );
+    assert!(
+        output.contains("export function alias(): void;"),
+        "Expected defineProperty export alias to reuse the function signature: {output}"
+    );
+    assert!(
+        output.contains("export namespace fn {\n    function self(): void;\n}"),
+        "Expected defineProperty namespace member function declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare function fn"),
+        "Did not expect the consumed local function to be emitted separately: {output}"
+    );
+}
+
+#[test]
 fn test_js_esm_syntax_ignores_commonjs_named_exports() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

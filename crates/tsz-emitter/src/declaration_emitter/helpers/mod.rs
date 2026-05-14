@@ -142,6 +142,7 @@ pub(in crate::declaration_emitter) struct JsDefinedPropertyDecl {
     pub(in crate::declaration_emitter) name: String,
     pub(in crate::declaration_emitter) type_text: String,
     pub(in crate::declaration_emitter) readonly: bool,
+    pub(in crate::declaration_emitter) value: NodeIndex,
 }
 
 #[derive(Clone)]

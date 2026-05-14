@@ -169,6 +169,8 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_js_module_exports_object_names(source_file);
         self.js_named_export_names.extend(module_exports_obj_names);
         self.js_module_exports_object_stmts = module_exports_obj_stmts;
+        self.js_define_property_export_local_names =
+            self.collect_js_commonjs_define_property_export_local_names(source_file);
         self.js_require_property_import_aliases.clear();
         let cjs_aliases = self.collect_js_cjs_export_aliases(source_file);
         self.js_cjs_export_aliases = cjs_aliases.aliases;
@@ -985,6 +987,14 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
             || self.is_js_named_exported_name(func.name);
+
+        if self.source_is_js_file
+            && let Some(name) = self.get_identifier_text(func.name)
+            && self.js_define_property_export_local_names.contains(&name)
+        {
+            self.skip_comments_in_node(func_node.pos, func_node.end);
+            return;
+        }
 
         // `export default function() { ... }` — delegate to the export default handler
         // which correctly emits `export default function (): ReturnType;`
