@@ -1296,11 +1296,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Check properties: a plain function has no user-defined properties,
-        // so if the target callable has non-optional properties (e.g., from a
-        // namespace merge), the function is NOT a subtype. This matches tsc's
-        // behavior where `typeof Point` (function + namespace exports) is not
-        // assignable to a bare function type.
         let should_skip_prop = |name: crate::intern::Atom| {
             let resolved = self.interner.resolve_atom(name);
             resolved.starts_with('#')
@@ -1312,12 +1307,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .cloned()
             .collect();
         if !target_props.is_empty() {
-            // The function type has no properties to match against the target's
-            // required properties. Delegate to check_object_subtype with an
-            // empty source shape to properly handle optional vs required props.
+            let mut source_props = Vec::new();
+            for t_prop in &target_props {
+                let prop_name = self.interner.resolve_atom(t_prop.name);
+                if matches!(prop_name.as_str(), "call" | "apply")
+                    && !source_props
+                        .iter()
+                        .any(|p: &PropertyInfo| p.name == t_prop.name)
+                {
+                    source_props.push(PropertyInfo {
+                        name: t_prop.name,
+                        type_id: t_prop.type_id,
+                        write_type: t_prop.write_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: true,
+                        is_class_prototype: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
+            }
             let source_shape = ObjectShape {
                 flags: ObjectFlags::empty(),
-                properties: Vec::new(),
+                properties: source_props,
                 string_index: None,
                 number_index: None,
                 symbol: None,

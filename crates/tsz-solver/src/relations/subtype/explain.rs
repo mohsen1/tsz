@@ -10,8 +10,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
-    FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo,
-    TupleElement, TypeId, Visibility,
+    CallSignature, CallableShape, FunctionShape, IntrinsicKind, LiteralValue, ObjectShape,
+    ObjectShapeId, PropertyInfo, TupleElement, TypeId, Visibility,
 };
 use crate::utils;
 use crate::visitor::is_type_parameter;
@@ -516,6 +516,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_fn = self.interner.function_shape(s_fn_id);
             let t_fn = self.interner.function_shape(t_fn_id);
             return self.explain_function_failure(&s_fn, &t_fn);
+        }
+
+        if let Some(t_callable_id) = callable_shape_id(self.interner, resolved_target) {
+            let t_callable = self.interner.callable_shape(t_callable_id);
+            let prefer_property_failure = !t_callable.properties.is_empty()
+                && !self.callable_properties_are_only_function_members(&t_callable.properties);
+            if !prefer_property_failure && !t_callable.call_signatures.is_empty() {
+                if let Some(s_fn_id) = function_shape_id(self.interner, resolved_source) {
+                    let s_fn = self.interner.function_shape(s_fn_id);
+                    if let Some(reason) =
+                        self.explain_function_to_callable_failure(&s_fn, &t_callable)
+                    {
+                        return Some(reason);
+                    }
+                }
+
+                if let Some(s_callable_id) = callable_shape_id(self.interner, resolved_source) {
+                    let s_callable = self.interner.callable_shape(s_callable_id);
+                    if let Some(reason) = self
+                        .explain_callable_to_callable_signature_failure(&s_callable, &t_callable)
+                    {
+                        return Some(reason);
+                    }
+                }
+            }
         }
 
         // Callable target with properties: when assigning to a callable type that has
@@ -1490,6 +1515,75 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        None
+    }
+
+    fn function_shape_from_call_signature(
+        signature: &CallSignature,
+        is_constructor: bool,
+    ) -> FunctionShape {
+        FunctionShape {
+            params: signature.params.clone(),
+            this_type: signature.this_type,
+            return_type: signature.return_type,
+            type_params: signature.type_params.clone(),
+            type_predicate: signature.type_predicate,
+            is_constructor,
+            is_method: signature.is_method,
+        }
+    }
+
+    fn explain_function_to_callable_failure(
+        &mut self,
+        source: &FunctionShape,
+        target: &CallableShape,
+    ) -> Option<SubtypeFailureReason> {
+        for target_signature in &target.call_signatures {
+            let target_function = Self::function_shape_from_call_signature(target_signature, false);
+            if !self
+                .check_function_subtype(source, &target_function)
+                .is_true()
+            {
+                return self.explain_function_failure(source, &target_function);
+            }
+        }
+        None
+    }
+
+    fn callable_properties_are_only_function_members(&self, properties: &[PropertyInfo]) -> bool {
+        properties.iter().all(|property| {
+            matches!(
+                self.interner.resolve_atom(property.name).as_str(),
+                "apply" | "bind" | "call" | "length" | "name" | "prototype"
+            )
+        })
+    }
+
+    fn explain_callable_to_callable_signature_failure(
+        &mut self,
+        source: &CallableShape,
+        target: &CallableShape,
+    ) -> Option<SubtypeFailureReason> {
+        for target_signature in &target.call_signatures {
+            let mut matching_source = None;
+            for source_signature in &source.call_signatures {
+                if self
+                    .check_call_signature_subtype(source_signature, target_signature)
+                    .is_true()
+                {
+                    matching_source = Some(source_signature);
+                    break;
+                }
+            }
+            if matching_source.is_none() {
+                let source_signature = source.call_signatures.first()?;
+                let source_function =
+                    Self::function_shape_from_call_signature(source_signature, false);
+                let target_function =
+                    Self::function_shape_from_call_signature(target_signature, false);
+                return self.explain_function_failure(&source_function, &target_function);
+            }
+        }
         None
     }
 
