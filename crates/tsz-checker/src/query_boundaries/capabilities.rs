@@ -257,75 +257,17 @@ impl EnvironmentCapabilities {
 // Global name classifiers (moved from name_resolution.rs to centralize)
 // =============================================================================
 
-/// Check if a name is a known Node.js global or built-in module name
-/// that requires @types/node (TS2580/TS2591).
+/// Check if a name is a known Node.js runtime global that requires
+/// `@types/node` (TS2580/TS2591).
 ///
-/// tsc emits the Node missing-global family for:
-/// 1. Node.js runtime globals: `require`, `process`, `Buffer`, etc.
-/// 2. Node.js built-in module names used as identifiers (e.g. from
-///    `import fs = require("fs")`): `fs`, `url`, `events`, etc.
-/// 3. `node:`-prefixed module specifiers used as names.
+/// Bare built-in module names like `fs`, `url`, or `crypto` are not runtime
+/// globals in tsc. They stay plain TS2304 when used as identifiers; module
+/// specifier diagnostics use [`is_known_node_module`] instead.
 pub(crate) fn is_known_node_global(name: &str) -> bool {
-    // Node.js runtime globals
-    if matches!(
+    matches!(
         name,
         "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname"
-    ) {
-        return true;
-    }
-    // Node.js built-in module names (commonly used as identifiers via
-    // `import X = require("X")` patterns).
-    // NOTE: "console" is intentionally excluded — tsc classifies standalone
-    // "console" as a DOM global (TS2584), not a Node global (TS2591).
-    // NOTE: "assert" is intentionally excluded — tsc classifies standalone
-    // "assert" as TS2304 (Cannot find name), not TS2591.  While "assert" is
-    // a Node.js built-in module, it is NOT a global variable and tsc never
-    // suggests @types/node installation for it.
-    if matches!(
-        name,
-        "buffer"
-            | "child_process"
-            | "cluster"
-            | "constants"
-            | "crypto"
-            | "dgram"
-            | "dns"
-            | "domain"
-            | "events"
-            | "fs"
-            | "http"
-            | "http2"
-            | "https"
-            | "inspector"
-            | "module"
-            | "net"
-            | "os"
-            | "path"
-            | "perf_hooks"
-            | "punycode"
-            | "querystring"
-            | "readline"
-            | "repl"
-            | "stream"
-            | "string_decoder"
-            | "sys"
-            | "timers"
-            | "tls"
-            | "tty"
-            | "url"
-            | "util"
-            | "v8"
-            | "vm"
-            | "worker_threads"
-            | "zlib"
-    ) {
-        return true;
-    }
-    // node:-prefixed module specifiers (e.g. "node:path")
-    if name.starts_with("node:") {
-        return true;
-    }
-    false
+    )
 }
 
 /// Check if a module specifier is a known Node.js built-in module (TS2591).
