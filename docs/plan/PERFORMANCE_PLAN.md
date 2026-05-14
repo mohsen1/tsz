@@ -1,8 +1,8 @@
 # TSZ Performance Notes
 
 Status: retained path for code/script references. The active execution roadmap
-is `docs/plan/ROADMAP.md`, especially Track 8: Residency, Performance, And
-Incremental Substrate.
+is `docs/plan/ROADMAP.md`, especially Track 10: Guardrails, Tooling,
+Residency, And Performance Substrate.
 
 The previous performance plan accumulated dated run logs, claim-file links, and
 branch-local status. That tracking now belongs in GitHub draft PRs, PR comments,
