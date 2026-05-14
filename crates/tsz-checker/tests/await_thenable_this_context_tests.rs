@@ -1,4 +1,21 @@
+use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_source_code_messages as diagnostics;
+use tsz_common::common::{ModuleKind, ScriptTarget};
+
+fn diagnostic_codes(source: &str, module: ModuleKind, target: ScriptTarget) -> Vec<u32> {
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            module,
+            target,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|diagnostic| diagnostic.code)
+    .collect()
+}
 
 #[test]
 fn await_thenable_accepts_then_signature_with_specialized_this_type() {
@@ -162,5 +179,61 @@ class EPromise<E, A> implements PromiseLike<A> {
             *code == 2322 && message.contains("PromiseLike<PromiseLike")
         }),
         "Did not expect nested PromiseLike inference in then return. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn variable_initializer_top_level_await_requires_supported_module_kind() {
+    let codes = diagnostic_codes(
+        "const data = await 1;\nexport {};\n",
+        ModuleKind::CommonJS,
+        ScriptTarget::ESNext,
+    );
+
+    assert!(
+        codes.contains(&1378),
+        "top-level await in a variable initializer must emit TS1378 for CommonJS modules; got {codes:?}",
+    );
+}
+
+#[test]
+fn nested_initializer_top_level_await_requires_supported_target() {
+    let codes = diagnostic_codes(
+        "const data = choose(await 1 ? 1 : 2);\ndeclare function choose(value: number): number;\nexport {};\n",
+        ModuleKind::ES2022,
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        codes.contains(&1378),
+        "top-level await nested inside an initializer must emit TS1378 below ES2017; got {codes:?}",
+    );
+}
+
+#[test]
+fn top_level_await_supported_module_and_target_is_allowed() {
+    let codes = diagnostic_codes(
+        "const data = await 1;\nexport {};\n",
+        ModuleKind::ES2022,
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        !codes.contains(&1378),
+        "ES2022 modules targeting ES2017 should allow top-level await; got {codes:?}",
+    );
+}
+
+#[test]
+fn await_inside_nested_async_function_initializer_is_not_top_level() {
+    let codes = diagnostic_codes(
+        "const run = async () => await 1;\nexport {};\n",
+        ModuleKind::CommonJS,
+        ScriptTarget::ESNext,
+    );
+
+    assert!(
+        !codes.contains(&1378),
+        "await inside a nested async function body must not use the source-file top-level gate; got {codes:?}",
     );
 }
