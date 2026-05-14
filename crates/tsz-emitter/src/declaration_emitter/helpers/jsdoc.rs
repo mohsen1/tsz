@@ -1710,6 +1710,11 @@ impl<'a> DeclarationEmitter<'a> {
         if type_expr.is_empty() {
             return None;
         }
+        let name = name
+            .find('<')
+            .and_then(|generic_start| name[..generic_start].split_whitespace().next())
+            .filter(|base| !base.is_empty())
+            .unwrap_or(name);
         Some((name.to_string(), type_expr.to_string()))
     }
 
@@ -2027,7 +2032,7 @@ impl<'a> DeclarationEmitter<'a> {
             source.push('>');
         }
         source.push_str(" = ");
-        source.push_str(&decl.type_text);
+        source.push_str(&Self::jsdoc_type_alias_parser_type_text(&decl.type_text));
         source.push_str(";\n");
 
         if decl.render_verbatim {
@@ -2037,12 +2042,119 @@ impl<'a> DeclarationEmitter<'a> {
         let mut parser = ParserState::new("jsdoc-alias.ts".to_string(), source);
         let root = parser.parse_source_file();
         let mut emitter = DeclarationEmitter::new(&parser.arena);
-        let rendered = emitter.emit(root);
+        let mut rendered = emitter.emit(root);
+        rendered = Self::compact_rendered_jsdoc_type_alias(&rendered);
+        if !decl.type_params.is_empty() && decl.type_text.contains('\n') {
+            let type_params = decl.type_params.join(", ");
+            rendered = format!("/**\n * <{type_params}>\n */\n{rendered}");
+        }
         if rendered.trim().is_empty() {
             None
         } else {
             Some(rendered)
         }
+    }
+
+    fn compact_rendered_jsdoc_type_alias(rendered: &str) -> String {
+        let lines = rendered.lines().collect::<Vec<_>>();
+        let mut output = String::new();
+        let mut i = 0usize;
+        while i < lines.len() {
+            let line = lines[i];
+            if line.trim_end().ends_with(": {")
+                && i + 2 < lines.len()
+                && lines[i + 1].trim_start().starts_with("[")
+                && lines[i + 2].trim() == "};"
+            {
+                let prefix = line.trim_end().trim_end_matches('{').trim_end();
+                output.push_str(prefix);
+                output.push_str(" { ");
+                output.push_str(lines[i + 1].trim());
+                output.push_str(" };\n");
+                i += 3;
+                continue;
+            }
+
+            if line.trim() == "} & {"
+                && i + 2 < lines.len()
+                && lines[i + 1].trim_start().starts_with("[")
+                && lines[i + 2].trim() == "};"
+            {
+                output.push_str("} & { ");
+                output.push_str(lines[i + 1].trim());
+                output.push_str(" };\n");
+                i += 3;
+                continue;
+            }
+
+            output.push_str(line);
+            output.push('\n');
+            i += 1;
+        }
+        output
+    }
+
+    pub(crate) fn format_jsdoc_type_text_for_declaration(type_text: &str) -> String {
+        let Some(open) = type_text.find("<{") else {
+            return type_text.to_string();
+        };
+        if !type_text.ends_with("}>") {
+            return type_text.to_string();
+        }
+        let prefix = &type_text[..open + 1];
+        let inner = &type_text[open + 2..type_text.len() - 2];
+        if inner.contains('{') || inner.contains('}') || inner.contains('\n') {
+            return type_text.to_string();
+        }
+
+        let mut fields = Vec::new();
+        for field in inner.split(',') {
+            let Some((name, ty)) = field.split_once(':') else {
+                return type_text.to_string();
+            };
+            let name = name.trim();
+            let ty = ty.trim();
+            if name.is_empty() || ty.is_empty() {
+                return type_text.to_string();
+            }
+            fields.push(format!("    {name}: {ty};"));
+        }
+
+        format!("{prefix}{{\n{}\n}}>", fields.join("\n"))
+    }
+
+    fn jsdoc_type_alias_parser_type_text(type_text: &str) -> String {
+        if !type_text.contains('\n') {
+            return type_text.to_string();
+        }
+
+        let mut normalized = String::new();
+        for raw_line in type_text.lines() {
+            let line = raw_line.trim_end();
+            let trimmed = line.trim();
+            normalized.push_str(line);
+            if Self::jsdoc_multiline_type_line_needs_separator(trimmed) {
+                normalized.push(';');
+            }
+            normalized.push('\n');
+        }
+        normalized.trim_end().to_string()
+    }
+
+    fn jsdoc_multiline_type_line_needs_separator(line: &str) -> bool {
+        if line.is_empty()
+            || line.starts_with(':')
+            || line.ends_with(';')
+            || line.ends_with(',')
+            || line.ends_with('{')
+            || line.ends_with('(')
+            || line.ends_with('&')
+            || line.ends_with('|')
+        {
+            return false;
+        }
+
+        line.contains("?:") || line.ends_with(')')
     }
 
     pub(in crate::declaration_emitter) fn emit_rendered_jsdoc_type_alias(

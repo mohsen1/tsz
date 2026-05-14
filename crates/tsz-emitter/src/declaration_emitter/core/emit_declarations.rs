@@ -745,12 +745,17 @@ impl<'a> DeclarationEmitter<'a> {
         if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
-            let mut filtered =
-                Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain);
+            let mut filtered = if has_jsdoc_type_function_signature {
+                Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain)
+            } else {
+                self.current_statement_jsdoc_chain.clone()
+            };
             if suppress_jsdoc_type_alias_comments {
                 filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
             }
-            self.emit_jsdoc_comment_chain(&filtered);
+            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos(stmt_node.pos, &filtered) {
+                self.emit_jsdoc_comment_chain(&filtered);
+            }
         } else {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
         }
