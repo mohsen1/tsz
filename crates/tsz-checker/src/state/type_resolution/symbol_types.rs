@@ -49,15 +49,9 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
         let local_alias_symbol = self
             .ctx
-            .resolve_dynamic_symbol_file_index(sym_id)
-            .is_none()
-            .then(|| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
-            })
-            .flatten();
+            .binder
+            .get_symbol(sym_id)
+            .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
         let symbol_meta = local_alias_symbol
             .or_else(|| self.get_cross_file_symbol(sym_id))
             .map(|symbol| {
@@ -83,7 +77,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
+        if local_alias_symbol.is_none()
+            && let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
             && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
             && let Some((result, _)) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {
@@ -455,6 +450,11 @@ impl<'a> CheckerState<'a> {
                 let structural_type = if structural_type != TypeId::ERROR
                     && structural_type != TypeId::UNKNOWN
                     && !preserve_deferred_keyof
+                    && !tsz_solver::type_queries::is_union_type(self.ctx.types, structural_type)
+                    && !tsz_solver::type_queries::is_intersection_type(
+                        self.ctx.types,
+                        structural_type,
+                    )
                     && !crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,
                         structural_type,
@@ -519,6 +519,17 @@ impl<'a> CheckerState<'a> {
                     || target_flags & symbol_flags::ENUM != 0
                     || target_flags & symbol_flags::TYPE_PARAMETER != 0
                 {
+                    if target_sym_id == sym_id
+                        && self
+                            .ctx
+                            .resolve_symbol_file_index(target_sym_id)
+                            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                        && let Some((result, _)) =
+                            self.delegate_cross_arena_symbol_resolution(target_sym_id)
+                    {
+                        self.ctx.leave_recursion();
+                        return result;
+                    }
                     self.ctx.leave_recursion();
                     return self.type_reference_symbol_type(target_sym_id);
                 }
@@ -588,6 +599,17 @@ impl<'a> CheckerState<'a> {
                         || target_flags & symbol_flags::ENUM != 0
                         || target_flags & symbol_flags::TYPE_PARAMETER != 0
                     {
+                        if target_sym_id == sym_id
+                            && self
+                                .ctx
+                                .resolve_symbol_file_index(target_sym_id)
+                                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                            && let Some((result, _)) =
+                                self.delegate_cross_arena_symbol_resolution(target_sym_id)
+                        {
+                            self.ctx.leave_recursion();
+                            return result;
+                        }
                         self.ctx.leave_recursion();
                         return self.type_reference_symbol_type(target_sym_id);
                     }
@@ -1309,7 +1331,14 @@ impl<'a> CheckerState<'a> {
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         use tsz_lowering::TypeLowering;
 
-        if let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
+        let local_alias_symbol = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
+
+        if local_alias_symbol.is_none()
+            && let Some(file_idx) = self.ctx.resolve_dynamic_symbol_file_index(sym_id)
             && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
             && let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id)
         {

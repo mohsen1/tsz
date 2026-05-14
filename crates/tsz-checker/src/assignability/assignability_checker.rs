@@ -1734,6 +1734,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn evaluate_type_for_assignability_inner(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(distributed) = self.distribute_intersection_union_for_assignability(type_id) {
+            return distributed;
+        }
+
         let kind = classify_for_assignability_eval(self.ctx.types, type_id);
         let mut evaluated = match kind {
             AssignabilityEvalKind::Application => {
@@ -1795,9 +1799,13 @@ impl<'a> CheckerState<'a> {
 
         // Distribution pass: normalize compound types so mixed representations do not
         // leak into relation checks (for example, `Lazy(Class)` + resolved class object).
-        if let Some(distributed) = map_compound_members(self.ctx.types, evaluated, |member| {
-            self.evaluate_type_for_assignability(member)
-        }) {
+        if let Some(distributed) = self.distribute_intersection_union_for_assignability(evaluated) {
+            evaluated = distributed;
+        } else if let Some(distributed) =
+            map_compound_members(self.ctx.types, evaluated, |member| {
+                self.evaluate_type_for_assignability(member)
+            })
+        {
             evaluated = distributed;
         }
 
@@ -1816,6 +1824,71 @@ impl<'a> CheckerState<'a> {
         evaluated = self.normalize_callable_type_for_assignability(evaluated);
 
         evaluated
+    }
+
+    fn distribute_intersection_union_for_assignability(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let members =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)?;
+        let mut evaluated_members = Vec::with_capacity(members.len());
+        let mut union_member_index = None;
+
+        for member in members {
+            let evaluated = self.evaluate_type_for_assignability(member);
+            if union_member_index.is_none() && self.object_union_has_branch_only_keys(evaluated) {
+                union_member_index = Some(evaluated_members.len());
+            }
+            evaluated_members.push(evaluated);
+        }
+
+        let union_member_index = union_member_index?;
+        let union_members = crate::query_boundaries::common::union_members(
+            self.ctx.types,
+            evaluated_members[union_member_index],
+        )?;
+        let mut distributed = Vec::with_capacity(union_members.len());
+        for branch in union_members {
+            let mut branch_members = evaluated_members.clone();
+            branch_members[union_member_index] = branch;
+            distributed.push(self.ctx.types.factory().intersection(branch_members));
+        }
+
+        Some(self.ctx.types.factory().union_preserve_members(distributed))
+    }
+
+    fn object_union_has_branch_only_keys(&self, type_id: TypeId) -> bool {
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        if members.len() < 2 {
+            return false;
+        }
+
+        let mut first_keys = None;
+        for member in members {
+            let Some(shape_id) =
+                crate::query_boundaries::common::object_shape_id(self.ctx.types, member)
+            else {
+                return false;
+            };
+            let keys: FxHashSet<_> = self
+                .ctx
+                .types
+                .object_shape(shape_id)
+                .properties
+                .iter()
+                .map(|prop| prop.name)
+                .collect();
+            match &first_keys {
+                Some(first) if first != &keys => return true,
+                None => first_keys = Some(keys),
+                _ => {}
+            }
+        }
+        false
     }
 
     fn concrete_remapped_mapped_assignability_target(&mut self, target: TypeId) -> Option<TypeId> {

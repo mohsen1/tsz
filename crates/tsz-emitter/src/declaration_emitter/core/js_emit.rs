@@ -1678,7 +1678,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_text.to_string()
     }
 
-    fn js_define_property_jsdoc_body_return_text(
+    pub(in crate::declaration_emitter) fn js_define_property_jsdoc_body_return_text(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
         jsdoc: Option<&str>,

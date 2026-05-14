@@ -1140,7 +1140,7 @@ impl<'a> TypeLowering<'a> {
             // member list so the printer can render `0 | 1 | 2` in source
             // order even when the canonical sort uses non-deterministic
             // alloc-order for non-zero number literals.
-            let result = self.interner.union(members.clone());
+            let result = self.interner.union_literal_reduce(members.clone());
             self.interner.store_union_origin(result, members);
             result
         } else {
