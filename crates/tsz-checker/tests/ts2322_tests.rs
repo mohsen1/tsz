@@ -7271,6 +7271,38 @@ fn test_ts2322_unwrap_over_return_type_alias() {
 }
 
 #[test]
+fn awaited_return_type_object_literal_reports_all_property_mismatches() {
+    let source = r#"
+        async function fetchData(): Promise<{ id: number; name: string }> {
+            return { id: 1, name: "test" };
+        }
+
+        type AwaitedData = Awaited<ReturnType<typeof fetchData>>;
+        const wrongAwaitedData: AwaitedData = { id: "wrong", name: 123 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "expected both Awaited<ReturnType<...>> property mismatches, got: {ts2322:#?}",
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'string' is not assignable to type 'number'")),
+        "expected id mismatch diagnostic, got: {ts2322:#?}",
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("Type 'number' is not assignable to type 'string'")),
+        "expected name mismatch diagnostic, got: {ts2322:#?}",
+    );
+}
+
+#[test]
 fn test_ts2322_generic_alias_chain_inline_vs_alias_parity() {
     // Generalization gate: peeling must not regress the no-alias path.
     // `Cond<Promise<X>>` (inline) and `Cond<ToPromise<X>>` (aliased) must
