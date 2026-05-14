@@ -1285,7 +1285,7 @@ impl Server {
             if path == current_file_path {
                 continue;
             }
-            if !path.contains("/node_modules/.pnpm/") {
+            if !path.contains("/node_modules/") {
                 continue;
             }
             for missing_name in missing_names {

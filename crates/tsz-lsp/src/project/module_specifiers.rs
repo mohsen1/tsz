@@ -1384,7 +1384,7 @@ impl Project {
                 .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
 
             if let Some(package_json) = package_json
-                && let Some(package_name) = package_json
+                && let Some(manifest_package_name) = package_json
                     .get("name")
                     .and_then(serde_json::Value::as_str)
                     .map(str::trim)
@@ -1393,6 +1393,11 @@ impl Project {
                     .filter(|name| !name.is_empty())
                     .or_else(|| Self::infer_package_name_from_node_modules_dir(&dir_normalized))
             {
+                let package_name = Self::package_name_for_node_modules_manifest(
+                    &dir_normalized,
+                    &manifest_package_name,
+                )
+                .unwrap_or(manifest_package_name);
                 if supports_package_exports && let Some(exports_value) = package_json.get("exports")
                 {
                     return self.package_specifier_from_package_exports_value(
@@ -1437,6 +1442,37 @@ impl Project {
         }
 
         None
+    }
+
+    fn package_name_for_node_modules_manifest(
+        dir_normalized: &str,
+        manifest_package_name: &str,
+    ) -> Option<String> {
+        let marker = "/node_modules/";
+        let marker_idx = dir_normalized.rfind(marker)?;
+        let package_path = &dir_normalized[marker_idx + marker.len()..];
+        let (package_root, package_suffix) = split_node_modules_package_path(package_path)?;
+        if package_suffix.is_empty() {
+            return None;
+        }
+
+        let package_root = normalize_node_modules_package_specifier(&package_root);
+        let manifest_package_name = normalize_node_modules_package_specifier(manifest_package_name);
+        if manifest_package_name == package_root
+            || manifest_package_name
+                .strip_prefix(&package_root)
+                .is_some_and(|rest| rest.starts_with('/'))
+        {
+            return None;
+        }
+
+        let package_path_name =
+            normalize_node_modules_package_specifier(&format!("{package_root}/{package_suffix}"));
+        if package_path_name.is_empty() {
+            None
+        } else {
+            Some(package_path_name)
+        }
     }
 
     fn infer_package_name_from_node_modules_dir(dir_normalized: &str) -> Option<String> {
@@ -2794,6 +2830,26 @@ mod tests {
                 "/repo/node_modules/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg/sub/path/file.d.ts"
             ),
             Some("@scope/pkg/sub/path/file".to_string())
+        );
+    }
+
+    #[test]
+    fn nested_package_manifest_inside_package_keeps_parent_subpath_specifier() {
+        let mut project = Project::new();
+        project.set_file(
+            "/project/node_modules/preact/hooks/package.json".to_string(),
+            r#"{ "name": "hooks", "version": "0.1.0", "types": "src/index.d.ts" }"#.to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+            "export declare function useMemo<T>(factory: () => T): T;".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules(
+                "/project/node_modules/preact/hooks/src/index.d.ts"
+            ),
+            Some("preact/hooks".to_string())
         );
     }
 

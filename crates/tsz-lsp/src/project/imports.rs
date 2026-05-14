@@ -2998,6 +2998,50 @@ export = ts;
     }
 
     #[test]
+    fn diagnostics_import_candidates_use_parent_package_subpath_for_nested_package_manifest() {
+        let mut project = Project::new();
+        project.set_file(
+            "/project/app.tsx".to_string(),
+            "const state = useMemo(() => 'Hello', []);".to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/package.json".to_string(),
+            r#"{ "name": "preact", "version": "10.3.4", "types": "src/index.d.ts" }"#.to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/hooks/package.json".to_string(),
+            r#"{ "name": "hooks", "version": "0.1.0", "types": "src/index.d.ts" }"#.to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+            "export declare function useMemo<T>(factory: () => T, inputs: ReadonlyArray<unknown> | undefined): T;\n".to_string(),
+        );
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 14), Position::new(0, 21)),
+            message: "Cannot find name 'useMemo'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics("/project/app.tsx", &diagnostics)
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "useMemo")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "preact/hooks"),
+            "expected diagnostics auto-import candidate preact/hooks, got {specs:?}"
+        );
+    }
+
+    #[test]
     fn auto_import_candidates_include_direct_exported_class_declarations() {
         let mut project = Project::new();
         project.set_file(

@@ -555,8 +555,8 @@ impl<'a> CodeActionProvider<'a> {
         let insert_at_file_start = insert_pos.line == 0 && insert_pos.character == 0;
         let has_leading_import = insert_at_file_start && self.first_statement_is_import(root);
         // Match tsserver's behavior of picking the file's existing newline
-        // style (preferring the first observed sequence), falling back to
-        // CRLF when the source has no newlines (matches tsserver default).
+        // style (preferring the first observed sequence), falling back to LF
+        // when the source has no newlines.
         // An explicit override (from `format.newLineCharacter`) wins over
         // both the source scan and the CRLF default.
         let newline = if let Some(override_nl) = self.new_line_override.as_deref() {
@@ -566,7 +566,7 @@ impl<'a> CodeActionProvider<'a> {
         } else if self.source.contains('\n') {
             "\n"
         } else {
-            "\r\n"
+            "\n"
         };
         let mut new_text = String::new();
         if needs_newline {
