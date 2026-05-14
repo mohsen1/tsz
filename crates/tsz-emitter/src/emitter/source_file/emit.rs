@@ -1095,6 +1095,19 @@ impl<'a> Printer<'a> {
             if has_top_level_using
                 && source.statements.nodes.iter().any(|&stmt_idx| {
                     self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                        let after_first_using = source
+                            .statements
+                            .nodes
+                            .iter()
+                            .take_while(|&&idx| idx != stmt_idx)
+                            .any(|&idx| {
+                                self.arena
+                                    .get(idx)
+                                    .is_some_and(|node| self.statement_is_top_level_using(node))
+                            });
+                        if !after_first_using {
+                            return false;
+                        }
                         (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                             && self
                                 .arena
@@ -1106,10 +1119,27 @@ impl<'a> Printer<'a> {
                                         && export.module_specifier.is_none()
                                         && self.arena.get(export.export_clause).is_some_and(
                                             |clause_node| {
-                                                clause_node.kind
-                                                    != syntax_kind_ext::FUNCTION_DECLARATION
-                                                    && clause_node.kind
-                                                        != syntax_kind_ext::CLASS_DECLARATION
+                                                if clause_node.kind
+                                                    == syntax_kind_ext::FUNCTION_DECLARATION
+                                                {
+                                                    return false;
+                                                }
+                                                if clause_node.kind
+                                                    == syntax_kind_ext::CLASS_DECLARATION
+                                                {
+                                                    return self
+                                                        .arena
+                                                        .get_class(clause_node)
+                                                        .is_some_and(|class| {
+                                                            self.ctx.options.legacy_decorators
+                                                                && !self
+                                                                    .collect_class_decorators(
+                                                                        &class.modifiers,
+                                                                    )
+                                                                    .is_empty()
+                                                        });
+                                                }
+                                                true
                                             },
                                         )
                                 }))
@@ -1859,6 +1889,7 @@ impl<'a> Printer<'a> {
                     emitted,
                     &local_name,
                     export_name,
+                    false,
                 );
                 self.writer.truncate(before_len);
                 self.write(&rewritten);
