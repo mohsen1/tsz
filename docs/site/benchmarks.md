@@ -11,6 +11,8 @@ permalink: /benchmarks/index.html
 
 Comparing type-checking on existing TypeScript projects, with emphasis on projects that use lots of advanced type-system features.
 
+{{ project_compatibility_dashboard | safe }}
+
 <div class="bench-legend">
   <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz (Rust compiler)</span>
   <span class="bench-legend-item"><span class="bench-legend-swatch tsgo"></span> tsgo (Go compiler)</span>
