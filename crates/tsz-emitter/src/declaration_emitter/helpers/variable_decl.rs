@@ -262,6 +262,12 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
         // For JS files with JSDoc @type, named type takes precedence over literal narrowing.
         let js_has_jsdoc_type = jsdoc_type_text.is_some();
+        let bundled_duplicate_global_var_type =
+            self.get_identifier_text(decl_name).and_then(|name| {
+                self.bundled_duplicate_global_var_types
+                    .get(name.as_str())
+                    .cloned()
+            });
         let exported_call_initializer = self.variable_declaration_has_effective_export(decl_idx)
             && self
                 .arena
@@ -277,7 +283,10 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
 
         // Determine if we should emit a literal initializer for const
-        if let Some(enum_member_text) = const_enum_member_initializer {
+        if let Some(type_text) = bundled_duplicate_global_var_type {
+            self.write(": ");
+            self.write(&type_text);
+        } else if let Some(enum_member_text) = const_enum_member_initializer {
             self.write(if self.source_is_js_file { ": " } else { " = " });
             self.write(&enum_member_text);
         } else if let Some(literal_initializer_text) = literal_initializer_text {

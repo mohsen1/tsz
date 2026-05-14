@@ -255,6 +255,22 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sym_id| self.sym_has_non_widening_declared_value_type(sym_id))
     }
 
+    fn object_literal_property_access_literal_type(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node_idx = self.ctx.arena.skip_parenthesized_and_assertions(node_idx);
+        let node = self.ctx.arena.get(node_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        if let Some(literal_type) = self.const_array_to_enum_member_literal_type_query(node_idx) {
+            return Some(literal_type);
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        self.imported_array_to_enum_member_literal_type(access.expression, access.name_or_argument)
+    }
+
     fn object_literal_variable_initializer_symbol(
         &self,
         idx: NodeIndex,
@@ -1059,7 +1075,9 @@ impl<'a> CheckerState<'a> {
                                 value_type,
                                 property_context_type,
                             );
-                            self.reduce_literal_index_access_property_types(applied)
+                            let applied = self.reduce_literal_index_access_property_types(applied);
+                            self.object_literal_property_access_literal_type(prop.initializer)
+                                .unwrap_or(applied)
                         };
 
                         // Widen literal types for object literal properties.
@@ -1073,7 +1091,10 @@ impl<'a> CheckerState<'a> {
                             .expression_is_type_assertion(prop.initializer)
                             || self.identifier_refers_to_non_widening_declared_value_type(
                                 prop.initializer,
-                            );
+                            )
+                            || self
+                                .object_literal_property_access_literal_type(prop.initializer)
+                                .is_some();
                         let property_context_preserves_literal = property_context_type
                             .is_some_and(|ct| !is_literal_permissive_context(ct));
                         let widening_eligible = !self.ctx.in_const_assertion

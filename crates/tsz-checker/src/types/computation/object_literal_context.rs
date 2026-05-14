@@ -1430,11 +1430,19 @@ impl<'a> CheckerState<'a> {
                 };
                 present_property_names.push(name.clone());
                 // Get the literal type of the initializer without full type computation.
-                let unit_lit =
-                    self.literal_type_from_initializer(prop.initializer)
-                        .filter(|&lit_type| {
-                            crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
-                        });
+                let unit_lit = self
+                    .literal_type_from_initializer(prop.initializer)
+                    .or_else(|| {
+                        let initializer_type = self.get_type_of_node(prop.initializer);
+                        crate::query_boundaries::common::is_unit_type(
+                            self.ctx.types,
+                            initializer_type,
+                        )
+                        .then_some(initializer_type)
+                    })
+                    .filter(|&lit_type| {
+                        crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
+                    });
                 if let Some(lit_type) = unit_lit {
                     unit_discriminants.push((name, lit_type));
                 } else {

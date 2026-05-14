@@ -2022,9 +2022,22 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::SymbolRef;
         let factory = self.ctx.types.factory();
         self.record_symbol_dependency(sym_id);
+        let cross_file_owner_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .filter(|&file_idx| file_idx != self.ctx.current_file_idx);
+        if let Some(file_idx) = cross_file_owner_idx
+            && let Some((cached, _params)) = self
+                .ctx
+                .cached_cross_file_symbol_type(sym_id, file_idx as u32)
+        {
+            return cached;
+        }
 
         // Check cache first
-        if let Some(&cached) = self.ctx.symbol_types.get(&sym_id) {
+        if cross_file_owner_idx.is_none()
+            && let Some(&cached) = self.ctx.symbol_types.get(&sym_id)
+        {
             let cached_is_stale_alias_placeholder =
                 !self.ctx.symbol_resolution_set.contains(&sym_id)
                     && crate::query_boundaries::common::lazy_def_id(self.ctx.types, cached)
