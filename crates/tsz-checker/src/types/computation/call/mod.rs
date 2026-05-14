@@ -8,6 +8,7 @@
 //! Split into submodules:
 //! - `inner` — the main `get_type_of_call_expression_inner` implementation
 
+mod abstract_constructor_args;
 mod inner;
 mod literal_key_preservation;
 mod namespace_conflict;

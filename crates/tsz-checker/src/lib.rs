@@ -366,7 +366,6 @@ mod value_usage_tests;
 #[path = "../tests/yield_star_return_type_tests.rs"]
 mod yield_star_return_type_tests;
 // Tests kept in root test harness where shared fixtures live.
-#[cfg(test)]
 #[path = "tests/application_arg_concrete_index_access_display_tests.rs"]
 mod application_arg_concrete_index_access_display_tests;
 #[cfg(test)]
