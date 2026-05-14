@@ -256,4 +256,5 @@ mod type_printing_undefined;
 mod unexported_alias_literal;
 mod variable_decl;
 mod variable_decl_function_initializers;
+mod variable_decl_type_helpers;
 mod visibility;
