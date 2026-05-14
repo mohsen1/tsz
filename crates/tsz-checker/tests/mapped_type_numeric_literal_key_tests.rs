@@ -68,9 +68,8 @@ fn direct_numeric_literal_union_constraint() {
 
 #[test]
 fn single_numeric_literal_constraint() {
-    // The single-literal arm hits `TypeData::Literal(LiteralValue::Number)`
-    // directly in `extract_mapped_keys`, while the union arm hits its
-    // `literal_number` branch. Both must use the numeric-literal substitution.
+    // Single numeric constraints and numeric unions exercise separate mapped-key
+    // collection paths. Both must use the numeric-literal substitution.
     assert_no_errors(
         "[K in 5]: K",
         r#"
