@@ -23,7 +23,17 @@ struct DirectActualLibAliasBodyProof {
 fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
     matches!(
         name,
-        "DecoratorMetadata" | "DecoratorMetadataObject" | "PropertyKey" | "Readonly" | "Record"
+        "DecoratorMetadata"
+            | "DecoratorMetadataObject"
+            | "LocalesArgument"
+            | "NumberFormatOptionsCurrencyDisplay"
+            | "NumberFormatOptionsSignDisplay"
+            | "NumberFormatOptionsStyle"
+            | "NumberFormatOptionsUseGrouping"
+            | "PropertyKey"
+            | "Readonly"
+            | "Record"
+            | "UnicodeBCP47LocaleIdentifier"
     )
 }
 
@@ -287,18 +297,59 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(alias_type) = self.resolve_lib_type_by_name(name) else {
-            record_direct_actual_lib_alias_body_outcome(
-                DirectActualLibAliasBodyOutcome::MissingResolverType,
-            );
-            return None;
-        };
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
-        else {
-            record_direct_actual_lib_alias_body_outcome(
-                DirectActualLibAliasBodyOutcome::ResolverNotLazyDef,
-            );
-            return None;
+        let def_id = if let Some(alias_type) = self.resolve_lib_type_by_name(name) {
+            let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
+            else {
+                record_direct_actual_lib_alias_body_outcome(
+                    DirectActualLibAliasBodyOutcome::ResolverNotLazyDef,
+                );
+                return None;
+            };
+            def_id
+        } else {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            // Namespace-qualified lib aliases (for example Intl.* aliases) may not
+            // be directly discoverable by resolve_lib_type_by_name(name). When that
+            // happens, lower the proven declaration arena directly and materialize
+            // the canonical alias body into DefinitionStore.
+            let mut lowered: Option<(TypeId, Vec<TypeParamInfo>)> = None;
+            for &decl_idx in &symbol.declarations {
+                let decl_arenas = self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .map(|arenas| arenas.iter().map(std::convert::AsRef::as_ref).collect())
+                    .unwrap_or_else(|| vec![delegate_arena]);
+                for decl_arena in decl_arenas {
+                    if !is_direct_actual_lib_declaration_arena(decl_arena) {
+                        continue;
+                    }
+                    let Some(node) = decl_arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(type_alias) = decl_arena.get_type_alias(node) else {
+                        continue;
+                    };
+                    lowered = Some(self.lower_cross_arena_type_alias_declaration(
+                        sym_id, decl_idx, decl_arena, type_alias,
+                    ));
+                    break;
+                }
+                if lowered.is_some() {
+                    break;
+                }
+            }
+            let Some((body, params)) = lowered else {
+                record_direct_actual_lib_alias_body_outcome(
+                    DirectActualLibAliasBodyOutcome::MissingResolverType,
+                );
+                return None;
+            };
+            self.ctx.insert_def_type_params(def_id, params);
+            self.ctx.definition_store.set_body(def_id, body);
+            def_id
         };
         let Some(def_info) = self.ctx.definition_store.get(def_id) else {
             record_direct_actual_lib_alias_body_outcome(
@@ -1698,6 +1749,105 @@ mod tests {
         assert_ne!(ty, TypeId::UNKNOWN);
         assert_ne!(ty, TypeId::ERROR);
         assert_eq!(params.len(), 2, "Record should expose K and T");
+    }
+
+    #[test]
+    fn direct_actual_lib_symbol_type_handles_intl_non_generic_alias_bodies() {
+        let lib_files = load_lib_files(&["es5.d.ts", "es2020.intl.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        for name in [
+            "LocalesArgument",
+            "NumberFormatOptionsCurrencyDisplay",
+            "NumberFormatOptionsSignDisplay",
+            "NumberFormatOptionsStyle",
+            "NumberFormatOptionsUseGrouping",
+            "UnicodeBCP47LocaleIdentifier",
+        ] {
+            let sym_id = state
+                .ctx
+                .binder
+                .file_locals
+                .get(name)
+                .or_else(|| state.resolve_lib_namespace_export_symbol("Intl", name))
+                .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
+            let delegate_arena = state
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map(std::convert::AsRef::as_ref)
+                .unwrap_or_else(|| panic!("{name} should have a delegate arena"));
+            let symbol = state
+                .get_cross_file_symbol(sym_id)
+                .unwrap_or_else(|| panic!("{name} symbol should be available"))
+                .clone();
+
+            let proof = state
+                .direct_actual_lib_type_alias_body(sym_id, &symbol, name, delegate_arena)
+                .unwrap_or_else(|| panic!("{name} should have a proven actual-lib alias body"));
+            assert_eq!(
+                proof.outcome,
+                DirectActualLibAliasBodyOutcome::Success,
+                "{name} should be admitted in the direct alias allowlist",
+            );
+            assert!(
+                proof.type_params.is_empty(),
+                "{name} should remain non-generic",
+            );
+
+            let (direct_ty, direct_params) = state
+                .direct_actual_lib_symbol_type(
+                    sym_id,
+                    CrossArenaSymbolMissSource::SymbolArena,
+                    Some(delegate_arena),
+                    false,
+                )
+                .unwrap_or_else(|| panic!("{name} should lower through direct alias path"));
+            assert_ne!(
+                direct_ty,
+                TypeId::UNKNOWN,
+                "{name} should not lower to UNKNOWN"
+            );
+            assert_ne!(direct_ty, TypeId::ERROR, "{name} should not lower to ERROR");
+            assert!(
+                direct_params.is_empty(),
+                "{name} should stay non-generic on direct path",
+            );
+
+            let (fallback_body, fallback_params) = state.compute_type_of_symbol(sym_id);
+            assert_eq!(
+                direct_ty, fallback_body,
+                "{name} direct alias body must match child-checker fallback body",
+            );
+            assert!(
+                fallback_params.is_empty(),
+                "{name} fallback should remain non-generic",
+            );
+        }
     }
 
     #[test]
