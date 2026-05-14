@@ -589,3 +589,56 @@ fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
         "Should detect the collapsed mapped tuple spread shape that needs TS2589 recovery"
     );
 }
+
+/// TS2799 false positive: Permutation type should NOT trigger "tuple too large"
+/// for a small union. For `Permutation<"a" | "b">`, there are only 2 permutations
+/// and the recursion terminates in a few steps. tsc accepts this without error.
+///
+/// Repro for: <https://github.com/mohsen1/tsz/issues/6515>
+#[test]
+fn permutation_type_small_union_no_ts2799() {
+    // Use T parameter name
+    let source_t = r#"
+type Permutation<T, K = T> = [T] extends [never]
+  ? []
+  : K extends K
+    ? [K, ...Permutation<Exclude<T, K>>]
+    : never;
+type Perm = Permutation<"a" | "b">;
+"#;
+    let diags = get_diagnostics(source_t);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2799),
+        "Should NOT emit TS2799 for Permutation<\"a\" | \"b\"> (T param): {diags:?}"
+    );
+
+    // Use U parameter name — rule must not be hardcoded to 'T'
+    let source_u = r#"
+type Permutation<U, J = U> = [U] extends [never]
+  ? []
+  : J extends J
+    ? [J, ...Permutation<Exclude<U, J>>]
+    : never;
+type Perm2 = Permutation<"x" | "y">;
+"#;
+    let diags2 = get_diagnostics(source_u);
+    assert!(
+        !diags2.iter().any(|d| d.0 == 2799),
+        "Should NOT emit TS2799 for Permutation<\"x\" | \"y\"> (U param): {diags2:?}"
+    );
+
+    // 3-element union: only 6 permutations, must not trigger TS2799
+    let source_3 = r#"
+type Permutation<T, K = T> = [T] extends [never]
+  ? []
+  : K extends K
+    ? [K, ...Permutation<Exclude<T, K>>]
+    : never;
+type Perm3 = Permutation<"A" | "B" | "C">;
+"#;
+    let diags3 = get_diagnostics(source_3);
+    assert!(
+        !diags3.iter().any(|d| d.0 == 2799),
+        "Should NOT emit TS2799 for Permutation<\"A\" | \"B\" | \"C\">: {diags3:?}"
+    );
+}

@@ -1089,5 +1089,9 @@ path = "tests/tuple_union_contextual_typing_tests.rs"
 name = "string_iterable_overload_matching_tests"
 path = "tests/string_iterable_overload_matching_tests.rs"
 
+[[test]]
+name = "self_module_augmentation_isolation_tests"
+path = "tests/self_module_augmentation_isolation_tests.rs"
+
 [lints]
 workspace = true
