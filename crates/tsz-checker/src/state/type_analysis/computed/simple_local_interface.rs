@@ -12,18 +12,23 @@ use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
+pub(super) struct SimpleLocalInterfaceFacts {
+    pub(super) has_out_of_arena_decl: bool,
+    pub(super) has_cross_file_same_index: bool,
+    pub(super) has_local_interface_decl: bool,
+    pub(super) has_local_interface_heritage_extends: bool,
+    pub(super) has_local_computed_property_name: bool,
+    pub(super) suppress_missing_interface_decl_reject: bool,
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn try_lower_simple_local_interface_object(
         &mut self,
         sym_id: SymbolId,
         declarations: &[NodeIndex],
-        has_out_of_arena_decl: bool,
-        has_cross_file_same_index: bool,
-        has_local_interface_decl: bool,
-        has_local_interface_heritage_extends: bool,
-        has_local_computed_property_name: bool,
+        facts: SimpleLocalInterfaceFacts,
     ) -> Option<TypeId> {
-        if has_out_of_arena_decl {
+        if facts.has_out_of_arena_decl {
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectOutOfArenaDecl,
             );
@@ -34,13 +39,16 @@ impl<'a> CheckerState<'a> {
             );
             return None;
         }
-        if has_cross_file_same_index {
+        if facts.has_cross_file_same_index {
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectCrossFileSameIndex,
             );
             return None;
         }
-        if !has_local_interface_decl {
+        if !facts.has_local_interface_decl {
+            if facts.suppress_missing_interface_decl_reject {
+                return None;
+            }
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectMissingInterfaceDecl,
             );
@@ -51,13 +59,13 @@ impl<'a> CheckerState<'a> {
             );
             return None;
         }
-        if has_local_interface_heritage_extends {
+        if facts.has_local_interface_heritage_extends {
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectHeritageExtends,
             );
             return None;
         }
-        if has_local_computed_property_name {
+        if facts.has_local_computed_property_name {
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectComputedName,
             );
@@ -72,6 +80,9 @@ impl<'a> CheckerState<'a> {
 
         let decl_idx = declarations[0];
         let Some(node) = self.ctx.arena.get(decl_idx) else {
+            if facts.suppress_missing_interface_decl_reject {
+                return None;
+            }
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectMissingInterfaceDecl,
             );
@@ -83,6 +94,9 @@ impl<'a> CheckerState<'a> {
             return None;
         };
         let Some(interface) = self.ctx.arena.get_interface(node) else {
+            if facts.suppress_missing_interface_decl_reject {
+                return None;
+            }
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectMissingInterfaceDecl,
             );

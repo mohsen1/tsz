@@ -1560,10 +1560,10 @@ impl<'a> DeclarationEmitter<'a> {
                     && !Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                 {
                     self.write(": ");
-                    self.write(&jsdoc_param.type_text);
-                    if jsdoc_param.optional
-                        && !Self::type_text_has_undefined_branch(&jsdoc_param.type_text)
-                    {
+                    let type_text =
+                        self.jsdoc_type_text_for_declaration_emit(&jsdoc_param.type_text);
+                    self.write(&type_text);
+                    if jsdoc_param.optional && !Self::type_text_has_undefined_branch(&type_text) {
                         self.write(" | undefined");
                     }
                 } else if let Some(jsdoc_param) = effective_jsdoc_param
