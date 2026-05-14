@@ -16,6 +16,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::IndexSignature;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
@@ -56,6 +57,23 @@ fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
         i += 1;
         seen.get(&key_of(sig)).copied() == Some(idx)
     });
+}
+
+/// Merges an additional string-keyed index signature into an existing one by
+/// unioning their key patterns, enabling excess-property checking to accept any
+/// key that matches ANY of the declared template-literal patterns.
+pub(crate) fn merge_string_index_by_union(
+    existing: &mut IndexSignature,
+    extra: IndexSignature,
+    factory: tsz_solver::TypeFactory<'_>,
+) {
+    if existing.key_type != extra.key_type {
+        existing.key_type = factory.union2(existing.key_type, extra.key_type);
+    }
+    if existing.value_type != extra.value_type {
+        existing.value_type = factory.union2(existing.value_type, extra.value_type);
+    }
+    existing.readonly &= extra.readonly;
 }
 
 impl<'a> CheckerState<'a> {
@@ -526,7 +544,12 @@ impl<'a> CheckerState<'a> {
                     if key_type == TypeId::NUMBER {
                         Self::merge_index_signature(&mut number_index, info);
                     } else {
-                        Self::merge_index_signature(&mut string_index, info);
+                        match string_index.as_mut() {
+                            None => string_index = Some(info),
+                            Some(existing) => {
+                                merge_string_index_by_union(existing, info, factory);
+                            }
+                        }
                     }
                 }
             }
