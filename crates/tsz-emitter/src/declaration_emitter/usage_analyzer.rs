@@ -32,6 +32,17 @@ mod value_references;
 
 pub(super) type SolverTypeId = tsz_solver::TypeId;
 
+pub struct UsageAnalyzerConfig<'a> {
+    pub arena: &'a NodeArena,
+    pub binder: &'a BinderState,
+    pub type_cache: &'a TypeCacheView,
+    pub type_interner: &'a TypeInterner,
+    pub current_arena: Arc<NodeArena>,
+    pub current_file_path: Option<String>,
+    pub import_name_map: &'a FxHashMap<String, SymbolId>,
+    pub source_is_js_file: bool,
+}
+
 /// Tracks how a symbol is used - as a type, a value, or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UsageKind {
@@ -108,30 +119,21 @@ pub struct UsageAnalyzer<'a> {
 
 impl<'a> UsageAnalyzer<'a> {
     /// Create a new usage analyzer.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        type_cache: &'a TypeCacheView,
-        type_interner: &'a TypeInterner,
-        current_arena: Arc<NodeArena>,
-        current_file_path: Option<String>,
-        import_name_map: &'a FxHashMap<String, SymbolId>,
-        source_is_js_file: bool,
-    ) -> Self {
+    pub fn new(config: UsageAnalyzerConfig<'a>) -> Self {
         Self {
-            arena,
-            binder,
-            type_cache,
-            type_interner,
-            import_name_map,
+            arena: config.arena,
+            binder: config.binder,
+            type_cache: config.type_cache,
+            type_interner: config.type_interner,
+            import_name_map: config.import_name_map,
             used_symbols: FxHashMap::default(),
             visited_nodes: FxHashSet::default(),
             visited_types: FxHashSet::default(),
             type_symbol_cache: FxHashMap::default(),
             memoizing_types: FxHashSet::default(),
-            current_arena,
-            current_file_path,
-            source_is_js_file,
+            current_arena: config.current_arena,
+            current_file_path: config.current_file_path,
+            source_is_js_file: config.source_is_js_file,
             foreign_symbols: FxHashSet::default(),
             in_value_pos: false,
             current_ambient_module_specifier: None,
