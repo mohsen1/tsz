@@ -668,7 +668,13 @@ impl<'a> InferenceContext<'a> {
             // e.g., for { foo: string, bar: number }, K = "foo" | "bar"
             let name_literals: Vec<TypeId> = string_named_props
                 .iter()
-                .map(|p| self.interner.literal_string_atom(p.name))
+                .map(|p| {
+                    crate::utils::literal_key_for_property_name(
+                        self.interner,
+                        p.name,
+                        p.is_string_named,
+                    )
+                })
                 .collect();
             let names_union = if name_literals.len() == 1 {
                 name_literals[0]
@@ -685,7 +691,11 @@ impl<'a> InferenceContext<'a> {
             // (e.g., Box<number> | Box<string> | Box<boolean>), not a single "best" type.
             let template_priority = InferencePriority::MappedType;
             for prop in &string_named_props {
-                let key_literal = self.interner.literal_string_atom(prop.name);
+                let key_literal = crate::utils::literal_key_for_property_name(
+                    self.interner,
+                    prop.name,
+                    prop.is_string_named,
+                );
                 let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                 let instantiated_template =
                     instantiate_type(self.interner, mapped.template, &subst);

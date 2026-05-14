@@ -728,10 +728,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         if has_properties {
                             // Simple mapped type inference for { [P in K]: T }
                             // Infer constraint (K) from property name literals
+                            // (numeric-named props contribute number literals).
                             let name_literals: Vec<TypeId> = source_obj
                                 .properties
                                 .iter()
-                                .map(|p| self.interner.literal_string_atom(p.name))
+                                .map(|p| {
+                                    crate::utils::literal_key_for_property_name(
+                                        self.interner,
+                                        p.name,
+                                        p.is_string_named,
+                                    )
+                                })
                                 .collect();
                             let names_union = if name_literals.len() == 1 {
                                 name_literals[0]
@@ -2271,7 +2278,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let iter_param_name = mapped.type_param.name;
         for prop in properties {
-            let key_literal = self.interner.literal_string_atom(prop.name);
+            let key_literal = crate::utils::literal_key_for_property_name(
+                self.interner,
+                prop.name,
+                prop.is_string_named,
+            );
             let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
             self.constrain_types(ctx, var_map, prop.type_id, instantiated_template, priority);
