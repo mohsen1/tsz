@@ -2170,6 +2170,131 @@ fn test_emitter_must_not_import_checker_internals() {
     );
 }
 
+/// Track 9/10 ratchet: direct `tsz_solver` access from the emitter must not grow.
+///
+/// Existing declaration emit code still reaches into solver APIs while the
+/// `DeclarationSummary`/`PublicApiSummary` boundary is being introduced. This
+/// guard keeps that debt measurable and forces new emit/DTS work to either use a
+/// semantic summary/query boundary or explicitly lower this ceiling after
+/// removing old reach-through.
+#[test]
+fn test_emitter_direct_solver_access_does_not_grow() {
+    let emitter_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-emitter/src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&emitter_src, &mut files);
+
+    let mut direct_solver_lines = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("use tsz_solver") || line.contains("tsz_solver::") {
+                direct_solver_lines.push(format!("{}:{}", path.display(), line_num + 1));
+            }
+        }
+    }
+
+    const DIRECT_SOLVER_ACCESS_LINE_CEILING: usize = 461;
+    assert!(
+        direct_solver_lines.len() <= DIRECT_SOLVER_ACCESS_LINE_CEILING,
+        "Emitter direct solver access grew to {} lines (ceiling: {}). \
+         Route new emit/DTS semantic reads through a compiler semantic view, \
+         declaration summary, or query boundary before increasing this debt. \
+         Direct access lines:\n  {}",
+        direct_solver_lines.len(),
+        DIRECT_SOLVER_ACCESS_LINE_CEILING,
+        direct_solver_lines.join("\n  ")
+    );
+}
+
+/// Track 9/10 ratchet: emitter source-text recovery must not grow.
+///
+/// Existing JS/DTS emit still uses source text for parser-recovery and legacy
+/// transform details. New recovery facts should come from parser/lowering
+/// structures instead of adding more emitter substring scans.
+#[test]
+fn test_emitter_source_text_recovery_surface_does_not_grow() {
+    let emitter_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-emitter/src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&emitter_src, &mut files);
+
+    let mut source_text_lines = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("source_text") {
+                source_text_lines.push(format!("{}:{}", path.display(), line_num + 1));
+            }
+        }
+    }
+
+    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 909;
+    assert!(
+        source_text_lines.len() <= SOURCE_TEXT_RECOVERY_LINE_CEILING,
+        "Emitter source-text recovery surface grew to {} lines (ceiling: {}). \
+         Route new malformed-syntax or transform recovery through parser/lowering \
+         facts instead of adding emitter substring scans. Source-text lines:\n  {}",
+        source_text_lines.len(),
+        SOURCE_TEXT_RECOVERY_LINE_CEILING,
+        source_text_lines.join("\n  ")
+    );
+}
+
+/// Track 10 ratchet: rendered type strings must not become new semantic inputs.
+///
+/// Existing checker code still has a small number of one-line decisions that
+/// call `format_type`/`format_type_diagnostic` and immediately inspect the
+/// rendered string. New decisions should use structural solver/query-boundary
+/// facts instead.
+#[test]
+fn test_rendered_type_decision_patterns_do_not_grow() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut rendered_decisions = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+
+            let formats_type =
+                line.contains("format_type(") || line.contains("format_type_diagnostic(");
+            let inspects_rendered = line.contains(".contains(") || line.contains(".starts_with(");
+            if formats_type && inspects_rendered {
+                rendered_decisions.push(format!("{}:{}", path.display(), line_num + 1));
+            }
+        }
+    }
+
+    const RENDERED_TYPE_DECISION_LINE_CEILING: usize = 5;
+    assert!(
+        rendered_decisions.len() <= RENDERED_TYPE_DECISION_LINE_CEILING,
+        "Rendered-type semantic decision patterns grew to {} lines (ceiling: {}). \
+         Route new decisions through structural solver/query-boundary facts instead \
+         of inspecting formatted type strings. Rendered decision lines:\n  {}",
+        rendered_decisions.len(),
+        RENDERED_TYPE_DECISION_LINE_CEILING,
+        rendered_decisions.join("\n  ")
+    );
+}
+
 /// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]
