@@ -121,6 +121,26 @@ fn relevant_strict_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn readonly_const_tuple_spread_into_fixed_arity_generic_call_no_ts2554() {
+    let diagnostics = relevant_default_lib_diagnostics(
+        r#"
+function infer<T, U, V>(a: T, b: U, c: V): [T, U, V] {
+    return [a, b, c];
+}
+
+const args = [1, 'hello', true] as const;
+const result = infer(...args);
+const check: [1, 'hello', true] = result;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected readonly const tuple spread to satisfy fixed-arity generic call; got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn variadic_rest_tuple_satisfies_array_rest_constraint() {
     let source = r#"
 export {};
