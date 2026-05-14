@@ -201,11 +201,22 @@ pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 2_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
 
-/// Maximum number of interned types before the interner returns ERROR.
+/// Maximum number of interned types before the interner returns `TypeId::ERROR`.
+///
+/// Native and WASM currently share the same 500k policy. The circuit breaker
+/// was introduced with matching values on both cfg branches; there is no
+/// separate native memory budget yet. Keep both constants visible so any future
+/// target-specific change is reviewed explicitly.
+///
 /// Prevents OOM on pathological inputs (e.g., DOM types + module augmentation
 /// that create millions of intermediate types via heritage merging and
-/// function shape instantiation). With ~200-300 bytes per interned entry
-/// (DashMap overhead, Arc, shapes), 2M types ≈ 400-600MB.
+/// function shape instantiation). With roughly 200-300 bytes per interned entry
+/// (DashMap overhead, `Arc`, shapes), 500k types is roughly a 100-150MB
+/// interner budget before fallback.
+///
+/// When the count is exceeded, new non-intrinsic interning poisons the interner
+/// and returns `TypeId::ERROR`. Already-computed ids remain readable for later
+/// diagnostics.
 #[cfg(target_arch = "wasm32")]
 pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1141,10 +1152,8 @@ impl TypeInterner {
         // Circuit breaker 1: type count limit. Returning `TypeId::ERROR` here
         // intentionally does not credit a hit or miss — the residual
         // `calls - hits - misses` exposes circuit-breaker activations.
-        if self.approximate_count() > MAX_INTERNED_TYPES {
-            self.poisoned
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            return TypeId::ERROR;
+        if self.interned_type_limit_exceeded() {
+            return self.poison_due_to_interned_type_limit();
         }
 
         let shard_idx = (hash as usize) & (SHARD_COUNT - 1);
@@ -1858,6 +1867,22 @@ impl TypeInterner {
         self.alloc_counter.load(Ordering::Relaxed) as usize
     }
 
+    #[inline]
+    const fn interned_type_limit_exceeded_for_count(count: usize) -> bool {
+        count > MAX_INTERNED_TYPES
+    }
+
+    #[inline]
+    fn interned_type_limit_exceeded(&self) -> bool {
+        Self::interned_type_limit_exceeded_for_count(self.approximate_count())
+    }
+
+    #[inline]
+    fn poison_due_to_interned_type_limit(&self) -> TypeId {
+        self.poisoned.store(true, Ordering::Relaxed);
+        TypeId::ERROR
+    }
+
     /// Consume evaluation fuel and return whether fuel is exhausted.
     ///
     /// This is a global budget across all `TypeEvaluator` instances. When exhausted,
@@ -1925,5 +1950,32 @@ impl TypeInterner {
             TypeId::FUNCTION => Some(TypeData::Intrinsic(IntrinsicKind::Function)),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interned_type_limit_fallback_poison_returns_error() {
+        let interner = TypeInterner::new();
+        interner
+            .alloc_counter
+            .store((MAX_INTERNED_TYPES + 1) as u32, Ordering::Relaxed);
+
+        assert!(interner.interned_type_limit_exceeded());
+        assert_eq!(interner.poison_due_to_interned_type_limit(), TypeId::ERROR);
+        assert!(interner.poisoned.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn interned_type_limit_boundary_is_strictly_greater_than_limit() {
+        assert!(!TypeInterner::interned_type_limit_exceeded_for_count(
+            MAX_INTERNED_TYPES
+        ));
+        assert!(TypeInterner::interned_type_limit_exceeded_for_count(
+            MAX_INTERNED_TYPES + 1
+        ));
     }
 }
