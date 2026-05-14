@@ -726,12 +726,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluator
             .evaluate_tuple_index(&elements, self.index_type);
 
-        // CRITICAL FIX: If we can't find the element, but the index is generic,
-        // we must defer evaluation (return None) instead of returning UNDEFINED.
-        // This prevents false TS2344 errors when a tuple is indexed by a type
-        // parameter (e.g., `[-1, 0, 1, ...][Depth]` where `Depth extends number`).
-        // Without this, the evaluator resolves the IndexAccess to `undefined`,
-        // which then fails the constraint check against `number`.
+        // Generic tuple indexes defer instead of becoming `undefined`, avoiding
+        // false constraint errors for patterns like `Tuple[Depth]`.
         if result == TypeId::UNDEFINED && self.is_generic_index() {
             return None;
         }
@@ -781,8 +777,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_enum(&mut self, def_id: u32, _member_type: TypeId) -> Self::Output {
-        let def_id = crate::def::DefId(def_id);
-        let ns_type = self.evaluator.resolver().get_enum_namespace_type(def_id)?;
+        let ns_type = self
+            .evaluator
+            .resolver()
+            .get_enum_namespace_type(crate::def::DefId(def_id))?;
         let result = self
             .evaluator
             .recurse_index_access(ns_type, self.index_type);
@@ -798,35 +796,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .interner()
             .get_mapped(MappedTypeId(mapped_id));
 
-        // Optimization: Mapped[K] -> Template[P/K] where K matches constraint
-        // This handles cases like `Ev<K>["callback"]` where Ev<K> is a mapped type
-        // over K, without needing to expand the mapped type (which fails for TypeParameter K).
-
-        tracing::trace!(
-            mapped_constraint = mapped.constraint.0,
-            mapped_constraint_key = ?self.evaluator.interner().lookup(mapped.constraint),
-            index_type = self.index_type.0,
-            index_type_key = ?self.evaluator.interner().lookup(self.index_type),
-            "visit_mapped index access"
-        );
-
         // Only apply if no name remapping (as clause)
         if mapped.name_type.is_some() {
             return None;
         }
 
-        // Same-name TypeParameter match: handle the case where the mapped constraint and
-        // the index type are both TypeParameters with the same name but different TypeIds.
-        //
-        // This occurs with `T extends Record<K, number>, K extends string` where
-        // `T[K]` should resolve to `number`. After Application expansion:
-        // - `Record<K, number>` → `{ [P in K_inner]: number }` where K_inner (TypeId A)
-        //   was created before K's `extends string` constraint was recorded.
-        // - The function's K has a different TypeId (TypeId B) with the constraint.
-        // - Both have the same Atom name (e.g., Atom("K")).
-        //
-        // By name-matching TypeParams we correctly identify that the index K is the
-        // same parameter as the mapped constraint K, enabling substitution.
+        // Name-match TypeParams so expanded `Record<K, V>` constraints still
+        // substitute for the caller's distinct-but-same-name `K`.
         let same_type_param_name = {
             let interner = self.evaluator.interner();
             match (
