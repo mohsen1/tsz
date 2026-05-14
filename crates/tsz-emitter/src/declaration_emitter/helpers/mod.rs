@@ -245,4 +245,5 @@ mod type_printing;
 mod type_printing_paths;
 mod unexported_alias_literal;
 mod variable_decl;
+mod variable_decl_function_initializers;
 mod visibility;

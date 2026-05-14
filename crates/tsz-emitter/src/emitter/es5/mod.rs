@@ -9,6 +9,7 @@ mod bindings_patterns;
 mod helpers;
 mod helpers_async;
 mod helpers_async_generator;
+mod helpers_async_shadowing;
 #[allow(dead_code)]
 pub(in crate::emitter) mod loop_capture;
 mod templates;
