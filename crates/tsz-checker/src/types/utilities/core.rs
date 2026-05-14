@@ -2224,6 +2224,21 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let union_object_type = self.resolve_lazy_type(object_type);
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, union_object_type)
+            && keys.iter().any(|&value| {
+                self.get_numeric_index_from_number(value)
+                    .is_some_and(|index| {
+                        members.iter().any(|&member| {
+                            !self.union_member_supports_numeric_literal_key(member, index)
+                        })
+                    })
+            })
+        {
+            return None;
+        }
+
         let mut types = Vec::with_capacity(keys.len());
         for &value in keys {
             if let Some(index) = self.get_numeric_index_from_number(value) {
@@ -2260,6 +2275,29 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
         }
+    }
+
+    pub(crate) fn union_member_supports_numeric_literal_key(
+        &self,
+        member: TypeId,
+        index: usize,
+    ) -> bool {
+        if self.is_union_member_number_indexable(member) {
+            return true;
+        }
+
+        let property_name = index.to_string();
+        let member = self.resolve_type_for_property_access_simple(member);
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member).is_some_and(
+            |shape| {
+                shape.properties.iter().any(|property| {
+                    !property.is_string_named
+                        && !property.is_symbol_named
+                        && self.ctx.types.resolve_atom_ref(property.name).as_ref()
+                            == property_name.as_str()
+                })
+            },
+        )
     }
 
     /// Check if a type is array-like (supports numeric indexing).

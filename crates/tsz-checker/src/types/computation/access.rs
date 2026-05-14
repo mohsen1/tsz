@@ -1089,29 +1089,15 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if !number_keys.is_empty() {
-                    let number_keys_missing_index = number_keys.iter().any(|&key| {
-                        let key_type = self.ctx.types.literal_number(key);
-                        let key_index = self.get_numeric_index_from_number(key);
-                        self.should_report_no_index_signature(
-                            pre_resolution_object_type,
-                            key_type,
-                            key_index,
-                        )
-                    });
-                    if number_keys_missing_index {
-                        number_keys_ok = false;
-                        report_no_index = true;
-                    } else {
-                        match self.get_element_access_type_for_literal_number_keys(
-                            object_type_for_access,
-                            &number_keys,
-                            skip_flow_narrowing,
-                        ) {
-                            Some(result) => types.push(result),
-                            None => {
-                                number_keys_ok = false;
-                                report_no_index = true;
-                            }
+                    match self.get_element_access_type_for_literal_number_keys(
+                        object_type_for_access,
+                        &number_keys,
+                        skip_flow_narrowing,
+                    ) {
+                        Some(result) => types.push(result),
+                        None => {
+                            number_keys_ok = false;
+                            report_no_index = true;
                         }
                     }
                 }
@@ -1353,14 +1339,17 @@ impl<'a> CheckerState<'a> {
             && let Some(index) = literal_index
             && !self.is_array_like_type(object_type_for_access)
         {
-            let key_type = self.ctx.types.literal_number(index as f64);
-            if self.should_report_no_index_signature(
-                pre_resolution_object_type,
-                key_type,
-                Some(index),
-            ) {
-                report_no_index = true;
-            } else {
+            let union_numeric_key_missing = {
+                let union_object_type = self.resolve_lazy_type(pre_resolution_object_type);
+                crate::query_boundaries::common::union_members(self.ctx.types, union_object_type)
+                    .is_some_and(|members| {
+                        members.iter().any(|&member| {
+                            !self.union_member_supports_numeric_literal_key(member, index)
+                        })
+                    })
+            };
+
+            if !union_numeric_key_missing {
                 let property_name = index.to_string();
                 let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
                 let result = self.resolve_property_access_with_env(resolved_type, &property_name);
