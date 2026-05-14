@@ -84,6 +84,8 @@ pub const CONTEXT_FLAG_GENERATOR_MEMBER_NAME: u32 = 131072;
 pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
 /// Context flag: parsing a binding pattern as a function parameter name.
 pub const CONTEXT_FLAG_PARAMETER_BINDING_PATTERN: u32 = 524288;
+/// Context flag: parsing a function-like body.
+pub const CONTEXT_FLAG_FUNCTION_BODY: u32 = 1048576;
 
 // =============================================================================
 // Parse Diagnostic
@@ -918,6 +920,10 @@ impl ParserState {
     #[inline]
     pub(crate) const fn in_parameter_default_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_PARAMETER_DEFAULT) != 0
+    }
+
+    pub(crate) const fn in_function_body_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_FUNCTION_BODY) != 0
     }
 
     /// Check if 'in' is disallowed as a binary operator (e.g., in for-statement initializers)

@@ -1,8 +1,9 @@
 //! Parser state - literal, binding pattern, and compound expression parsing.
 
 use super::state::{
-    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN, CONTEXT_FLAG_GENERATOR,
-    CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION, CONTEXT_FLAG_STATIC_BLOCK, ParserState,
+    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN, CONTEXT_FLAG_FUNCTION_BODY,
+    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION, CONTEXT_FLAG_STATIC_BLOCK,
+    ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -2106,7 +2107,11 @@ impl ParserState {
         };
 
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
+            let saved_body_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
+            let block = self.parse_block();
+            self.context_flags = saved_body_flags;
+            block
         } else {
             if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -2199,7 +2204,11 @@ impl ParserState {
         }
 
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
+            let saved_body_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
+            let block = self.parse_block();
+            self.context_flags = saved_body_flags;
+            block
         } else {
             if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -2303,6 +2312,7 @@ impl ParserState {
                 self.context_flags |= CONTEXT_FLAG_ASYNC;
             }
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
+            self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
             self.push_label_scope();
             let body = if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_block()
@@ -2390,6 +2400,7 @@ impl ParserState {
         if asterisk {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
         let mut body_already_consumed_by_recovery = false;

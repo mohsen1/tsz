@@ -2,8 +2,8 @@
 
 use super::state::{
     CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
-    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_GENERATOR_MEMBER_NAME, CONTEXT_FLAG_STATIC_BLOCK,
-    ParserState,
+    CONTEXT_FLAG_FUNCTION_BODY, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_GENERATOR_MEMBER_NAME,
+    CONTEXT_FLAG_STATIC_BLOCK, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -648,6 +648,7 @@ impl ParserState {
         // Clear static block flag - constructor creates a new function boundary
         let body_saved_flags = self.context_flags;
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
@@ -816,6 +817,7 @@ impl ParserState {
         // Clear static block flag - accessor creates a new function boundary
         let saved_flags = self.context_flags;
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
@@ -1761,6 +1763,7 @@ impl ParserState {
         if asterisk_token {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         // Check if it's a method or property.
         // Method: foo() or foo<T>().
