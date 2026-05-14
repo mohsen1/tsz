@@ -1400,6 +1400,81 @@ function f(obj: { x: string | number }) {
     );
 }
 
+#[test]
+fn type_predicate_narrowing_does_not_leak_after_if_without_else() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function isNumber(value: unknown): value is number {
+    return typeof value === "number";
+}
+
+function test(x: unknown) {
+    if (isNumber(x)) {
+        let n: number = x;
+    }
+    x.toFixed(2);
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 18046 && message.contains("'x' is of type 'unknown'")
+        }),
+        "expected TS18046 after predicate branch rejoins with the original type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renamed_type_predicate_narrowing_does_not_leak_after_if_else_join() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function keepsText(input: unknown): input is string {
+    return typeof input === "string";
+}
+
+function use(candidate: unknown) {
+    if (keepsText(candidate)) {
+        let s: string = candidate;
+    } else {
+        let u: unknown = candidate;
+    }
+    candidate.trim();
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 18046 && message.contains("'candidate' is of type 'unknown'")
+        }),
+        "expected TS18046 after both predicate branches can reach the join, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn type_predicate_narrowing_survives_when_false_branch_terminates() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function isNumber(value: unknown): value is number {
+    return typeof value === "number";
+}
+
+function test(x: unknown) {
+    if (!isNumber(x)) {
+        return;
+    }
+    let n: number = x;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "predicate narrowing should survive after terminating false branch, got: {diagnostics:?}"
+    );
+}
+
 /// Regression test: type predicate narrowing with discriminated union members.
 ///
 /// When interfaces have string literal discriminant properties (e.g., `kind: "a"`),

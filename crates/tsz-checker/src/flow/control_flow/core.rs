@@ -290,6 +290,9 @@ impl<'a> FlowAnalyzer<'a> {
                 simplified.push(ty);
             }
         }
+        if simplified.contains(&TypeId::UNKNOWN) {
+            return vec![TypeId::UNKNOWN];
+        }
         simplified
     }
 
