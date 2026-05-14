@@ -950,6 +950,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .get_class(stmt_node)
                     .map(|class| class.name)
                     .filter(|&name| self.is_js_export_equals_name(name)),
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    self.js_export_equals_root_variable_name_for_statement(stmt_idx)
+                }
                 _ => None,
             }
         } else {

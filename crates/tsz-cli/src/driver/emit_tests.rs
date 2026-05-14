@@ -215,6 +215,21 @@ fn test_bundle_declaration_output_wraps_amd_modules_with_fallback_name() {
 }
 
 #[test]
+fn test_bundle_declaration_output_rewrites_amd_import_type_specifiers() {
+    let input = r#"/** @type {typeof import("./folder/mod1")} */
+export declare const items: (typeof import("./folder/mod1"))[];"#;
+
+    let output =
+        bundle_declaration_output(input, tsz_common::common::ModuleKind::AMD, Some("index"));
+    let expected = r#"declare module "index" {
+    /** @type {typeof import("./folder/mod1")} */
+    export const items: (typeof import("folder/mod1"))[];
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_bundle_declaration_output_does_not_use_amd_dependency_name() {
     let input = r#"/// <amd-dependency name="legacyAlias" path="legacy/module" />
 export declare const value = 1;"#;

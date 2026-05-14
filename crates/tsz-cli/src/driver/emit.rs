@@ -1684,6 +1684,10 @@ fn rewrite_ambient_module_member_line(line: &str, module_name: &str) -> Option<S
 
 fn rewrite_amd_relative_module_specifier_line(line: String, module_name: &str) -> String {
     let trimmed = line.trim_start();
+    if trimmed.starts_with('*') || trimmed.starts_with('/') {
+        return line;
+    }
+
     let Some(after_keyword) = trimmed
         .strip_prefix("module \"")
         .or_else(|| trimmed.strip_prefix("import \""))
@@ -1693,7 +1697,7 @@ fn rewrite_amd_relative_module_specifier_line(line: String, module_name: &str) -
                 .and_then(|rest| rest.rsplit_once(" from \"").map(|(_, spec)| spec))
         })
     else {
-        return line;
+        return rewrite_amd_import_type_specifiers(line, module_name);
     };
     let Some(end_quote) = after_keyword.find('"') else {
         return line;
@@ -1715,6 +1719,52 @@ fn rewrite_amd_relative_module_specifier_line(line: String, module_name: &str) -
     rewritten.push_str(&line[..spec_start]);
     rewritten.push_str(&resolved);
     rewritten.push_str(&line[spec_end..]);
+    rewrite_amd_import_type_specifiers(rewritten, module_name)
+}
+
+fn rewrite_amd_import_type_specifiers(line: String, module_name: &str) -> String {
+    let mut rewritten = String::with_capacity(line.len());
+    let mut rest = line.as_str();
+
+    loop {
+        let Some(import_start) = rest.find("import(") else {
+            rewritten.push_str(rest);
+            break;
+        };
+        rewritten.push_str(&rest[..import_start]);
+        let after_import = &rest[import_start + "import(".len()..];
+        let Some(quote) = after_import.as_bytes().first().copied() else {
+            rewritten.push_str(&rest[import_start..]);
+            break;
+        };
+        if !matches!(quote, b'\'' | b'"') {
+            rewritten.push_str("import(");
+            rest = after_import;
+            continue;
+        }
+
+        let quote = quote as char;
+        let after_quote = &after_import[1..];
+        let Some(end_quote) = after_quote.find(quote) else {
+            rewritten.push_str(&rest[import_start..]);
+            break;
+        };
+        let specifier = &after_quote[..end_quote];
+        rewritten.push_str("import(");
+        rewritten.push(quote);
+        if specifier.starts_with('.') {
+            if let Some(resolved) = resolve_amd_relative_module_specifier(module_name, specifier) {
+                rewritten.push_str(&resolved);
+            } else {
+                rewritten.push_str(specifier);
+            }
+        } else {
+            rewritten.push_str(specifier);
+        }
+        rewritten.push(quote);
+        rest = &after_quote[end_quote + quote.len_utf8()..];
+    }
+
     rewritten
 }
 

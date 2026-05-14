@@ -2546,6 +2546,11 @@ impl<'a> DeclarationEmitter<'a> {
 
                     self.write(";");
                     self.write_line();
+                    for (_, _, _, decl) in &regular_decls[group_start..group_end] {
+                        if self.is_js_export_equals_name(decl.name) {
+                            self.emit_js_namespace_export_aliases_for_name(decl.name, is_exported);
+                        }
+                    }
                     group_start = group_end;
                 }
             }

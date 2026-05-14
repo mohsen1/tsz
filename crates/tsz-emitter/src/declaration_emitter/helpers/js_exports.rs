@@ -2888,6 +2888,32 @@ impl<'a> DeclarationEmitter<'a> {
             .contains(&name_ident.escaped_text)
     }
 
+    pub(crate) fn js_export_equals_root_variable_name_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        if !self.source_is_js_file || self.js_export_equals_names.is_empty() {
+            return None;
+        }
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let var_stmt = self.arena.get_variable(stmt_node)?;
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let decl_list_node = self.arena.get(decl_list_idx)?;
+            if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                continue;
+            }
+            let decl_list = self.arena.get_variable(decl_list_node)?;
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = self.arena.get(decl_idx)?;
+                let decl = self.arena.get_variable_declaration(decl_node)?;
+                if self.is_js_export_equals_name(decl.name) {
+                    return Some(decl.name);
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn emit_js_namespace_export_aliases_for_name(
         &mut self,
         name_idx: NodeIndex,

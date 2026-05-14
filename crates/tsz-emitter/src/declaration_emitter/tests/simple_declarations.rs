@@ -2359,6 +2359,42 @@ module.exports = a;
 }
 
 #[test]
+fn test_js_module_exports_variable_with_typedef_members() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {{x: number}} Item
+ */
+/**
+ * @type {Item}
+ */
+const x = {x: 12};
+module.exports = x;
+"#,
+    );
+
+    let expected = r#"export = x;
+/**
+ * @typedef {{x: number}} Item
+ */
+/**
+ * @type {Item}
+ */
+declare const x: Item;
+declare namespace x {
+    export { Item };
+}
+type Item = {
+    x: number;
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected JS export= variables to hoist export= and retain local typedef namespace members: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_defers_dependency_class_until_after_root_namespace() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
