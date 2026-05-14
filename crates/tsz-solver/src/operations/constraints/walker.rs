@@ -1087,8 +1087,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let infer_targets = if structural_matches.len() > 1 {
                             self.filter_by_discriminant(source, &structural_matches)
                         } else {
-                            structural_matches
+                            structural_matches.clone()
                         };
+                        self.add_never_candidates_for_excluded_union_placeholders(
+                            ctx,
+                            var_map,
+                            &structural_matches,
+                            &infer_targets,
+                            priority,
+                        );
                         for member in infer_targets {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
@@ -1170,8 +1177,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let infer_targets = if structural_matches.len() > 1 {
                             self.filter_by_discriminant(source, &structural_matches)
                         } else {
-                            structural_matches
+                            structural_matches.clone()
                         };
+                        self.add_never_candidates_for_excluded_union_placeholders(
+                            ctx,
+                            var_map,
+                            &structural_matches,
+                            &infer_targets,
+                            priority,
+                        );
 
                         for member in infer_targets {
                             self.constrain_types(ctx, var_map, source, member, priority);
