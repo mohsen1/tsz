@@ -68,6 +68,10 @@ pub struct DeclarationEmitter<'a> {
     /// Global symbol-to-arena mapping from all program files, enabling cross-file
     /// symbol source path resolution for TS2883 portability checks.
     pub(super) global_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// In declaration bundles, duplicate global `var` declarations share the
+    /// first emitted type instead of each file independently narrowing its own
+    /// initializer.
+    pub(super) bundled_duplicate_global_var_types: FxHashMap<String, String>,
     /// Map of module → symbol names to auto-generate imports for
     /// Pre-calculated in driver where `MergedProgram` is available
     pub(super) required_imports: FxHashMap<String, Vec<String>>,

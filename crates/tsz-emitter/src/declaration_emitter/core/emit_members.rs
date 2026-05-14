@@ -2400,6 +2400,15 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         "let"
                     } else if js_var_promoted_to_const {
+                        let has_bundled_duplicate_global_var = regular_decls
+                            [group_start..group_end]
+                            .iter()
+                            .any(|(_, _, _, decl)| {
+                                self.get_identifier_text(decl.name).is_some_and(|name| {
+                                    self.bundled_duplicate_global_var_types
+                                        .contains_key(name.as_str())
+                                })
+                            });
                         let is_named_js_export =
                             regular_decls[group_start..group_end]
                                 .iter()
@@ -2416,7 +2425,7 @@ impl<'a> DeclarationEmitter<'a> {
                         ) || self
                             .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
                             .is_some();
-                        if has_jsdoc || is_named_js_export {
+                        if has_jsdoc || is_named_js_export || has_bundled_duplicate_global_var {
                             "var"
                         } else {
                             keyword
