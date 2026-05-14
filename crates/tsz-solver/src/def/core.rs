@@ -434,6 +434,9 @@ pub struct DefinitionStore {
     /// Next available `DefId`
     next_id: AtomicU32,
 
+    /// Monotonic revision for resolver-visible definition-store mutations.
+    generation: AtomicU64,
+
     /// Reverse map: `TypeId` -> `DefId` for named types.
     ///
     /// When a class/interface instance type is computed, the checker registers it here
@@ -706,6 +709,7 @@ impl DefinitionStore {
             instance_id,
             definitions: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
+            generation: AtomicU64::new(1),
             type_to_def: DefDashMap::default(),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             symbol_only_index: DefDashMap::with_capacity_and_hasher(
@@ -748,6 +752,15 @@ impl DefinitionStore {
         DefId(id)
     }
 
+    fn bump_generation(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Current resolver-visible generation for this store.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
     /// Register a new definition and return its `DefId`.
     pub fn register(&self, info: DefinitionInfo) -> DefId {
         let id = self.allocate();
@@ -787,6 +800,7 @@ impl DefinitionStore {
         self.name_to_defs.entry(info.name).or_default().push(id);
 
         self.definitions.insert(id, info);
+        self.bump_generation();
         id
     }
 
@@ -799,6 +813,7 @@ impl DefinitionStore {
         self.register_symbol_file_mapping(symbol_id, file_idx, def_id);
         // Also maintain the file-agnostic index (keeps the first registered DefId).
         self.symbol_only_index.entry(symbol_id).or_insert(def_id);
+        self.bump_generation();
     }
 
     fn register_symbol_file_mapping(&self, symbol_id: u32, file_idx: u32, def_id: DefId) {
@@ -864,6 +879,7 @@ impl DefinitionStore {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.extends = extends;
             entry.implements = implements;
+            self.bump_generation();
         }
     }
 
@@ -881,6 +897,7 @@ impl DefinitionStore {
             if entry.kind == DefKind::TypeAlias && entry.type_params.is_empty() {
                 self.body_to_alias.entry(body).or_insert(id);
             }
+            self.bump_generation();
         } else {
             // Create a minimal entry for DefIds created via get_or_create_def_id
             // (which only populates symbol_to_def/def_to_symbol, not definitions).
@@ -910,6 +927,7 @@ impl DefinitionStore {
                     is_declare: false,
                 },
             );
+            self.bump_generation();
         }
     }
 
@@ -1019,6 +1037,7 @@ impl DefinitionStore {
                 self.body_to_alias.remove(&body);
             }
             entry.type_params = params;
+            self.bump_generation();
         }
     }
 
@@ -1040,6 +1059,7 @@ impl DefinitionStore {
             if !implements.is_empty() {
                 entry.implements = implements;
             }
+            self.bump_generation();
         }
     }
 
@@ -1052,6 +1072,7 @@ impl DefinitionStore {
             let hash = Self::hash_shape(&shape);
             entry.instance_shape = Some(shape);
             self.shape_to_def.entry(hash).or_insert(id);
+            self.bump_generation();
         }
     }
 
@@ -1078,6 +1099,7 @@ impl DefinitionStore {
         self.class_to_constructor.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
+        self.bump_generation();
     }
 
     /// Register a mapping from a `TypeId` to its defining `DefId`.
@@ -1124,6 +1146,7 @@ impl DefinitionStore {
                 }
             }
         }
+        self.bump_generation();
     }
 
     /// Look up the `DefId` that produced the given `TypeId`.
@@ -1140,6 +1163,7 @@ impl DefinitionStore {
     /// companion with `get_constructor_def` and reuse the stable identity.
     pub fn register_constructor_companion(&self, class_def: DefId, ctor_def: DefId) {
         self.class_to_constructor.insert(class_def, ctor_def);
+        self.bump_generation();
     }
 
     /// Look up the pre-populated `ClassConstructor` `DefId` for a class.
@@ -1165,6 +1189,7 @@ impl DefinitionStore {
     pub fn add_export(&self, id: DefId, name: Atom, export_def: DefId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.add_export(name, export_def);
+            self.bump_generation();
         }
     }
 
@@ -1175,6 +1200,7 @@ impl DefinitionStore {
     pub fn set_extends(&self, id: DefId, extends: DefId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.extends = Some(extends);
+            self.bump_generation();
         }
     }
 
@@ -1185,6 +1211,7 @@ impl DefinitionStore {
     pub fn set_implements(&self, id: DefId, implements: Vec<DefId>) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.implements = implements;
+            self.bump_generation();
         }
     }
 
@@ -1257,6 +1284,7 @@ impl DefinitionStore {
     /// intersection reduction or conditional evaluation.
     pub fn mark_body_as_computed(&self, body: TypeId) {
         self.computed_alias_bodies.insert(body);
+        self.bump_generation();
     }
 
     /// Check if a body `TypeId` was marked as "computed".
