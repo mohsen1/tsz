@@ -1446,6 +1446,23 @@ declaration/provenance guards (`reject_out_of_arena_decl=6`,
 attribution-mode run. Decision record:
 [`perf-runs/2026-05-14-simple-object-residual-annotations.md`](perf-runs/2026-05-14-simple-object-residual-annotations.md).
 
+**2026-05-14 simple-object declaration/provenance residue names:** the
+follow-up adds a bounded
+`compute_type_of_symbol_interface_simple_object_declaration_provenance_residues`
+table and reruns regenerated monorepo-006. Diagnostics remain `10,198`,
+simple-object hits remain `24,762`, and the two live declaration/provenance
+guard buckets are now named. `reject_missing_interface_decl` is seven
+single-declaration rows: `Iterable`, `IteratorReturnResult`,
+`IteratorYieldResult`, `PropertyDescriptor`, `PropertyDescriptorMap`,
+`RegExpIndicesArray`, and `RegExpStringIterator`. `reject_out_of_arena_decl`
+is six rows: `ArrayIterator`, `CollatorOptions`, `DateTimeFormatOptions`,
+`IteratorObject`, `NumberFormatOptions`, and `StringIterator`. This is
+attribution-only; the next behavior slice should prove one row family before
+relaxing any guard. Decision record:
+[`perf-runs/2026-05-14-simple-object-provenance-residues.md`](perf-runs/2026-05-14-simple-object-provenance-residues.md).
+Claim:
+[`claims/perf-simple-object-provenance-residues-2026-05-14.md`](claims/perf-simple-object-provenance-residues-2026-05-14.md).
+
 **2026-05-14 composite/array attribution companion:** a follow-up attribution
 record for the same guarded union/intersection, array, and tuple admission
 shows the remaining annotation-kind buckets (`union_or_intersection`,
