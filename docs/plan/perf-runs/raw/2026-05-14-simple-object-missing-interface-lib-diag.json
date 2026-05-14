@@ -31,12 +31,12 @@
     "config_discovery": 0.0,
     "source_discovery": 0.0,
     "module_resolution": 0.0,
-    "io_read": 429.096917,
-    "load_libs": 41.856417,
-    "parse_bind": 2432.61775,
-    "check": 98173.0625,
-    "emit": 0.0,
-    "total": 101167.98220900001
+    "io_read": 307.329375,
+    "load_libs": 10.722917,
+    "parse_bind": 1766.8911249999999,
+    "check": 71382.7895,
+    "emit": 0.000042,
+    "total": 73541.07587500001
   },
   "counts": {
     "files": 5337,
@@ -45,5 +45,5 @@
     "source_bytes": 0,
     "diagnostics": 10198
   },
-  "rss_peak_bytes": 3717169152
+  "rss_peak_bytes": 3723558912
 }

@@ -1567,6 +1567,7 @@ impl<'a> CheckerState<'a> {
             // type (e.g., `interface Node { forEachChild(...) }`), we must fall
             // through to the full merge path so user-declared members are included.
             let should_resolve_missing_interface_decl_from_lib = !has_local_interface_decl
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
                 && should_resolve_simple_object_missing_interface_decl_from_lib(&escaped_name);
             let can_resolve_lib_interface_without_local_decl = !has_local_interface_decl
                 && (has_out_of_arena_decl
