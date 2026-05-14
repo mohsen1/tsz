@@ -62,10 +62,11 @@ Owners:
 `env_eval_cache` is the best low-risk candidate for the next ownership move. It
 stores semantic evaluation answers for `evaluate_type_with_env`, is keyed by
 `TypeId`, and already tracks solver recursion-limit state in
-`EnvEvalCacheEntry`. The cache should move behind a query-boundary helper before
-it moves into solver storage directly, because the current answer also depends
-on the active `TypeEnvironment`. The move should make that environment identity
-or snapshot an explicit input instead of reading ambient `CheckerContext` state.
+`EnvEvalCacheEntry`. Direct callers now route through `CheckerContext` helper
+methods, which keeps the `RefCell` mechanics owned by context and gives the next
+move a single boundary to relocate. Moving it further toward query-boundary or
+solver storage requires making the active `TypeEnvironment` identity or snapshot
+an explicit input instead of reading ambient `CheckerContext` state.
 
 ## Reset Invariants
 

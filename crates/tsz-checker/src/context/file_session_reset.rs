@@ -243,7 +243,7 @@ impl<'a> CheckerContext<'a> {
         self.application_symbols_resolved.clear();
         self.application_symbols_resolution_set.clear();
         self.namespace_module_names.clear();
-        self.env_eval_cache.borrow_mut().clear();
+        self.clear_env_eval_cache();
 
         // Depth counters: reset to their base depth and clear the
         // `exceeded` flag.

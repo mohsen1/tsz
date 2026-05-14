@@ -1767,13 +1767,7 @@ impl<'a> CheckerState<'a> {
         let resolved_constraint = self.evaluate_mapped_constraint_with_resolution(constraint);
         if resolved_constraint != constraint {
             self.ctx
-                .env_eval_cache
-                .borrow_mut()
-                .entry(constraint)
-                .or_insert(crate::context::EnvEvalCacheEntry {
-                    result: resolved_constraint,
-                    depth_exceeded: false,
-                });
+                .cache_env_eval_result_if_absent(constraint, resolved_constraint, false);
             let retry = self.evaluate_type_with_env_uncached(type_id);
             if retry != type_id {
                 return retry;
