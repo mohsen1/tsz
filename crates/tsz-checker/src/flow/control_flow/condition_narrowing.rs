@@ -1,7 +1,9 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::common::is_union_type;
 use crate::query_boundaries::flow as flow_boundary;
-use crate::query_boundaries::flow_analysis::{is_unit_type, is_unknown_narrowing_literal};
+use crate::query_boundaries::flow_analysis::{
+    empty_object_type, is_unit_type, is_unknown_narrowing_literal,
+};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
@@ -678,6 +680,18 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             self.make_narrowing_context()
         };
+
+        if type_id == TypeId::UNKNOWN
+            && let Some(current_exclusion) =
+                self.typeof_exclusion_for_condition(condition_idx, target, is_true_branch)
+        {
+            let prior_exclusions =
+                self.antecedent_typeof_exclusion_mask(antecedent_id, target, &mut Vec::new());
+            let exclusions = prior_exclusions | Self::typeof_exclusion_bit(current_exclusion);
+            if exclusions == Self::ALL_TYPEOF_EXCLUSIONS {
+                return empty_object_type(self.interner);
+            }
+        }
 
         if cond_node.kind == SyntaxKind::Identifier as u16
             // Direct truthiness checks (`if (x)`, `x && ...`, `x! && ...`) must narrow

@@ -301,6 +301,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let expr_type = self.get_type_of_node(expr_idx);
+            if source != TypeId::UNKNOWN
+                && (expr_type == TypeId::UNKNOWN || expr_type == source)
+                && crate::query_boundaries::common::is_empty_object_type(self.ctx.types, source)
+            {
+                return self.format_assignability_type_for_message(source, target);
+            }
             let expr_display_type = if expr_type == TypeId::UNKNOWN && source != TypeId::UNKNOWN {
                 source
             } else {
@@ -492,6 +498,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let expr_type = self.get_type_of_node(expr_idx);
+            if source != TypeId::UNKNOWN
+                && (expr_type == TypeId::UNKNOWN || expr_type == source)
+                && crate::query_boundaries::common::is_empty_object_type(self.ctx.types, source)
+            {
+                return self.format_assignability_type_for_message(source, target);
+            }
             let expr_display_type = if expr_type == TypeId::UNKNOWN && source != TypeId::UNKNOWN {
                 source
             } else {
