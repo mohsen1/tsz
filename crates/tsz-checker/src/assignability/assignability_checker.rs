@@ -1,6 +1,7 @@
 //! Type assignability and excess property checking.
 //! Subtype, identity, and redeclaration compatibility live in `subtype_identity_checker`.
 
+use super::assignability_eval::signature_has_param_capacity;
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
     assignability_cache_key, check_application_variance_assignability,
@@ -3118,17 +3119,4 @@ impl<'a> CheckerState<'a> {
             self.ctx.strict_null_checks(),
         )
     }
-}
-
-/// A target signature can supply contextual types for `source_param_count`
-/// callback parameters when it has a rest parameter (which absorbs any
-/// trailing positions) or its fixed parameter list is at least that long.
-fn signature_has_param_capacity(
-    params: &[tsz_solver::ParamInfo],
-    source_param_count: usize,
-) -> bool {
-    if params.iter().any(|p| p.rest) {
-        return true;
-    }
-    params.len() >= source_param_count
 }

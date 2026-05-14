@@ -1,6 +1,19 @@
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
+/// A target signature can supply contextual types for `source_param_count`
+/// callback parameters when it has a rest parameter (which absorbs any
+/// trailing positions) or its fixed parameter list is at least that long.
+pub(super) fn signature_has_param_capacity(
+    params: &[tsz_solver::ParamInfo],
+    source_param_count: usize,
+) -> bool {
+    if params.iter().any(|p| p.rest) {
+        return true;
+    }
+    params.len() >= source_param_count
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn evaluate_lazy_alias_for_assignability(
         &mut self,
