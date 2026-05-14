@@ -74,6 +74,10 @@ name = "array_subclass_inheritance_tests"
 path = "tests/array_subclass_inheritance_tests.rs"
 
 [[test]]
+name = "tuple_infer_mapped_recursive_tests"
+path = "tests/tuple_infer_mapped_recursive_tests.rs"
+
+[[test]]
 name = "tuple_rest_array_canonicalization_tests"
 path = "tests/tuple_rest_array_canonicalization_tests.rs"
 
