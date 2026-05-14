@@ -594,6 +594,50 @@ check_prerequisites() {
 
 RESULTS_CSV=""
 BENCHMARKS_RUN=0
+PROJECT_COMPATIBILITY_JSONL=""
+
+record_project_compatibility() {
+    local name="$1"
+    local exit_class="$2"
+    local phase="$3"
+    local diagnostic_status="$4"
+    local diagnostic_delta="${5:-}"
+    local files_reached="${6:-0}"
+    local peak_memory_bytes="${7:-}"
+
+    [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
+
+    COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+    COMPAT_NAME="$name" \
+    COMPAT_EXIT_CLASS="$exit_class" \
+    COMPAT_PHASE="$phase" \
+    COMPAT_DIAGNOSTIC_STATUS="$diagnostic_status" \
+    COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
+    COMPAT_FILES_REACHED="$files_reached" \
+    COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
+    node <<'NODE'
+const fs = require("node:fs");
+
+const toNumber = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
+const row = {
+  name: process.env.COMPAT_NAME || "",
+  exit_class: process.env.COMPAT_EXIT_CLASS || "unknown",
+  phase: process.env.COMPAT_PHASE || "unknown",
+  diagnostic_status: process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown",
+  diagnostic_deltas: delta ? [delta].slice(0, 20) : [],
+  files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
+  peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
+};
+
+fs.appendFileSync(process.env.COMPAT_JSONL_FILE, `${JSON.stringify(row)}\n`, "utf8");
+NODE
+}
 
 # run_isolated <label> <command...>
 #
@@ -823,12 +867,13 @@ run_project_benchmark() {
         fi
         if [ "$tsc_check" -ne 0 ]; then
             local status
+            local tsc_error=""
             if [ "$tsc_check" -eq 124 ]; then
                 status="tsc timeout after ${project_tsc_timeout}s"
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
+                tsc_error="tsc timed out after ${project_tsc_timeout}s"
             else
                 status="tsc fixture error"
-                local tsc_error
                 if [ "${#project_node_prefix[@]}" -gt 0 ]; then
                     tsc_error="$(run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
                 else
@@ -837,6 +882,7 @@ run_project_benchmark() {
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
             fi
+            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             return
         fi
@@ -876,12 +922,14 @@ run_project_benchmark() {
         local tsgo_lps="N/A"
         local winner="error"
         local ratio="0"
+        local diagnostic_delta=""
 
         echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
 
         if [ "$tsz_check" -eq 124 ]; then
             status="tsz timeout"
             tsz_ms="TIMEOUT"
+            diagnostic_delta="tsz timed out after ${project_timeout}s"
             echo -e "  ${CYAN}tsz:${NC} timed out after ${project_timeout}s" >&2
         elif [ "$tsz_check" -ne 0 ]; then
             status="tsz error"
@@ -892,12 +940,14 @@ run_project_benchmark() {
             else
                 tsz_error="$(run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
             fi
+            diagnostic_delta="tsz: $tsz_error"
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
         if [ "$tsgo_check" -eq 124 ]; then
             status="${status:+${status}; }tsgo timeout"
             tsgo_ms="TIMEOUT"
+            diagnostic_delta="${diagnostic_delta:+${diagnostic_delta}; }tsgo timed out after ${project_timeout}s"
             echo -e "  ${CYAN}tsgo:${NC} timed out after ${project_timeout}s" >&2
         elif [ "$tsgo_check" -ne 0 ]; then
             status="${status:+${status}; }tsgo error"
@@ -908,6 +958,7 @@ run_project_benchmark() {
             else
                 tsgo_error="$(run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
             fi
+            diagnostic_delta="${diagnostic_delta:+${diagnostic_delta}; }tsgo: $tsgo_error"
             echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
         fi
 
@@ -915,6 +966,11 @@ run_project_benchmark() {
             status="${status:+${status}; }tsc ok"
         fi
 
+        if [ "$tsz_check" -eq 124 ] || [ "$tsgo_check" -eq 124 ]; then
+            record_project_compatibility "$name" "timeout" "check" "compiler timed out" "$diagnostic_delta" "$file_count"
+        else
+            record_project_compatibility "$name" "nonzero exit" "check" "diagnostic mismatch or compiler error" "$diagnostic_delta" "$file_count"
+        fi
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
         return
     fi
@@ -992,6 +1048,7 @@ run_project_benchmark() {
                 -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
         fi
         if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
+            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,tsgo,0,tsz unavailable; tsgo error\n"
             rm -f "$json_file"
             return
@@ -1000,6 +1057,7 @@ run_project_benchmark() {
             local tsgo_exit_status
             tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
             if [ "$tsgo_exit_status" != "ok" ]; then
+                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,error,0,tsz unavailable; tsgo ${tsgo_exit_status}\n"
                 rm -f "$json_file"
                 return
@@ -1011,6 +1069,7 @@ run_project_benchmark() {
                 tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
                 local tsgo_ms
                 tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,${tsgo_ms},N/A,${tsgo_lps},tsgo,0,tsz unavailable\n"
             fi
         fi
@@ -1043,6 +1102,7 @@ run_project_benchmark() {
     fi
     if [ "$hyperfine_status" -ne 0 ]; then
         local status="hyperfine error"
+        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
         return
@@ -1059,6 +1119,11 @@ run_project_benchmark() {
             [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
             [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
             echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
+            if [[ "$status" == *"timeout"* ]]; then
+                record_project_compatibility "$name" "timeout" "timing" "compiler timed out" "$status" "$file_count"
+            else
+                record_project_compatibility "$name" "nonzero exit" "timing" "diagnostic mismatch or compiler error" "$status" "$file_count"
+            fi
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             rm -f "$json_file"
             return
@@ -1082,6 +1147,7 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
+            record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     fi
@@ -1122,10 +1188,25 @@ export_results_json() {
     TS_TOOLBELT_DIR_VALUE="$TS_TOOLBELT_DIR" \
     TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
     BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
+    COMPATIBILITY_JSONL_VALUE="$PROJECT_COMPATIBILITY_JSONL" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const outFile = process.argv[2];
+
+const PROJECT_OWNER_FAMILIES = {
+  "kysely-project": "contextual generics, guards, indexed/property access",
+  "zod-project": "recursive conditionals, object guards, class/generic identity",
+  "ts-toolbelt-project": "recursive type evaluation pressure",
+  "type-fest-project": "mapped/conditional/key-space utility surface",
+  "ts-essentials-project": "utility types plus recursive JSON shapes",
+  "large-ts-repo": "residency/runtime/project graph stress",
+  nextjs: "module graph plus generated app dependencies",
+  "nextjs-fresh-app": "generated app-router dependency graph",
+  "vite-vanilla-ts-app": "generated Vite dependency graph",
+  "rxjs-project": "reactive library generic project surface",
+  "utility-types-project": "utility type project surface",
+};
 
 function readProjectReadmes() {
   const candidates = {
@@ -1162,8 +1243,75 @@ function readProjectReadmes() {
   return readmes;
 }
 
+function readCompatibilityRows() {
+  const file = process.env.COMPATIBILITY_JSONL_VALUE || "";
+  if (!file) return new Map();
+  try {
+    const rows = fs.readFileSync(file, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    return new Map(rows.map((row) => [row.name, row]));
+  } catch {
+    return new Map();
+  }
+}
+
+function fallbackCompatibility(row) {
+  if (!PROJECT_OWNER_FAMILIES[row.name]) return null;
+  const status = String(row.status || "").toLowerCase();
+  if (!status) {
+    return {
+      exit_class: "exit success",
+      phase: "check",
+      diagnostic_status: "none",
+      diagnostic_deltas: [],
+      files_reached: row.lines ? null : null,
+      peak_memory_bytes: null,
+    };
+  }
+  if (status.includes("fixture")) {
+    return {
+      exit_class: "fixture invalid",
+      phase: "fixture setup",
+      diagnostic_status: "tsc fixture failed",
+      diagnostic_deltas: [],
+      files_reached: null,
+      peak_memory_bytes: null,
+    };
+  }
+  return {
+    exit_class: status.includes("timeout") ? "timeout" : "nonzero exit",
+    phase: "check",
+    diagnostic_status: status.includes("tsz") ? "diagnostic mismatch or compiler error" : "compiler error",
+    diagnostic_deltas: [],
+    files_reached: null,
+    peak_memory_bytes: null,
+  };
+}
+
+function compatibilityFor(row, compatibilityRows) {
+  const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
+  if (!recorded) return {};
+  return {
+    compatibility: {
+      exit_class: recorded.exit_class || "unknown",
+      phase: recorded.phase || "unknown",
+      diagnostic_status: recorded.diagnostic_status || "unknown",
+      diagnostic_deltas: Array.isArray(recorded.diagnostic_deltas)
+        ? recorded.diagnostic_deltas.slice(0, 20)
+        : [],
+      semantic_owner_family: PROJECT_OWNER_FAMILIES[row.name] || "not classified",
+      files_reached: recorded.files_reached ?? null,
+      peak_memory_bytes: recorded.peak_memory_bytes ?? null,
+    },
+  };
+}
+
 const csv = process.env.RESULTS_CSV_EXPANDED || "";
 const projectReadmes = readProjectReadmes();
+const compatibilityRows = readCompatibilityRows();
 const rows = csv
   .split(/\r?\n/)
   .map((line) => line.trim())
@@ -1181,6 +1329,7 @@ const rows = csv
       name,
       lines: toNumber(lines),
       kb: toNumber(kb),
+      ...(PROJECT_OWNER_FAMILIES[name] ? { project_files: compatibilityRows.get(name)?.files_reached ?? null } : {}),
       tsz_ms: toNumber(tszMs),
       tsgo_ms: toNumber(tsgoMs),
       tsz_lps: toNumber(tszLps),
@@ -1189,6 +1338,7 @@ const rows = csv
       factor: toNumber(factor),
       status: status || null,
       ...(projectReadmes.has(name) ? { readme: projectReadmes.get(name) } : {}),
+      ...compatibilityFor({ name, lines: toNumber(lines), status: status || null }, compatibilityRows),
     };
   });
 
@@ -3177,13 +3327,15 @@ main() {
 
     # Create temp directory for synthetic files
     TEMP_DIR=$(mktemp -d)
+    PROJECT_COMPATIBILITY_JSONL="$TEMP_DIR/project-compatibility.jsonl"
+    : > "$PROJECT_COMPATIBILITY_JSONL"
     # Always export the partial JSON on exit (including SIGTERM/SIGINT/OOM
     # kills) so a long bench that gets cut off — e.g. by the GitHub Actions
     # job timeout or the runner OOM killer on `large-ts-repo` — still
     # surfaces the rows that DID complete. Without this, an exit at any
     # point past the first benchmark would lose the entire dataset, leaving
     # the gh-pages deploy with no fresh artifact.
-    trap "rm -rf $TEMP_DIR; export_results_json" EXIT
+    trap "export_results_json; rm -rf $TEMP_DIR" EXIT
     trap "exit 130" INT
     trap "exit 143" TERM
 
