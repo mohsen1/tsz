@@ -1,14 +1,15 @@
 # 2026-05-14 - DelegateCrossArenaSymbol Intl Info Interface Follow-up
 
-Attribution-mode evidence captured on `origin/main` at `eb72db3709`
-(`perf(checker): admit actual-lib IteratorResult alias`). The PR branch was
-then kept rebased as main moved.
+Attribution-mode evidence captured on `origin/main` at `8f086b29c6`
+(`fix(solver): detect circular inference when T[K] is passed to unconstrained
+T`). The PR branch was then rebased onto `28ec6cb6a3` after main moved through
+emitter-only changes for this `--noEmit` fixture.
 
 ## Reproducer
 
 | Item | Value |
 | --- | --- |
-| baseline commit | `eb72db3709` |
+| baseline commit | `8f086b29c6` |
 | after branch | `codex/perf-actual-lib-intl-info-interfaces-20260514` |
 | `tsz` build | `cargo build -p tsz-cli --bin tsz --release --features perf-tools` |
 | fixture path | `scripts/bench/scale-cliff/fixtures/monorepo-006` |
@@ -18,8 +19,8 @@ then kept rebased as main moved.
 Raw JSON:
 
 - Baseline:
-  `docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-iterator-result-after-monorepo-006-diag.json`
-  `docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-iterator-result-after-monorepo-006-pc.json`
+  `docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-intl-info-interfaces-baseline-monorepo-006-diag.json`
+  `docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-intl-info-interfaces-baseline-monorepo-006-pc.json`
 - After:
   `docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-intl-info-interfaces-after-monorepo-006-diag.json`
   `docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-intl-info-interfaces-after-monorepo-006-pc.json`
@@ -46,9 +47,6 @@ an `Intl` namespace export whose symbol id matches the delegated symbol.
 | delta | -2 | -2 | 0 | 0 | 0 | -2 |
 
 Diagnostics count is unchanged (`10,198` on both runs).
-
-`compute_type_of_symbol_calls` also drops by two (`26,354 -> 26,352`) because
-the two residual namespace interfaces no longer construct child checkers.
 
 ## Miss Residues
 

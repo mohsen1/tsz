@@ -17,18 +17,18 @@
     "calls": 977,
     "cache_hits_lib": 0,
     "cache_hits_cross_file": 434,
-    "misses": 0,
+    "misses": 2,
     "max_recursion_depth": 4,
     "cross_file_type_params_cache_hits": 0,
     "cross_file_type_params_cache_misses": 0
   },
   "checker": {
     "state_constructed": 5251,
-    "with_parent_cache_constructed": 0,
+    "with_parent_cache_constructed": 2,
     "file_session_resets": 0,
-    "compute_type_of_symbol_calls": 26352,
+    "compute_type_of_symbol_calls": 26354,
     "compute_type_of_symbol_cache_hits": 252083,
-    "compute_type_of_symbol_interface_simple_object_fastpath_hits": 24760
+    "compute_type_of_symbol_interface_simple_object_fastpath_hits": 24762
   },
   "overlay": {
     "copy_calls": 0,
@@ -48,10 +48,10 @@
     "candidate_paths_total": 0
   },
   "interner": {
-    "intern_calls": 453915,
-    "intern_hits": 377180,
+    "intern_calls": 453917,
+    "intern_hits": 377182,
     "intern_misses": 76735,
-    "string_intern_calls": 4185560,
+    "string_intern_calls": 4185551,
     "type_list_intern_calls": 360,
     "object_shape_intern_calls": 101010,
     "function_shape_intern_calls": 174,
@@ -60,12 +60,12 @@
     "conditional_intern_calls": 2016,
     "mapped_intern_calls": 2715,
     "lock_wait_histogram_ns": [
-      178909,
-      367,
+      179158,
+      115,
       3,
+      2,
       0,
-      0,
-      0,
+      1,
       0,
       0
     ]
@@ -73,7 +73,7 @@
   "by_reason": [
     {
       "reason": "DelegateCrossArenaSymbol",
-      "with_parent_cache_constructed": 0,
+      "with_parent_cache_constructed": 2,
       "overlay_copy_calls": 0,
       "overlay_copy_entries": 0,
       "overlay_copy_max_entries": 0
@@ -195,7 +195,7 @@
     "by_source": [
       {
         "name": "symbol_arenas",
-        "count": 0
+        "count": 2
       },
       {
         "name": "declaration_arenas",
@@ -217,7 +217,7 @@
       },
       {
         "name": "interface",
-        "count": 0
+        "count": 2
       },
       {
         "name": "class",
@@ -284,10 +284,25 @@
         "count": 0
       }
     ],
-    "target_declaration_files": 0,
+    "target_declaration_files": 2,
     "target_source_files": 0
   },
-  "delegate_declaration_file_miss_residues": [],
+  "delegate_declaration_file_miss_residues": [
+    {
+      "name": "TextInfo",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.esnext.intl.d.ts",
+      "count": 1
+    },
+    {
+      "name": "WeekInfo",
+      "kind": "interface",
+      "source": "symbol_arenas",
+      "target_file": "lib.esnext.intl.d.ts",
+      "count": 1
+    }
+  ],
   "alias_shortcut_outcomes": [
     {
       "name": "success",
@@ -357,7 +372,7 @@
   "compute_type_of_symbol_source_outcomes": [
     {
       "name": "global_symbol",
-      "count": 25375
+      "count": 25377
     },
     {
       "name": "cross_file_symbol",
@@ -379,7 +394,7 @@
     },
     {
       "name": "interface",
-      "count": 24783
+      "count": 24785
     },
     {
       "name": "class",
@@ -471,7 +486,7 @@
   "compute_type_of_symbol_interface_callsite_outcomes": [
     {
       "name": "root",
-      "count": 24770
+      "count": 24772
     },
     {
       "name": "parent_interface",
@@ -497,7 +512,7 @@
   "compute_type_of_symbol_interface_simple_object_outcomes": [
     {
       "name": "success",
-      "count": 24760
+      "count": 24762
     },
     {
       "name": "reject_out_of_arena_decl",
@@ -637,7 +652,7 @@
     },
     {
       "name": "rejected_non_direct_arena",
-      "count": 0
+      "count": 2
     },
     {
       "name": "missing_symbol",

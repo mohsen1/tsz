@@ -15,7 +15,7 @@
     "local_override": false
   },
   "command_line": [
-    "/private/tmp/tsz-intl-info-after-target.5enQcG/release/tsz",
+    "/private/tmp/tsz-intl-info-baseline-target.UwQC4m/release/tsz",
     "--noEmit",
     "-p",
     "/private/tmp/tsz-bench-fixtures/monorepo-006/tsconfig.json",
@@ -23,20 +23,20 @@
     "--pretty",
     "false",
     "--diagnostics-json",
-    "docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-intl-info-interfaces-after-monorepo-006-diag.json",
+    "docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-intl-info-interfaces-baseline-monorepo-006-diag.json",
     "--perf-counters-json",
-    "docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-intl-info-interfaces-after-monorepo-006-pc.json"
+    "docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-intl-info-interfaces-baseline-monorepo-006-pc.json"
   ],
   "phases_ms": {
     "config_discovery": 0.0,
     "source_discovery": 0.0,
     "module_resolution": 0.0,
-    "io_read": 282.705375,
-    "load_libs": 24.481916,
-    "parse_bind": 2619.514208,
-    "check": 99715.32925,
-    "emit": 0.000166,
-    "total": 102698.0425
+    "io_read": 277.357416,
+    "load_libs": 4.914583,
+    "parse_bind": 1790.3777499999999,
+    "check": 115473.584042,
+    "emit": 0.000417,
+    "total": 117574.691208
   },
   "counts": {
     "files": 5337,
@@ -45,5 +45,5 @@
     "source_bytes": 0,
     "diagnostics": 10198
   },
-  "rss_peak_bytes": 3582689280
+  "rss_peak_bytes": 3586424832
 }
