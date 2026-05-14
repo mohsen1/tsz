@@ -840,7 +840,22 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-size: 0.78rem;
 }
 
+.compat-queue {
+  display: grid;
+  gap: 0.18rem;
+  margin-top: 0.25rem;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 0.76rem;
+}
+
 .compat-deltas code {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.compat-queue code {
   display: block;
   overflow-wrap: anywhere;
   white-space: normal;
