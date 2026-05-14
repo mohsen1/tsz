@@ -399,7 +399,9 @@ impl<'a> CheckerState<'a> {
             return Some(self.ctx.types.factory().object(Vec::new()));
         }
 
-        let parsed = serde_json::from_str::<JsonValue>(source_text).ok()?;
+        let parsed = serde_json::from_str::<JsonValue>(source_text)
+            .or_else(|_| json5::from_str::<JsonValue>(source_text))
+            .ok()?;
         Some(self.json_value_type(&parsed))
     }
 

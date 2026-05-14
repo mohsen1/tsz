@@ -18443,6 +18443,54 @@ export const name = pkg.default.name;
 }
 
 #[test]
+fn json_module_type_accepts_package_json_trailing_commas() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "esnext",
+            "module": "esnext",
+            "resolveJsonModule": true,
+            "noEmit": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import pkg from "./package.json";
+
+const wrong: number = pkg.name;
+void wrong;
+"#,
+    );
+    write_file(
+        &base.join("package.json"),
+        r#"{
+  "name": "pkg",
+  "bin": {
+    "cli": "./bin/cli.js",
+  },
+}"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected JSON module type to survive trailing commas and report TS2322, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn resolve_json_module_does_not_make_included_json_files_roots() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

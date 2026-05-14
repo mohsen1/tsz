@@ -1543,6 +1543,7 @@ version = "0.1.9"
 dependencies = [
  "dashmap",
  "globset",
+ "json5",
  "rustc-hash",
  "serde_json",
  "smallvec",
