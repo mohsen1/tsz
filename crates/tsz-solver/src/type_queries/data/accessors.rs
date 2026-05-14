@@ -686,6 +686,29 @@ pub fn receiver_property_visibility(
     }
 }
 
+fn union_member_has_branch_only_keys(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(union_members) = get_union_members(db, type_id) else {
+        return false;
+    };
+    if union_members.len() < 2 {
+        return false;
+    }
+
+    let mut first_keys: Option<FxHashSet<_>> = None;
+    for branch in &union_members {
+        let Some(shape) = get_object_shape(db, *branch) else {
+            return false;
+        };
+        let keys = shape.properties.iter().map(|prop| prop.name).collect();
+        match &first_keys {
+            Some(first) if first != &keys => return true,
+            None => first_keys = Some(keys),
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Detect intersections that should preserve a discriminated object-union shape
 /// instead of being eagerly collapsed by downstream evaluators.
 ///
@@ -713,10 +736,13 @@ pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: Type
     }
 
     if candidate_names.is_empty() {
-        return false;
+        return members
+            .iter()
+            .copied()
+            .any(|member| union_member_has_branch_only_keys(db, member));
     }
 
-    members.iter().copied().any(|member| {
+    let has_discriminated_union_member = members.iter().copied().any(|member| {
         let Some(union_members) = get_union_members(db, member) else {
             return false;
         };
@@ -740,7 +766,20 @@ pub fn is_discriminated_object_intersection(db: &dyn TypeDatabase, type_id: Type
             }
             seen.len() > 1
         })
-    })
+    });
+    if has_discriminated_union_member {
+        return true;
+    }
+
+    // Also preserve object intersections where a union member has branch-only
+    // properties but no shared discriminant with the other intersection members,
+    // e.g. `(A | B) & { path?: ... }`. Eagerly merging this form to a single
+    // object keeps only common union properties and makes branch-specific keys
+    // appear excess during fresh object literal checks.
+    members
+        .iter()
+        .copied()
+        .any(|member| union_member_has_branch_only_keys(db, member))
 }
 
 /// Get the applicable contextual type for an array literal from a (possibly union) type.

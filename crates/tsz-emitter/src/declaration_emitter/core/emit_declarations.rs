@@ -65,6 +65,16 @@ impl<'a> DeclarationEmitter<'a> {
                     self.import_name_map.len(),
                     self.import_name_map
                 );
+                let source_is_js_file = self
+                    .arena
+                    .get(root_idx)
+                    .and_then(|node| self.arena.get_source_file(node))
+                    .is_some_and(|source_file| self.source_file_is_js(source_file));
+                let source_is_declaration_file = self
+                    .arena
+                    .get(root_idx)
+                    .and_then(|node| self.arena.get_source_file(node))
+                    .is_some_and(|source_file| source_file.is_declaration_file);
                 let mut analyzer = crate::declaration_emitter::usage_analyzer::UsageAnalyzer::new(
                     self.arena,
                     binder,
@@ -73,10 +83,10 @@ impl<'a> DeclarationEmitter<'a> {
                     std::sync::Arc::clone(current_arena),
                     self.current_file_path.clone(),
                     &self.import_name_map,
-                    self.arena
-                        .get(root_idx)
-                        .and_then(|node| self.arena.get_source_file(node))
-                        .is_some_and(|source_file| self.source_file_is_js(source_file)),
+                    crate::declaration_emitter::usage_analyzer::UsageAnalyzerSourceFlags {
+                        source_is_js_file,
+                        source_is_declaration_file,
+                    },
                 );
                 let used = analyzer.analyze(root_idx).clone();
                 let foreign = analyzer.get_foreign_symbols();
@@ -338,13 +348,22 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                    self.arena.get_function(stmt_node).is_some_and(|func| {
-                        self.arena
-                            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                            || self.get_identifier_text(func.name).is_some_and(|name| {
-                                js_hoistable_function_export_names.contains(&name)
-                            })
-                    })
+                    let is_exported_or_named_export =
+                        self.arena.get_function(stmt_node).is_some_and(|func| {
+                            self.arena
+                                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                                || self.get_identifier_text(func.name).is_some_and(|name| {
+                                    js_hoistable_function_export_names.contains(&name)
+                                })
+                        });
+                    if is_exported_or_named_export {
+                        true
+                    } else {
+                        let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
+                        jsdoc_chain
+                            .iter()
+                            .any(|jsdoc| !Self::parse_jsdoc_template_params(jsdoc).is_empty())
+                    }
                 } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                     self.arena
                         .get_export_decl(stmt_node)
@@ -558,7 +577,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !allow_deferred_js_named_export
             && self.js_deferred_named_export_statements.contains(&stmt_idx)
         {
-            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            }
             return;
         }
         if self
@@ -913,6 +934,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
+        let function_jsdoc = if self.source_is_js_file {
+            self.function_like_jsdoc_for_node(func_idx)
+        } else {
+            None
+        };
 
         // Get function name as string for overload tracking
         let function_name = self.get_function_name(func_idx);
@@ -1019,6 +1045,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(&return_type_text);
         } else if let (Some(return_type_text), true) =
             self.function_body_return_hint(func, func_body)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) =
+            self.js_define_property_jsdoc_body_return_text(func, function_jsdoc.as_deref())
         {
             self.write(": ");
             self.write(&return_type_text);
