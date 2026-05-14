@@ -387,10 +387,10 @@ pub fn callable_first_sig_is_method(db: &dyn TypeDatabase, type_id: TypeId) -> b
     if let Some(shape) = get_function_shape(db, type_id) {
         return shape.is_method;
     }
-    if let Some(shape) = get_callable_shape(db, type_id) {
-        if let Some(sig) = shape.call_signatures.first() {
-            return sig.is_method;
-        }
+    if let Some(shape) = get_callable_shape(db, type_id)
+        && let Some(sig) = shape.call_signatures.first()
+    {
+        return sig.is_method;
     }
     false
 }
