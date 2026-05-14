@@ -1085,5 +1085,9 @@ path = "tests/template_literal_record_key_tests.rs"
 name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
 
+[[test]]
+name = "ts2344_infer_positional_constraint_tests"
+path = "tests/ts2344_infer_positional_constraint_tests.rs"
+
 [lints]
 workspace = true
