@@ -30,6 +30,7 @@ mod narrowing_helpers;
 mod optional_chain;
 pub(crate) mod references;
 pub(crate) mod type_guards;
+mod typeof_exclusions;
 pub(crate) mod var_utils;
 mod zod_literal_helpers;
 
