@@ -27,7 +27,7 @@
     "with_parent_cache_constructed": 2,
     "file_session_resets": 5249,
     "compute_type_of_symbol_calls": 26258,
-    "compute_type_of_symbol_cache_hits": 251999,
+    "compute_type_of_symbol_cache_hits": 251987,
     "compute_type_of_symbol_interface_simple_object_fastpath_hits": 24762
   },
   "overlay": {
@@ -48,21 +48,21 @@
     "candidate_paths_total": 0
   },
   "interner": {
-    "intern_calls": 428521,
-    "intern_hits": 351781,
-    "intern_misses": 76740,
-    "string_intern_calls": 4185772,
-    "type_list_intern_calls": 372,
-    "object_shape_intern_calls": 76008,
-    "function_shape_intern_calls": 195,
-    "callable_shape_intern_calls": 528,
-    "application_intern_calls": 601,
+    "intern_calls": 428483,
+    "intern_hits": 351748,
+    "intern_misses": 76735,
+    "string_intern_calls": 4185340,
+    "type_list_intern_calls": 360,
+    "object_shape_intern_calls": 76013,
+    "function_shape_intern_calls": 174,
+    "callable_shape_intern_calls": 511,
+    "application_intern_calls": 607,
     "conditional_intern_calls": 1968,
     "mapped_intern_calls": 2715,
     "lock_wait_histogram_ns": [
-      179089,
-      204,
-      1,
+      179221,
+      58,
+      0,
       0,
       0,
       0,
@@ -480,7 +480,7 @@
     },
     {
       "name": "skip_all_three",
-      "count": 4
+      "count": 7
     }
   ],
   "compute_type_of_symbol_interface_callsite_outcomes": [
