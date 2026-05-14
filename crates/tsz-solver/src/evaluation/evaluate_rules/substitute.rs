@@ -9,7 +9,7 @@
 //! self-mapping placeholder to handle true cycles.
 
 use crate::relations::subtype::TypeResolver;
-use crate::types::{ConditionalType, FunctionShape, TypeData, TypeId};
+use crate::types::{ConditionalType, FunctionShape, TemplateSpan, TupleElement, TypeData, TypeId};
 use rustc_hash::FxHashMap;
 
 use super::super::evaluate::TypeEvaluator;
@@ -65,6 +65,68 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     type_id
                 }
             }
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner().type_list(list_id);
+                let mut changed = false;
+                let members: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        let substituted = self.substitute_exact_type(member, from, to, memo);
+                        changed |= substituted != member;
+                        substituted
+                    })
+                    .collect();
+                if changed {
+                    self.interner().union(members)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner().type_list(list_id);
+                let mut changed = false;
+                let members: Vec<_> = members
+                    .iter()
+                    .map(|&member| {
+                        let substituted = self.substitute_exact_type(member, from, to, memo);
+                        changed |= substituted != member;
+                        substituted
+                    })
+                    .collect();
+                if changed {
+                    self.interner().intersection(members)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Array(element)) => {
+                let substituted = self.substitute_exact_type(element, from, to, memo);
+                if substituted != element {
+                    self.interner().array(substituted)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Tuple(elements_id)) => {
+                let elements = self.interner().tuple_list(elements_id);
+                let mut changed = false;
+                let elements: Vec<_> = elements
+                    .iter()
+                    .map(|element| {
+                        let type_id = self.substitute_exact_type(element.type_id, from, to, memo);
+                        changed |= type_id != element.type_id;
+                        TupleElement {
+                            type_id,
+                            ..*element
+                        }
+                    })
+                    .collect();
+                if changed {
+                    self.interner().tuple(elements)
+                } else {
+                    type_id
+                }
+            }
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner().function_shape(shape_id);
                 let mut changed = false;
@@ -107,6 +169,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     type_id
                 }
             }
+            Some(TypeData::IndexAccess(object_type, index_type)) => {
+                let substituted_object = self.substitute_exact_type(object_type, from, to, memo);
+                let substituted_index = self.substitute_exact_type(index_type, from, to, memo);
+                if substituted_object != object_type || substituted_index != index_type {
+                    self.interner()
+                        .index_access(substituted_object, substituted_index)
+                } else {
+                    type_id
+                }
+            }
             Some(TypeData::Conditional(cond_id)) => {
                 let cond = self.interner().get_conditional(cond_id);
                 let check_type = self.substitute_exact_type(cond.check_type, from, to, memo);
@@ -125,6 +197,59 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         false_type,
                         is_distributive: cond.is_distributive,
                     })
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::TemplateLiteral(template_id)) => {
+                let spans = self.interner().template_list(template_id);
+                let mut changed = false;
+                let spans: Vec<_> = spans
+                    .iter()
+                    .map(|span| match span {
+                        TemplateSpan::Text(text) => TemplateSpan::Text(*text),
+                        TemplateSpan::Type(span_type) => {
+                            let substituted =
+                                self.substitute_exact_type(*span_type, from, to, memo);
+                            changed |= substituted != *span_type;
+                            TemplateSpan::Type(substituted)
+                        }
+                    })
+                    .collect();
+                if changed {
+                    self.interner().template_literal(spans)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::KeyOf(inner)) => {
+                let substituted = self.substitute_exact_type(inner, from, to, memo);
+                if substituted != inner {
+                    self.interner().keyof(substituted)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::ReadonlyType(inner)) => {
+                let substituted = self.substitute_exact_type(inner, from, to, memo);
+                if substituted != inner {
+                    self.interner().readonly_type(substituted)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::NoInfer(inner)) => {
+                let substituted = self.substitute_exact_type(inner, from, to, memo);
+                if substituted != inner {
+                    self.interner().no_infer(substituted)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::StringIntrinsic { kind, type_arg }) => {
+                let substituted = self.substitute_exact_type(type_arg, from, to, memo);
+                if substituted != type_arg {
+                    self.interner().string_intrinsic(kind, substituted)
                 } else {
                     type_id
                 }
@@ -236,6 +361,45 @@ mod tests {
         assert_ne!(
             result, corrupted,
             "memo lookup was corrupted back to the original unsubstituted node"
+        );
+    }
+
+    #[test]
+    fn test_substitute_exact_type_reaches_index_access_and_template_spans() {
+        let interner = TypeInterner::new();
+
+        let k_param = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("K"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let obj = interner.lazy(DefId(301));
+        let indexed = interner.index_access(obj, k_param);
+        let dot = interner.intern_string(".");
+        let template = interner.template_literal(vec![
+            TemplateSpan::Type(k_param),
+            TemplateSpan::Text(dot),
+            TemplateSpan::Type(indexed),
+        ]);
+        let branch = interner.union(vec![indexed, template]);
+        let meta = interner.literal_string("meta");
+
+        let mut evaluator =
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+        let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+        let result = evaluator.substitute_exact_type(branch, k_param, meta, &mut memo);
+
+        let expected_indexed = interner.index_access(obj, meta);
+        let expected_template = interner.template_literal(vec![
+            TemplateSpan::Type(meta),
+            TemplateSpan::Text(dot),
+            TemplateSpan::Type(expected_indexed),
+        ]);
+        let expected = interner.union(vec![expected_indexed, expected_template]);
+        assert_eq!(
+            result, expected,
+            "distributive branch substitution must update T[K] and template-literal K spans"
         );
     }
 }
