@@ -231,6 +231,18 @@ impl<'a> CheckerState<'a> {
         self.has_modifier_kind(modifiers, SyntaxKind::AccessorKeyword)
     }
 
+    /// Like [`Self::has_accessor_modifier`] but accepts a borrowed
+    /// `Option<&NodeList>` — used at call sites that already hold the
+    /// modifier list as a reference.
+    pub(crate) fn has_accessor_modifier_ref(
+        &self,
+        modifiers: Option<&tsz_parser::parser::NodeList>,
+    ) -> bool {
+        self.ctx
+            .arena
+            .has_modifier_ref(modifiers, SyntaxKind::AccessorKeyword)
+    }
+
     /// Check if modifiers include the 'override' keyword.
     pub(crate) fn has_override_modifier(
         &self,

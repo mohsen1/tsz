@@ -7,7 +7,7 @@
 //! - Contextual sensitivity analysis (`is_contextually_sensitive`)
 
 use super::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::operations::iterators::get_iterator_info;
+use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
 use crate::types::{
     IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
 };
@@ -668,7 +668,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && self
                         .extract_iterable_yield_type(effective_param_type)
                         .is_some_and(|yield_type| {
-                            self.checker.is_assignable_to(TypeId::STRING, yield_type)
+                            !target_has_non_iterable_property_shape(
+                                self.interner,
+                                effective_param_type,
+                                |t| self.checker.evaluate_type(t),
+                            ) && self.checker.is_assignable_to(TypeId::STRING, yield_type)
                         }));
             if !assignable {
                 return Some(CallResult::ArgumentTypeMismatch {

@@ -811,8 +811,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let arg_types = if is_generic_new {
-            if let Some(shape) = constructor_shape {
+        let mut inferred_new_type_args: Option<Vec<TypeId>> = None;
+        let mut arg_types = if is_generic_new {
+            if let Some(ref shape) = constructor_shape {
                 // Pre-compute which parameter positions should skip excess property
                 // checking because the original parameter type contains a type parameter.
                 let excess_skip: Vec<bool> = {
@@ -882,18 +883,44 @@ impl<'a> CheckerState<'a> {
                         CallableContext::none(),
                     );
 
-                    // For sensitive object literal arguments, extract a partial type
-                    // from non-sensitive properties to improve inference.
+                    let type_param_names: Vec<tsz_common::Atom> =
+                        shape.type_params.iter().map(|tp| tp.name).collect();
+                    let mut round1_partials: Vec<Option<(TypeId, TypeId)>> = vec![None; args.len()];
+
+                    // For sensitive object/array literal arguments, extract a partial
+                    // type from properties/elements that can safely contribute to
+                    // inference. This mirrors generic call inference so constructor
+                    // options like `{ create: async () => value, destroy: value => {} }`
+                    // can infer `T` from `create` while leaving `destroy` for Round 2.
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if sensitive_args[i]
-                            && let Some(partial) = self.extract_non_sensitive_object_type(arg_idx)
+                            && let Some(param_type) =
+                                shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                                    let last = shape.params.last()?;
+                                    last.rest.then_some(last.type_id)
+                                })
+                            && let Some(partial) = self
+                                .extract_inference_contributing_object_type(
+                                    arg_idx,
+                                    param_type,
+                                    &type_param_names,
+                                )
+                                .or_else(|| {
+                                    self.extract_inference_contributing_array_type(
+                                        arg_idx,
+                                        param_type,
+                                        &type_param_names,
+                                    )
+                                })
+                                .or_else(|| self.extract_non_sensitive_object_type(arg_idx))
                         {
                             trace!(
                                 arg_index = i,
                                 partial_type = partial.0,
-                                "Round 1: extracted non-sensitive partial type for object literal"
+                                "Round 1: extracted inference-contributing partial type for new argument"
                             );
                             round1_arg_types[i] = partial;
+                            round1_partials[i] = Some((param_type, partial));
                         }
                     }
 
@@ -960,6 +987,25 @@ impl<'a> CheckerState<'a> {
                             round2_contextual_type,
                         )
                     };
+                    for (param_type, partial) in round1_partials.iter().flatten() {
+                        self.seed_substitution_from_partial_function_returns(
+                            &mut substitution,
+                            *partial,
+                            *param_type,
+                            &shape.type_params,
+                        );
+                    }
+                    let type_args: Vec<TypeId> = shape
+                        .type_params
+                        .iter()
+                        .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
+                        .collect();
+                    if type_args
+                        .iter()
+                        .any(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ANY)
+                    {
+                        inferred_new_type_args = Some(type_args);
+                    }
                     if let Some(contextual) = contextual_type {
                         use tsz_binder::SymbolId;
 
@@ -1237,6 +1283,31 @@ impl<'a> CheckerState<'a> {
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.in_const_assertion = prev_in_const_assertion;
+
+        // For generic constructors (without const type params), widen scalar literal
+        // arg types for error display. During arg collection, preserve_literal_types
+        // was true so that generic inference gets precise literal types (e.g., `true`
+        // for `T = true`). But for TS2345 error messages, tsc displays the widened
+        // type (`boolean`, not `true`). The function call path achieves this via its
+        // multi-pass inference; here we widen explicitly post-collection.
+        if is_generic_new && !has_const_type_params {
+            let preserve_literals = constructor_shape
+                .as_ref()
+                .map(|shape| self.generic_new_literal_preservation_mask(shape, arg_types.len()))
+                .unwrap_or_default();
+            for (i, arg_type) in arg_types.iter_mut().enumerate() {
+                if !preserve_literals.get(i).copied().unwrap_or(false) {
+                    *arg_type = tsz_solver::operations::widening::widen_literal_type(
+                        self.ctx.types,
+                        *arg_type,
+                    );
+                }
+            }
+        }
+        if let Some(type_args) = &inferred_new_type_args {
+            constructor_type =
+                self.apply_type_argument_ids_to_constructor_type(constructor_type, type_args);
+        }
 
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);

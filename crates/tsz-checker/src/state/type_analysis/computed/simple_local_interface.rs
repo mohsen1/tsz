@@ -126,12 +126,24 @@ impl<'a> CheckerState<'a> {
                     tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind(
                         annotation_kind,
                     );
-                    if annotation_kind == AnnotationKind::TypeReference {
-                        tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome(
-                            self.classify_simple_local_interface_type_reference_reject_outcome(
+                    if annotation_kind == AnnotationKind::TypeReference
+                        && tsz_common::perf_counters::enabled_fast()
+                    {
+                        let reject_outcome = self
+                            .classify_simple_local_interface_type_reference_reject_outcome(
                                 sig.type_annotation,
-                            ),
+                            );
+                        tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome(
+                            reject_outcome,
                         );
+                        if let Some(name) =
+                            self.simple_local_interface_type_reference_name(sig.type_annotation)
+                        {
+                            tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_type_reference_reject_residue(
+                                reject_outcome,
+                                &name,
+                            );
+                        }
                     }
                     return None;
                 }
@@ -169,22 +181,102 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_simple_local_interface_fastpath_type(&self, type_idx: NodeIndex) -> bool {
-        self.ctx.arena.get(type_idx).is_some_and(|node| {
-            matches!(
-                node.kind,
-                kind if kind == SyntaxKind::AnyKeyword as u16
-                    || kind == SyntaxKind::BigIntKeyword as u16
-                    || kind == SyntaxKind::BooleanKeyword as u16
-                    || kind == SyntaxKind::NeverKeyword as u16
-                    || kind == SyntaxKind::NumberKeyword as u16
-                    || kind == SyntaxKind::ObjectKeyword as u16
-                    || kind == SyntaxKind::StringKeyword as u16
-                    || kind == SyntaxKind::SymbolKeyword as u16
-                    || kind == SyntaxKind::UndefinedKeyword as u16
-                    || kind == SyntaxKind::UnknownKeyword as u16
-                    || kind == SyntaxKind::VoidKeyword as u16
-            )
-        })
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return false;
+        };
+        if matches!(
+            node.kind,
+            kind if kind == SyntaxKind::AnyKeyword as u16
+                || kind == SyntaxKind::BigIntKeyword as u16
+                || kind == SyntaxKind::BooleanKeyword as u16
+                || kind == SyntaxKind::NeverKeyword as u16
+                || kind == SyntaxKind::NumberKeyword as u16
+                || kind == SyntaxKind::ObjectKeyword as u16
+                || kind == SyntaxKind::StringKeyword as u16
+                || kind == SyntaxKind::SymbolKeyword as u16
+                || kind == SyntaxKind::UndefinedKeyword as u16
+                || kind == SyntaxKind::UnknownKeyword as u16
+                || kind == SyntaxKind::VoidKeyword as u16
+                || kind == syntax_kind_ext::LITERAL_TYPE
+                || kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE
+        ) {
+            return true;
+        }
+
+        if node.kind == syntax_kind_ext::UNION_TYPE
+            || node.kind == syntax_kind_ext::INTERSECTION_TYPE
+        {
+            return self
+                .ctx
+                .arena
+                .get_composite_type(node)
+                .is_some_and(|composite| {
+                    composite
+                        .types
+                        .nodes
+                        .iter()
+                        .copied()
+                        .all(|member| self.is_simple_local_interface_fastpath_type(member))
+                });
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_TYPE {
+            return self.ctx.arena.get_array_type(node).is_some_and(|array| {
+                self.is_simple_local_interface_fastpath_type(array.element_type)
+            });
+        }
+
+        if node.kind == syntax_kind_ext::TUPLE_TYPE {
+            return self.ctx.arena.get_tuple_type(node).is_some_and(|tuple| {
+                tuple
+                    .elements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .all(|element| self.is_simple_local_interface_fastpath_type(element))
+            });
+        }
+
+        self.is_simple_local_interface_primitive_type_reference(node)
+    }
+
+    fn is_simple_local_interface_primitive_type_reference(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(type_name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(type_name_node) else {
+            return false;
+        };
+        matches!(
+            ident.escaped_text.as_str(),
+            "any"
+                | "bigint"
+                | "boolean"
+                | "never"
+                | "number"
+                | "object"
+                | "string"
+                | "symbol"
+                | "undefined"
+                | "unknown"
+                | "void"
+        )
     }
 
     fn classify_simple_local_interface_non_primitive_annotation_kind(
@@ -284,5 +376,41 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeReferenceOutcome::OtherTypeNameSyntax
+    }
+
+    fn simple_local_interface_type_reference_name(&self, type_idx: NodeIndex) -> Option<String> {
+        let type_node = self.ctx.arena.get(type_idx)?;
+        let type_ref = self.ctx.arena.get_type_ref(type_node)?;
+        self.simple_local_interface_entity_name_text(type_ref.type_name)
+    }
+
+    fn simple_local_interface_entity_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.as_str().to_owned());
+        }
+
+        if name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = self.ctx.arena.get_qualified_name(name_node)?;
+            let left = self.simple_local_interface_entity_name_text(qualified.left)?;
+            let right_node = self.ctx.arena.get(qualified.right)?;
+            let right = self
+                .ctx
+                .arena
+                .get_identifier(right_node)?
+                .escaped_text
+                .as_str();
+            let mut out = String::with_capacity(left.len() + 1 + right.len());
+            out.push_str(&left);
+            out.push('.');
+            out.push_str(right);
+            return Some(out);
+        }
+
+        None
     }
 }

@@ -199,12 +199,13 @@ impl<'a> LoweringPass<'a> {
                                 .is_some_and(|n| n.kind == SyntaxKind::AsyncKeyword as u16)
                         })
                     });
-                    if is_async_method && self.ctx.needs_async_lowering && method.body.is_some() {
+                    if is_async_method
+                        && method.body.is_some()
+                        && ((method.asterisk_token && self.ctx.needs_es2018_lowering)
+                            || (!method.asterisk_token && self.ctx.needs_async_lowering))
+                    {
                         if method.asterisk_token {
                             // Async generator method: needs __asyncGenerator + __await
-                            if self.ctx.target_es5 {
-                                self.mark_async_helpers();
-                            }
                             self.mark_async_generator_helpers();
                         } else {
                             // Non-generator async method: needs __awaiter

@@ -38,6 +38,14 @@ impl<'a> CheckerState<'a> {
         self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, true)
     }
 
+    pub(crate) fn apply_type_argument_ids_to_constructor_type(
+        &mut self,
+        ctor_type: TypeId,
+        type_args: &[TypeId],
+    ) -> TypeId {
+        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, false)
+    }
+
     fn apply_type_arguments_to_constructor_type_inner(
         &mut self,
         ctor_type: TypeId,

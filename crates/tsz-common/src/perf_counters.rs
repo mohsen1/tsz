@@ -816,6 +816,26 @@ fn delegate_declaration_file_miss_residues()
     DELEGATE_DECLARATION_FILE_MISS_RESIDUES.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT:
+    usize = 128;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue {
+    pub name: String,
+    pub outcome: &'static str,
+    pub count: u64,
+}
+
+static COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUES: OnceLock<
+    Mutex<Vec<ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue>>,
+> = OnceLock::new();
+
+fn compute_type_of_symbol_interface_simple_object_type_reference_reject_residues()
+-> &'static Mutex<Vec<ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue>> {
+    COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUES
+        .get_or_init(|| Mutex::new(Vec::new()))
+}
+
 /// One process-wide instance. Incremented from any thread, read once at
 /// dump time.
 pub struct PerfCounters {
@@ -1616,6 +1636,54 @@ pub fn record_compute_type_of_symbol_interface_simple_object_type_reference_reje
     .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record bounded name-level residue for type-reference annotations rejected by
+/// the simple local-interface object shortcut.
+#[inline]
+pub fn record_compute_type_of_symbol_interface_simple_object_type_reference_reject_residue(
+    outcome: ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome,
+    name: &str,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let outcome_name =
+        COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_NAMES
+            [outcome.as_index()];
+    let mut rows = compute_type_of_symbol_interface_simple_object_type_reference_reject_residues()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows
+        .iter_mut()
+        .find(|row| row.name == name && row.outcome == outcome_name)
+    {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len()
+        < COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT
+    {
+        rows.push(
+            ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue {
+                name: name.to_owned(),
+                outcome: outcome_name,
+                count: 1,
+            },
+        );
+    } else if let Some(row) = rows.iter_mut().find(|row| row.name == "__truncated__") {
+        row.count += 1;
+    } else {
+        rows.push(
+            ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue {
+                name: "__truncated__".to_string(),
+                outcome: "overflow",
+                count: 1,
+            },
+        );
+    }
+}
+
 /// Record a `TypeInterner::intern_string` call. Mirrors the existing
 /// `record_compute_type_of_symbol_*` shape: gate once, one `counters()`
 /// lookup, increment exactly the named field.
@@ -1954,6 +2022,9 @@ impl PerfCounters {
             snap.resolver.package_json_reads,
             snap.resolver.candidate_paths_total,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
+            + &Self::dump_compute_type_of_symbol_interface_simple_object_type_reference_reject_residues(
+                &snap.compute_type_of_symbol_interface_simple_object_type_reference_reject_residues,
+            )
             + &Self::dump_cross_arena_symbol_miss_classification()
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
@@ -2103,6 +2174,25 @@ impl PerfCounters {
                     out.push_str(&format!("  {name:<28} {count:>12}\n"));
                 }
             }
+        }
+        out
+    }
+
+    fn dump_compute_type_of_symbol_interface_simple_object_type_reference_reject_residues(
+        rows: &[ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue],
+    ) -> String {
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from(
+            "\ncompute_type_of_symbol interface simple-object type-reference reject residues:\n",
+        );
+        for row in rows {
+            out.push_str(&format!(
+                "  {:<32} {:<36} {:>8}\n",
+                row.name, row.outcome, row.count,
+            ));
         }
         out
     }
@@ -2422,6 +2512,16 @@ pub struct PerfCounterSnapshot {
     /// order.
     pub compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes:
         Vec<NamedCount>,
+    /// Bounded name-level attribution for `type_reference` rows within
+    /// `compute_type_of_symbol_interface_simple_object_outcomes.reject_non_primitive_annotation`.
+    ///
+    /// Captures at most
+    /// `COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT`
+    /// distinct `(name, outcome)` rows in perf-counter mode. This makes the
+    /// guarded shortcut's `identifier_not_found_symbol` residue actionable
+    /// before relaxing symbol-resolution guards.
+    pub compute_type_of_symbol_interface_simple_object_type_reference_reject_residues:
+        Vec<ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue>,
     /// Outcome buckets for direct cross-file interface lowering attempts.
     ///
     /// JSON counterpart of
@@ -2802,6 +2902,8 @@ impl PerfCounters {
                     ),
                 })
                 .collect(),
+            compute_type_of_symbol_interface_simple_object_type_reference_reject_residues:
+                Self::snapshot_compute_type_of_symbol_interface_simple_object_type_reference_reject_residues(),
             direct_interface_lowering_outcomes: (0
                 ..DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -2845,6 +2947,22 @@ impl PerfCounters {
                     .then_with(|| a.source.cmp(b.source))
                     .then_with(|| a.target_file.cmp(&b.target_file))
             })
+        });
+        rows
+    }
+
+    fn snapshot_compute_type_of_symbol_interface_simple_object_type_reference_reject_residues()
+    -> Vec<ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue> {
+        let mut rows =
+            compute_type_of_symbol_interface_simple_object_type_reference_reject_residues()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+        rows.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.outcome.cmp(b.outcome))
         });
         rows
     }
@@ -2897,6 +3015,7 @@ mod json_tests {
             "compute_type_of_symbol_interface_fastpath_outcomes",
             "compute_type_of_symbol_interface_callsite_outcomes",
             "compute_type_of_symbol_interface_simple_object_outcomes",
+            "compute_type_of_symbol_interface_simple_object_type_reference_reject_residues",
             "direct_interface_lowering_outcomes",
             "direct_actual_lib_alias_body_outcomes",
             "cross_file_cache_miss_causes",
@@ -3479,6 +3598,51 @@ mod json_tests {
                 "compute_type_of_symbol_interface_simple_object_type_reference_reject_outcomes[{i}].count should be a number",
             );
         }
+    }
+
+    #[test]
+    fn compute_type_of_symbol_interface_simple_object_type_reference_reject_residues_lock_field_shape()
+     {
+        let unique_name = format!(
+            "__test_simple_object_type_ref_residue_{}__",
+            std::process::id()
+        );
+        {
+            let mut rows =
+                compute_type_of_symbol_interface_simple_object_type_reference_reject_residues()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(
+                ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue {
+                    name: unique_name.clone(),
+                    outcome: "identifier_not_found_symbol",
+                    count: 11,
+                },
+            );
+        }
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json
+            ["compute_type_of_symbol_interface_simple_object_type_reference_reject_residues"]
+            .as_array()
+            .expect(
+                "compute_type_of_symbol_interface_simple_object_type_reference_reject_residues is array",
+            );
+        let row = rows
+            .iter()
+            .find(|row| row["name"] == unique_name)
+            .expect("test residue row is present");
+        let obj = row.as_object().expect("row is object");
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> =
+            ["name", "outcome", "count"].into_iter().collect();
+        assert_eq!(
+            actual, expected,
+            "compute_type_of_symbol_interface_simple_object_type_reference_reject_residues row field shape drifted",
+        );
+        assert_eq!(row["outcome"], "identifier_not_found_symbol");
+        assert_eq!(row["count"], 11);
     }
 
     #[test]

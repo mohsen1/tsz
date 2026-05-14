@@ -29,24 +29,33 @@ pub(crate) struct MappedKeys {
     /// When non-empty and `has_string` is false, the object gets a template-literal index
     /// signature instead of a plain string index signature.
     pub template_literals: Vec<TypeId>,
-}
-
-impl MappedKeys {
-    /// Appends object properties into `string_literals` and, for
-    /// unquoted numeric names, into `numeric_atoms` with their pre-parsed value.
-    fn push_properties(&mut self, properties: Vec<PropertyInfo>, db: &dyn crate::TypeDatabase) {
-        for prop in properties {
-            if !prop.is_string_named
-                && let Some(n) = crate::utils::atom_as_numeric_key(db, prop.name)
-            {
-                self.numeric_atoms.insert(prop.name, n);
-            }
-            self.string_literals.push(prop.name);
-        }
-    }
+    /// Unique-symbol keys (e.g. `typeof sym1`) that appear in `keyof T` when T has
+    /// symbol-keyed properties.  Each element is a `TypeData::UniqueSymbol` `TypeId`.
+    pub symbol_keys: Vec<TypeId>,
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Partition `properties` from `collect_properties` into string, numeric, and symbol key buckets.
+    /// Reuses the existing `unique_symbol_ref_from_symbol_named_atom` helper to avoid
+    /// duplicating `__unique_N` / well-known-symbol atom conversion logic.
+    fn collect_props_into_keys(&self, keys: &mut MappedKeys, properties: Vec<PropertyInfo>) {
+        for prop in properties {
+            if prop.is_symbol_named {
+                if let Some(sym_ref) = self.unique_symbol_ref_from_symbol_named_atom(prop.name) {
+                    keys.symbol_keys
+                        .push(self.interner().unique_symbol(sym_ref));
+                }
+            } else {
+                if !prop.is_string_named
+                    && let Some(n) = crate::utils::atom_as_numeric_key(self.interner(), prop.name)
+                {
+                    keys.numeric_atoms.insert(prop.name, n);
+                }
+                keys.string_literals.push(prop.name);
+            }
+        }
+    }
+
     /// Helper for key remapping in mapped types.
     /// Returns Ok(Some(remapped)) if remapping succeeded,
     /// Ok(None) if the key should be filtered (remapped to never),
@@ -230,7 +239,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // WASM environments have limited memory, but 100 is too restrictive for
         // real-world code (large SDKs, generated API types often have 150-250 keys).
         // 250 covers ~99% of real-world use cases while remaining safe for WASM.
-        if key_set.string_literals.len() > self.max_mapped_keys() {
+        if key_set.string_literals.len() + key_set.symbol_keys.len() > self.max_mapped_keys() {
             self.mark_depth_exceeded();
             return TypeId::ERROR;
         }
@@ -406,6 +415,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // PERF: Reuse a single TypeSubstitution across all keys to avoid
         // re-allocating the inner FxHashMap on every iteration.
         let mut subst = TypeSubstitution::new();
+        // When the source is an intersection containing type parameters (e.g., `S & State<T>`),
+        // collect_properties cannot capture the deferred index access constraints from those
+        // type parameters, so the identity-homomorphic shortcut must be skipped.
+        // Hoisted out of the key loops because this value is constant across all iterations.
+        let source_has_type_params = resolved_source_id.is_some_and(|src| {
+            crate::type_queries::is_type_parameter_or_intersection_with_type_parameter(
+                self.interner(),
+                src,
+            )
+        });
 
         for &key_name in &key_set.string_literals {
             // Check if depth was exceeded during previous iterations
@@ -476,20 +495,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // For non-optional properties in identity homomorphic types, the
             // evaluated T[K] equals the declared type, so we can also skip.
             //
-            // EXCEPTION: When the source is an intersection containing type parameters
-            // (e.g., `S & State<T>`), collect_properties cannot capture the deferred
-            // index access constraints from those type parameters. For example,
-            // `Pick<S & State<T>, "a">` should produce property type `(S & State<T>)["a"]`
-            // which includes `S["a"]` as a constraint, but collect_properties only sees
-            // the concrete `State<T>` member and returns `T`, losing the `S["a"]` part.
-            // In such cases, fall through to normal evaluation which correctly handles
-            // index access distribution over intersections.
-            let source_has_type_params = resolved_source_id.is_some_and(|src| {
-                crate::type_queries::is_type_parameter_or_intersection_with_type_parameter(
-                    self.interner(),
-                    src,
-                )
-            });
             let property_type = if is_identity_homomorphic
                 && !source_has_type_params
                 && let Some(&(_, _, declared_type, _, _, _)) = source_info
@@ -536,6 +541,106 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     is_string_named,
                     is_symbol_named,
                     single_quoted_name,
+                });
+            }
+        }
+
+        for symbol_key_id in &key_set.symbol_keys {
+            if self.is_depth_exceeded() {
+                return TypeId::ERROR;
+            }
+
+            let remapped = match self.remap_key_type_for_mapped(mapped, *symbol_key_id) {
+                Ok(Some(r)) => r,
+                Ok(None) => continue,
+                Err(()) => return self.interner().mapped(*mapped),
+            };
+
+            // Collect the remapped unique-symbol TypeIds; handle union `as` results.
+            let remapped_syms: smallvec::SmallVec<[TypeId; 1]> =
+                match self.interner().lookup(remapped) {
+                    Some(TypeData::UniqueSymbol(_)) => smallvec::smallvec![remapped],
+                    Some(TypeData::Union(list_id)) => self
+                        .interner()
+                        .type_list(list_id)
+                        .iter()
+                        .copied()
+                        .filter(|&m| {
+                            matches!(self.interner().lookup(m), Some(TypeData::UniqueSymbol(_)))
+                        })
+                        .collect(),
+                    _ => continue, // remapped to non-symbol; skip
+                };
+
+            if remapped_syms.is_empty() {
+                continue;
+            }
+
+            let TypeData::UniqueSymbol(source_sym_ref) = self
+                .interner()
+                .lookup(*symbol_key_id)
+                .expect("symbol_keys only contains UniqueSymbol TypeIds")
+            else {
+                continue;
+            };
+            let source_atom = self
+                .interner()
+                .intern_string(&format!("__unique_{}", source_sym_ref.0));
+            let source_info = source_prop_map.get(&source_atom);
+            let (source_optional, source_readonly) =
+                source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));
+            let (optional, readonly) = crate::type_queries::compute_mapped_modifiers(
+                mapped,
+                is_homomorphic,
+                source_optional,
+                source_readonly,
+            );
+
+            let property_type = if is_identity_homomorphic
+                && !source_has_type_params
+                && let Some(&(_, _, declared_type, _, _, _)) = source_info
+            {
+                declared_type
+            } else {
+                subst.clear();
+                subst.insert(mapped.type_param.name, *symbol_key_id);
+                let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+                let evaluated = self.evaluate(instantiated);
+                if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
+                    return TypeId::ERROR;
+                }
+                evaluated
+            };
+
+            for remapped_sym_id in remapped_syms {
+                // Reuse source_atom when remapped symbol is the identity (no `as` remapping).
+                let remapped_atom = if remapped_sym_id == *symbol_key_id {
+                    source_atom
+                } else {
+                    let TypeData::UniqueSymbol(remapped_sym_ref) = self
+                        .interner()
+                        .lookup(remapped_sym_id)
+                        .expect("remapped_syms only contains UniqueSymbol TypeIds")
+                    else {
+                        continue;
+                    };
+                    self.interner()
+                        .intern_string(&format!("__unique_{}", remapped_sym_ref.0))
+                };
+                properties.push(PropertyInfo {
+                    name: remapped_atom,
+                    type_id: property_type,
+                    write_type: property_type,
+                    optional,
+                    readonly,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                    is_symbol_named: true,
+                    single_quoted_name: false,
                 });
             }
         }
@@ -1004,6 +1109,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             has_string: false,
             has_number: false,
             template_literals: Vec::new(),
+            symbol_keys: Vec::new(),
         };
 
         match key {
@@ -1029,13 +1135,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         string_index,
                         number_index,
                     } => {
-                        keys.push_properties(properties, self.interner());
+                        self.collect_props_into_keys(&mut keys, properties);
                         keys.has_string = string_index.is_some();
                         keys.has_number = number_index.is_some();
                         tracing::trace!(
                             string_literals = ?keys.string_literals,
                             has_string = keys.has_string,
                             has_number = keys.has_number,
+                            symbol_keys_len = keys.symbol_keys.len(),
                             "extract_mapped_keys: extracted keys from KeyOf"
                         );
                         Some(keys)
@@ -1060,7 +1167,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     string_index,
                                     number_index,
                                 } => {
-                                    keys.push_properties(properties, self.interner());
+                                    self.collect_props_into_keys(&mut keys, properties);
                                     keys.has_string = string_index.is_some();
                                     keys.has_number = number_index.is_some();
                                     tracing::trace!(
@@ -1173,7 +1280,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         continue;
                     }
                     if member == TypeId::SYMBOL {
-                        // We don't model symbol index signatures yet; ignore symbol keys.
+                        // Generic `symbol` type — no concrete index to track.
+                        continue;
+                    }
+                    if matches!(
+                        self.interner().lookup(member),
+                        Some(TypeData::UniqueSymbol(_))
+                    ) {
+                        keys.symbol_keys.push(member);
                         continue;
                     }
                     // Use visitor helper for data extraction (North Star Rule 3)
@@ -1198,14 +1312,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
                         keys.template_literals.extend(inner_keys.template_literals);
+                        keys.symbol_keys.extend(inner_keys.symbol_keys);
                     }
                 }
                 if !keys.has_string
                     && !keys.has_number
                     && keys.string_literals.is_empty()
                     && keys.template_literals.is_empty()
+                    && keys.symbol_keys.is_empty()
                 {
-                    // Only symbol keys (or nothing) - defer until we support symbol indices.
                     return None;
                 }
                 Some(keys)
@@ -1220,6 +1335,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Intrinsic(IntrinsicKind::Never) => {
                 // Mapped over `never` yields an empty object.
+                Some(keys)
+            }
+            TypeData::UniqueSymbol(_) => {
+                keys.symbol_keys.push(type_id);
                 Some(keys)
             }
             TypeData::Enum(_def_id, members) => {
@@ -1284,15 +1403,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             result.template_literals.push(*tl);
                         }
                     }
+                    // Symbol keys: keep only symbols present in every member's key set.
+                    if !result.symbol_keys.is_empty() {
+                        if other.symbol_keys.is_empty() {
+                            result.symbol_keys.clear();
+                        } else {
+                            result.symbol_keys.retain(|k| other.symbol_keys.contains(k));
+                        }
+                    }
                 }
-                if !result.has_string
-                    && !result.has_number
-                    && result.string_literals.is_empty()
-                    && result.template_literals.is_empty()
-                {
-                    // Intersection is empty — produces empty object.
-                    // Still return Some so we generate an empty object type rather than deferring.
-                }
+                // Intersection may be empty — still return Some to produce an empty object
+                // rather than deferring.
                 Some(result)
             }
             TypeData::Lazy(def_id) => {

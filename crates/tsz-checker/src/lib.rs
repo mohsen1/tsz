@@ -457,11 +457,17 @@ mod generic_inference_manual;
 #[path = "tests/generic_rest_satisfies_anchor_tests.rs"]
 mod generic_rest_satisfies_anchor_tests;
 #[cfg(test)]
+#[path = "tests/generic_spread_iterability_tests.rs"]
+mod generic_spread_iterability_tests;
+#[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
+#[cfg(test)]
+#[path = "../tests/interface_extends_array_json_tests.rs"]
+mod interface_extends_array_json_tests;
 #[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;

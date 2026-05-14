@@ -1041,6 +1041,40 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.ctx.target_es5
+            && node.kind == syntax_kind_ext::METHOD_DECLARATION
+            && let Some(method) = self.arena.get_method_decl(node)
+            && self
+                .arena
+                .has_modifier(&method.modifiers, tsz_scanner::SyntaxKind::AsyncKeyword)
+        {
+            let has_generator_asterisk = method.asterisk_token
+                || self
+                    .source_text
+                    .and_then(|text| {
+                        let start = (node.pos as usize).min(text.len());
+                        let end = self
+                            .arena
+                            .get(method.body)
+                            .map_or(node.end as usize, |body| body.pos as usize)
+                            .min(text.len());
+                        (start < end).then(|| &text[start..end])
+                    })
+                    .is_some_and(|prefix| prefix.contains('*'));
+            if has_generator_asterisk {
+                let property_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    method.name,
+                );
+                self.emit_async_generator_es5_object_method_property(
+                    &property_name,
+                    &method.parameters.nodes,
+                    method.body,
+                );
+                return;
+            }
+        }
+
         if node.kind == syntax_kind_ext::METHOD_DECLARATION
             && self
                 .arena

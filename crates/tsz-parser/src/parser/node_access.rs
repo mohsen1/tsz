@@ -1580,6 +1580,25 @@ impl Node {
         matches!(self.kind, GET_ACCESSOR | SET_ACCESSOR)
     }
 
+    /// Check if this is a non-arrow function-like node (creates its own `this` binding).
+    ///
+    /// Arrow functions capture `this` from their enclosing scope and are excluded.
+    /// Class bodies also create a `this` scope but are not included here — use
+    /// [`is_class_like`] for that boundary check.
+    #[inline]
+    #[must_use]
+    pub const fn is_non_arrow_function_like(&self) -> bool {
+        matches!(
+            self.kind,
+            FUNCTION_DECLARATION
+                | FUNCTION_EXPRESSION
+                | METHOD_DECLARATION
+                | CONSTRUCTOR
+                | GET_ACCESSOR
+                | SET_ACCESSOR
+        )
+    }
+
     /// Check if this is a binding pattern (array or object destructuring)
     #[inline]
     #[must_use]

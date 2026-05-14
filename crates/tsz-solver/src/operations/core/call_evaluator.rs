@@ -305,6 +305,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .extend_from_slice(markers);
     }
 
+    /// Returns true if the first argument came from a type assertion (e.g. `1 as 1`).
+    /// Non-fresh literals from assertions are preserved rather than widened.
+    pub(crate) fn is_first_arg_type_annotated(&self) -> bool {
+        self.arg_source_is_type_annotation
+            .first()
+            .copied()
+            .unwrap_or(false)
+    }
+
     pub const fn set_force_bivariant_callbacks(&mut self, enabled: bool) {
         self.force_bivariant_callbacks = enabled;
     }

@@ -330,6 +330,10 @@ bitflags::bitflags! {
         /// matching tsc's `SignatureCheckMode.Callback` bit. Cache results
         /// computed under this mode separately from non-callback results.
         const IN_CALLBACK_PARAM_CHECK       = 1 << 14;
+        /// Strict identity mode for the readonly modifier. See the
+        /// `strict_readonly_identity` field on `SubtypeChecker` for the
+        /// rationale and toggle site.
+        const STRICT_READONLY_IDENTITY      = 1 << 15;
     }
 }
 

@@ -28,9 +28,7 @@
   verification, and roadmap status updates are complete.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
-  emit, fourslash, and WASM.
-- Do not babysit CI. Push the draft PR, note the run URL if useful, switch to
-  non-overlapping work, and come back later to inspect status or failures.
+  emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
 - Keep DRY slices small and behavior-preserving unless explicitly fixing a bug.
   Let CI perform compile, lint, unit, conformance, emit, and fourslash verification.
 
@@ -172,12 +170,24 @@ For each change ask:
 - Prefer dedicated files per major checker/solver concern.
 - Avoid growth of monolith modules; split before crossing maintainability threshold.
 
-## 19.5) Testing
-- **Use `cargo nextest run` instead of `cargo test`** for all unit/integration test runs.
-- `cargo nextest run` provides better parallelism, output, and failure reporting.
-- Wrap full-suite runs with `scripts/safe-run.sh`: `scripts/safe-run.sh cargo nextest run`
-- Filtered runs: `cargo nextest run -E 'test(pattern)'` or `cargo nextest run -- pattern`
-- Single crate: `cargo nextest run -p tsz_checker`
+## 19.5) Testing and CI
+- **Never run full conformance, fourslash, or emit suites locally.** Those are
+  CI's job. Local pre-commit is formatting-only.
+- Prefer **not** having the full TypeScript submodule checked out locally
+  unless you actually need its sources for a specific investigation. CI has it.
+- Run local commands only when they answer a specific debugging question or
+  provide fast targeted feedback. Prefer narrow filters and stop once the
+  result informs the fix.
+- Open a draft PR early. Draft CI runs lint, dist-fast build, and unit tests.
+  When the PR is marked ready for review, CI runs conformance, emit, fourslash,
+  WASM, and snapshot gates.
+- **Never sit waiting for CI.** Push the draft PR, note the run URL if useful,
+  then switch to non-overlapping work. Come back later to inspect status.
+- **Use `cargo nextest run` instead of `cargo test`** for unit/integration runs.
+  Better parallelism, output, and failure reporting.
+  - Filtered runs: `cargo nextest run -E 'test(pattern)'` or `cargo nextest run -- pattern`
+  - Single crate: `cargo nextest run -p tsz_checker`
+  - Wrap full-suite runs with `scripts/safe-run.sh` (see §20.75).
 
 ## 19.6) Lint Hygiene For Doc Comments
 
@@ -214,230 +224,57 @@ Skill usage rules:
 - Reuse scripts/assets/templates from skill directories when available.
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
+## 20.1) Agent Identity & Collaboration
+
+- **Pick an AgentName.** If you don't have one, derive one from the machine
+  you're running on (CPU + RAM + model — e.g. `m3-max-64g-opus47`). Keep it
+  stable across the session.
+- **Sign your work.** Every PR body and GitHub issue you create or comment on
+  must include your AgentName so humans (and other agents) can tell who did it.
+- **Shared GitHub identity.** All agents push as the same GitHub user
+  (`mohsen1`). Assume sibling agents are operating concurrently under the same
+  account — check WIP claims, draft PRs, and open issues before starting work,
+  and address other agents by their AgentName when relevant.
+- **Stacked PRs for dependent work.** If your new PR depends on another PR
+  that should land first, open it as a stacked PR (base = the dependency
+  branch, not `main`). When the dependency merges, GitHub automatically
+  rebases the base to `main`. Do not wait for the dependency to merge before
+  starting; do not duplicate its changes into your branch.
+
+## 20.2) Opportunistic Improvements
+
+- If you spot a mistake while browsing code, fix it. If the fix is genuinely
+  unrelated to your current PR, file a GitHub issue instead (with your
+  AgentName in the body).
+- If you spot a refactor that would improve the code, apply it **only if its
+  blast radius fits inside your current PR**. Otherwise file an issue.
+- Don't bundle a sprawling refactor into a narrow bug-fix PR — that defeats
+  reviewability and breaks the stacked-PR model.
+
 ## 20.25) Conformance Maintenance
 
-Conformance is currently at 100%. There is no session picker or conformance
-campaign loop. Treat conformance work as maintenance:
+Conformance is at 100%. The daily mode is **regression prevention**, not
+recovery. There is no session picker, campaign loop, or random-pick script.
 
-- Do not create random-pick or session orchestration scripts.
-- Preserve 100% conformance when changing checker, solver, parser, binder,
-  emitter, transforms, compiler diagnostics, conformance harness code,
-  TypeScript baselines, or conformance snapshot files.
-- Use targeted local runs only for debugging. Let ready-for-review CI run the
-  full conformance suite.
-- Every behavior-changing fix still needs an owning-crate unit test.
-
-## 20.26) Conformance Commit Gate — every commit must defend the delta
-
-The project has already reached 99% once. The reason it does not stay
-there is not lack of isolated fixes; it is unreviewed net-negative
-snapshot churn. Every commit that can affect conformance must make the
-conformance delta explicit before it is committed.
-
-This gate applies to every commit touching checker, solver, parser,
-binder, emitter, transforms, compiler diagnostics, conformance harness
-code, TypeScript baselines, or conformance snapshot files.
-
-### Required before each conformance-relevant commit
-
-1. Refresh or inspect the conformance snapshot for the exact tree being
-   committed. Use targeted runs while developing, but commit-time notes
-   must be based on the committed snapshot files when they change.
-2. Compare against `main` and record:
-   - total passed before/after and net pass delta,
-   - new failing tests,
-   - newly fixed tests,
-   - tests that still fail but changed expected/actual code sets,
-   - category deltas for false positives, all-missing, wrong-code,
-     fingerprint-only, and close-to-passing.
-3. If the commit is net-negative, stop. Do not commit it unless the user
-   explicitly requested the regression and the commit/PR message names
-   every new failure with a rationale.
-4. Never hide regressions inside "refresh snapshots", "integrate batch",
-   or "update baselines" commits. Snapshot-only commits still need the
-   same before/after failure-set report.
-5. A fixed test plus a new failing test is not automatically acceptable.
-   Net-zero swaps must explain why the new failure is expected and why
-   the fixed failure is a higher-priority root-cause move.
-
-### Required commit/PR wording
-
-Every conformance-relevant commit message or PR body must include a
-short conformance block:
-
-```text
-Conformance:
-- passed: <before> -> <after> (<delta>)
-- fixed: <count> (<test names or "none">)
-- new failures: <count> (<test names or "none">)
-- changed failures: <count> (<summary or "none">)
-- category delta: false_positive <delta>, all_missing <delta>, wrong_code <delta>, fingerprint_only <delta>, close_to_passing <delta>
-```
-
-If any line is unknown, do not commit yet. Generate or inspect the data
-first.
-
-### Work campaigns, not leaf churn
-
-Conformance commits should move a root-cause bucket:
-
-- diagnostic-count parity,
-- type-display/fingerprint parity,
-- TS2339 false positives,
-- TS7006 contextual typing leakage,
-- TS2322/TS2345/TS2430 relation-boundary inconsistencies,
-- parser recovery,
-- module-resolution parity.
-
-Close-to-passing leaf tests are useful only when they validate one of
-those root-cause moves. A `+0` conformance commit is suspect unless it
-reduces a tracked bucket or removes technical debt that is blocking one
-of these campaigns.
-
-### Quick reference
-```bash
-# Inspect current conformance snapshot:
-python3 scripts/conformance/query-conformance.py --dashboard
-
-# Verify a specific test:
-./scripts/conformance/conformance.sh run --filter "<name>" --verbose
-
-# Unit tests for the crates you changed:
-cargo nextest run --package tsz-checker --lib
-cargo nextest run --package tsz-solver --lib
-
-# Full conformance (heavy — use the safe-run wrapper):
-scripts/safe-run.sh ./scripts/conformance/conformance.sh run
-
-# Refresh offline snapshot after a batch of fixes:
-scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
-
-# Push and open a PR (never push to main):
-git push -u origin <your-branch>
-```
-
-## 20.5) Conformance Analysis Tools
-
-### CRITICAL: Avoid re-running the full conformance suite
-- The full conformance suite takes **minutes** to run. Do NOT run it for research, planning, or analysis.
-- **All analysis can be done offline** from pre-computed snapshot files. Use the query tools below.
-- Only run the full suite (`./scripts/conformance/conformance.sh run` or `snapshot`) when you need to **verify code changes** you've made.
-
-### KPI Dashboard (primary daily signal)
-```bash
-# This replaces overall conformance % as the primary signal
-python3 scripts/conformance/query-conformance.py --dashboard
-```
-The dashboard shows:
-1. **Big3 wrong-code count** (TS2322+TS2339+TS2345 missing/extra breakdown)
-2. **Crash count** (tests where we emit 0 but tsc expects diagnostics)
-3. **Node lane pass rate** (NodeModulesSearch, jsFileCompilation, node, declarationEmit)
-4. **Close-to-passing** (fingerprint-only, diff=1, diff=2)
-5. **Failure categories** (false positives, all-missing, wrong-code, fingerprint-only)
-6. **Campaign impact** (Tier 1 and Tier 2 campaign test counts)
-
-### Offline analysis (preferred — zero cost, instant)
-Two snapshot files contain everything needed for analysis:
-- **`scripts/conformance/conformance-snapshot.json`** — high-level aggregates (summary, areas, top failures, quick wins).
-- **`scripts/conformance/conformance-detail.json`** — per-test failure data (expected/actual/missing/extra codes for every failing test, ~400KB).
-
-### Preferred strategy: fingerprint parity first, then wrong-code campaigns
-- **Fingerprint parity is the #1 lever.** 617 tests (73.6%) already emit the right codes but wrong message/position/count.
-- Start with the **KPI dashboard**, then check fingerprint-only failures:
+- Preserve 100% when changing checker, solver, parser, binder, emitter,
+  transforms, compiler diagnostics, conformance harness code, TypeScript
+  baselines, or conformance snapshot files.
+- Every behavior-changing fix needs an owning-crate unit test.
+- **Do not run the full conformance suite locally** (see §19.5). Let
+  ready-for-review CI run it.
+- For local debugging only, use a narrow filter:
   ```bash
-  python3 scripts/conformance/query-conformance.py --dashboard
-  python3 scripts/conformance/query-conformance.py --fingerprint-only
-  python3 scripts/conformance/query-conformance.py --fingerprint-only --code TS2322
-  python3 scripts/conformance/query-conformance.py --campaign type-display-parity
-  python3 scripts/conformance/query-conformance.py --campaign diagnostic-count
-  python3 scripts/conformance/query-conformance.py --campaign big3
-  python3 scripts/conformance/query-conformance.py --campaign narrowing-flow
+  ./scripts/conformance/conformance.sh run --filter "<name>" --verbose
   ```
-- **Fingerprint campaigns (Tier 1)**: Fix type printer display, diagnostic emission counts, or position anchoring.
-  One good printer fix can flip 50+ tests. Target >1.0 tests per commit.
-- **Wrong-code campaigns (Tier 2)**: Find invariants that fix BOTH missing AND extra diagnostics.
-  Fix in Solver or boundary helpers, not checker-local heuristics.
-- Do **not** pick work solely from one-extra/one-missing/close lists. Those are Tier 3 tools.
-
-**Query tool** (`python3 scripts/conformance/query-conformance.py`):
-```bash
-# KPI dashboard (primary daily signal)
-python3 scripts/conformance/query-conformance.py --dashboard
-
-# Overview: what to work on next
-python3 scripts/conformance/query-conformance.py
-
-# Recommended root-cause campaigns
-python3 scripts/conformance/query-conformance.py --campaigns
-
-# Deep-dive one campaign
-python3 scripts/conformance/query-conformance.py --campaign big3
-
-# Tests fixable by adding 1 missing code (Tier 3 only)
-python3 scripts/conformance/query-conformance.py --one-missing
-
-# Tests fixable by removing 1 extra code (Tier 3 only)
-python3 scripts/conformance/query-conformance.py --one-extra
-
-# False positive breakdown (expected 0, we emit errors)
-python3 scripts/conformance/query-conformance.py --false-positives
-
-# Deep-dive a specific error code (shows would-pass, also-needs, extras)
-python3 scripts/conformance/query-conformance.py --code TS2454
-
-# List tests where a code is falsely emitted
-python3 scripts/conformance/query-conformance.py --extra-code TS7053
-
-# Tests closest to passing (diff <= N)
-python3 scripts/conformance/query-conformance.py --close 2
-
-# Export paths for piping into conformance runner
-python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
-```
-
-**Reading snapshot JSON directly** (for custom queries):
-```python
-import json
-with open('scripts/conformance/conformance-snapshot.json') as f:
-    snap = json.load(f)
-# Keys: summary, areas_by_pass_rate, top_failures, not_implemented_codes,
-#        partial_codes, one_missing_zero_extra, one_extra_zero_missing,
-#        false_positive_codes, top_missing_codes, top_extra_codes, categories
-```
-
-**Reading detail JSON directly** (for per-test queries):
-```python
-import json
-with open('scripts/conformance/conformance-detail.json') as f:
-    detail = json.load(f)
-# detail["failures"][test_path] = {"e": [...], "a": [...], "m": [...], "x": [...]}
-# e=expected, a=actual, m=missing, x=extra
-# PASS tests are not in the failures dict (implicit pass).
-```
-
-### TSC cache for research (what does tsc expect?)
-- `scripts/conformance/tsc-cache-full.json` contains tsc's expected diagnostics for every test.
-- Each entry has `error_codes`, `diagnostic_fingerprints` (code, file, line, column, message_key).
-- Use Python/jq to query the cache for tests expecting a specific error code without running anything:
-  ```python
-  python3 -c "
-  import json
-  with open('scripts/conformance/tsc-cache-full.json') as f:
-      cache = json.load(f)
-  for key, val in sorted(cache.items()):
-      if CODE in val.get('error_codes', []):
-          print(key)
-  "
-  ```
-
-### Targeted testing (after code changes)
-- `./scripts/conformance/conformance.sh run --filter "pattern"` — run only tests matching a filename pattern (fast, seconds).
-- `./scripts/conformance/conformance.sh run --filter "pattern" --verbose` — see expected vs actual diagnostics for failures.
-- Use `--max N` to limit test count for quick smoke tests.
-
-### Full suite (use sparingly — only to verify changes)
-- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run` — run all conformance tests (error-code level).
-- `scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot` — run + analyze + save all snapshot files. Run this after a batch of changes to update the offline data.
+- If you suspect a regression, the per-test detail is in
+  `scripts/conformance/conformance-detail.json` (read it offline; don't
+  re-run to inspect). Snapshot aggregates are in
+  `scripts/conformance/conformance-snapshot.json`. The
+  `python3 scripts/conformance/query-conformance.py --dashboard` command
+  surfaces the standard KPIs (big3, crashes, fingerprint-only, etc.).
+- If you do introduce a regression, fix it in the same PR or revert. Do not
+  hide regressions inside "refresh snapshots" / "integrate batch" /
+  "update baselines" commits — those must still be net-zero or net-positive.
 
 ## 20.75) Memory-Guarded Execution (`scripts/safe-run.sh`)
 - **All long-running or memory-intensive commands MUST be wrapped with `scripts/safe-run.sh`.**
@@ -491,8 +328,7 @@ scripts/safe-run.sh --verbose -- cargo build
 - This ensures `pre-commit` checks run locally before commits.
 - If hooks are not installed, local lint guardrails can be bypassed accidentally.
 
-
-## 24) Critical: Work Philosophy
+## 24.5) Critical: Work Philosophy
 - Prioritize **architectural integrity** over quick fixes.
 - When in doubt, choose the path that preserves the clean separation of concerns and long-term maintainability, even if it requires more upfront work.
 - Avoid patching symptoms in the checker; instead, invest in the solver and boundary helpers to keep the architecture sound.
