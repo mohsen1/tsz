@@ -186,13 +186,24 @@ function withExpectedProjectRows(results) {
 }
 
 function compatibilityState(row) {
+  const compatibility = row?.compatibility || {};
+  const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
   if (hasSuccessfulTiming(row)) {
+    if (diagnosticStatus && diagnosticStatus !== "none") {
+      return {
+        className: "yellow",
+        stateLabel: "Yellow",
+        exitClass: firstPresent(compatibility.exit_class, "diagnostic mismatch"),
+        phase: firstPresent(compatibility.phase, "check"),
+        diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
+      };
+    }
     return {
       className: "green",
       stateLabel: "Green",
-      exitClass: "exit success",
-      phase: "check",
-      diagnosticDeltas: "none recorded",
+      exitClass: firstPresent(compatibility.exit_class, "exit success"),
+      phase: firstPresent(compatibility.phase, "check"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "none recorded"),
     };
   }
 
@@ -201,35 +212,40 @@ function compatibilityState(row) {
     return {
       className: "gray",
       stateLabel: "Gray",
-      exitClass: status.includes("tsc fixture") ? "fixture invalid" : "missing or incomplete artifact",
-      phase: status.includes("fixture") ? "fixture setup" : "artifact",
-      diagnosticDeltas: "not available",
+      exitClass: firstPresent(
+        compatibility.exit_class,
+        status.includes("tsc fixture") ? "fixture invalid" : "missing or incomplete artifact",
+      ),
+      phase: firstPresent(compatibility.phase, status.includes("fixture") ? "fixture setup" : "artifact"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not available"),
     };
   }
 
-  if (status.includes("diagnostic mismatch")) {
+  if (status.includes("diagnostic mismatch") || diagnosticStatus.includes("diagnostic mismatch")) {
     return {
       className: "yellow",
       stateLabel: "Yellow",
-      exitClass: "diagnostic mismatch",
-      phase: firstPresent(row?.compatibility?.phase, "check"),
-      diagnosticDeltas: firstPresent(row?.compatibility?.diagnostic_deltas, "not captured by latest artifact"),
+      exitClass: firstPresent(compatibility.exit_class, "diagnostic mismatch"),
+      phase: firstPresent(compatibility.phase, "check"),
+      diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
     };
   }
 
   return {
     className: "red",
     stateLabel: "Red",
-    exitClass: status.includes("timeout") ? "timeout" : "nonzero exit",
-    phase: firstPresent(row?.compatibility?.phase, "check"),
-    diagnosticDeltas: firstPresent(row?.compatibility?.diagnostic_deltas, "not captured by latest artifact"),
+    exitClass: firstPresent(compatibility.exit_class, status.includes("timeout") ? "timeout" : "nonzero exit"),
+    phase: firstPresent(compatibility.phase, "check"),
+    diagnosticDeltas: firstPresent(compatibility.diagnostic_deltas, "not captured by latest artifact"),
   };
 }
 
 function compatibilityRowFor(definition, allResults) {
   const row = allResults.find((candidate) => candidate?.name === definition.name);
+  const artifactFamily = firstPresent(row?.compatibility?.semantic_owner_family, row?.compatibility?.owner_family);
   return {
     ...definition,
+    family: artifactFamily || definition.family,
     ...compatibilityState(row),
     row,
     lines: row?.lines || 0,
