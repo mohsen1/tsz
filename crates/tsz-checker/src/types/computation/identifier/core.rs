@@ -1534,6 +1534,60 @@ impl<'a> CheckerState<'a> {
                 return self.check_flow_usage(idx, module_exports_type, sym_id);
             }
 
+            if has_alias
+                && !self.is_identifier_in_type_position(idx)
+                && let Some(target_sym_id) = self.ctx.resolve_import_alias_and_register(sym_id)
+                && target_sym_id != sym_id
+            {
+                let target_value_info = self
+                    .get_cross_file_symbol(target_sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(target_sym_id))
+                    .and_then(|target_symbol| {
+                        let tflags = target_symbol.flags;
+                        if (tflags & symbol_flags::VALUE) == 0
+                            || (tflags & symbol_flags::ALIAS) != 0
+                            || target_symbol.import_module.is_some()
+                            || !target_symbol.value_declaration.is_some()
+                        {
+                            return None;
+                        }
+                        let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id)?;
+                        Some((
+                            target_symbol.value_declaration,
+                            target_symbol.declarations.clone(),
+                            target_file_idx,
+                        ))
+                    });
+                if let Some((target_value_decl, target_declarations, target_file_idx)) =
+                    target_value_info
+                {
+                    let preferred_value_decl = self
+                        .preferred_value_declaration(
+                            target_sym_id,
+                            target_value_decl,
+                            &target_declarations,
+                        )
+                        .unwrap_or(target_value_decl);
+                    let value_type = self
+                        .ctx
+                        .cached_cross_file_symbol_type(target_sym_id, target_file_idx as u32)
+                        .map(|(cached_type, _)| cached_type)
+                        .filter(|cached_type| {
+                            *cached_type != TypeId::UNKNOWN && *cached_type != TypeId::ERROR
+                        })
+                        .unwrap_or_else(|| {
+                            self.type_of_value_declaration_for_cross_file_symbol(
+                                target_sym_id,
+                                preferred_value_decl,
+                                target_file_idx,
+                            )
+                        });
+                    if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                        return self.check_flow_usage(idx, value_type, sym_id);
+                    }
+                }
+            }
+
             // Merged TYPE_ALIAS + VALUE symbols: when a user-defined value (e.g.,
             // `declare const Readonly: unique symbol`) shares a name with a global
             // type alias (e.g., `type Readonly<T> = ...` from lib.d.ts), the binder

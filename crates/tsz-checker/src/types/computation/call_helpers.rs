@@ -6,6 +6,7 @@ use crate::state::CheckerState;
 use tsz_binder::{Symbol, SymbolId};
 use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -803,6 +804,32 @@ impl<'a> CheckerState<'a> {
         for (_, &owned_sym_id) in delegate_binder.file_locals.iter() {
             checker.ctx.symbol_types.remove(&owned_sym_id);
             checker.ctx.symbol_instance_types.remove(&owned_sym_id);
+        }
+        if let Some(node) = target_arena.get(decl_idx)
+            && let Some(var_decl) = target_arena.get_variable_declaration(node)
+            && var_decl.type_annotation.is_some()
+            && let Some(annotation_node) = target_arena.get(var_decl.type_annotation)
+            && annotation_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = target_arena.get_type_ref(annotation_node)
+            && let Some(type_name) = target_arena.get_identifier_text(type_ref.type_name)
+            && let Some(alias_sym_id) = delegate_binder.file_locals.get(type_name)
+            && let Some(alias_symbol) = delegate_binder.get_symbol(alias_sym_id)
+            && alias_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+        {
+            for &alias_decl in &alias_symbol.declarations {
+                let Some(alias_node) = target_arena.get(alias_decl) else {
+                    continue;
+                };
+                let Some(alias_data) = target_arena.get_type_alias(alias_node) else {
+                    continue;
+                };
+                let alias_body_type = checker.get_type_from_type_node(alias_data.type_node);
+                let alias_body_type = checker.resolve_ref_type(alias_body_type);
+                if alias_body_type != TypeId::UNKNOWN && alias_body_type != TypeId::ERROR {
+                    Self::leave_cross_arena_delegation();
+                    return alias_body_type;
+                }
+            }
         }
         let mut result = checker.type_of_value_declaration_with_mode(decl_idx, true);
         if result.is_unknown_or_error()

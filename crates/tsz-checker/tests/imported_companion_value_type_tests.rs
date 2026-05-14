@@ -113,6 +113,54 @@ const value: string = x.value
 }
 
 #[test]
+fn imported_value_uses_cross_file_type_alias_annotation_body() {
+    let diagnostics = check(
+        &[
+            (
+                "object-utils.ts",
+                r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value
+}
+"#,
+            ),
+            (
+                "a.ts",
+                r#"
+import { freeze } from "./object-utils.js"
+
+type Factory = Readonly<{
+  create(): string
+}>
+
+export const Factory: Factory = freeze<Factory>({
+  create() {
+    return "ok"
+  },
+})
+
+Factory.create()
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import { Factory } from "./a.js"
+
+const value: string = Factory.create()
+"#,
+            ),
+        ],
+        "b.ts",
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "imported value should resolve a same-file type alias annotation body across files, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn import_type_alias_survives_local_value_with_same_name() {
     let diagnostics = check(
         &[
