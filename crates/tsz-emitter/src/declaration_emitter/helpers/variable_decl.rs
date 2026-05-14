@@ -241,7 +241,15 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         let has_type_annotation = type_annotation.is_some();
         let has_initializer = initializer.is_some();
-        let jsdoc_type_text = self
+        let jsdoc_raw_type_expr = self
+            .source_is_js_file
+            .then(|| {
+                self.leading_jsdoc_type_expr_for_pos(stmt_pos)
+                    .or_else(|| self.jsdoc_type_expr_for_node(decl_idx))
+                    .or_else(|| self.jsdoc_type_expr_for_node(decl_name))
+            })
+            .flatten();
+        let mut jsdoc_type_text = self
             .source_is_js_file
             .then(|| {
                 self.jsdoc_name_like_type_expr_for_pos(stmt_pos)
@@ -251,6 +259,15 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.jsdoc_type_text_for_node(decl_name))
             })
             .flatten();
+        if jsdoc_raw_type_expr.as_deref() == Some("event")
+            && self.arena.get(initializer).is_some_and(|node| {
+                node.kind == SyntaxKind::UndefinedKeyword as u16
+                    || node.kind == SyntaxKind::Identifier as u16
+                        && self.get_identifier_text(initializer).as_deref() == Some("undefined")
+            })
+        {
+            jsdoc_type_text = Some("Event | undefined".to_string());
+        }
         let const_asserted_enum_member = has_initializer
             .then(|| self.const_asserted_enum_access_member_text(initializer))
             .flatten();

@@ -313,7 +313,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn jsdoc_name_like_type_expr_for_pos(&self, pos: u32) -> Option<String> {
         let expr = self.leading_jsdoc_type_expr_for_pos(pos)?;
         if Self::jsdoc_name_like_type_reference(&expr) {
-            Some(expr)
+            Some(Self::normalize_jsdoc_type_text(&expr, false))
         } else {
             None
         }
@@ -322,6 +322,11 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn jsdoc_name_like_type_expr_for_node(&self, idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(idx)?;
         self.jsdoc_name_like_type_expr_for_pos(node.pos)
+    }
+
+    pub(crate) fn jsdoc_type_expr_for_node(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        self.leading_jsdoc_type_expr_for_pos(node.pos)
     }
 
     pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_pos(
@@ -764,14 +769,26 @@ impl<'a> DeclarationEmitter<'a> {
         }
         match s {
             "*" | "?" => "any".to_string(),
+            "String" => "string".to_string(),
+            "Number" => "number".to_string(),
+            "Boolean" => "boolean".to_string(),
+            "Void" => "void".to_string(),
+            "Undefined" => "undefined".to_string(),
+            "Null" => "null".to_string(),
+            "Function" | "function" => "Function".to_string(),
             // `Array<>` is the form after `normalize_jsdoc_type_expr` strips
             // the legacy `.<` → `<` so both `Array` and `Array.<>` reach this
             // arm. tsc treats empty-args generic JSDoc references as
             // implicit-any (`Array.<>` → `any[]`); without the `Array<>` arm
             // the DTS surfaces a literal `Array<>` token that is not valid
             // TypeScript.
-            "Array" | "Array.<>" | "Array<>" => "any[]".to_string(),
-            "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
+            "Array" | "array" | "Array.<>" | "array.<>" | "Array<>" | "array<>" => {
+                "any[]".to_string()
+            }
+            "Promise" | "promise" | "Promise.<>" | "promise.<>" | "Promise<>" | "promise<>" => {
+                "Promise<any>".to_string()
+            }
+            "event" => "Event".to_string(),
             _ => s.to_string(),
         }
     }

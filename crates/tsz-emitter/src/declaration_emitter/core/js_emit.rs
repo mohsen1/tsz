@@ -399,6 +399,12 @@ impl<'a> DeclarationEmitter<'a> {
         if name_node.kind != SyntaxKind::Identifier as u16 {
             return false;
         }
+        if self
+            .leading_jsdoc_type_expr_for_pos(name_node.pos)
+            .is_some()
+        {
+            return false;
+        }
 
         let Some(init_node) = self.arena.get(initializer) else {
             return false;

@@ -1575,6 +1575,47 @@ function format(x) {
 }
 
 #[test]
+fn test_js_variable_jsdoc_redirected_type_names_emit_tsc_forms() {
+    let output = emit_js_dts(
+        r#"
+/** @type {String} */const a = "";
+/** @type {array} */const b = [];
+/** @type {promise} */const c = Promise.resolve(0);
+/** @type {Object<string, string>} */const d = {x: "x"};
+/** @type {class} */const e = true;
+/** @type {event} */const f = undefined;
+"#,
+    );
+
+    assert!(
+        output.contains("/** @type {String} */ declare const a: string;"),
+        "Expected String JSDoc to redirect to primitive string and stay inline: {output}"
+    );
+    assert!(
+        output.contains("/** @type {array} */ declare const b: any[];"),
+        "Expected lowercase array JSDoc to emit implicit-any array: {output}"
+    );
+    assert!(
+        output.contains("/** @type {promise} */ declare const c: Promise<any>;"),
+        "Expected lowercase promise JSDoc to emit implicit-any Promise: {output}"
+    );
+    assert!(
+        output.contains(
+            "/** @type {Object<string, string>} */ declare const d: {\n    [x: string]: string;\n};"
+        ),
+        "Expected Object<string, string> JSDoc to emit an index signature: {output}"
+    );
+    assert!(
+        output.contains("/** @type {class} */ declare const e: class;"),
+        "Expected unresolved JSDoc names to remain unresolved: {output}"
+    );
+    assert!(
+        output.contains("/** @type {event} */ declare const f: Event | undefined;"),
+        "Expected lowercase event JSDoc to match declaration emit lookup behavior: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_variable_strips_jsdoc_satisfies_comment() {
     let output = emit_js_dts(
         r#"

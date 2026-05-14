@@ -168,6 +168,8 @@ impl<'a> DeclarationEmitter<'a> {
                         next_ct.starts_with("/**") && next_ct != "/**/" && !between.contains('\n')
                     }
                 };
+                let declaration_on_same_line =
+                    !text[c_end as usize..actual_start as usize].contains('\n');
                 self.write_indent();
                 if ct.contains('\n') {
                     let mut first = true;
@@ -211,7 +213,7 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     self.write(ct);
                 }
-                if next_on_same_line {
+                if next_on_same_line || declaration_on_same_line {
                     self.write(" ");
                 } else {
                     self.write_line();
