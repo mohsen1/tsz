@@ -2,20 +2,102 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn is_react_jsx_component_alias_application(&self, type_id: TypeId) -> bool {
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-            .or_else(|| {
-                self.ctx.types.get_display_alias(type_id).and_then(|alias| {
-                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+    /// Returns true when `type_id` is a React library component alias type whose
+    /// return-type check should be skipped to avoid cycle-detection false positives.
+    ///
+    /// The same logical alias can appear in several storage forms:
+    /// - `Application { base: Lazy(def_id), args }` — explicit or defaulted type args
+    /// - `Lazy(def_id)` — referenced without type args (lowering skipped defaults)
+    /// - Evaluated union/object with a display alias or a `DefStore` entry naming the alias
+    pub(in crate::checkers_domain::jsx) fn is_react_jsx_component_alias_application(
+        &self,
+        type_id: TypeId,
+    ) -> bool {
+        // Resolve to the DefId: try Application→Lazy, bare Lazy, display-alias→Lazy,
+        // then fall back to the DefStore (covers evaluated unions registered under the alias).
+        let display_alias = self.ctx.types.get_display_alias(type_id);
+        let def_id =
+            crate::query_boundaries::common::get_application_lazy_def_id(self.ctx.types, type_id)
+                .or_else(|| {
+                    display_alias.and_then(|alias| {
+                        crate::query_boundaries::common::get_application_lazy_def_id(
+                            self.ctx.types,
+                            alias,
+                        )
+                    })
                 })
-            });
-        let Some(app) = app else {
+                .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id))
+                .or_else(|| {
+                    display_alias.and_then(|alias| {
+                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias)
+                    })
+                })
+                .or_else(|| self.ctx.definition_store.find_def_for_type(type_id));
+        let Some(def_id) = def_id else {
             return false;
         };
-        matches!(
-            self.format_type(app.base).as_str(),
-            "React.ComponentType" | "ComponentType" | "React.ReactType" | "ReactType"
-        )
+        let Some(name_atom) = self.ctx.definition_store.get_name(def_id) else {
+            return false;
+        };
+        let name = self.ctx.types.resolve_atom_ref(name_atom);
+        let is_react_component_alias_name = matches!(
+            name.as_ref(),
+            "ComponentType"
+                | "ReactType"
+                | "ComponentClass"
+                | "StatelessComponent"
+                | "FunctionComponent"
+                | "SFC"
+                | "PureComponent"
+        );
+        is_react_component_alias_name && self.react_component_alias_def_has_react_origin(def_id)
+    }
+
+    fn react_component_alias_def_has_react_origin(&self, def_id: tsz_solver::DefId) -> bool {
+        if self
+            .ctx
+            .definition_store
+            .get_symbol_id(def_id)
+            .is_some_and(|raw| {
+                let sym_id = tsz_binder::SymbolId(raw);
+                self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    || self.symbol_parent_chain_contains_name(sym_id, "React")
+            })
+        {
+            return true;
+        }
+
+        let display = self.format_type(self.ctx.types.factory().lazy(def_id));
+        display.starts_with("React.")
+    }
+
+    fn symbol_parent_chain_contains_name(
+        &self,
+        mut sym_id: tsz_binder::SymbolId,
+        name: &str,
+    ) -> bool {
+        let lib_binders = self.get_lib_binders();
+        let mut depth = 0;
+        while depth < 16 {
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                return false;
+            };
+            let parent = symbol.parent;
+            if parent.is_none() {
+                return false;
+            }
+            if self
+                .ctx
+                .binder
+                .get_symbol_with_libs(parent, &lib_binders)
+                .is_some_and(|parent_symbol| parent_symbol.escaped_name == name)
+            {
+                return true;
+            }
+            sym_id = parent;
+            depth += 1;
+        }
+        false
     }
 
     pub(super) fn is_react_jsx_component_alias_display(&self, type_id: TypeId) -> bool {
