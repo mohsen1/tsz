@@ -567,8 +567,11 @@ impl<'a> CheckerState<'a> {
         // - ConditionalApplicationInfer: preserve Application-form args specifically
         // - EvaluateAll: evaluate all args normally
         let arg_preservation = query::classify_body_for_arg_preservation(self.ctx.types, body_type);
-        let body_is_conditional =
-            crate::query_boundaries::common::is_conditional_type(self.ctx.types, body_type);
+        let body_conditional = query::get_conditional_type(self.ctx.types, body_type);
+        let body_is_conditional = body_conditional.is_some();
+        let body_is_distributive_conditional = body_conditional
+            .as_ref()
+            .is_some_and(|cond| cond.is_distributive);
         // Preserving Application-form args keeps generic identity intact so the solver's
         // variance fast path can fire instead of falling back to full structural expansion.
         let body_needs_concrete_args = body_is_conditional
@@ -578,6 +581,7 @@ impl<'a> CheckerState<'a> {
             .map(|&arg| {
                 let arg_is_application = query::application_info(self.ctx.types, arg).is_some();
                 match arg_preservation {
+                    _ if body_is_distributive_conditional => arg,
                     _ if body_is_conditional && self.contains_type_parameters_cached(arg) => arg,
                     query::BodyArgPreservation::ConditionalInfer
                         if self.contains_type_parameters_cached(arg) || arg_is_application =>

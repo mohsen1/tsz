@@ -416,7 +416,10 @@ impl<'a> Printer<'a> {
             })
             .unwrap_or(false);
 
-        // Capture `super` before entering the nested generator.
+        // Issue #3759: Emit `super` capture before entering the generator. tsc
+        // pre-binds each referenced `super.<name>` via an `Object.create` block so
+        // the generator body can reach captured aliases — `super` is not
+        // lexically valid inside a nested generator function.
         let super_capture = if body_is_empty_single_line {
             crate::transforms::emit_utils::AsyncMethodSuperCapture::default()
         } else {

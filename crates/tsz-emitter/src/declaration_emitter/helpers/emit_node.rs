@@ -585,8 +585,11 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(target_stmt_node) = self.arena.get(target_stmt_idx) else {
                     continue;
                 };
-                if self.stmt_has_export_modifier(target_stmt_node)
-                    || self.statement_has_attached_jsdoc(source_file, target_stmt_node)
+                if self.stmt_has_export_modifier(target_stmt_node) {
+                    continue;
+                }
+                if target_stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION
+                    && self.statement_has_attached_jsdoc(source_file, target_stmt_node)
                 {
                     continue;
                 }
