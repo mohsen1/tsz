@@ -5,11 +5,14 @@
 //! This module extends `CheckerState` with utilities for constructor-related
 //! type checking operations.
 
-use crate::query_boundaries::checkers::constructor::{
-    AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
-    classify_for_constructor_access, classify_for_constructor_return_merge,
-    classify_for_instance_type, construct_return_type_for_display, has_construct_signatures,
-    resolve_abstract_constructor_anchor,
+use crate::query_boundaries::{
+    checkers::constructor::{
+        AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind,
+        InstanceTypeKind, classify_for_constructor_access, classify_for_constructor_return_merge,
+        classify_for_instance_type, construct_return_type_for_display, has_construct_signatures,
+        resolve_abstract_constructor_anchor,
+    },
+    common,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use rustc_hash::FxHashSet;
@@ -72,6 +75,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn refine_mixin_call_return_type(
         &mut self,
         callee_idx: NodeIndex,
+        callee_type: TypeId,
         arg_types: &[TypeId],
         return_type: TypeId,
     ) -> TypeId {
@@ -100,13 +104,17 @@ impl<'a> CheckerState<'a> {
         if matches!(base_arg_type, TypeId::ANY | TypeId::ERROR) {
             return return_type;
         }
+        let type_param_substitution =
+            self.mixin_call_type_parameter_substitution(callee_type, arg_types);
 
         let factory = self.ctx.types.factory();
         let mut refined_return = factory.intersection2(return_type, base_arg_type);
 
-        if let Some(mixin_instance_type) =
-            self.mixin_instance_type_from_returned_class(class_expr_idx, base_arg_type)
-        {
+        if let Some(mixin_instance_type) = self.mixin_instance_type_from_returned_class(
+            class_expr_idx,
+            base_arg_type,
+            &type_param_substitution,
+        ) {
             refined_return =
                 self.set_all_construct_return_types(refined_return, mixin_instance_type);
         } else if let Some(intersected_instance) =
@@ -132,15 +140,48 @@ impl<'a> CheckerState<'a> {
         refined_return
     }
 
+    fn mixin_call_type_parameter_substitution(
+        &mut self,
+        callee_type: TypeId,
+        arg_types: &[TypeId],
+    ) -> common::TypeSubstitution {
+        let mut substitution = common::TypeSubstitution::new();
+        let callee_shape =
+            common::function_shape_for_type(self.ctx.types, callee_type).or_else(|| {
+                let evaluated = self.evaluate_type_for_assignability(callee_type);
+                common::function_shape_for_type(self.ctx.types, evaluated)
+            });
+        let Some(callee_shape) = callee_shape else {
+            return substitution;
+        };
+
+        for (param, &arg_type) in callee_shape.params.iter().zip(arg_types.iter()) {
+            let Some(type_param) = common::type_param_info(self.ctx.types, param.type_id) else {
+                continue;
+            };
+            substitution.insert(type_param.name, arg_type);
+        }
+
+        substitution
+    }
+
     fn mixin_instance_type_from_returned_class(
         &mut self,
         class_expr_idx: NodeIndex,
         base_arg_type: TypeId,
+        type_param_substitution: &common::TypeSubstitution,
     ) -> Option<TypeId> {
         let class_data = self.ctx.arena.get_class_at(class_expr_idx)?;
-        let returned_instance = self.get_class_instance_type(class_expr_idx, class_data);
+        let mut returned_instance = self.get_class_instance_type(class_expr_idx, class_data);
         if matches!(returned_instance, TypeId::ANY | TypeId::ERROR) {
             return None;
+        }
+        if !type_param_substitution.is_empty() {
+            returned_instance = common::instantiate_type(
+                self.ctx.types,
+                returned_instance,
+                type_param_substitution,
+            );
         }
         let base_instance = self.instance_type_from_constructor_type(base_arg_type)?;
         if matches!(base_instance, TypeId::ANY | TypeId::ERROR) {

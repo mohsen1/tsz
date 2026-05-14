@@ -5494,6 +5494,32 @@ const t = f({ a: 1, b: "c", d: ["e", 2] });
 }
 
 #[test]
+fn mixin_inferred_const_literal_tag_substitutes_return_class_property() {
+    let source = r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+
+class User {
+  name = 'unknown';
+}
+
+function Tagged<TBase extends Constructor, TTag>(Base: TBase, tag: TTag) {
+  return class Tagged extends Base {
+    tag: TTag = tag;
+  };
+}
+
+const TaggedUser = Tagged(User, 'user' as const);
+const tagu = new TaggedUser();
+const tag: 'user' = tagu.tag;
+"#;
+
+    assert!(
+        !has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 when an inferred const literal tag flows into a mixin return class property"
+    );
+}
+
+#[test]
 fn non_primitive_conditional_with_type_params_matches_tsc_errors() {
     let source = r#"
 type A<T, V> = { [P in keyof T]: T[P] extends V ? 1 : 0; };
