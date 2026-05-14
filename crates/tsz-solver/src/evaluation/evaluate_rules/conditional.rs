@@ -1437,7 +1437,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Handle concrete array extends pattern: `T extends Array<X>` (no infer in X).
     ///
-    /// Extracts the element type S from check_unwrapped, then checks `S <: target_elem`.
+    /// Extracts the element type `S` from `check_unwrapped`, then checks `S <: target_elem`.
     /// Returns `Some(true_branch)` or `Some(false_branch)` on success, `None` to fall
     /// through to the full structural subtype check.
     ///
@@ -1471,7 +1471,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(self.evaluate(branch))
     }
 
-    /// Extract the element type from an array-like check_type.
+    /// Extract the element type from an array-like `check_type`.
     ///
     /// Handles `Array(elem)`, `ReadonlyType(Array(elem))`, `Tuple(...)`,
     /// `Application(Array|ReadonlyArray, [elem])`, and `ObjectWithIndex` array shapes.
