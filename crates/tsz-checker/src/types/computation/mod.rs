@@ -35,6 +35,7 @@ pub(crate) mod call_helpers;
 pub(crate) mod call_inference;
 pub(crate) mod call_result;
 pub(crate) mod complex;
+mod complex_constructor_inference;
 pub(crate) mod complex_constructors;
 pub(crate) mod complex_js_constructor;
 pub(crate) mod complex_new_target;
