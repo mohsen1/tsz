@@ -3,7 +3,7 @@ use super::namespace::rewrite_enum_iife_for_namespace_export;
 use crate::transforms::enum_es5::EnumES5Transformer;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{Node, VariableDeclarationData};
+use tsz_parser::parser::node::{FunctionData, Node, VariableDeclarationData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -33,6 +33,15 @@ impl<'a> Printer<'a> {
             self.skip_comments_for_erased_node(node);
             return;
         }
+        let has_recovered_errant_arrow_body =
+            self.has_recovered_errant_function_arrow_body(node, func);
+        if has_recovered_errant_arrow_body
+            && self.recovered_errant_function_arrow_skips_declaration(func)
+        {
+            self.emit_expression_in_statement_position(func.body);
+            self.write_semicolon();
+            return;
+        }
 
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if func.name.is_some() {
@@ -41,6 +50,16 @@ impl<'a> Printer<'a> {
                 String::new()
             };
             self.emit_async_function_es5(func, &func_name, "this");
+            return;
+        }
+
+        if func.is_async && self.ctx.needs_es2018_lowering && func.asterisk_token {
+            let func_name = if func.name.is_some() {
+                self.get_identifier_text_idx(func.name)
+            } else {
+                String::new()
+            };
+            self.emit_async_generator_lowered(func, &func_name);
             return;
         }
 
@@ -143,6 +162,20 @@ impl<'a> Printer<'a> {
             }
             return;
         }
+        if has_recovered_errant_arrow_body {
+            self.write(" { }");
+            self.function_scope_depth -= 1;
+            if func.name.is_some() {
+                let func_name = self.get_identifier_text_idx(func.name);
+                if !func_name.is_empty() {
+                    self.declared_namespace_names.insert(func_name);
+                }
+            }
+            self.write_line();
+            self.emit_expression_in_statement_position(func.body);
+            self.write_semicolon();
+            return;
+        }
 
         // No return type for JavaScript — skip comments inside erased return type
         if !self.ctx.flags.in_declaration_emit
@@ -172,6 +205,7 @@ impl<'a> Printer<'a> {
         self.prepare_logical_assignment_value_temps(func.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
+        let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
@@ -185,7 +219,12 @@ impl<'a> Printer<'a> {
         self.emit(func.body);
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
+        self.ctx.arguments_capture_name = prev_arguments_capture_name;
         self.ctx.flags.in_generator = prev_in_generator;
+        if self.function_has_recovered_pre_body_token(node, func.body) {
+            self.write_line();
+            self.write("{ }");
+        }
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
@@ -202,6 +241,48 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(func_name);
             }
         }
+    }
+
+    fn function_has_recovered_pre_body_token(&self, node: &Node, body: NodeIndex) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(body_node) = self.arena.get(body) else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (body_node.pos as usize).min(text.len());
+        let Some(prefix) = text.get(start..end) else {
+            return false;
+        };
+        prefix
+            .rfind(')')
+            .is_some_and(|close_paren| prefix[close_paren + 1..].contains('¬'))
+    }
+
+    fn has_recovered_errant_function_arrow_body(&self, node: &Node, func: &FunctionData) -> bool {
+        let Some(body_node) = self.arena.get(func.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (body_node.pos as usize).min(text.len());
+        text.get(start..end)
+            .is_some_and(|header| header.contains("=>"))
+    }
+
+    fn recovered_errant_function_arrow_skips_declaration(&self, func: &FunctionData) -> bool {
+        func.type_annotation.is_some()
+            || func.parameters.nodes.iter().copied().any(|param_idx| {
+                self.arena
+                    .get_parameter_at(param_idx)
+                    .is_some_and(|param| param.type_annotation.is_some())
+            })
     }
 
     pub(in crate::emitter) fn emit_variable_declaration_list(&mut self, node: &Node) {

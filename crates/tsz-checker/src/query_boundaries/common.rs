@@ -32,6 +32,7 @@ pub(crate) use tsz_solver::QueryDatabase;
 pub(crate) use tsz_solver::SubtypeFailureReason;
 pub(crate) use tsz_solver::TypeEnvironment;
 pub(crate) use tsz_solver::TypeResolver;
+pub(crate) use tsz_solver::fill_application_defaults;
 pub(crate) use tsz_solver::instantiate_generic;
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
@@ -51,6 +52,10 @@ pub(crate) fn instantiate_type(
     substitution: &tsz_solver::TypeSubstitution,
 ) -> TypeId {
     tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
+}
+
+pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
+    tsz_solver::is_compiler_managed_type(name)
 }
 
 /// If `ty` is `Lazy(def_id)` for a non-generic `TypeAlias` whose body is the

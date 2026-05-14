@@ -1,0 +1,38 @@
+{
+  "fixture": "monorepo-006",
+  "mode": "attribution",
+  "timings": {
+    "total_s": 81.25,
+    "check_s": 79.6,
+    "parse_bind_s": 1.14,
+    "io_read_s": 0.32
+  },
+  "diagnostics": 10198,
+  "compute_type_of_symbol": {
+    "total_calls": 26370,
+    "cache_hits": 252026,
+    "source_outcomes": {
+      "global_symbol": 25373,
+      "cross_file_symbol": 0,
+      "missing_symbol": 0
+    },
+    "kind_outcomes": {
+      "alias": 148,
+      "type_alias": 297,
+      "interface": 24781,
+      "class": 0,
+      "function": 0,
+      "variable": 0,
+      "module": 0,
+      "property": 0,
+      "method": 0,
+      "accessor": 0,
+      "enum": 0,
+      "type_parameter": 147,
+      "type_literal": 0,
+      "object_literal": 0,
+      "signature": 0,
+      "other": 0
+    }
+  }
+}

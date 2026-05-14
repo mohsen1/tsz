@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "mode": "timing",
+  "tsz": {
+    "version": "0.1.9",
+    "commit": null,
+    "profile": "release"
+  },
+  "fixture": {
+    "name": null,
+    "repo": null,
+    "ref": null,
+    "actual_commit": null,
+    "path": null,
+    "local_override": false
+  },
+  "command_line": [
+    "/Users/mohsen/code/tsz/.target/release/tsz",
+    "-p",
+    "/private/tmp/tsz-bench-fixtures/monorepo-006/tsconfig.json",
+    "--diagnostics-json",
+    "docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-missing-resolver-after-monorepo-006-diag.json",
+    "--perf-counters-json",
+    "docs/plan/perf-runs/raw/2026-05-14-delegate-actual-lib-missing-resolver-after-monorepo-006-pc.json"
+  ],
+  "phases_ms": {
+    "config_discovery": 0.0,
+    "source_discovery": 0.0,
+    "module_resolution": 0.0,
+    "io_read": 288.847083,
+    "load_libs": 3.175125,
+    "parse_bind": 1179.857417,
+    "check": 79514.036458,
+    "emit": 0.00020800000000000001,
+    "total": 81013.804875
+  },
+  "counts": {
+    "files": 5332,
+    "root_files": 5250,
+    "lib_files": 82,
+    "source_bytes": 0,
+    "diagnostics": 10198
+  },
+  "rss_peak_bytes": 3021193216
+}

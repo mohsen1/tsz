@@ -189,6 +189,9 @@ impl<'a> LoweringPass<'a> {
         let helpers = self.transforms.helpers_mut();
         helpers.await_helper = true;
         helpers.async_generator = true;
+        if self.ctx.target_es5 {
+            helpers.generator = true;
+        }
     }
 
     pub(super) fn mark_class_helpers(

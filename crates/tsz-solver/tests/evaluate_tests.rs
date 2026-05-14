@@ -11867,7 +11867,10 @@ fn test_keyof_both_index_signatures() {
 
 #[test]
 fn test_keyof_numeric_literal_keys() {
-    // keyof { 0: string, 1: number } = "0" | "1"
+    // keyof { 0: string, 1: number } = 0 | 1 (numeric literals, matching tsc).
+    // `PropertyInfo::new` defaults to `is_string_named: false`, which models
+    // properties declared with a bare numeric name (`{ 0: ... }` rather than
+    // `{ "0": ... }`).
     let interner = TypeInterner::new();
 
     let obj = interner.object(vec![
@@ -11876,8 +11879,8 @@ fn test_keyof_numeric_literal_keys() {
     ]);
 
     let result = evaluate_keyof(&interner, obj);
-    let key_0 = interner.literal_string("0");
-    let key_1 = interner.literal_string("1");
+    let key_0 = interner.literal_number(0.0);
+    let key_1 = interner.literal_number(1.0);
     let expected = interner.union(vec![key_0, key_1]);
     assert_eq!(result, expected);
 }

@@ -1,33 +1,10 @@
 //! Tests for TS2693 (type-only as value) and TS2362/TS2363 (arithmetic operand errors)
 
 use crate::context::{CheckerOptions, ScriptTarget};
-use crate::diagnostics::Diagnostic;
-
-fn diagnostic_count(diags: &[Diagnostic], code: u32) -> usize {
-    diags.iter().filter(|d| d.code == code).count()
-}
-
-fn diagnostic_count_where(diags: &[Diagnostic], mut matches: impl FnMut(u32) -> bool) -> usize {
-    diags.iter().filter(|d| matches(d.code)).count()
-}
-
-fn diagnostics_with_code(diags: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| d.code == code).collect()
-}
-
-fn has_diagnostic_code(diags: &[Diagnostic], code: u32) -> bool {
-    diags.iter().any(|d| d.code == code)
-}
-
-fn has_diagnostic_code_message(diags: &[Diagnostic], code: u32, message: &str) -> bool {
-    diags
-        .iter()
-        .any(|d| d.code == code && d.message_text.contains(message))
-}
-
-fn has_diagnostic_message(diags: &[Diagnostic], message: &str) -> bool {
-    diags.iter().any(|d| d.message_text.contains(message))
-}
+use crate::test_utils::{
+    diagnostic_count, diagnostic_count_where, diagnostics_with_code, has_diagnostic_code,
+    has_diagnostic_code_message, has_diagnostic_message,
+};
 
 #[test]
 fn test_interface_used_as_value() {

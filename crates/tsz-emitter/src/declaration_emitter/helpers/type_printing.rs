@@ -1086,7 +1086,9 @@ impl<'a> DeclarationEmitter<'a> {
         candidate.get(object_start..object_end).map(str::to_string)
     }
 
-    fn inexact_optional_object_intersection_text(source_object: &str) -> Option<String> {
+    pub(in crate::declaration_emitter) fn inexact_optional_object_intersection_text(
+        source_object: &str,
+    ) -> Option<String> {
         let inner = source_object.trim().strip_prefix('{')?.strip_suffix('}')?;
         let members = Self::split_object_members(inner);
         if members.is_empty() {

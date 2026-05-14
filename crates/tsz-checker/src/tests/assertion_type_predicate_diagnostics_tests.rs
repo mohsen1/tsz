@@ -121,6 +121,38 @@ v.toUpperCase();
 }
 
 #[test]
+fn type_predicate_target_must_name_function_parameter() {
+    let codes = check_source_codes(
+        r#"
+type PredicateCheck<T> = T extends (...args: any[]) => T is infer U ? U : never;
+type PC = PredicateCheck<(x: unknown) => x is string>;
+"#,
+    );
+    assert!(
+        codes.contains(&1225),
+        "expected TS1225 when a type predicate names type parameter `T` instead of a function parameter, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_rest_parameter() {
+    let codes = check_source_codes(
+        r#"
+function isAllStrings(...values: unknown[]): values is string[] {
+    return values.every(value => typeof value === "string");
+}
+
+function assertAllStrings(...values: unknown[]): asserts values is string[] {}
+"#,
+    );
+    let ts1229_count = codes.iter().filter(|&&code| code == 1229).count();
+    assert_eq!(
+        ts1229_count, 2,
+        "expected TS1229 for type and assertion predicates that reference rest parameters, got {codes:?}"
+    );
+}
+
+#[test]
 fn assertion_element_access_emits_ts2776() {
     let codes = check_source_codes(
         r#"

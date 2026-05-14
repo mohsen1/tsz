@@ -9,6 +9,32 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if let Some(index_alias) = self.scoped_static_super_index_alias.as_ref().cloned()
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+            && let Some(base) = self.arena.get(access.expression)
+            && base.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.write(&index_alias);
+            self.write("(");
+            self.emit(access.name_or_argument);
+            self.write(")");
+            if self.scoped_static_super_index_value_access {
+                self.write(".value");
+            }
+            self.write(".call(");
+            self.emit_scoped_static_super_receiver();
+            if let Some(ref args) = call.arguments {
+                for &arg_idx in &args.nodes {
+                    self.write(", ");
+                    self.emit(arg_idx);
+                }
+            }
+            self.write(")");
+            return;
+        }
+
         if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
             && let Some(expr_node) = self.arena.get(call.expression)
         {
@@ -56,6 +82,27 @@ impl<'a> Printer<'a> {
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
                 if self.scoped_static_super_direct_access {
+                    if let Some(index_alias) =
+                        self.scoped_static_super_index_alias.as_ref().cloned()
+                    {
+                        self.write(&index_alias);
+                        self.write("(");
+                        self.emit(access.name_or_argument);
+                        self.write(")");
+                        if self.scoped_static_super_index_value_access {
+                            self.write(".value");
+                        }
+                        self.write(".call(");
+                        self.emit_scoped_static_super_receiver();
+                        if let Some(ref args) = call.arguments {
+                            for &arg_idx in &args.nodes {
+                                self.write(", ");
+                                self.emit(arg_idx);
+                            }
+                        }
+                        self.write(")");
+                        return;
+                    }
                     self.write(&base_alias);
                     self.write("[");
                     self.emit(access.name_or_argument);

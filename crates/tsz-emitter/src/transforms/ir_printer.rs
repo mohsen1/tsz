@@ -681,6 +681,9 @@ impl<'a> IRPrinter<'a> {
                     self.write(name);
                 }
             }
+            IRNode::RuntimeHelper(name) => {
+                self.write_helper(name);
+            }
             IRNode::This { captured } => {
                 self.write(if *captured { "_this" } else { "this" });
             }
@@ -1229,6 +1232,8 @@ impl<'a> IRPrinter<'a> {
                 super_param,
                 body,
                 weakmap_decls,
+                computed_prop_temp_decls,
+                computed_prop_temp_inits,
                 weakmap_inits,
                 leading_comment,
                 deferred_static_blocks,
@@ -1238,6 +1243,12 @@ impl<'a> IRPrinter<'a> {
                 if !weakmap_decls.is_empty() {
                     self.write("var ");
                     self.write(&weakmap_decls.join(", "));
+                    self.write(";");
+                    self.write_line();
+                }
+                if !computed_prop_temp_decls.is_empty() {
+                    self.write("var ");
+                    self.write(&computed_prop_temp_decls.join(", "));
                     self.write(";");
                     self.write_line();
                 }
@@ -1289,6 +1300,12 @@ impl<'a> IRPrinter<'a> {
                     self.emit_node(base);
                 }
                 self.write("));");
+
+                for init in computed_prop_temp_inits {
+                    self.write_line();
+                    self.write_indent();
+                    self.emit_node(init);
+                }
 
                 // Emit WeakMap instantiations if any
                 if !weakmap_inits.is_empty() {

@@ -2347,6 +2347,7 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1378 // Top-level 'for await' loops are only allowed...
         | 1432 // 'await' expressions are only allowed within async functions
         | 1434 // Top-level 'await' expressions are only allowed...
+        | 1389 // '{0}' is not allowed as a variable declaration name
         | 1382 // Unexpected token. Did you mean `{'>'}` or `&gt;`? (JSX)
         | 1438 // Interface must be given a name (recovery creates invalid expression statements)
         | 1442 // Identifier or expression expected (TS-only construct in JS)

@@ -195,6 +195,63 @@ pub(crate) fn compile_named_files_get_diagnostics_with_options_and_import_report
         .collect()
 }
 
+pub(crate) fn compile_named_project_get_diagnostics_with_options(
+    files: &[(&str, &str)],
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    let resolved_module_paths = Arc::new(resolved_module_paths);
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut diagnostics = Vec::new();
+
+    for (file_idx, file_name) in file_names.iter().enumerate() {
+        let mut checker = CheckerState::new(
+            all_arenas[file_idx].as_ref(),
+            all_binders[file_idx].as_ref(),
+            &types,
+            file_name.clone(),
+            options.clone(),
+        );
+        checker.enable_source_file_test_pragmas();
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(file_idx);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules.clone());
+        checker.check_source_file(roots[file_idx]);
+        diagnostics.extend(
+            checker
+                .ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code != 2318)
+                .map(|d| (d.code, d.message_text.clone())),
+        );
+    }
+
+    diagnostics
+}
+
 pub(crate) fn compile_named_files_get_diagnostics_with_lib_and_options(
     files: &[(&str, &str)],
     entry_file: &str,

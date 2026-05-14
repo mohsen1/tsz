@@ -1062,6 +1062,31 @@ fn(s => s.toUpperCase());
 }
 
 #[test]
+fn string_argument_does_not_match_generic_array_overload() {
+    let diags = check_source_diagnostics(
+        r#"
+function first<T>(arr: T[]): T;
+function first(arr: string): string;
+function first(arr: any): any {
+  return typeof arr === 'string' ? arr[0] : arr[0];
+}
+
+const f1: number = first([1, 2, 3]);
+const f2: string = first("hello");
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.code, 2322 | 2345 | 2769))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected string argument to select string overload, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn nested_object_literal_context_is_preserved_without_ambient_restore() {
     let diags = check_source_diagnostics(
         r#"

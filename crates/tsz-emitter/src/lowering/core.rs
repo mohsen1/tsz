@@ -807,10 +807,10 @@ impl<'a> LoweringPass<'a> {
         let mut directives = Vec::new();
         if self.ctx.target_es5 {
             if func.is_async {
-                self.mark_async_helpers();
-                // Async generators (async function*) need additional helpers
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
+                } else {
+                    self.mark_async_helpers();
                 }
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if func.asterisk_token {
@@ -823,11 +823,15 @@ impl<'a> LoweringPass<'a> {
                 }
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
-        } else if self.ctx.needs_async_lowering && func.is_async {
-            // ES2015/ES2016: async functions need __awaiter (generators are native)
-            self.mark_async_helpers();
+        } else if func.is_async
+            && ((func.asterisk_token && self.ctx.needs_es2018_lowering)
+                || (!func.asterisk_token && self.ctx.needs_async_lowering))
+        {
             if func.asterisk_token {
                 self.mark_async_generator_helpers();
+            } else {
+                // ES2015/ES2016: async functions need __awaiter (generators are native)
+                self.mark_async_helpers();
             }
         }
 
@@ -1172,13 +1176,11 @@ impl<'a> LoweringPass<'a> {
         }
 
         // Check if this is an async function needing lowering (target < ES2017)
-        let base_directive = if self.ctx.needs_async_lowering && self.has_async_modifier(idx) {
+        let base_directive = if self.has_async_modifier(idx)
+            && ((func.asterisk_token && self.ctx.needs_es2018_lowering)
+                || (!func.asterisk_token && self.ctx.needs_async_lowering))
+        {
             if func.asterisk_token {
-                // Async generators: at ES2015+ use __asyncGenerator + __await (no __awaiter).
-                // At ES5, also need __awaiter + __generator for the outer wrapper.
-                if self.ctx.target_es5 {
-                    self.mark_async_helpers();
-                }
                 self.mark_async_generator_helpers();
             } else {
                 self.mark_async_helpers();
@@ -1809,9 +1811,10 @@ impl<'a> LoweringPass<'a> {
 
         if self.ctx.target_es5 {
             if func.is_async {
-                self.mark_async_helpers();
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
+                } else {
+                    self.mark_async_helpers();
                 }
                 self.transforms.insert(
                     idx,
@@ -1832,7 +1835,10 @@ impl<'a> LoweringPass<'a> {
                     TransformDirective::ES5FunctionParameters { function_node: idx },
                 );
             }
-        } else if self.ctx.needs_async_lowering && func.is_async {
+        } else if func.is_async
+            && ((func.asterisk_token && self.ctx.needs_es2018_lowering)
+                || (!func.asterisk_token && self.ctx.needs_async_lowering))
+        {
             if func.asterisk_token {
                 // ES2015+: async generators need __asyncGenerator + __await helpers
                 self.mark_async_generator_helpers();

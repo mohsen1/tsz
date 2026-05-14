@@ -714,6 +714,39 @@ impl<'a> AsyncES5Transformer<'a> {
             ))
         };
 
+        if func.is_async
+            && crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                node.pos,
+                self.arena.get(func.body).map_or(node.end, |body| body.pos),
+            )
+        {
+            let mut transformer = AsyncES5Transformer::new(self.arena);
+            if let Some(text) = self.source_text {
+                transformer.set_source_text(text);
+            }
+            let inner = transformer.transform_async_generator_inner_function(
+                name.as_ref().map(|name| format!("{name}_1")),
+                &func.parameters.nodes,
+                func.body,
+                false,
+            );
+            return IRNode::FunctionExpr {
+                name: None,
+                parameters: self.convert_parameters(&func.parameters.nodes),
+                body: vec![IRNode::ReturnStatement(Some(Box::new(IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__asyncGenerator".into())),
+                    arguments: vec![
+                        IRNode::This { captured: false },
+                        IRNode::Identifier("arguments".into()),
+                        inner,
+                    ],
+                })))],
+                is_expression_body: false,
+                body_source_range: None,
+            };
+        }
+
         // Convert parameters
         let params = self.convert_parameters(&func.parameters.nodes);
 

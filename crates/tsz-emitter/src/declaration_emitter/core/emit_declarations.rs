@@ -745,12 +745,17 @@ impl<'a> DeclarationEmitter<'a> {
         if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
-            let mut filtered =
-                Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain);
+            let mut filtered = if has_jsdoc_type_function_signature {
+                Self::jsdoc_chain_without_type_tags(&self.current_statement_jsdoc_chain)
+            } else {
+                self.current_statement_jsdoc_chain.clone()
+            };
             if suppress_jsdoc_type_alias_comments {
                 filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
             }
-            self.emit_jsdoc_comment_chain(&filtered);
+            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos(stmt_node.pos, &filtered) {
+                self.emit_jsdoc_comment_chain(&filtered);
+            }
         } else {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
         }
@@ -1165,13 +1170,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // `undefined` — the solver approximates it as `undefined` from the
                 // runtime value, which we widen to `void` here. Matches
                 // declFileTypeAnnotationBuiltInType.
-                let solver_undefined_or_any = effective_return_type_id
-                    == tsz_solver::types::TypeId::ANY
-                    || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED;
-                if solver_undefined_or_any
-                    && func_body.is_some()
-                    && self.body_returns_void(func_body)
-                {
+                let solver_void_like = effective_return_type_id == tsz_solver::types::TypeId::ANY
+                    || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED
+                    || effective_return_type_id == tsz_solver::types::TypeId::NEVER;
+                if solver_void_like && func_body.is_some() && self.body_returns_void(func_body) {
                     self.write(": void");
                 } else if let Some(type_text) = func_body
                     .is_some()
@@ -1627,19 +1629,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         member_idx: NodeIndex,
     ) -> bool {
-        let Some(member_node) = self.arena.get(member_idx) else {
-            return false;
-        };
-        let name_idx = if let Some(prop) = self.arena.get_property_decl(member_node) {
-            Some(prop.name)
-        } else if let Some(method) = self.arena.get_method_decl(member_node) {
-            Some(method.name)
-        } else {
-            self.arena
-                .get_accessor(member_node)
-                .map(|accessor| accessor.name)
-        };
-        if let Some(name_idx) = name_idx
+        if let Some(name_idx) = self.get_member_name_idx(member_idx)
             && let Some(name_node) = self.arena.get(name_idx)
         {
             return name_node.kind == SyntaxKind::PrivateIdentifier as u16;

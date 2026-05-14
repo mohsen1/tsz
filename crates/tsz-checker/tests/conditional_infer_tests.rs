@@ -213,6 +213,41 @@ function withDeferredAny<T>(x: T): DeferredAny<T> {
 }
 
 #[test]
+fn recursive_promise_chain_keeps_only_ts1062_without_self_assignment_ts2322() {
+    let source = r#"
+type PromiseChain<T> = Promise<T | PromiseChain<T>>;
+
+async function unwrapChain<T>(chain: PromiseChain<T>): Promise<T> {
+  const result = await chain;
+  if (result instanceof Promise) {
+    return unwrapChain(result as PromiseChain<T>);
+  }
+  return result as T;
+}
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    let ts1062_count = diagnostics.iter().filter(|diag| diag.code == 1062).count();
+    let false_self_ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == 2322
+                && diag
+                    .message_text
+                    .contains("Type 'T' is not assignable to type 'T'")
+        })
+        .collect();
+    assert_eq!(
+        ts1062_count, 1,
+        "expected exactly one TS1062 for recursive Promise chain; diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        false_self_ts2322.is_empty(),
+        "recursive Promise chain should not emit self-assignment TS2322; diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn extract_like_conditional_target_still_rejects_unconstrained_type_parameter() {
     let source = r#"
 type OnlyObjects<T> = T extends object ? T : never;
@@ -1557,6 +1592,376 @@ const bad: NR = ["oops"];
     assert!(
         diags.iter().any(|d| d.code == 2322),
         "GetRet of non-generic nums(): number[] should stay number[]. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_with_unknown_rest_resolves_to_string() {
+    // issue #6253: fixed source params must match the element type of a non-infer rest param
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: unknown[]) => unknown ? A : never;
+type A1 = FirstArg<(a: string, b: number) => void>;
+const a1: A1 = "test";
+const bad: A1 = 42;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only `bad: A1 = 42` should error (A1 = string). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_different_names_resolves_correctly() {
+    // different type-param and rest-param names — fix must be structural, not name-keyed
+    let source = r#"
+type FirstArg<T> = T extends (first: infer S, ...rest: unknown[]) => unknown ? S : never;
+type F1 = FirstArg<(x: number, y: string) => void>;
+const ok: F1 = 1;
+const bad: F1 = "nope";
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only `bad: F1 = \"nope\"` should error (F1 = number). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_multiple_extra_fixed_params() {
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: unknown[]) => unknown ? A : never;
+type F3 = FirstArg<(a: string, b: number, c: boolean) => void>;
+const ok: F3 = "hi";
+const bad: F3 = 1;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Only numeric assignment should fail (F3 = string). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_rest_elem_constraint_fails_for_incompatible_extra_param() {
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: string[]) => unknown ? A : never;
+type F = FirstArg<(a: string, b: object) => void>;
+const accepted: F = "x" as never;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "F should be `never`; assigning `never` is valid (no errors). Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_with_return_infer_and_unknown_rest() {
+    let source = r#"
+type FirstArgAndRet<T> =
+  T extends (x: infer A, ...args: unknown[]) => infer R ? [A, R] : never;
+type FR = FirstArgAndRet<(a: string, b: number) => boolean>;
+const ok: FR = ["hi", true];
+const bad: FR = [1, true];
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "FR = [string, boolean]; only `[1, true]` should fail. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_source_rest_param_against_unknown_rest_pattern() {
+    // source rest param compared array-to-array (not array vs element) against pattern rest
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: unknown[]) => unknown ? A : never;
+type FR = FirstArg<(a: string, ...rest: number[]) => void>;
+const ok: FR = "hi";
+const bad: FR = 99;
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "FR = string; only numeric assignment should fail. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn infer_first_param_source_with_no_extra_params() {
+    let source = r#"
+type FirstArg<T> = T extends (x: infer A, ...args: unknown[]) => unknown ? A : never;
+type F0 = FirstArg<(a: number) => void>;
+const ok: F0 = 1;
+const bad: F0 = "nope";
+"#;
+    let diags = tsz_checker::test_utils::check_source_diagnostics(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "F0 = number; only string assignment should fail. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+// ── Tuple rest/last infer spread flattening (issue #6671) ──────────────────
+
+/// `[...infer R, infer L]` captures R as a tuple. The true branch `[L, ...R]`
+/// must spread R's elements into the result, not wrap them in a nested tuple.
+#[test]
+fn test_rotate_right_tuple_infer_rest_last_spreads_correctly() {
+    let source = r#"
+type RotateRight<T extends unknown[]> =
+  T extends [...infer R, infer L] ? [L, ...R] : T;
+
+type RR1 = RotateRight<[1, 2, 3]>;
+type RR2 = RotateRight<[string, number]>;
+
+const ok1: RR1 = [3, 1, 2];
+const ok2: RR2 = [42, "hello"];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert!(
+        diags.is_empty(),
+        "RotateRight should produce no errors. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `RotateRight` should reject assignments that don't match the rotated type.
+#[test]
+fn test_rotate_right_rejects_wrong_assignment() {
+    let source = r#"
+type RotateRight<T extends unknown[]> =
+  T extends [...infer R, infer L] ? [L, ...R] : T;
+
+type RR1 = RotateRight<[1, 2, 3]>;
+const bad: RR1 = [1, 2, 3];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Assigning [1,2,3] to RotateRight<[1,2,3]>=[3,1,2] should error."
+    );
+}
+
+/// `RotateLeft` `[infer F, ...infer R]` followed by `[...R, F]` must also spread R.
+#[test]
+fn test_rotate_left_tuple_infer_first_rest_spreads_correctly() {
+    let source = r#"
+type RotateLeft<T extends unknown[]> =
+  T extends [infer F, ...infer R] ? [...R, F] : T;
+
+type RL1 = RotateLeft<[1, 2, 3]>;
+type RL2 = RotateLeft<[string, number, boolean]>;
+
+const ok1: RL1 = [2, 3, 1];
+const ok2: RL2 = [42, true, "hello"];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert!(
+        diags.is_empty(),
+        "RotateLeft should produce no errors. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// `Reverse<T>` uses `[...infer Init, infer Last]` recursively; every recursive
+/// step must spread the init portion correctly.
+#[test]
+fn test_recursive_reverse_tuple_spreads_correctly() {
+    let source = r#"
+type Reverse<T extends unknown[]> =
+  T extends [...infer Init, infer Last] ? [Last, ...Reverse<Init>] : T;
+
+type Rev1 = Reverse<[1, 2, 3]>;
+type Rev2 = Reverse<[string, number]>;
+
+const ok1: Rev1 = [3, 2, 1];
+const ok2: Rev2 = [42, "hello"];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert!(
+        diags.is_empty(),
+        "Reverse should produce no errors. Got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+// ============================================================================
+// Tests for issue #6657: infer bindings in complex extends clauses
+//
+// Structural rule: when the extends clause of a conditional type contains
+// `infer X` (regardless of surrounding expression complexity), references to
+// `X` in the true/false branches must resolve without TS2304.
+// ============================================================================
+
+fn no_ts2304(diags: &[tsz_checker::diagnostics::Diagnostic], ctx: &str) {
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        errors.is_empty(),
+        "{ctx}: expected no TS2304, got: {:?}",
+        errors
+            .iter()
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+fn ts2304_count(diags: &[tsz_checker::diagnostics::Diagnostic]) -> usize {
+    diags.iter().filter(|d| d.code == 2304).count()
+}
+
+/// Utility type in check position: `Pick<T, K> extends infer R`
+/// — `R` must be visible inside the true branch mapped type.
+#[test]
+fn infer_binding_visible_when_check_type_is_utility_application() {
+    let source = r#"
+type Flatten<T, K extends keyof T> =
+    Pick<T, K> extends infer R ? { [P in keyof R]: R[P] } : never;
+interface Obj { a: string; b: number }
+type T1 = Flatten<Obj, "a">;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "Pick<T,K> extends infer R");
+}
+
+/// Intersection in check position: `T & U extends infer V`
+/// — `V` must be visible in the true branch.
+#[test]
+fn infer_binding_visible_when_check_type_is_intersection() {
+    let source = r#"
+type Merge<A, B> =
+    A & B extends infer V ? { [K in keyof V]: V[K] } : never;
+type T2 = Merge<{ x: number }, { y: string }>;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "A & B extends infer V");
+}
+
+/// Real-world `RequiredByKeys` pattern with Omit & Required<Pick>.
+#[test]
+fn infer_binding_visible_in_required_by_keys_pattern() {
+    let source = r#"
+type RequiredByKeys<T, K extends keyof T = keyof T> =
+    Omit<T, K> & Required<Pick<T, K>> extends infer X
+        ? { [P in keyof X]: X[P] }
+        : never;
+interface User { name?: string; age?: number }
+type T3 = RequiredByKeys<User, "name">;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "Omit<T,K> & Required<Pick<T,K>> extends infer X");
+}
+
+/// Multiple infer bindings in the extends clause.
+/// All bound names must be visible in the branches.
+#[test]
+fn multiple_infer_bindings_all_visible_in_branches() {
+    let source = r#"
+type Unpack<T> =
+    T extends { first: infer A; second: infer B }
+        ? { [K in keyof A | keyof B]: K extends keyof A ? A[K] : B[K extends keyof B ? K : never] }
+        : never;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "multiple infer A, B");
+}
+
+/// Renamed infer variable (Q instead of R) — proves the fix is not
+/// tied to any specific identifier spelling.
+#[test]
+fn infer_binding_works_with_any_variable_name() {
+    let source = r#"
+type Spread<T, K extends keyof T> =
+    Pick<T, K> extends infer Q ? { [P in keyof Q]: Q[P] } : never;
+interface Data { x: number; y: string }
+type T4 = Spread<Data, "x">;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "Pick<T,K> extends infer Q (renamed variable)");
+}
+
+/// The simple case (check type is a direct type parameter) must still work:
+/// no regression for `T extends infer R`.
+#[test]
+fn infer_binding_simple_type_param_check_no_regression() {
+    let source = r#"
+type Identity<T> = T extends infer R ? { [P in keyof R]: R[P] } : never;
+type T5 = Identity<{ a: string }>;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "T extends infer R (simple case regression)");
+}
+
+/// Infer bindings are scoped to the true branch only.
+/// The false branch must still report unknown-name errors for `R`.
+#[test]
+fn infer_binding_not_visible_in_false_branch() {
+    let source = r#"
+type Bad<T> =
+    T extends { a: infer R }
+        ? string
+        : { [K in keyof R]: R[K] };
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert_eq!(
+        ts2304_count(&diags),
+        2,
+        "false branch infer references should remain unbound. Actual diagnostics: {:?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))

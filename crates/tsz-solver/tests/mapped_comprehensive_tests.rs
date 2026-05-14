@@ -1322,3 +1322,265 @@ fn test_is_readonly_index_signature_on_mapped_type() {
         &interner, mutable_id, false, true
     ));
 }
+
+// =============================================================================
+// Symbol Key Mapped Type Tests (issue #6232)
+// =============================================================================
+
+/// Helper: given a type and a unique symbol ref, find the symbol-named property's type.
+fn find_symbol_property(
+    interner: &TypeInterner,
+    type_id: TypeId,
+    sym: crate::types::SymbolRef,
+) -> Option<TypeId> {
+    let target_name = format!("__unique_{}", sym.0);
+    match interner.lookup(type_id) {
+        Some(TypeData::Object(sid) | TypeData::ObjectWithIndex(sid)) => {
+            let shape = interner.object_shape(sid);
+            shape
+                .properties
+                .iter()
+                .find(|p| {
+                    p.is_symbol_named && interner.resolve_atom_ref(p.name).as_ref() == target_name
+                })
+                .map(|p| p.type_id)
+        }
+        _ => None,
+    }
+}
+
+#[test]
+fn test_mapped_type_with_only_symbol_keys() {
+    // { [K in typeof sym1]: number } → { [sym1]: number }
+    let interner = TypeInterner::new();
+    let sym1 = crate::types::SymbolRef(501);
+    let sym1_type = interner.unique_symbol(sym1);
+
+    let k_name = interner.intern_string("K");
+    let k_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let mapped = MappedType {
+        type_param: k_info,
+        constraint: sym1_type,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let result = evaluate_type(&interner, interner.mapped(mapped));
+    assert!(
+        find_symbol_property(&interner, result, sym1).is_some(),
+        "mapped type over single unique symbol should produce symbol-named property"
+    );
+    assert_eq!(
+        find_symbol_property(&interner, result, sym1),
+        Some(TypeId::NUMBER)
+    );
+}
+
+#[test]
+fn test_mapped_type_symbol_union_keys() {
+    // { [K in typeof sym1 | typeof sym2]: string }
+    // → { [sym1]: string; [sym2]: string }
+    let interner = TypeInterner::new();
+    let sym1 = crate::types::SymbolRef(502);
+    let sym2 = crate::types::SymbolRef(503);
+    let sym1_type = interner.unique_symbol(sym1);
+    let sym2_type = interner.unique_symbol(sym2);
+    let constraint = interner.union(vec![sym1_type, sym2_type]);
+
+    let k_name = interner.intern_string("K");
+    let k_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let mapped = MappedType {
+        type_param: k_info,
+        constraint,
+        name_type: None,
+        template: TypeId::STRING,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let result = evaluate_type(&interner, interner.mapped(mapped));
+    assert_eq!(
+        find_symbol_property(&interner, result, sym1),
+        Some(TypeId::STRING)
+    );
+    assert_eq!(
+        find_symbol_property(&interner, result, sym2),
+        Some(TypeId::STRING)
+    );
+}
+
+#[test]
+fn test_mapped_type_mixed_string_and_symbol_keys() {
+    // { [K in "str" | typeof sym1]: number }
+    // → { str: number; [sym1]: number }
+    let interner = TypeInterner::new();
+    let sym1 = crate::types::SymbolRef(504);
+    let sym1_type = interner.unique_symbol(sym1);
+    let str_key = interner.literal_string("str");
+    let constraint = interner.union(vec![str_key, sym1_type]);
+
+    let k_name = interner.intern_string("K");
+    let k_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let mapped = MappedType {
+        type_param: k_info,
+        constraint,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let result = evaluate_type(&interner, interner.mapped(mapped));
+
+    // String key should be present
+    let has_str_prop = match interner.lookup(result) {
+        Some(TypeData::Object(sid) | TypeData::ObjectWithIndex(sid)) => interner
+            .object_shape(sid)
+            .properties
+            .iter()
+            .any(|p| !p.is_symbol_named && interner.resolve_atom_ref(p.name).as_ref() == "str"),
+        _ => false,
+    };
+    assert!(
+        has_str_prop,
+        "mixed-key mapped type should preserve string key 'str'"
+    );
+    assert_eq!(
+        find_symbol_property(&interner, result, sym1),
+        Some(TypeId::NUMBER),
+        "mixed-key mapped type should preserve symbol key sym1"
+    );
+}
+
+#[test]
+fn test_mapped_type_symbol_filter_as_clause() {
+    // type SymbolProps<T> = { [K in keyof T as K extends symbol ? K : never]: T[K] }
+    // Applied to { str: string, [sym1]: number }
+    // → { [sym1]: number }
+    //
+    // We simulate this by using "str" | UniqueSymbol(sym1) as the constraint and
+    // a conditional as the name_type.
+    let interner = TypeInterner::new();
+    let sym1 = crate::types::SymbolRef(505);
+    let sym1_type = interner.unique_symbol(sym1);
+    let str_key = interner.literal_string("str");
+    let constraint = interner.union(vec![str_key, sym1_type]);
+
+    let k_name = interner.intern_string("K");
+    let k_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.type_param(crate::types::TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // as K extends symbol ? K : never
+    let name_type = interner.conditional(ConditionalType {
+        check_type: k_type,
+        extends_type: TypeId::SYMBOL,
+        true_type: k_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let mapped = MappedType {
+        type_param: k_info,
+        constraint,
+        name_type: Some(name_type),
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let result = evaluate_type(&interner, interner.mapped(mapped));
+
+    // "str" should be filtered out by the as clause
+    let has_str_prop = match interner.lookup(result) {
+        Some(TypeData::Object(sid) | TypeData::ObjectWithIndex(sid)) => interner
+            .object_shape(sid)
+            .properties
+            .iter()
+            .any(|p| !p.is_symbol_named && interner.resolve_atom_ref(p.name).as_ref() == "str"),
+        _ => false,
+    };
+    assert!(
+        !has_str_prop,
+        "as clause `K extends symbol ? K : never` should filter out string key 'str'"
+    );
+
+    // [sym1] should be kept
+    assert_eq!(
+        find_symbol_property(&interner, result, sym1),
+        Some(TypeId::NUMBER),
+        "as clause `K extends symbol ? K : never` should preserve unique symbol key"
+    );
+}
+
+#[test]
+fn test_mapped_type_string_filter_as_clause_removes_symbol_keys() {
+    // { [K in "str" | typeof sym1 as K extends string ? K : never]: number }
+    // → { str: number }  (symbol filtered out)
+    let interner = TypeInterner::new();
+    let sym1 = crate::types::SymbolRef(506);
+    let sym1_type = interner.unique_symbol(sym1);
+    let str_key = interner.literal_string("str");
+    let constraint = interner.union(vec![str_key, sym1_type]);
+
+    let k_name = interner.intern_string("K");
+    let k_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.type_param(crate::types::TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // as K extends string ? K : never
+    let name_type = interner.conditional(ConditionalType {
+        check_type: k_type,
+        extends_type: TypeId::STRING,
+        true_type: k_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let mapped = MappedType {
+        type_param: k_info,
+        constraint,
+        name_type: Some(name_type),
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let result = evaluate_type(&interner, interner.mapped(mapped));
+
+    // Symbol key should be filtered out
+    assert!(
+        find_symbol_property(&interner, result, sym1).is_none(),
+        "as K extends string ? K : never should filter out symbol key"
+    );
+}

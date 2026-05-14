@@ -940,6 +940,17 @@ fn test_tuple_type_in_declaration() {
 }
 
 #[test]
+fn test_tuple_object_index_signature_preserves_parameter_name() {
+    let output = emit_dts("export type H = string | [string, { [key: string]: unknown }, ...H[]];");
+    assert!(
+        output.contains(
+            "export type H = string | [string, {\n    [key: string]: unknown;\n}, ...H[]];"
+        ),
+        "Expected object index signature inside tuple to preserve its parameter name: {output}"
+    );
+}
+
+#[test]
 fn test_multiline_tuple_type_argument_preserves_tuple_breaks() {
     let output = emit_dts(
         r#"

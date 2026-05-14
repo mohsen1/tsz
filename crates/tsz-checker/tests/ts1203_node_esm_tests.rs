@@ -40,6 +40,13 @@ fn get_diagnostics_with_file_name(
 
 const EXPORT_ASSIGNMENT_SRC: &str = "const a = {}; export = a;";
 const NON_IDENTIFIER_EXPORT_ASSIGNMENT_SRC: &str = "const value = 1;\nexport = value + 1;\n";
+const EXPORT_AS_NAMESPACE_SRC: &str = r#"
+namespace MyLib {
+    export function test(): void {}
+}
+export as namespace MyLib;
+export {};
+"#;
 
 #[test]
 fn ts1203_emitted_for_node16_esm_file() {
@@ -153,6 +160,32 @@ export as namespace React;
     assert!(
         diagnostics.iter().all(|diag| diag.code != 2686),
         "TS2686 should not fire on `export = React` in the defining UMD file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn export_as_namespace_in_ts_file_emits_ts1315() {
+    let codes = get_codes(EXPORT_AS_NAMESPACE_SRC, ModuleKind::CommonJS, None);
+    assert!(
+        codes.contains(&1315),
+        "TS1315 should fire for `export as namespace` outside a declaration file, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_as_namespace_in_declaration_file_does_not_emit_ts1315() {
+    let codes = get_diagnostics_with_file_name(
+        EXPORT_AS_NAMESPACE_SRC,
+        ModuleKind::CommonJS,
+        None,
+        "test.d.ts",
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect::<Vec<_>>();
+    assert!(
+        !codes.contains(&1315),
+        "TS1315 should not fire for `export as namespace` in a declaration file, got: {codes:?}"
     );
 }
 

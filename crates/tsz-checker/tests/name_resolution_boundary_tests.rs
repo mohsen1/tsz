@@ -12,6 +12,10 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::test_utils::{
+    diagnostic_codes, diagnostic_count, diagnostics_where, diagnostics_with_code,
+    has_diagnostic_code, has_diagnostic_code_where,
+};
 
 fn check(source: &str) -> Vec<Diagnostic> {
     let mut parser =
@@ -43,35 +47,8 @@ fn check_named_files(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic
         .collect()
 }
 
-fn diagnostic_codes(diags: &[Diagnostic]) -> Vec<u32> {
-    diags.iter().map(|d| d.code).collect()
-}
-
-fn diagnostic_count(diags: &[Diagnostic], code: u32) -> usize {
-    diags.iter().filter(|d| d.code == code).count()
-}
-
-fn diagnostics_with_code(diags: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| d.code == code).collect()
-}
-
-fn diagnostics_where(
-    diags: &[Diagnostic],
-    mut matches: impl FnMut(u32) -> bool,
-) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| matches(d.code)).collect()
-}
-
 fn expect_diagnostic_code<'a>(diags: &'a [Diagnostic], code: u32, message: &str) -> &'a Diagnostic {
     diags.iter().find(|d| d.code == code).expect(message)
-}
-
-fn has_diagnostic_code(diags: &[Diagnostic], code: u32) -> bool {
-    diags.iter().any(|d| d.code == code)
-}
-
-fn has_diagnostic_code_where(diags: &[Diagnostic], mut matches: impl FnMut(u32) -> bool) -> bool {
-    diags.iter().any(|d| matches(d.code))
 }
 
 // =========================================================================

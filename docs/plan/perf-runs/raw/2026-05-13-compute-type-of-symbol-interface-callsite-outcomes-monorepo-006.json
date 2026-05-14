@@ -1,0 +1,56 @@
+{
+  "fixture": "monorepo-006",
+  "mode": "attribution",
+  "timings": {
+    "total_s": 95.75,
+    "check_s": 94.06,
+    "parse_bind_s": 1.16,
+    "io_read_s": 0.33
+  },
+  "diagnostics": 10198,
+  "compute_type_of_symbol": {
+    "total_calls": 26379,
+    "cache_hits": 252043,
+    "source_outcomes": {
+      "global_symbol": 25404,
+      "cross_file_symbol": 0,
+      "missing_symbol": 0
+    },
+    "kind_outcomes": {
+      "alias": 148,
+      "type_alias": 313,
+      "interface": 24796,
+      "class": 0,
+      "function": 0,
+      "variable": 0,
+      "module": 0,
+      "property": 0,
+      "method": 0,
+      "accessor": 0,
+      "enum": 0,
+      "type_parameter": 147,
+      "type_literal": 0,
+      "object_literal": 0,
+      "signature": 0,
+      "other": 0
+    },
+    "interface_fastpath_outcomes": {
+      "full_path": 1,
+      "skip_computed_name_map": 1,
+      "skip_prewarm": 0,
+      "skip_local_heritage_merge": 0,
+      "skip_computed_name_map_and_prewarm": 0,
+      "skip_computed_name_map_and_local_heritage_merge": 16,
+      "skip_prewarm_and_local_heritage_merge": 0,
+      "skip_all_three": 24767
+    },
+    "interface_callsite_outcomes": {
+      "root": 24782,
+      "parent_interface": 14,
+      "parent_type_alias": 0,
+      "parent_alias": 0,
+      "parent_other": 0,
+      "parent_missing": 0
+    }
+  }
+}

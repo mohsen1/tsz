@@ -30,7 +30,8 @@ When picking a slice:
    completion. Bench gates: `scripts/bench/perf-hotspots.sh --quick` must not
    regress against the pinned baseline; `scripts/bench/precommit-microbench.sh`
    stays green.
-2. **Conformance fixes (Workstream 1)** — second-class priority. The conformance target is 100%; preserve it while changing checker, solver,
+2. **Conformance maintenance (Workstream 1)** — second-class priority. The
+   conformance target is 100%; preserve it while changing checker, solver,
    parser, binder, emitter, transforms, diagnostics, harness code, baselines,
    or snapshots. **Now subordinated to the performance goal**: a conformance
    maintenance fix that introduces a hot-path slowdown must be reworked or
@@ -53,7 +54,7 @@ When picking a slice:
 
 **Ranking heuristic**: when in doubt, look at §5 ("Stable Identity, Skeletons,
 And Large-Repo Residency") for the next perf slice. Run
-`scripts/bench/perf-hotspots.sh --quick` to measure the impact. Drop to
+`scripts/bench/perf-hotspots.sh --quick` to measure the impact. Use
 conformance work only to preserve the 100% target or repair CI-detected drift.
 
 This document supersedes the previous scattered plan files in `docs/plan/` and the former standalone DRY audit.
@@ -70,6 +71,22 @@ Workflow:
 4. Open a draft PR immediately with the `WIP` label.
 5. Only then start implementation.
 6. Before marking ready, update the issue and PR with final scope and verification.
+
+Draft PR command shape:
+
+```bash
+gh pr create --draft --label WIP --title "[WIP] <scope>: <intent>" --body "$(cat <<'EOF'
+## Intent
+- <what this PR intends to change>
+
+## Planned Scope
+- <files/systems expected to change>
+
+## Verification Plan
+- <targeted tests / conformance / emit / bench plan>
+EOF
+)"
+```
 
 Rules:
 
@@ -502,7 +519,8 @@ DRY loop rules:
 5. Prefer one helper or fixture plus a small representative migration, one crate-local consolidation with tests, one bug-shaped finding with a targeted regression test, or one script/helper extraction with callers migrated in the same area.
 6. Preserve behavior unless the selected item is explicitly a bug fix.
 7. Add or update tests that lock the shared invariant, not just the migrated call sites.
-8. End successful iterations by pushing a draft PR for light CI and marking it ready only when the full CI budget should run.
+8. End successful iterations by pushing a draft PR for light CI and marking it
+   ready only when the full CI budget should run.
 9. Before marking ready, update this roadmap with landed status, remove `WIP`, remove any `[WIP]` / `[do not merge]` title prefix, and mark the PR ready.
 10. If unrelated dirty files are present, stop and resolve the handoff instead of silently omitting them.
 

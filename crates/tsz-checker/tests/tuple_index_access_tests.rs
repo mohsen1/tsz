@@ -5,6 +5,31 @@
 use tsz_checker::test_utils::{check_source_diagnostics, diagnostic_codes};
 
 #[test]
+fn parameters_of_generic_function_allows_numeric_index() {
+    let diagnostics = check_source_diagnostics(
+        r#"
+type Parameters<T extends (...args: any) => any> = T extends (...args: infer P) => any ? P : never;
+type ReturnType<T extends (...args: any) => any> = T extends (...args: any[]) => infer R ? R : any;
+
+function apply<T extends (x: any) => any>(fn: T, arg: Parameters<T>[0]): ReturnType<T> {
+  return fn(arg);
+}
+
+const result = apply((x: number) => x.toString(), 42);
+"#,
+    );
+    let ts2536: Vec<_> = diagnostics.iter().filter(|d| d.code == 2536).collect();
+    assert!(
+        ts2536.is_empty(),
+        "Expected Parameters<T>[0] to be accepted for callable-constrained T. Got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn readonly_variadic_tuple_to_mutable_variadic_tuple_emits_ts4104() {
     let diagnostics = check_source_diagnostics(
         r"

@@ -3,27 +3,21 @@
 //! These tests verify that TS2322 "Type 'X' is not assignable to type 'Y'" errors
 //! are properly emitted in various contexts.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_checker::state::CheckerState;
-use tsz_checker::test_utils::{HasDiagnosticCode, diagnostic_codes as project_diagnostic_codes};
+use tsz_checker::test_utils::{
+    HasDiagnosticCode, diagnostic_codes as project_diagnostic_codes, load_lib_files,
+};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_roots = [
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets"),
-        manifest_dir.join("../../crates/tsz-core/src/lib-assets-stripped"),
-        manifest_dir.join("../../TypeScript/src/lib"),
-    ];
-    let lib_names = [
+    load_lib_files(&[
         "es5.d.ts",
         "es2015.d.ts",
         "es2015.core.d.ts",
@@ -40,27 +34,7 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "dom.generated.d.ts",
         "dom.iterable.d.ts",
         "esnext.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for file_name in lib_names {
-        for root in &lib_roots {
-            let lib_path = root.join(file_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if !seen_files.insert(file_name.to_string()) {
-                    break;
-                }
-                let lib_file = LibFile::from_source(file_name.to_string(), content);
-                lib_files.push(Arc::new(lib_file));
-                break;
-            }
-        }
-    }
-
-    lib_files
+    ])
 }
 
 fn with_lib_contexts(source: &str, file_name: &str, options: CheckerOptions) -> Vec<(u32, String)> {
@@ -5091,6 +5065,33 @@ const r1: number = x;
 }
 
 #[test]
+fn iterator_intersection_return_method_name_is_not_unresolved_identifier() {
+    let source = r#"
+type WithReturn = Iterator<number> & { return(): IteratorReturnResult<void> };
+
+const iter: WithReturn = {
+  next() { return { value: 1, done: false as const }; },
+  return() { return { value: undefined, done: true as const }; }
+};
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|diagnostic| diagnostic.0).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME)
+            && !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "object literal method name `return` should satisfy Iterator intersection without TS2304/TS2322, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_module_local_builtin_iterator_return_alias_shadows_intrinsic() {
     let source = r#"
 export {};
@@ -6990,5 +6991,317 @@ fn test_ts2322_constrained_to_object_optional_generic_no_false_positive() {
     assert!(
         !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected no TS2322 for `(D extends object | undefined) || {{}}`, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_explicit_union_undefined_or_empty_object_as_object_assignment() {
+    // Explicit `D | undefined` parameter assigned via `||` fallback to `object`:
+    // tsc accepts this because the truthy branch produces `D & {}`, which IS
+    // assignable to the `object` keyword even for an unconstrained type param.
+    let source = r#"
+        function test<D>(data: D | undefined): object {
+            let d: object = data || {};
+            return d;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for explicit `(D | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_explicit_union_undefined_or_empty_object_various_names() {
+    // Verify name-invariance for the explicit `D | undefined` variant.
+    let source = r#"
+        function withT<T>(x: T | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+        function withValue<Value>(x: Value | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for explicit `(T | undefined) || {{}}` assignment with various names, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_multi_type_param_union_undefined_or_empty_object() {
+    // Structural rule: when `D | E | undefined || {}` is used, where D and E are
+    // both unconstrained type parameters, the result should be assignable to `object`
+    // because each type param gets the `& {}` treatment making the union object-safe.
+    let source = r#"
+        function withTwo<D, E>(x: D | E | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | E | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_class_method_generic_or_empty_object_as_object() {
+    // The `(D | undefined) || {}` → `object` rule applies in class method contexts too.
+    let source = r#"
+        class Foo<D> {
+            method(data: D | undefined): object {
+                let d: object = data || {};
+                return d;
+            }
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for class method `(D | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_reduces_to_application_for_infer() {
+    // Structural rule: when matching `Application(B, args)` against
+    // pattern `Application(B_pat, [infer V])` and `B` is a generic type
+    // alias whose body is itself an `Application(B_pat, [X])`, peel one
+    // alias step so bases align and `V` binds to the substituted `X`.
+    let source = r#"
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+        type ToPromise<X> = Promise<X>;
+
+        type R = Cond<ToPromise<{ id: number }>>;
+        const ok: R = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for Cond<ToPromise<{{id}}>>: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_renamed_infer_var() {
+    // Anti-hardcoding: the rule must hold regardless of the infer variable
+    // name (`T` vs `P`) and the alias parameter name (`X` vs `Y`).
+    let source = r#"
+        type Cond<Q> = Q extends Promise<infer P> ? P : never;
+        type Wrap<Y> = Promise<Y>;
+
+        type R = Cond<Wrap<string>>;
+        const ok: R = "hello";
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for renamed-infer Cond<Wrap<string>>: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_multi_layer_generic_alias_chain() {
+    // Two layers of generic aliasing must all peel back to Promise.
+    let source = r#"
+        type Inner<X> = Promise<X>;
+        type Outer<Y> = Inner<Y>;
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+
+        type R = Cond<Outer<{ id: number }>>;
+        const ok: R = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for two-layer alias chain: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_async_return_via_return_type_promise_infer() {
+    // Reported repro from issue #6581: when the alias body is a Conditional
+    // (ReturnType's body) that yields `Application(Promise, ...)` via infer,
+    // the outer conditional must still recover the Application form for
+    // `Promise<infer T>` to bind `T`.
+    let source = r#"
+        type AsyncReturn<F extends (...args: any) => any> =
+            ReturnType<F> extends Promise<infer T> ? T : never;
+
+        declare function fetchUser(): Promise<{ id: number }>;
+
+        type FU = AsyncReturn<typeof fetchUser>;
+        const fu: FU = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for AsyncReturn<typeof fetchUser>: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_unwrap_over_return_type_alias() {
+    // Variant: the source is `Unwrap<R>` where `R` is a non-generic alias
+    // for `ReturnType<typeof f>`. Same conditional-body reduction must apply.
+    let source = r#"
+        type Unwrap<P> = P extends Promise<infer X> ? X : never;
+        declare function getUser(): Promise<{ id: number }>;
+
+        type R = ReturnType<typeof getUser>;
+        type U = Unwrap<R>;
+        const u: U = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for Unwrap<R> via ReturnType alias: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_inline_vs_alias_parity() {
+    // Generalization gate: peeling must not regress the no-alias path.
+    // `Cond<Promise<X>>` (inline) and `Cond<ToPromise<X>>` (aliased) must
+    // both bind `T` to `X`.
+    let source = r#"
+        type Cond<P> = P extends Promise<infer T> ? T : never;
+        type ToPromise<X> = Promise<X>;
+
+        type Inline = Cond<Promise<{ id: number }>>;
+        type Aliased = Cond<ToPromise<{ id: number }>>;
+        const inline: Inline = { id: 1 };
+        const aliased: Aliased = { id: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322: Vec<_> =
+        diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322.is_empty(),
+        "Expected inline and aliased Cond to behave identically: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_generic_alias_chain_negative_non_promise_takes_false_branch() {
+    // Negative: ensure peeling does NOT cause a false positive in the
+    // false branch. When the source is not Promise-shaped at all, the
+    // conditional must take the false branch and the result type must
+    // reject Promise-shape assignments.
+    let source = r#"
+        type Unwrap<P> = P extends Promise<infer X> ? X : "fallback";
+        type NotPromise = { x: number };
+        type U = Unwrap<NotPromise>;
+        const ok: U = "fallback";
+        const bad: U = { x: 1 };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected the `bad` line to error (U is 'fallback'), got {ts2322} TS2322 diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_async_return_via_return_type_negative_sync_function() {
+    // Negative: a synchronous function should take the `never` branch.
+    // Assigning a value-shape to `never` must still error.
+    let source = r#"
+        type AsyncReturn<F extends (...args: any) => any> =
+            ReturnType<F> extends Promise<infer T> ? T : never;
+        declare function syncFn(): { id: number };
+        type FU = AsyncReturn<typeof syncFn>;
+        const bad: FU = { id: 1 };
+    "#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 when assigning to AsyncReturn of a sync function: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_return_no_false_positive() {
+    // `T extends never` → T can only be `never`, so returning T as `never` is valid.
+    let source = r#"
+        function handleT<T extends never>(x: T): never { return x; }
+        function handleN<N extends never>(x: N): never { return x; }
+        function handleK<K extends never>(x: K): never { return x; }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 for `T extends never` return: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_variable_no_false_positive() {
+    // Assigning a value of type T (extends never) to a variable of type never is valid.
+    let source = r#"
+        function f<T extends never>(x: T): T {
+            const y: never = x;
+            return y;
+        }
+        function g<U extends never>(x: U): U {
+            const z: never = x;
+            return z;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when assigning `T extends never` to `never`: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_transitive_constraint() {
+    // T extends U where U extends never → T should also be assignable to never.
+    let source = r#"
+        function passDown<U extends never, T extends U>(x: T): never { return x; }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 for transitive `T extends U extends never`: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_concrete_value_to_never_param_errors() {
+    // Negative: concrete types remain non-assignable to never (the fix must not loosen this).
+    let source = r#"
+        declare function needsNever(x: never): void;
+        needsNever(42);
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2345 = diagnostic_count(
+        &diags,
+        diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+    );
+    assert!(
+        ts2345 >= 1,
+        "Expected TS2345 when passing number to `never` param: {diags:?}"
     );
 }

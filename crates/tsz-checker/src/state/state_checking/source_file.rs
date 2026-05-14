@@ -354,7 +354,8 @@ impl<'a> CheckerState<'a> {
 
         let prev_unreachable = self.ctx.is_unreachable;
         let prev_reported = self.ctx.has_reported_unreachable;
-        let suppress_grammar = self.has_syntax_parse_errors();
+        let suppress_grammar = self.has_syntax_parse_errors()
+            || self.ctx.diagnostics.iter().any(|diag| diag.code == 1389);
 
         // TS1046: In .d.ts files, top-level value declarations must start
         // with 'declare' or 'export'. Report the first violation only.
@@ -364,6 +365,20 @@ impl<'a> CheckerState<'a> {
 
         let mut seen_dts_ambient_violation = false;
         for &stmt_idx in &sf.statements.nodes {
+            if !is_dts
+                && !suppress_grammar
+                && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.ctx.error(
+                    stmt_node.pos,
+                    stmt_node.end.saturating_sub(stmt_node.pos),
+                    diagnostic_messages::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES
+                        .to_string(),
+                    diagnostic_codes::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES,
+                );
+            }
             if is_dts && !suppress_grammar && !seen_dts_ambient_violation {
                 seen_dts_ambient_violation = self.check_dts_statement_in_ambient_context(stmt_idx);
             }
@@ -593,9 +608,14 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        let has_recursive_promise_await_diagnostic = self.ctx.diagnostics.iter().any(|diag| {
+            diag.code == tsz_common::diagnostics::diagnostic_codes::TYPE_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_THE_FULFILLMENT_CALLBACK_OF_ITS_OWN
+        });
         self.ctx.diagnostics.retain(|diag| {
             diag.code != tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                || !is_nested_same_wrapper_assignability_message(&diag.message_text)
+                || (!is_nested_same_wrapper_assignability_message(&diag.message_text)
+                    && (!has_recursive_promise_await_diagnostic
+                        || !is_same_display_assignability_message(&diag.message_text)))
         });
 
         self.rewrite_infer_generic_return_fingerprints(&sf.text);
@@ -1894,4 +1914,24 @@ fn is_nested_same_wrapper_assignability_message(message: &str) -> bool {
     // but Box<Box<number>> vs Box<Box<string>> → keep (target arg starts with Box<)
     let target_args = target.split_once('<').map(|(_, rest)| rest).unwrap_or("");
     !target_args.trim_start().starts_with(&prefix)
+}
+
+fn is_same_display_assignability_message(message: &str) -> bool {
+    let Some(source_rest) = message.strip_prefix("Type '") else {
+        return false;
+    };
+    let Some(source_end) = source_rest.find('\'') else {
+        return false;
+    };
+    let source = &source_rest[..source_end];
+    let Some(target_start) = message.find("' is not assignable to type '") else {
+        return false;
+    };
+    let target_rest = &message[target_start + "' is not assignable to type '".len()..];
+    let Some(target_end) = target_rest.find('\'') else {
+        return false;
+    };
+    let target = &target_rest[..target_end];
+
+    source == target
 }

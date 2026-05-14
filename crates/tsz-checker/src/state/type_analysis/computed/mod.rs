@@ -3,6 +3,7 @@
 
 mod builtin_iterator_return_alias;
 mod jsx_runtime_bridge;
+mod simple_local_interface;
 mod type_alias_merged_value;
 mod type_alias_variable_alias;
 
@@ -715,31 +716,82 @@ impl<'a> CheckerState<'a> {
 
         // Use get_symbol_globally to find symbols in lib files and other files
         // Extract needed data to avoid holding borrow across mutable operations
-        let (flags, value_decl, declarations, import_module, import_name, escaped_name) =
-            match self.get_symbol_globally(sym_id) {
-                Some(symbol) => (
+        let (flags, value_decl, declarations, import_module, import_name, escaped_name) = match self
+            .get_symbol_globally(sym_id)
+        {
+            Some(symbol) => {
+                tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                    tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::GlobalSymbol,
+                );
+                (
                     symbol.flags,
                     symbol.value_declaration,
                     symbol.declarations.clone(),
                     symbol.import_module.clone(),
                     symbol.import_name.clone(),
                     symbol.escaped_name.clone(),
-                ),
-                None => {
-                    // Also try the cross-file symbol
-                    match self.get_cross_file_symbol(sym_id) {
-                        Some(symbol) => (
+                )
+            }
+            None => {
+                // Also try the cross-file symbol
+                match self.get_cross_file_symbol(sym_id) {
+                    Some(symbol) => {
+                        tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                                tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::CrossFileSymbol,
+                            );
+                        (
                             symbol.flags,
                             symbol.value_declaration,
                             symbol.declarations.clone(),
                             symbol.import_module.clone(),
                             symbol.import_name.clone(),
                             symbol.escaped_name.clone(),
-                        ),
-                        None => return (TypeId::UNKNOWN, Vec::new()),
+                        )
+                    }
+                    None => {
+                        tsz_common::perf_counters::record_compute_type_of_symbol_source_outcome(
+                                tsz_common::perf_counters::ComputeTypeOfSymbolSourceOutcome::MissingSymbol,
+                            );
+                        return (TypeId::UNKNOWN, Vec::new());
                     }
                 }
-            };
+            }
+        };
+
+        let kind_outcome = if flags & symbol_flags::ALIAS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Alias
+        } else if flags & symbol_flags::TYPE_ALIAS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeAlias
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Interface
+        } else if flags & symbol_flags::CLASS != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Class
+        } else if flags & symbol_flags::FUNCTION != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Function
+        } else if flags & symbol_flags::VARIABLE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Variable
+        } else if flags & symbol_flags::MODULE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Module
+        } else if flags & symbol_flags::PROPERTY != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Property
+        } else if flags & symbol_flags::METHOD != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Method
+        } else if flags & symbol_flags::ACCESSOR != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Accessor
+        } else if flags & symbol_flags::ENUM != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Enum
+        } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeParameter
+        } else if flags & symbol_flags::TYPE_LITERAL != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::TypeLiteral
+        } else if flags & symbol_flags::OBJECT_LITERAL != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::ObjectLiteral
+        } else if flags & symbol_flags::SIGNATURE != 0 {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Signature
+        } else {
+            tsz_common::perf_counters::ComputeTypeOfSymbolKindOutcome::Other
+        };
+        tsz_common::perf_counters::record_compute_type_of_symbol_kind_outcome(kind_outcome);
 
         tracing::trace!(
         sym_id = sym_id.0,
@@ -1350,6 +1402,39 @@ impl<'a> CheckerState<'a> {
 
         // Interface - return interface type with call signatures
         if flags & symbol_flags::INTERFACE != 0 {
+            if tsz_common::perf_counters::enabled_fast() {
+                let interface_callsite_outcome = if self.ctx.symbol_resolution_stack.len() < 2 {
+                    tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::Root
+                } else {
+                    let parent_sym_id = self.ctx.symbol_resolution_stack
+                        [self.ctx.symbol_resolution_stack.len() - 2];
+                    let parent_flags = self
+                        .get_symbol_globally(parent_sym_id)
+                        .map(|symbol| symbol.flags)
+                        .or_else(|| self.get_cross_file_symbol(parent_sym_id).map(|s| s.flags));
+                    match parent_flags {
+                        Some(parent_flags) if parent_flags & symbol_flags::INTERFACE != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentInterface
+                        }
+                        Some(parent_flags) if parent_flags & symbol_flags::TYPE_ALIAS != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentTypeAlias
+                        }
+                        Some(parent_flags) if parent_flags & symbol_flags::ALIAS != 0 => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentAlias
+                        }
+                        Some(_) => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentOther
+                        }
+                        None => {
+                            tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceCallsiteOutcome::ParentMissing
+                        }
+                    }
+                };
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_callsite_outcome(
+                    interface_callsite_outcome,
+                );
+            }
+
             // Merged lib symbols can live in the main binder but still carry
             // declaration nodes from other arenas. Lowering those declarations
             // against the current arena produces incomplete interface shapes
@@ -1392,6 +1477,59 @@ impl<'a> CheckerState<'a> {
                                 .any(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
                     })
             });
+            let mut has_local_interface_decl = false;
+            let mut has_local_interface_heritage_extends = false;
+            let mut has_local_computed_property_name = false;
+            let mut namespace_prefix = None;
+            for decl_idx in declarations.iter().copied() {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(interface) = self.ctx.arena.get_interface(node) else {
+                    continue;
+                };
+                has_local_interface_decl = true;
+                if namespace_prefix.is_none() {
+                    namespace_prefix = self.declaration_namespace_prefix(self.ctx.arena, decl_idx);
+                }
+                if !has_local_interface_heritage_extends
+                    && let Some(heritage_clauses) = interface.heritage_clauses.as_ref()
+                {
+                    has_local_interface_heritage_extends =
+                        heritage_clauses.nodes.iter().copied().any(|clause_idx| {
+                            self.ctx
+                                .arena
+                                .get(clause_idx)
+                                .and_then(|clause_node| {
+                                    self.ctx.arena.get_heritage_clause(clause_node)
+                                })
+                                .is_some_and(|clause| {
+                                    clause.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16
+                                })
+                        });
+                }
+                if has_local_computed_property_name {
+                    continue;
+                }
+                has_local_computed_property_name =
+                    interface.members.nodes.iter().copied().any(|member_idx| {
+                        let Some(member) = self.ctx.arena.get(member_idx) else {
+                            return false;
+                        };
+                        let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member) {
+                            sig.name
+                        } else if let Some(acc) = self.ctx.arena.get_accessor(member) {
+                            acc.name
+                        } else {
+                            return false;
+                        };
+                        self.ctx.arena.get(name_idx).is_some_and(|name_node| {
+                            name_node.kind
+                                == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    });
+            }
+
             // Only use the is_lib_symbol fallback when the per-declaration check
             // couldn't determine the arena origin (i.e. no declaration_arenas entry
             // AND the declaration exists in the current arena). The is_lib_symbol
@@ -1407,27 +1545,13 @@ impl<'a> CheckerState<'a> {
                 // interfaces will have real interface nodes; cross-arena collisions
                 // will have NodeIndexes that point to unrelated nodes. Only fall
                 // back to lib resolution when there's no real interface decl.
-                let has_real_interface_decl = declarations.iter().any(|&decl_idx| {
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_interface(node))
-                        .is_some()
-                });
-                !has_real_interface_decl && self.ctx.binder.symbol_arenas.contains_key(&sym_id)
+                !has_local_interface_decl && self.ctx.binder.symbol_arenas.contains_key(&sym_id)
             };
             // When all declarations are from lib arenas (no local interface
             // declarations), resolve via the lib type directly. But when the
             // user has local interface declarations that augment/extend the lib
             // type (e.g., `interface Node { forEachChild(...) }`), we must fall
             // through to the full merge path so user-declared members are included.
-            let has_local_interface_decl = declarations.iter().any(|&decl_idx| {
-                self.ctx
-                    .arena
-                    .get(decl_idx)
-                    .and_then(|node| self.ctx.arena.get_interface(node))
-                    .is_some()
-            });
             if (has_out_of_arena_decl || is_lib_symbol)
                 && !has_local_interface_decl
                 && !self.ctx.lib_contexts.is_empty()
@@ -1459,6 +1583,25 @@ impl<'a> CheckerState<'a> {
                 return (lib_type, Vec::new());
             }
 
+            if let Some(interface_type) = self.try_lower_simple_local_interface_object(
+                sym_id,
+                &declarations,
+                has_out_of_arena_decl,
+                has_cross_file_same_index,
+                has_local_interface_decl,
+                has_local_interface_heritage_extends,
+                has_local_computed_property_name,
+            ) {
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_fastpath_hit();
+                if let Some(shape) = type_environment::object_shape(self.ctx.types, interface_type)
+                {
+                    self.ctx
+                        .definition_store
+                        .set_instance_shape(self.ctx.get_or_create_def_id(sym_id), shape);
+                }
+                return (interface_type, Vec::new());
+            }
+
             if !declarations.is_empty() {
                 // Get type parameters from the first interface declaration.
                 // When cross-file declarations exist, the first declaration may be
@@ -1485,19 +1628,35 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                let needs_computed_name_map = has_local_computed_property_name;
+                let needs_prewarm =
+                    declarations.len() > 1 || has_out_of_arena_decl || has_cross_file_same_index;
+                let needs_local_heritage_merge = has_local_interface_heritage_extends;
+                tsz_common::perf_counters::record_compute_type_of_symbol_interface_fastpath_outcome(
+                    tsz_common::perf_counters::ComputeTypeOfSymbolInterfaceFastPathOutcome::from_skips(
+                        !needs_computed_name_map,
+                        !needs_prewarm,
+                        !needs_local_heritage_merge,
+                    ),
+                );
+
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
-                let computed_names = self.precompute_computed_property_names(&declarations);
-                let computed_symbol_names =
-                    self.precompute_symbol_named_computed_property_names(&declarations);
-                let prewarmed_type_params =
-                    self.prewarm_member_type_reference_params(&declarations);
-                let namespace_prefix = declarations.iter().copied().find_map(|decl_idx| {
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_interface(node))
-                        .and_then(|_| self.declaration_namespace_prefix(self.ctx.arena, decl_idx))
-                });
+                let (computed_names, computed_symbol_names) = if needs_computed_name_map {
+                    (
+                        self.precompute_computed_property_names(&declarations),
+                        self.precompute_symbol_named_computed_property_names(&declarations),
+                    )
+                } else {
+                    (
+                        rustc_hash::FxHashMap::default(),
+                        rustc_hash::FxHashSet::default(),
+                    )
+                };
+                let prewarmed_type_params = if needs_prewarm {
+                    self.prewarm_member_type_reference_params(&declarations)
+                } else {
+                    rustc_hash::FxHashMap::default()
+                };
 
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
@@ -1599,8 +1758,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let mut interface_type =
-                    self.merge_interface_heritage_types(&declarations, interface_type);
+                let mut interface_type = if needs_local_heritage_merge {
+                    self.merge_interface_heritage_types(&declarations, interface_type)
+                } else {
+                    interface_type
+                };
 
                 // Merge heritage types from cross-file declarations that
                 // merge_interface_heritage_types couldn't process (it uses
@@ -1645,129 +1807,4 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tsz_solver::{QueryDatabase, TypeInterner};
-
-    fn make_prop(name: tsz_common::Atom, declaration_order: u32) -> PropertyInfo {
-        PropertyInfo {
-            name,
-            type_id: TypeId::ANY,
-            write_type: TypeId::ANY,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-        }
-    }
-
-    #[test]
-    fn synthetic_namespace_default_normalization_preserves_default_before_augmentations() {
-        let types = TypeInterner::new();
-        let default_atom = types.intern_string("default");
-        let configs_atom = types.intern_string("configs");
-        let mut props = vec![make_prop(configs_atom, 0), make_prop(default_atom, 1)];
-
-        CheckerState::normalize_namespace_export_declaration_order(&mut props);
-        let namespace_type = types.factory().object(props);
-        let shape = crate::query_boundaries::common::object_shape_for_type(&types, namespace_type)
-            .expect("namespace type should have an object shape");
-        let shape_props: Vec<_> = shape
-            .properties
-            .iter()
-            .map(|prop| {
-                (
-                    types.resolve_atom_ref(prop.name).to_string(),
-                    prop.declaration_order,
-                )
-            })
-            .collect();
-
-        assert_eq!(
-            shape_props,
-            vec![("configs".to_string(), 2), ("default".to_string(), 1)]
-        );
-    }
-
-    #[test]
-    fn ordered_namespace_export_entries_follow_first_declaration_span() {
-        use tsz_binder::{BinderState, SymbolTable, symbol_flags};
-        use tsz_checker::context::{CheckerOptions, ScriptTarget};
-        use tsz_parser::parser::ParserState;
-
-        let mut parser = ParserState::new("/test.ts".to_string(), String::new());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let third = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "third".to_string());
-        binder
-            .symbols
-            .get_mut(third)
-            .expect("third symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((30, 31)));
-
-        let first = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "first".to_string());
-        binder
-            .symbols
-            .get_mut(first)
-            .expect("first symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((10, 11)));
-
-        let second = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "second".to_string());
-        binder
-            .symbols
-            .get_mut(second)
-            .expect("second symbol should exist")
-            .add_declaration(NodeIndex::NONE, Some((20, 21)));
-
-        let missing_span = binder
-            .symbols
-            .alloc(symbol_flags::EXPORT_VALUE, "missingSpan".to_string());
-
-        let mut exports = SymbolTable::new();
-        exports.set("third".to_string(), third);
-        exports.set("missingSpan".to_string(), missing_span);
-        exports.set("first".to_string(), first);
-        exports.set("second".to_string(), second);
-
-        let types = TypeInterner::new();
-        let checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "/test.ts".to_string(),
-            CheckerOptions {
-                target: ScriptTarget::ES2020,
-                ..CheckerOptions::default()
-            },
-        );
-
-        let ordered = checker.ordered_namespace_export_entries(&exports);
-        let names: Vec<_> = ordered
-            .into_iter()
-            .map(|(name, _)| name.to_string())
-            .collect();
-        assert_eq!(
-            names,
-            vec![
-                "first".to_string(),
-                "second".to_string(),
-                "third".to_string(),
-                "missingSpan".to_string()
-            ]
-        );
-    }
-}
+mod tests;

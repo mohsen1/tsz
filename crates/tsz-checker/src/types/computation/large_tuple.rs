@@ -2,6 +2,7 @@
 
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::types_domain::unique_symbol_arena::unwrap_parenthesized_type;
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
@@ -50,9 +51,22 @@ impl<'a> CheckerState<'a> {
             .is_too_large()
     }
 
-    pub(crate) fn type_alias_symbol_contains_tuple_spread(&self, alias_sym: SymbolId) -> bool {
+    /// Returns true when the alias body has a tuple spread **and** its top-level node is
+    /// not a conditional type (modulo parentheses).
+    ///
+    /// `TS2799` applies to unconditional exponential spread chains (e.g. `type T = [...A, ...B]`).
+    /// Conditional-type aliases express termination via their false branch; if depth is exceeded
+    /// for those, the correct diagnostic is `TS2589`, not `TS2799`.
+    pub(crate) fn type_alias_is_unconditional_tuple_spread(&self, alias_sym: SymbolId) -> bool {
         self.type_alias_type_node(alias_sym)
-            .is_some_and(|type_node| self.type_node_contains_tuple_spread(type_node, 0))
+            .is_some_and(|type_node| {
+                let inner = unwrap_parenthesized_type(self.ctx.arena, type_node);
+                self.ctx
+                    .arena
+                    .get(inner)
+                    .is_none_or(|n| n.kind != syntax_kind_ext::CONDITIONAL_TYPE)
+                    && self.type_node_contains_tuple_spread(type_node, 0)
+            })
     }
 
     fn estimate_tuple_type_node_length(

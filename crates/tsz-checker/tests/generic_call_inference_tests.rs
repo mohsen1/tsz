@@ -13,10 +13,9 @@
 
 use tsz_checker::context::CheckerOptions;
 
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
-use tsz_checker::test_utils::check_source_with_libs_code_messages;
+use tsz_checker::test_utils::{check_source_with_libs_code_messages, load_compiled_lib_files};
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
@@ -30,22 +29,7 @@ fn compile_and_get_raw_diagnostics(source: &str) -> Vec<tsz_checker::diagnostics
 }
 
 fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-    ];
-
-    lib_paths
-        .iter()
-        .filter_map(|lib_path| {
-            let content = std::fs::read_to_string(lib_path).ok()?;
-            let file_name = lib_path.file_name()?.to_string_lossy().to_string();
-            Some(Arc::new(LibFile::from_source(file_name, content)))
-        })
-        .collect()
+    load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
 fn compile_with_es5_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -1865,6 +1849,32 @@ const result = create();
 }
 
 #[test]
+fn default_type_parameter_substitutes_inside_conditional_constraint() {
+    // Regression for issue #6559: using Chainable without explicit type
+    // arguments must substitute Config = {} inside the nested conditional
+    // constraint for option's key parameter.
+    let source = r#"
+type Chainable<Config = {}> = {
+  option<K extends string>(
+    key: K extends keyof Config ? never : K,
+    value: number
+  ): void;
+};
+
+declare const explicit: Chainable<{}>;
+explicit.option('foo', 123);
+
+declare const defaulted: Chainable;
+defaulted.option('foo', 123);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Default type parameter should substitute into conditional constraint. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn contextual_return_instantiates_defaulted_generic_call_result() {
     let source = r#"
 interface Box<T> { value: T | undefined }
@@ -3391,6 +3401,173 @@ const a = f({ d: [] });
     );
 }
 
+// ─── Issue #6261: const type param preserves literals across multiple params ──
+//
+// Structural rule: when a generic call has a `const` type parameter whose
+// constraint does not allow a mutable array-like target, the literal shape of
+// the argument expression must be the round-1 inference seed. The presence
+// of additional non-const parameters, multiple type parameters, class
+// constructors, or interface methods does not change this rule.
+
+#[test]
+fn const_type_param_class_constructor_preserves_object_literal() {
+    // tsc preserves `g.value.x: 1` even though the constructor signature
+    // includes the const type param via a property.
+    let source = r#"
+class ConstContainer<const T> { constructor(public value: T) {} }
+const g = new ConstContainer({ x: 1 });
+const _gx: 1 = g.value.x;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "class const type param should preserve literal property type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_multiple_const_params_preserve_each_literal() {
+    let source = r#"
+function multiConst<const T, const U>(x: T, y: U): [T, U] { return [x, y]; }
+const e = multiConst({ a: 1 }, { b: 2 });
+const _e0a: 1 = e[0].a;
+const _e1b: 2 = e[1].b;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "multiple const type params must each preserve literal property types. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_sibling_primitive_param_preserves_literal() {
+    // The presence of a sibling non-const parameter (`y: number`) must not
+    // cause T to be widened.
+    let source = r#"
+function f<const T>(x: T, y: number): T { return x; }
+const r = f({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "sibling primitive param must not break const literal preservation. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_when_const_param_is_second_preserves_literal() {
+    // Position of the const-typed parameter must not matter.
+    let source = r#"
+function f<const T>(x: number, y: T): T { return y; }
+const r = f(2, { b: 1 });
+const _rb: 1 = r.b;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "const param at non-first position must still preserve literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_renamed_preserves_literal() {
+    // Renaming the type parameter must not affect the rule (the fix is
+    // structural, not name-driven).
+    let source = r#"
+function renamed<const P>(x: P, y: number): P { return x; }
+const r = renamed({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "renaming const type param must not break preservation. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_mixed_const_and_non_const_preserves_const_literal() {
+    // `const T` preserves; `U` (non-const) widens normally.
+    let source = r#"
+function mixed<const T, U>(x: T, y: U): [T, U] { return [x, y]; }
+const r = mixed({ a: 1 }, { b: 2 });
+const _ra: 1 = r[0].a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "const T should preserve literal even when sibling U is non-const. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_interface_method_preserves_literal() {
+    let source = r#"
+interface ConstMethod { process<const T>(value: T): T; }
+declare const cm: ConstMethod;
+const h = cm.process({ y: 2 });
+const _hy: 2 = h.y;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "interface method with const type param should preserve literal. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_aliased_readonly_array_constraint_preserves_literal() {
+    // An alias wrapping the readonly-array constraint must still trigger
+    // literal preservation (the constraint is resolved before the
+    // mutable-array check).
+    let source = r#"
+type ROArr = readonly unknown[];
+function f<const T extends ROArr>(x: T, y: number): T { return x; }
+const r = f([1, 2, 3], 0);
+const _r: readonly [1, 2, 3] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "aliased readonly-array constraint must still preserve literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn non_const_type_param_still_widens_object_literal_property() {
+    // Negative case: without `const`, the literal property type must widen
+    // (proves the fix is gated on `is_const`, not unconditional).
+    let source = r#"
+function f<T>(x: T, y: number): T { return x; }
+const r = f({ a: 1 }, 2);
+const _ra: 1 = r.a;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "non-const T must still widen property literal to number. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn const_type_param_with_mutable_array_constraint_widens() {
+    // Negative case: `const T extends unknown[]` (mutable array) should
+    // widen because the constraint allows a mutable-array target. This
+    // proves the (c) branch is gated on `constraint_allows_mutable_array_like`.
+    let source = r#"
+function f<const T extends unknown[]>(x: T): T { return x; }
+const r = f([1, 2, 3]);
+const _r: [1, 2, 3] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "mutable-array constraint must keep widening behavior. Got: {diags:#?}"
+    );
+}
+
 // ─── Symbol-keyed property exclusion from string-index inference ─────────────
 
 #[test]
@@ -3712,5 +3889,129 @@ const _check: [1, "x", true] = r;
     assert!(
         diags.iter().all(|(code, _)| *code != 2322),
         "three-way variadic spread with asserted tuples must preserve all literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn conditional_type_parameter_default_evaluates_after_prior_arg_known() {
+    let source = r#"
+type Wrapper<T, W = T extends string ? number : boolean> = {
+  value: T;
+  wrapped: W;
+};
+
+type WrapStr = Wrapper<string>;
+const ws: WrapStr = { value: "hello", wrapped: 42 };
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "conditional default depending on earlier known type parameter must evaluate. Got: {diags:#?}"
+    );
+}
+
+// ─── Template literal type parameter inference (issue #6147) ─────────────────
+
+/// f(x: prefix-T) where T extends string — call with matching literal should infer T.
+#[test]
+fn template_literal_infers_type_param_trailing_span() {
+    let source = r#"
+declare function f<T extends string>(x: `prefix-${T}`): T;
+const result = f("prefix-hello");
+const _check: "hello" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"hello\" from template literal argument. Got: {diags:#?}"
+    );
+}
+
+/// Same rule with a renamed type parameter (`K`) to confirm no identifier is hardcoded.
+#[test]
+fn template_literal_infers_type_param_renamed() {
+    let source = r#"
+declare function get<K extends string>(x: `get-${K}`): K;
+const result = get("get-name");
+const _check: "name" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "K should be inferred as \"name\" from template literal argument. Got: {diags:#?}"
+    );
+}
+
+/// f(x: pre-T-suf) where T extends string — T is surrounded by text anchors.
+#[test]
+fn template_literal_infers_type_param_prefix_and_suffix() {
+    let source = r#"
+declare function f<T extends string>(x: `pre-${T}-suf`): T;
+const result = f("pre-mid-suf");
+const _check: "mid" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"mid\" from surrounded template. Got: {diags:#?}"
+    );
+}
+
+/// f(x: T-U) where T and U extend string — two type params inferred from a separator-delimited literal.
+#[test]
+fn template_literal_infers_multiple_type_params() {
+    let source = r#"
+declare function f<T extends string, U extends string>(x: `${T}-${U}`): [T, U];
+const result = f("hello-world");
+const _check: ["hello", "world"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T and U should be inferred from two-param template. Got: {diags:#?}"
+    );
+}
+
+/// Same two-param rule using different names (`A`, `B`) to confirm generality.
+#[test]
+fn template_literal_infers_multiple_type_params_renamed() {
+    let source = r#"
+declare function split<A extends string, B extends string>(x: `${A}/${B}`): [A, B];
+const result = split("foo/bar");
+const _check: ["foo", "bar"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "A and B should be inferred from split template. Got: {diags:#?}"
+    );
+}
+
+/// When the argument does not match the template pattern, a TS2345 error is expected.
+#[test]
+fn template_literal_type_param_mismatch_errors() {
+    let source = r#"
+declare function f<T extends string>(x: `prefix-${T}`): T;
+f("wrong");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "passing a non-matching literal should raise TS2345. Got: {diags:#?}"
+    );
+}
+
+/// f(x: T-suffix) where T extends string — T is a leading span with a fixed suffix.
+#[test]
+fn template_literal_type_param_leading_span() {
+    let source = r#"
+declare function f<T extends string>(x: `${T}-suffix`): T;
+const result = f("hello-suffix");
+const _check: "hello" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"hello\" from leading template span. Got: {diags:#?}"
     );
 }

@@ -702,7 +702,13 @@ impl<'a> CheckerState<'a> {
                             .is_some()
                     })
                 });
-        if let Some(application_display) = application_display {
+        if let Some(application_display) = application_display
+            && !diagnostic_query::application_base_has_conditional_alias_body(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                application_display,
+            )
+        {
             let display_ty =
                 self.normalize_property_receiver_application_display_type(application_display);
             let preserve_object_args = self
@@ -1110,6 +1116,11 @@ impl<'a> CheckerState<'a> {
 
         let literal = self.ctx.arena.get_literal_expr(node)?;
         let target = target.map(|target| self.evaluate_type_for_assignability(target));
+        if let Some(display) =
+            self.computed_index_signature_object_literal_source_display(expr_idx, target)
+        {
+            return Some(display);
+        }
         let preserve_literal_source_for_normalized_union =
             target.is_some_and(|target| self.target_is_normalized_object_literal_union(target));
         let target_shape = target.and_then(|target| {

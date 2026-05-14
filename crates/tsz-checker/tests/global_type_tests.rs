@@ -8,10 +8,10 @@
 
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
+use tsz_checker::test_utils::load_compiled_lib_files;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -379,77 +379,19 @@ const r = new Promise<number>((resolve) => resolve(1));
 // Tests with lib.d.ts loaded - these should NOT emit errors
 
 fn load_lib_files_for_global_type_tests() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let search_roots: Vec<&Path> = {
-        let mut roots = vec![manifest_dir];
-        let mut parent = manifest_dir.parent();
-        while let Some(dir) = parent {
-            roots.push(dir);
-            parent = dir.parent();
-        }
-        roots
-    };
-    let candidates = [
-        (
-            "lib.es5.d.ts",
-            [
-                "scripts/node_modules/typescript/lib/lib.es5.d.ts",
-                "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
-                "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
-                "crates/tsz-core/src/lib-assets-stripped/es5.d.ts",
-                "crates/tsz-core/src/lib-assets/es5.d.ts",
-                "../tsz-core/src/lib-assets-stripped/es5.d.ts",
-                "../tsz-core/src/lib-assets/es5.d.ts",
-                "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
-                "TypeScript/src/lib/es5.d.ts",
-            ],
-        ),
-        (
-            "lib.es2015.d.ts",
-            [
-                "scripts/node_modules/typescript/lib/lib.es2015.d.ts",
-                "scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts",
-                "scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts",
-                "crates/tsz-core/src/lib-assets-stripped/es2015.d.ts",
-                "crates/tsz-core/src/lib-assets/es2015.d.ts",
-                "../tsz-core/src/lib-assets-stripped/es2015.d.ts",
-                "../tsz-core/src/lib-assets/es2015.d.ts",
-                "TypeScript/node_modules/typescript/lib/lib.es2015.d.ts",
-                "TypeScript/src/lib/es2015.d.ts",
-            ],
-        ),
-        (
-            "lib.es2015.symbol.d.ts",
-            [
-                "scripts/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
-                "scripts/conformance/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
-                "scripts/emit/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
-                "crates/tsz-core/src/lib-assets-stripped/es2015.symbol.d.ts",
-                "crates/tsz-core/src/lib-assets/es2015.symbol.d.ts",
-                "../tsz-core/src/lib-assets-stripped/es2015.symbol.d.ts",
-                "../tsz-core/src/lib-assets/es2015.symbol.d.ts",
-                "TypeScript/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
-                "TypeScript/src/lib/es2015.symbol.d.ts",
-            ],
-        ),
-    ];
-
-    let mut lib_files = Vec::new();
-    for (file_name, suffixes) in candidates {
-        let maybe_path = search_roots
-            .iter()
-            .flat_map(|root| suffixes.iter().map(move |suffix| root.join(suffix)))
-            .find(|path| path.exists());
-        if let Some(path) = maybe_path
-            && let Ok(content) = std::fs::read_to_string(&path)
-        {
-            lib_files.push(Arc::new(LibFile::from_source(
-                file_name.to_string(),
-                content,
-            )));
-        }
-    }
-    lib_files
+    load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.dom.d.ts",
+    ])
 }
 
 /// Helper function to create a checker WITH lib.d.ts and check source code.

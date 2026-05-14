@@ -668,7 +668,13 @@ impl<'a> InferenceContext<'a> {
             // e.g., for { foo: string, bar: number }, K = "foo" | "bar"
             let name_literals: Vec<TypeId> = string_named_props
                 .iter()
-                .map(|p| self.interner.literal_string_atom(p.name))
+                .map(|p| {
+                    crate::utils::literal_key_for_property_name(
+                        self.interner,
+                        p.name,
+                        p.is_string_named,
+                    )
+                })
                 .collect();
             let names_union = if name_literals.len() == 1 {
                 name_literals[0]
@@ -685,7 +691,11 @@ impl<'a> InferenceContext<'a> {
             // (e.g., Box<number> | Box<string> | Box<boolean>), not a single "best" type.
             let template_priority = InferencePriority::MappedType;
             for prop in &string_named_props {
-                let key_literal = self.interner.literal_string_atom(prop.name);
+                let key_literal = crate::utils::literal_key_for_property_name(
+                    self.interner,
+                    prop.name,
+                    prop.is_string_named,
+                );
                 let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                 let instantiated_template =
                     instantiate_type(self.interner, mapped.template, &subst);
@@ -1686,7 +1696,8 @@ impl<'a> InferenceContext<'a> {
         {
             for span in spans.iter() {
                 if let TemplateSpan::Type(type_id) = span
-                    && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                    && let Some(TypeData::Infer(param_info) | TypeData::TypeParameter(param_info)) =
+                        self.interner.lookup(*type_id)
                     && let Some(var) = self.find_type_param(param_info.name)
                 {
                     // Source is `any` or `string`, so infer that for all variables
@@ -1798,9 +1809,12 @@ impl<'a> InferenceContext<'a> {
                 }
 
                 TemplateSpan::Type(type_id) => {
-                    // Check if this is an infer variable. Intrinsics are never Infer.
+                    // Match both `infer T` (conditional) and generic `T` (type parameter).
+                    // Intrinsics are never Infer or TypeParameter.
                     if !type_id.is_intrinsic()
-                        && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                        && let Some(
+                            TypeData::Infer(param_info) | TypeData::TypeParameter(param_info),
+                        ) = self.interner.lookup(*type_id)
                         && let Some(var) = self.find_type_param(param_info.name)
                     {
                         if is_last {

@@ -367,7 +367,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = jsdoc_type_text.as_deref()
             {
                 self.write(": ");
-                self.write(type_text);
+                self.write(&Self::format_jsdoc_type_text_for_declaration(type_text));
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)
@@ -414,6 +414,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = self.nameable_new_expression_type_text(initializer)
             {
                 self.write(": ");
+                let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
+                    .unwrap_or(type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && self
@@ -466,6 +468,19 @@ impl<'a> DeclarationEmitter<'a> {
                 let mut type_text = self
                     .expand_rest_tuple_parameters_in_function_type_text(initializer, &type_text)
                     .unwrap_or(type_text);
+                type_text = self
+                    .preserve_call_argument_single_rest_parameter_text(initializer, &type_text)
+                    .unwrap_or(type_text);
+                type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
+                    .unwrap_or(type_text);
+                if let Some(labelled_type_text) = self
+                    .preserve_spread_argument_tuple_labels_in_call_return_type(
+                        initializer,
+                        &type_text,
+                    )
+                {
+                    type_text = labelled_type_text;
+                }
                 let preserves_reused_literal_call_type = reused_type_text
                     .as_deref()
                     .is_some_and(|reused| reused == type_text && reused.contains('"'));
@@ -979,6 +994,146 @@ impl<'a> DeclarationEmitter<'a> {
         let type_id = self.get_node_type_or_names(&[initializer])?;
         let widened = tsz_solver::operations::widening::widen_literal_type(interner, type_id);
         (widened != type_id).then(|| self.print_type_id_for_inferred_declaration(widened))
+    }
+
+    fn preserve_spread_argument_tuple_labels_in_call_return_type(
+        &self,
+        initializer: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let call = self
+            .arena
+            .get(initializer)
+            .and_then(|node| self.arena.get_call_expr(node))?;
+        let args = call.arguments.as_ref()?;
+        let [arg_idx] = args.nodes.as_slice() else {
+            return None;
+        };
+        let arg_node = self.arena.get(*arg_idx)?;
+        if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+            return None;
+        }
+        let spread = self.arena.get_spread(arg_node)?;
+        let spread_type = self.get_node_type_or_names(&[spread.expression])?;
+        let spread_text = self.print_type_id_for_inferred_declaration(spread_type);
+        if !spread_text.contains(':') || !Self::is_tuple_type_text(&spread_text) {
+            return None;
+        }
+
+        let unlabelled_spread = Self::strip_tuple_labels_from_type_text(&spread_text)?;
+        let normalized_return = Self::normalize_tuple_type_text(type_text)?;
+        (unlabelled_spread == normalized_return)
+            .then(|| Self::compact_tuple_type_text(&spread_text))
+            .flatten()
+    }
+
+    fn is_tuple_type_text(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        trimmed.starts_with('[') && trimmed.ends_with(']')
+    }
+
+    fn normalize_tuple_type_text(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?.trim();
+        if inner.is_empty() {
+            return Some("[]".to_string());
+        }
+        let parts = Self::split_top_level_commas(inner)
+            .into_iter()
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        Some(format!("[{}]", parts.join(", ")))
+    }
+
+    fn compact_tuple_type_text(type_text: &str) -> Option<String> {
+        Self::normalize_tuple_type_text(type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn expand_parameters_utility_tuple_type_text(
+        type_text: &str,
+    ) -> Option<String> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?.trim();
+        if inner.is_empty() {
+            return None;
+        }
+
+        let mut changed = false;
+        let parts = Self::split_top_level_commas(inner)
+            .into_iter()
+            .map(|part| {
+                let part = part.trim();
+                if let Some(expanded) = Self::expand_parameters_utility_type_text(part) {
+                    changed = true;
+                    expanded
+                } else {
+                    part.to_string()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        changed.then(|| format!("[{}]", parts.join(", ")))
+    }
+
+    fn expand_parameters_utility_type_text(type_text: &str) -> Option<String> {
+        let inner = type_text
+            .trim()
+            .strip_prefix("Parameters<")?
+            .strip_suffix('>')?
+            .trim();
+        let arrow_idx = Self::find_top_level_arrow(inner)?;
+        let head = inner.get(..arrow_idx)?.trim_end();
+        let open_idx = head.rfind('(')?;
+        let params_text = head.get(open_idx + 1..)?.strip_suffix(')')?.trim();
+        if params_text.is_empty() {
+            return Some("[]".to_string());
+        }
+        let params = Self::split_top_level_commas(params_text)
+            .into_iter()
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        Some(format!("[{}]", params.join(", ")))
+    }
+
+    fn strip_tuple_labels_from_type_text(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?.trim();
+        if inner.is_empty() {
+            return Some("[]".to_string());
+        }
+
+        let parts = Self::split_top_level_commas(inner)
+            .into_iter()
+            .map(|part| {
+                let part = part.trim();
+                let Some(colon_idx) = Self::find_top_level_byte(part, b':') else {
+                    return part.to_string();
+                };
+                let before_colon = part.get(..colon_idx).unwrap_or_default().trim();
+                let after_colon = part.get(colon_idx + 1..).unwrap_or_default().trim();
+                if after_colon.is_empty() || !Self::looks_like_tuple_label(before_colon) {
+                    return part.to_string();
+                }
+                let rest_prefix = if before_colon.strip_prefix("...").is_some() {
+                    "..."
+                } else {
+                    ""
+                };
+                format!("{rest_prefix}{after_colon}")
+            })
+            .collect::<Vec<_>>();
+
+        Some(format!("[{}]", parts.join(", ")))
+    }
+
+    fn looks_like_tuple_label(label: &str) -> bool {
+        let label = label.trim();
+        let label = label.strip_prefix("...").unwrap_or(label).trim();
+        let label = label.strip_suffix('?').unwrap_or(label).trim();
+        !label.is_empty()
+            && label
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
     }
 
     fn insert_import_for_reused_static_call_type(

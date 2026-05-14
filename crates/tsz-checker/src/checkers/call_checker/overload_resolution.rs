@@ -8,10 +8,11 @@ mod return_context;
 use crate::context::TypingRequest;
 use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
-use crate::query_boundaries::common::{ContextualTypeContext, PendingDiagnosticBuilder};
+use crate::query_boundaries::common::{
+    CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
+};
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::{CallableContext, OverloadResolution, SelectedTypePredicate};
@@ -52,7 +53,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> Option<OverloadResolution> {
-        use crate::query_boundaries::common::{CallResult, FunctionShape};
+        use crate::query_boundaries::common::FunctionShape;
 
         tracing::debug!(
             "resolve_overloaded_call_with_signatures: signatures = {:?}, args = {:?}",
@@ -255,14 +256,19 @@ impl<'a> CheckerState<'a> {
                 } else {
                     func_type
                 };
-            let (mut result, instantiated_predicate, instantiated_params) = self
-                .resolve_call_with_checker_adapter(
+            let (mut result, instantiated_predicate, instantiated_params) = if let Some(result) =
+                self.overload_string_argument_array_parameter_mismatch(&sig, &arg_types)
+            {
+                (result, None, None)
+            } else {
+                self.resolve_call_with_checker_adapter(
                     resolved_func_type,
                     &arg_types,
                     force_bivariant_callbacks,
                     sig_contextual_type,
                     None,
-                );
+                )
+            };
             if let CallResult::ArgumentTypeMismatch {
                 expected,
                 actual,
@@ -359,6 +365,42 @@ impl<'a> CheckerState<'a> {
                         )
                     {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
+                        continue;
+                    }
+                    // When a non-generic overload succeeds but its return type contains
+                    // `any` (e.g., T = `(a: any) => any` from `Array<(a: any) => any>`),
+                    // defer it so that later generic overloads can be tried with return
+                    // context substitution. A generic overload may bind its type parameter
+                    // to the contextual return type and give a more precise result
+                    // (e.g., `reduce<U>` returning U = Output instead of `(a: any) => any`).
+                    // This matches TypeScript's behavior of preferring generic overloads
+                    // when the non-generic return type is any-tainted and a contextual
+                    // return type exists that could be satisfied by a generic binding.
+                    if has_multiple_arity_compatible_signatures
+                        && sig.type_params.is_empty()
+                        && sig_contextual_type.is_some_and(|ct| {
+                            !crate::query_boundaries::common::is_type_deeply_any(self.ctx.types, ct)
+                        })
+                        && crate::query_boundaries::assignability::contains_any_type(
+                            self.ctx.types,
+                            return_type,
+                        )
+                        && no_rcs_fallback.is_none()
+                        && signatures[idx + 1..].iter().any(|later| {
+                            if later.type_params.is_empty() {
+                                return false;
+                            }
+                            let required = later.params.iter().filter(|p| !p.optional).count();
+                            let has_rest = later.params.iter().any(|p| p.rest);
+                            args.len() >= required && (has_rest || args.len() <= later.params.len())
+                        })
+                    {
+                        no_rcs_fallback = Some((
+                            arg_types.clone(),
+                            return_type,
+                            selected_type_predicate.clone(),
+                            self.ctx.snapshot_full(),
+                        ));
                         continue;
                     }
                     // When the matched overload is generic and has contextual refresh args,
@@ -1918,5 +1960,41 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
         }
+    }
+
+    fn overload_string_argument_array_parameter_mismatch(
+        &mut self,
+        sig: &tsz_solver::CallSignature,
+        arg_types: &[TypeId],
+    ) -> Option<CallResult> {
+        arg_types
+            .iter()
+            .copied()
+            .enumerate()
+            .find_map(|(index, actual)| {
+                if actual != TypeId::STRING
+                    && !crate::query_boundaries::common::is_string_type(self.ctx.types, actual)
+                    && crate::query_boundaries::common::string_literal_value(self.ctx.types, actual)
+                        .is_none()
+                {
+                    return None;
+                }
+                let expected = sig
+                    .params
+                    .get(index)
+                    .map(|param| param.type_id)
+                    .or_else(|| {
+                        sig.params
+                            .last()
+                            .and_then(|param| param.rest.then_some(param.type_id))
+                    })?;
+                self.is_array_like_type(expected)
+                    .then_some(CallResult::ArgumentTypeMismatch {
+                        index,
+                        expected,
+                        actual,
+                        fallback_return: sig.return_type,
+                    })
+            })
     }
 }

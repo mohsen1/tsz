@@ -29,6 +29,110 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn test_invalid_ambient_style_getter_defaults_to_any() {
+    let source = r#"
+export class C {
+    get value()
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("get value(): any;"),
+        "Expected no-body getter recovery to emit any: {output}"
+    );
+}
+
+#[test]
+fn test_legacy_index_signature_defaults_to_any() {
+    let source = r#"
+export interface I {
+    [p];
+    [p2: string, p3: number];
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("[p]: any;"),
+        "Expected untyped index signature to emit any result: {output}"
+    );
+    assert!(
+        output.contains("[p2: string, p3: number]: any;"),
+        "Expected legacy index signature parameters to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_index_signature_preserves_inline_parameter_comment() {
+    let source = r#"
+export interface I {
+    /** indexer */
+    [/** key param */ key: string]: any;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("[/** key param */ key: string]: any;"),
+        "Expected index signature parameter comment to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_non_exported_namespace_hidden_inside_non_ambient_namespace() {
+    let source = r#"
+export namespace Outer {
+    namespace Hidden {
+        export var x;
+    }
+    export declare namespace Ambient {
+        var y;
+    }
+    export var z;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        !output.contains("namespace Hidden"),
+        "Expected hidden non-exported namespace to be elided: {output}"
+    );
+    assert!(
+        output.contains("namespace Ambient {\n        var y: any;"),
+        "Expected declared nested namespace body to remain ambient: {output}"
+    );
+    assert!(
+        output.contains("var z: any;"),
+        "Expected exported namespace member to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_throw_only_unannotated_returns_void() {
+    let source = r#"
+export function f() {
+    throw new Error();
+}
+export class C {
+    m() {
+        throw new Error();
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export declare function f(): void;"),
+        "Expected throw-only function to emit void: {output}"
+    );
+    assert!(
+        output.contains("m(): void;"),
+        "Expected throw-only method to emit void: {output}"
+    );
+}
+
+#[test]
 fn test_defaulted_boolean_param_false_narrowing_return_type() {
     let source = r#"
 function removeUndefinedButNotFalse(x = true) {
@@ -1331,6 +1435,34 @@ const send = handlers => Promise.resolve(handlers);
     assert!(
         output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
         "Expected typedef alias to still be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiline_typedef_preserves_unstarred_source_lines() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ * @typedef {{
+  value: {
+    [K in keyof T]?: Box<T[K]>[]
+  }
+}} Box<T> */
+/** @type {Box<{foo:string}>} */
+const p = {};
+"#,
+    );
+
+    assert!(
+        output.starts_with(
+            "/**\n * @template T\n * @typedef {{\n  value: {\n    [K in keyof T]?: Box<T[K]>[]\n  }\n}} Box<T> */\n/** @type {Box<{foo:string}>} */\ndeclare const p: Box<{"
+        ),
+        "Expected unstarred typedef lines and following @type comment to preserve source text: {output}"
+    );
+    assert!(
+        output.contains("type Box<T> = {\n    value: { [K in keyof T]?: Box<T[K]>[]; };\n};"),
+        "Expected generic typedef name suffix to be folded into type parameters: {output}"
     );
 }
 

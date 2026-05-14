@@ -1922,6 +1922,16 @@ impl<'a> CheckerState<'a> {
         let Some(source_shape) = object_shape_for_type(self.ctx.types, source_resolved) else {
             return false;
         };
+
+        // When target is an intersection, source must overlap with every member.
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, target_resolved)
+        {
+            return members
+                .iter()
+                .all(|&member| self.object_properties_are_comparable(source, member));
+        }
+
         let Some(target_shape) = object_shape_for_type(self.ctx.types, target_resolved) else {
             return false;
         };

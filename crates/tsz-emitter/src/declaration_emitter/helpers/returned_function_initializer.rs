@@ -611,6 +611,60 @@ impl<'a> DeclarationEmitter<'a> {
         changed.then(|| format!("{prefix}({}) => {return_text}", params.join(", ")))
     }
 
+    pub(in crate::declaration_emitter) fn preserve_call_argument_single_rest_parameter_text(
+        &self,
+        call_idx: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let call_node = self.arena.get(call_idx)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(call_node)?;
+        let args = call.arguments.as_ref()?;
+        let first_arg = args.nodes.first().copied()?;
+        let first_arg = self.skip_parenthesized_expression(first_arg)?;
+        let arg_node = self.arena.get(first_arg)?;
+        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.arena.get_function(arg_node)?;
+        let [param_idx] = func.parameters.nodes.as_slice() else {
+            return None;
+        };
+        let param_node = self.arena.get(*param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        if !param.dot_dot_dot_token {
+            return None;
+        }
+
+        let trimmed = type_text.trim();
+        let arrow_idx = Self::find_top_level_arrow(trimmed)?;
+        let head = trimmed.get(..arrow_idx)?.trim_end();
+        let return_text = trimmed.get(arrow_idx + 2..)?.trim();
+        let open_idx = head.rfind('(')?;
+        let prefix = head.get(..open_idx)?;
+        let params_text = head.get(open_idx + 1..)?.strip_suffix(')')?.trim();
+        if params_text.starts_with("...") || Self::split_top_level_commas(params_text).len() != 1 {
+            return None;
+        }
+        let colon_idx = Self::find_top_level_byte(params_text, b':')?;
+        let name = params_text.get(..colon_idx)?.trim();
+        let param_type = params_text.get(colon_idx + 1..)?.trim();
+        if name.is_empty()
+            || param_type.is_empty()
+            || !(param_type.ends_with("[]") || param_type.starts_with("Array<"))
+        {
+            return None;
+        }
+
+        Some(format!(
+            "{prefix}(...{name}: {param_type}) => {return_text}"
+        ))
+    }
+
     fn expand_tuple_type_elements(
         &self,
         from_idx: NodeIndex,

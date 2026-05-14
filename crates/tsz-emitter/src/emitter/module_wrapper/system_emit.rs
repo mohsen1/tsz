@@ -1,7 +1,7 @@
 use super::super::Printer;
+use super::system_legacy_class_decorators::split_system_class_static_tail;
 use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::{JsxEmit, ModuleKind};
-use crate::output::source_writer::SourceWriter;
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
@@ -996,7 +996,13 @@ impl<'a> Printer<'a> {
                     .get_class(stmt_node)
                     .and_then(|class| self.get_identifier_text_opt(class.name))
                     .and_then(|name| deferred_named_exports.get(&name).cloned());
-                self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name, false)
+                self.emit_top_level_using_class_assignment(
+                    stmt_node,
+                    stmt_idx,
+                    export_name,
+                    false,
+                    false,
+                )
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 let export_name = self
@@ -1036,6 +1042,7 @@ impl<'a> Printer<'a> {
                                 export.export_clause,
                                 Some(export_name),
                                 !export.is_default_export,
+                                false,
                             )
                         } else {
                             false
@@ -1405,6 +1412,50 @@ impl<'a> Printer<'a> {
             } else {
                 class_name
             };
+            let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
+            if self.ctx.options.legacy_decorators
+                && (!legacy_class_decorators.is_empty()
+                    || !self
+                        .collect_constructor_param_decorators(&class_decl.members.nodes)
+                        .is_empty())
+            {
+                let alias_name =
+                    self.system_legacy_decorated_class_alias(&gen_name, &class_decl.members.nodes);
+                let emitted = self.capture_system_class_assignment(
+                    clause_node,
+                    export_decl.export_clause,
+                    &gen_name,
+                    alias_name.as_deref(),
+                );
+                let (class_part, static_tail) = split_system_class_static_tail(&emitted);
+                self.write(class_part.trim_start().trim_end());
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                if !static_tail.trim().is_empty() {
+                    self.write(static_tail.trim());
+                    if !self.output_ends_with_semicolon() {
+                        self.write(";");
+                    }
+                    self.write_line();
+                }
+                let assignment = self.capture_system_legacy_class_decorator_assignment(
+                    &gen_name,
+                    &legacy_class_decorators,
+                    &class_decl.members.nodes,
+                    alias_name.as_deref(),
+                );
+                self.write(&assignment);
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                self.write("exports_1(\"default\", ");
+                self.write(&gen_name);
+                self.write(");");
+                return true;
+            }
             self.write(&gen_name);
             self.write(" = ");
             // Emit class as anonymous class expression
@@ -1447,6 +1498,61 @@ impl<'a> Printer<'a> {
             if class_name.is_empty() {
                 return false;
             }
+            let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
+            let needs_legacy_class_decorate = self.ctx.options.legacy_decorators
+                && (!legacy_class_decorators.is_empty()
+                    || !self
+                        .collect_constructor_param_decorators(&class_decl.members.nodes)
+                        .is_empty());
+            let alias_name = needs_legacy_class_decorate
+                .then(|| {
+                    self.system_legacy_decorated_class_alias(&class_name, &class_decl.members.nodes)
+                })
+                .flatten();
+            if needs_legacy_class_decorate {
+                // Defer static block IIFEs so we can emit exports_1 before them
+                self.defer_class_static_blocks = true;
+                self.deferred_class_static_blocks.clear();
+                let emitted = self.capture_system_class_assignment(
+                    clause_node,
+                    export_decl.export_clause,
+                    &class_name,
+                    alias_name.as_deref(),
+                );
+                self.defer_class_static_blocks = false;
+                let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+                let (class_part, static_tail) = split_system_class_static_tail(&emitted);
+                self.write(class_part.trim_start().trim_end());
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                self.write("exports_1(\"");
+                self.write(&class_name);
+                self.write("\", ");
+                self.write(&class_name);
+                self.write(");");
+                if !static_tail.trim().is_empty() {
+                    self.write_line();
+                    self.write(static_tail.trim());
+                    if !self.output_ends_with_semicolon() {
+                        self.write(";");
+                    }
+                }
+                self.write_line();
+                self.emit_system_legacy_class_decorator_export(
+                    &class_name,
+                    &class_name,
+                    &legacy_class_decorators,
+                    &class_decl.members.nodes,
+                    alias_name.as_deref(),
+                );
+                if !deferred.is_empty() {
+                    self.emit_static_block_iifes(deferred);
+                }
+                return true;
+            }
+
             self.write(&class_name);
             self.write(" = ");
             // Defer static block IIFEs so we can emit exports_1 before them
@@ -1464,21 +1570,6 @@ impl<'a> Printer<'a> {
             self.write("\", ");
             self.write(&class_name);
             self.write(");");
-            let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
-            if self.ctx.options.legacy_decorators
-                && (!legacy_class_decorators.is_empty()
-                    || !self
-                        .collect_constructor_param_decorators(&class_decl.members.nodes)
-                        .is_empty())
-            {
-                self.write_line();
-                self.emit_system_legacy_class_decorator_export(
-                    &class_name,
-                    &class_name,
-                    &legacy_class_decorators,
-                    &class_decl.members.nodes,
-                );
-            }
             if !deferred.is_empty() {
                 self.emit_static_block_iifes(deferred);
             }
@@ -1568,44 +1659,6 @@ impl<'a> Printer<'a> {
         }
 
         false
-    }
-
-    fn emit_system_legacy_class_decorator_export(
-        &mut self,
-        export_name: &str,
-        class_name: &str,
-        decorators: &[NodeIndex],
-        members: &[NodeIndex],
-    ) {
-        let mut temp_writer = SourceWriter::with_capacity(256);
-        temp_writer.set_new_line_kind(self.ctx.options.new_line);
-        temp_writer.set_indent_level(self.writer.indent_level());
-        std::mem::swap(&mut self.writer, &mut temp_writer);
-
-        self.emit_legacy_class_decorator_assignment(
-            class_name, decorators, false, false, false, members,
-        );
-
-        std::mem::swap(&mut self.writer, &mut temp_writer);
-        let emitted = temp_writer.take_output();
-        if emitted.is_empty() {
-            return;
-        }
-
-        let assignment = emitted
-            .trim_start()
-            .trim_end()
-            .trim_end_matches(';')
-            .to_string();
-        if assignment.is_empty() {
-            return;
-        }
-
-        self.write("exports_1(\"");
-        self.write(export_name);
-        self.write("\", ");
-        self.write(&assignment);
-        self.write(");");
     }
 
     fn emit_system_enum_with_export_fold(

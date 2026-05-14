@@ -1,5 +1,6 @@
 use super::super::{JsxEmit, Printer};
 use super::{SystemDependencyAction, SystemDependencyPlan};
+use crate::emitter::declarations::class::class_has_self_references;
 use std::collections::HashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -168,6 +169,14 @@ impl<'a> Printer<'a> {
                             } else {
                                 class_name
                             };
+                            if let Some(alias) = self.system_hoist_legacy_decorated_class_alias(
+                                &name,
+                                &class_decl.members.nodes,
+                                &class_decl.modifiers,
+                            ) && seen.insert(alias.clone())
+                            {
+                                names.push(alias);
+                            }
                             if seen.insert(name.clone()) {
                                 names.push(name);
                             }
@@ -280,6 +289,14 @@ impl<'a> Printer<'a> {
                         && let Some(class_decl) = self.arena.get_class(clause_node)
                     {
                         let name = self.get_identifier_text_idx(class_decl.name);
+                        if let Some(alias) = self.system_hoist_legacy_decorated_class_alias(
+                            &name,
+                            &class_decl.members.nodes,
+                            &class_decl.modifiers,
+                        ) && seen.insert(alias.clone())
+                        {
+                            names.push(alias);
+                        }
                         if !name.is_empty() && seen.insert(name.clone()) {
                             names.push(name);
                         }
@@ -467,6 +484,27 @@ impl<'a> Printer<'a> {
         }
 
         names
+    }
+
+    fn system_hoist_legacy_decorated_class_alias(
+        &self,
+        class_name: &str,
+        members: &[NodeIndex],
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> Option<String> {
+        if class_name.is_empty() || !self.ctx.options.legacy_decorators {
+            return None;
+        }
+        let has_class_or_ctor_param_decorators =
+            !self.collect_class_decorators(modifiers).is_empty()
+                || !self
+                    .collect_constructor_param_decorators(members)
+                    .is_empty();
+        if !has_class_or_ctor_param_decorators {
+            return None;
+        }
+        class_has_self_references(self.arena, self.source_text_for_map(), class_name, members)
+            .then(|| format!("{class_name}_1"))
     }
 
     pub(super) fn add_system_jsx_runtime_dependency(

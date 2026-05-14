@@ -2191,13 +2191,16 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut emitted_any = false;
         for &member_idx in &class.members.nodes {
+            if self
+                .class_member_info(member_idx)
+                .is_none_or(|info| info.is_static)
+            {
+                continue;
+            }
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
             if let Some(prop) = self.arena.get_property_decl(member_node) {
-                if self.arena.is_static(&prop.modifiers) {
-                    continue;
-                }
                 let Some(prop_name_node) = self.arena.get(prop.name) else {
                     continue;
                 };
@@ -2289,19 +2292,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut declared_names = FxHashSet::default();
         for &member_idx in &members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            let member_name = if let Some(prop) = self.arena.get_property_decl(member_node) {
-                Some(prop.name)
-            } else if let Some(method) = self.arena.get_method_decl(member_node) {
-                Some(method.name)
-            } else {
-                self.arena
-                    .get_accessor(member_node)
-                    .map(|accessor| accessor.name)
-            };
-            if let Some(name_idx) = member_name
+            if let Some(name_idx) = self.get_member_name_idx(member_idx)
                 && let Some(name) = self.get_identifier_text(name_idx)
             {
                 declared_names.insert(name);
@@ -3191,6 +3182,10 @@ impl<'a> DeclarationEmitter<'a> {
                     k if k == SyntaxKind::PlusToken as u16 => Some(normalized),
                     _ => None,
                 }
+            }
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                let computed = self.arena.get_computed_property(node)?;
+                self.destructuring_property_lookup_text(computed.expression)
             }
             _ => None,
         }

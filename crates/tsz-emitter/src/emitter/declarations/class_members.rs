@@ -168,10 +168,18 @@ impl<'a> Printer<'a> {
         let is_async = self
             .arena
             .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
+        let has_generator_asterisk = method.asterisk_token
+            || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                node.pos,
+                self.arena
+                    .get(method.body)
+                    .map_or(node.end, |body| body.pos),
+            );
         let needs_async_lowering =
-            is_async && self.ctx.needs_async_lowering && !method.asterisk_token;
+            is_async && self.ctx.needs_async_lowering && !has_generator_asterisk;
         let needs_async_generator_lowering =
-            is_async && self.ctx.needs_async_lowering && method.asterisk_token;
+            is_async && self.ctx.needs_es2018_lowering && has_generator_asterisk;
 
         if needs_async_lowering || needs_async_generator_lowering {
             // Emit static modifier if present
@@ -184,7 +192,7 @@ impl<'a> Printer<'a> {
         }
 
         // Emit generator asterisk (skip for async generators being lowered)
-        if method.asterisk_token && !needs_async_generator_lowering {
+        if has_generator_asterisk && !needs_async_generator_lowering {
             self.write("*");
         }
 
@@ -221,6 +229,9 @@ impl<'a> Printer<'a> {
             };
             self.skip_comments_in_range(tp_skip_start, open_paren_pos);
         }
+        if needs_async_generator_lowering {
+            self.push_temp_scope();
+        }
         self.write("(");
         let search_start = method
             .parameters
@@ -233,12 +244,18 @@ impl<'a> Printer<'a> {
         } else {
             node.end
         };
-        self.emit_function_parameters_with_trailing_comments(
-            &method.parameters.nodes,
-            open_paren_pos,
-            search_start,
-            search_end,
-        );
+        if needs_async_generator_lowering
+            && self.async_generator_params_need_forwarding(&method.parameters.nodes)
+        {
+            self.emit_async_outer_parameter_placeholders(&method.parameters.nodes);
+        } else {
+            self.emit_function_parameters_with_trailing_comments(
+                &method.parameters.nodes,
+                open_paren_pos,
+                search_start,
+                search_end,
+            );
+        }
         self.write(")");
 
         // Skip return type for JavaScript emit — skip comments inside erased return type
@@ -250,7 +267,12 @@ impl<'a> Printer<'a> {
         }
 
         if needs_async_generator_lowering {
-            self.emit_method_async_generator_lowered_body(method.body, method.name);
+            self.emit_method_async_generator_lowered_body(
+                method.body,
+                method.name,
+                &method.parameters.nodes,
+            );
+            self.pop_temp_scope();
         } else if needs_async_lowering {
             self.emit_method_async_lowered_body(method.body, &method.parameters.nodes);
         } else {
@@ -263,7 +285,7 @@ impl<'a> Printer<'a> {
             self.push_temp_scope();
             let prev_declared = std::mem::take(&mut self.declared_namespace_names);
             self.prepare_logical_assignment_value_temps(method.body);
-            self.ctx.flags.in_generator = method.asterisk_token;
+            self.ctx.flags.in_generator = has_generator_asterisk;
             self.emit(method.body);
             self.declared_namespace_names = prev_declared;
             self.pop_temp_scope();
@@ -359,37 +381,73 @@ impl<'a> Printer<'a> {
             })
             .unwrap_or(false);
 
-        // Issue #3759: Emit `super` capture before entering the generator. tsc
-        // pre-binds each referenced `super.<name>` via an `Object.create` block so
-        // the generator body can reach them through `_super.<name>.call(this, …)`
-        // — `super` is not lexically valid inside a nested generator function.
-        let super_property_names = if body_is_empty_single_line {
-            Vec::new()
+        // Capture `super` before entering the nested generator.
+        let super_capture = if body_is_empty_single_line {
+            crate::transforms::emit_utils::AsyncMethodSuperCapture::default()
         } else {
-            crate::transforms::emit_utils::collect_async_method_super_property_names(
-                self.arena, body,
-            )
+            crate::transforms::emit_utils::collect_async_method_super_capture(self.arena, body)
         };
-        let super_alias = if super_property_names.is_empty() {
+        let source_text = self.source_text.unwrap_or_default();
+        let super_alias_text = if super_capture.property_names.is_empty() {
             None
         } else {
-            Some(std::sync::Arc::<str>::from("_super"))
+            Some(crate::transforms::emit_utils::hygienic_temp_name(
+                "_super",
+                source_text,
+            ))
         };
+        let super_index_alias_text = if super_capture.needs_element_index {
+            Some(crate::transforms::emit_utils::hygienic_temp_name(
+                "_superIndex",
+                source_text,
+            ))
+        } else {
+            None
+        };
+        let super_alias = super_alias_text.as_deref().map(std::sync::Arc::<str>::from);
+        let super_index_alias = super_index_alias_text
+            .as_deref()
+            .map(std::sync::Arc::<str>::from);
 
         self.write(" {");
         self.write_line();
         self.increase_indent();
 
-        if !super_property_names.is_empty() {
-            self.write("const _super = Object.create(null, {");
+        if let Some(index_alias) = super_index_alias_text.as_deref() {
+            self.write("const ");
+            self.write(index_alias);
+            if super_capture.needs_writable_element_index {
+                self.write(" = (function (geti, seti) {");
+                self.write_line();
+                self.increase_indent();
+                self.write("const cache = Object.create(null);");
+                self.write_line();
+                self.write("return name => cache[name] || (cache[name] = { get value() { return geti(name); }, set value(v) { seti(name, v); } });");
+                self.write_line();
+                self.decrease_indent();
+                self.write("})(name => super[name], (name, value) => super[name] = value);");
+            } else {
+                self.write(" = name => super[name];");
+            }
+            self.write_line();
+        }
+        if let Some(super_alias_name) = super_alias_text.as_deref() {
+            self.write("const ");
+            self.write(super_alias_name);
+            self.write(" = Object.create(null, {");
             self.write_line();
             self.increase_indent();
-            for (i, name) in super_property_names.iter().enumerate() {
+            for (i, name) in super_capture.property_names.iter().enumerate() {
                 self.write(name);
                 self.write(": { get: () => super.");
                 self.write(name);
+                if super_capture.writable_property_names.contains(name) {
+                    self.write(", set: v => super.");
+                    self.write(name);
+                    self.write(" = v");
+                }
                 self.write(" }");
-                if i + 1 < super_property_names.len() {
+                if i + 1 < super_capture.property_names.len() {
                     self.write(",");
                 }
                 self.write_line();
@@ -434,10 +492,19 @@ impl<'a> Printer<'a> {
         self.ctx.emit_await_as_yield = true;
         let prev_super_alias = self.scoped_static_super_base_alias.take();
         let prev_super_direct = self.scoped_static_super_direct_access;
+        let prev_super_index_alias = self.scoped_static_super_index_alias.take();
+        let prev_super_index_value = self.scoped_static_super_index_value_access;
+        let prev_function_scope_depth = self.function_scope_depth;
         if let Some(alias) = super_alias {
             self.scoped_static_super_base_alias = Some(alias);
             self.scoped_static_super_direct_access = true;
         }
+        if let Some(alias) = super_index_alias {
+            self.scoped_static_super_index_alias = Some(alias);
+            self.scoped_static_super_index_value_access =
+                super_capture.needs_writable_element_index;
+        }
+        self.function_scope_depth += 1;
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
@@ -450,56 +517,12 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+        self.function_scope_depth = prev_function_scope_depth;
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_direct_access = prev_super_direct;
+        self.scoped_static_super_index_alias = prev_super_index_alias;
+        self.scoped_static_super_index_value_access = prev_super_index_value;
         self.ctx.emit_await_as_yield = false;
-
-        self.decrease_indent();
-        self.write("});");
-        self.write_line();
-        self.decrease_indent();
-        self.write("}");
-    }
-
-    /// Emit async generator method body lowered to __asyncGenerator for ES2015 target.
-    /// `async *f() { ... }` becomes `f() { return __asyncGenerator(this, arguments, function* f_1() { ... }); }`
-    fn emit_method_async_generator_lowered_body(&mut self, body: NodeIndex, name_idx: NodeIndex) {
-        let method_name = if name_idx.is_some() {
-            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, name_idx)
-        } else {
-            String::new()
-        };
-
-        self.write(" {");
-        self.write_line();
-        self.increase_indent();
-
-        // return __asyncGenerator(this, arguments, function* name_1() {
-        self.write("return ");
-        self.write_helper("__asyncGenerator");
-        self.write("(this, arguments, function* ");
-        if !method_name.is_empty() {
-            self.write(&method_name);
-            self.write("_1");
-        }
-        self.write("() {");
-        self.write_line();
-        self.increase_indent();
-
-        // Set flag so `await expr` emits as `yield __await(expr)`
-        let saved = self.ctx.emit_await_as_yield_await;
-        self.ctx.emit_await_as_yield_await = true;
-
-        if let Some(body_node) = self.arena.get(body)
-            && let Some(block) = self.arena.get_block(body_node)
-        {
-            for &stmt in &block.statements.nodes {
-                self.emit(stmt);
-                self.write_line();
-            }
-        }
-
-        self.ctx.emit_await_as_yield_await = saved;
 
         self.decrease_indent();
         self.write("});");
@@ -582,16 +605,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For JavaScript: Skip property declarations without initializers
-        // (they are TypeScript-only declarations: typed props, bare props)
-        // Exception: Private fields (#name) are always emitted — they are runtime declarations.
-        // Exception: `accessor` fields are always emitted — they are ES2024 auto-accessors.
-        // Exception: native class-field emit keeps uninitialised props as class fields.
+        // For JavaScript: skip property declarations without initializers unless they
+        // still have a runtime class-field form. A typed declaration like `x: T;`
+        // is type-only even when native class fields are available.
         let target_supports_native_fields =
             (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
         let preserves_uninitialized_fields =
             self.ctx.options.use_define_for_class_fields && target_supports_native_fields;
-        if prop.initializer.is_none() && !preserves_uninitialized_fields {
+        if prop.initializer.is_none() {
             let is_private = self
                 .arena
                 .get(prop.name)
@@ -599,7 +620,14 @@ impl<'a> Printer<'a> {
             let has_accessor = self
                 .arena
                 .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-            if !is_private && !has_accessor {
+            let has_decorator = !self.collect_class_decorators(&prop.modifiers).is_empty();
+            let type_only_native_field =
+                preserves_uninitialized_fields && prop.type_annotation.is_some();
+            if (!preserves_uninitialized_fields || type_only_native_field)
+                && !is_private
+                && !has_accessor
+                && !has_decorator
+            {
                 self.skip_comments_for_erased_node(node);
                 return;
             }

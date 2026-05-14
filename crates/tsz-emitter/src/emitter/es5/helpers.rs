@@ -470,7 +470,7 @@ impl<'a> Printer<'a> {
                 if let Some(method) = self.arena.get_method_decl(node) {
                     self.emit(method.name);
                     self.write(": ");
-                    self.emit_object_literal_method_value_es5(method);
+                    self.emit_object_literal_method_value_es5(node, method);
                 }
             }
             _ => self.emit(prop_idx),
@@ -499,6 +499,7 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn emit_object_literal_method_value_es5(
         &mut self,
+        node: &Node,
         method: &MethodDeclData,
     ) {
         if method.body.is_none() {
@@ -510,6 +511,27 @@ impl<'a> Printer<'a> {
             .arena
             .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         if is_async {
+            if method.asterisk_token
+                || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                    self.source_text,
+                    node.pos,
+                    self.arena
+                        .get(method.body)
+                        .map_or(node.end, |body| body.pos),
+                )
+            {
+                let property_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    method.name,
+                );
+                self.emit_async_generator_es5_object_method_value(
+                    &property_name,
+                    &method.parameters.nodes,
+                    method.body,
+                );
+                return;
+            }
+
             self.emit_async_function_es5_body(
                 "",
                 &method.parameters.nodes,
@@ -920,7 +942,7 @@ impl<'a> Printer<'a> {
                 if let Some(method) = self.arena.get_method_decl(node) {
                     self.emit_assignment_target_es5(method.name, temp_var);
                     self.write(" = ");
-                    self.emit_object_literal_method_value_es5(method);
+                    self.emit_object_literal_method_value_es5(node, method);
                 }
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {

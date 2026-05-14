@@ -295,7 +295,8 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         if param_name == name {
-                            return match self.member_access_level_from_modifiers(&param.modifiers) {
+                            let level = self.member_access_level_from_modifiers(&param.modifiers);
+                            return match level {
                                 Some(level) => MemberLookup::Restricted(level),
                                 None => MemberLookup::Public,
                             };
@@ -1547,6 +1548,35 @@ impl<'a> CheckerState<'a> {
         let legacy_decorator_not_valid = self.ctx.compiler_options.experimental_decorators
             && (is_private_member || is_class_expression_member);
 
+        // ES (TC39) decorator first-argument shape per member kind. Computed once
+        // before the per-decorator loop because the member kind and modifiers do
+        // not vary across decorators on the same declaration.
+        //
+        // - Plain field: runtime invokes `decorator(undefined, context)`.
+        // - Auto-accessor (`accessor x = …`): runtime invokes
+        //   `decorator(target, context)` where `target` is a
+        //   `ClassAccessorDecoratorTarget<This, Value>` object. We resolve the
+        //   global type and instantiate it with `<any, any>`; the decorator's
+        //   `This`/`Value` type parameters are inferred from this shape.
+        //
+        // If `ClassAccessorDecoratorTarget` is unavailable (e.g. `--noLib`) we
+        // fall back to `ANY` so the absence of the lib type cannot itself
+        // produce a TS1240 false positive.
+        let es_member_first_arg: Option<TypeId> =
+            if !self.ctx.compiler_options.experimental_decorators
+                && node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && !is_ambient_field
+            {
+                Some(if self.has_accessor_modifier_ref(modifiers) {
+                    self.resolve_class_accessor_decorator_target_any()
+                        .unwrap_or(TypeId::ANY)
+                } else {
+                    TypeId::UNDEFINED
+                })
+            } else {
+                None
+            };
+
         if let Some(modifiers) = modifiers {
             for &modifier_idx in &modifiers.nodes {
                 let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
@@ -1585,11 +1615,12 @@ impl<'a> CheckerState<'a> {
 
                 let decorator_type = self.compute_type_of_node(decorator.expression);
 
-                if !self.ctx.compiler_options.experimental_decorators
-                    && node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                    && !is_ambient_field
-                {
-                    self.check_es_property_decorator_call_signature(modifier_idx, decorator_type);
+                if let Some(first_arg) = es_member_first_arg {
+                    self.check_es_member_decorator_call_signature(
+                        modifier_idx,
+                        decorator_type,
+                        first_arg,
+                    );
                 }
 
                 // TS1329: Check if the decorator accepts too few arguments for this position.

@@ -208,7 +208,7 @@ impl<'a> ES5SpreadTransformer<'a> {
                 if let Some(spread) = self.arena.get_unary_expr_ex(elem_node)
                     && let Some(expr) = self.transform_expression(spread.expression)
                 {
-                    segments.push(ArraySegment::Spread(expr));
+                    segments.push(ArraySegment::Spread(Box::new(expr)));
                 }
             } else {
                 // Regular element
@@ -243,7 +243,7 @@ impl<'a> ES5SpreadTransformer<'a> {
                         IRNode::prop(IRNode::prop(IRNode::id("Array"), "prototype"), "slice"),
                         "call",
                     ),
-                    vec![expr],
+                    vec![*expr],
                 )
             }
         };
@@ -346,7 +346,7 @@ impl<'a> ES5SpreadTransformer<'a> {
                 if let Some(spread) = self.arena.get_unary_expr_ex(arg_node)
                     && let Some(expr) = self.transform_expression(spread.expression)
                 {
-                    segments.push(ArraySegment::Spread(expr));
+                    segments.push(ArraySegment::Spread(Box::new(expr)));
                 }
             } else if let Some(arg_ir) = self.transform_expression(arg_idx) {
                 current_elements.push(arg_ir);
@@ -371,14 +371,14 @@ impl<'a> ES5SpreadTransformer<'a> {
 
         let mut result = match first {
             ArraySegment::Literal(elems) => IRNode::ArrayLiteral(elems),
-            ArraySegment::Spread(expr) => expr,
+            ArraySegment::Spread(expr) => *expr,
         };
 
         // Chain .concat() for remaining segments
         for segment in iter {
             let concat_arg = match segment {
                 ArraySegment::Literal(elems) => IRNode::ArrayLiteral(elems),
-                ArraySegment::Spread(expr) => expr,
+                ArraySegment::Spread(expr) => *expr,
             };
             result = IRNode::call(IRNode::prop(result, "concat"), vec![concat_arg]);
         }
@@ -436,7 +436,7 @@ impl<'a> ES5SpreadTransformer<'a> {
                 if let Some(spread) = self.arena.get_unary_expr_ex(elem_node)
                     && let Some(expr) = self.transform_expression(spread.expression)
                 {
-                    segments.push(ObjectSegment::Spread(expr));
+                    segments.push(ObjectSegment::Spread(Box::new(expr)));
                 }
             } else if let Some(prop) = self.transform_object_property(elem_idx) {
                 current_props.push(prop);
@@ -468,7 +468,7 @@ impl<'a> ES5SpreadTransformer<'a> {
         for segment in segments {
             let arg = match segment {
                 ObjectSegment::Literal(props) => IRNode::object(props),
-                ObjectSegment::Spread(expr) => expr,
+                ObjectSegment::Spread(expr) => *expr,
             };
             result = IRNode::call(assign_fn.clone(), vec![result, arg]);
         }
@@ -635,7 +635,7 @@ enum ArraySegment {
     /// Regular array literal elements
     Literal(Vec<IRNode>),
     /// Spread expression
-    Spread(IRNode),
+    Spread(Box<IRNode>),
 }
 
 /// Segment of an object being built with spread
@@ -643,7 +643,7 @@ enum ObjectSegment {
     /// Regular object properties
     Literal(Vec<IRProperty>),
     /// Spread expression
-    Spread(IRNode),
+    Spread(Box<IRNode>),
 }
 
 #[cfg(test)]

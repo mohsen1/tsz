@@ -1330,12 +1330,10 @@ impl<'a> CheckerState<'a> {
                         } else {
                             extra_number_indices.push(info);
                         }
+                    } else if string_index.is_none() {
+                        string_index = Some(info);
                     } else {
-                        if string_index.is_none() {
-                            string_index = Some(info);
-                        } else {
-                            extra_string_indices.push(info);
-                        }
+                        extra_string_indices.push(info);
                     }
                 }
                 continue;

@@ -10,8 +10,8 @@ use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
-    FunctionShape, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
-    TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
+    FunctionShape, IntrinsicKind, LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo,
+    TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -577,6 +577,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             }
+            // String literal source against a template literal target: extract capture groups
+            // for each TypeParameter or Infer span by pattern-matching the literal against the
+            // template. Delegates to InferenceContext::infer_from_types so both `infer T`
+            // (conditional) and `T extends string` (generic parameter) spans are handled.
+            (
+                Some(
+                    TypeData::Literal(LiteralValue::String(_))
+                    | TypeData::Intrinsic(IntrinsicKind::String),
+                ),
+                Some(TypeData::TemplateLiteral(_)),
+            ) => {
+                let _ = ctx.infer_from_types(source, target, priority);
+            }
             (Some(TypeData::IndexAccess(s_obj, s_idx)), _) => {
                 let evaluated = self.interner.evaluate_index_access(s_obj, s_idx);
                 if evaluated != source {
@@ -715,10 +728,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         if has_properties {
                             // Simple mapped type inference for { [P in K]: T }
                             // Infer constraint (K) from property name literals
+                            // (numeric-named props contribute number literals).
                             let name_literals: Vec<TypeId> = source_obj
                                 .properties
                                 .iter()
-                                .map(|p| self.interner.literal_string_atom(p.name))
+                                .map(|p| {
+                                    crate::utils::literal_key_for_property_name(
+                                        self.interner,
+                                        p.name,
+                                        p.is_string_named,
+                                    )
+                                })
                                 .collect();
                             let names_union = if name_literals.len() == 1 {
                                 name_literals[0]
@@ -2258,7 +2278,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let iter_param_name = mapped.type_param.name;
         for prop in properties {
-            let key_literal = self.interner.literal_string_atom(prop.name);
+            let key_literal = crate::utils::literal_key_for_property_name(
+                self.interner,
+                prop.name,
+                prop.is_string_named,
+            );
             let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
             self.constrain_types(ctx, var_map, prop.type_id, instantiated_template, priority);

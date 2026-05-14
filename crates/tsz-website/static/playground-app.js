@@ -24774,6 +24774,63 @@ export class UserStore<T extends User> {
 `
   },
   {
+    key: "sound_mode",
+    title: "Sound Mode: Sticky Freshness",
+    category: "diagnostics",
+    description: "Fresh object literals stay exact after a variable assignment.",
+    soundDiagnosticCode: "TSZ3006",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+// Sticky freshness keeps object-literal excess-property checks alive
+// after the literal has been assigned to a variable.
+interface Point2D { x: number; y: number }
+
+const point3d = { x: 1, y: 2, z: 3 };
+const point: Point2D = point3d;
+`
+  },
+  {
+    key: "sound_mode_argument",
+    title: "Sound Mode: Method Bivariance",
+    category: "diagnostics",
+    description: "Method implementations cannot narrow a parameter unsafely.",
+    soundDiagnosticCode: "TSZ2002",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+interface EventSink {
+  handle(value: string | number): void;
+}
+
+class StringOnlySink implements EventSink {
+  handle(value: string) {
+    value.toUpperCase();
+  }
+}
+`
+  },
+  {
+    key: "sound_mode_array",
+    title: "Sound Mode: Any Escape",
+    category: "diagnostics",
+    description: "Nested any cannot quietly satisfy a more precise shape.",
+    soundDiagnosticCode: "TSZ1001",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+interface Payload {
+  name: string;
+}
+
+function parsePayload(): { name: any } {
+  return JSON.parse('{"name":{"firstName":"Alan","lastName":"Turing"}}');
+}
+
+const payload: Payload = parsePayload();
+`
+  },
+  {
     key: "errors",
     title: "Type Errors",
     category: "diagnostics",
@@ -24826,6 +24883,288 @@ var LIB_FILES = [
   "lib.decorators.d.ts",
   "lib.decorators.legacy.d.ts"
 ];
+var TSCONFIG_MODEL_URI = "file:///tsconfig.json";
+var TSCONFIG_SCHEMA = {
+  type: "object",
+  allowTrailingCommas: true,
+  properties: {
+    compilerOptions: {
+      type: "object",
+      description: "Options passed to the TypeScript compiler.",
+      properties: {
+        strict: {
+          type: "boolean",
+          description: "Enable all strict type-checking options."
+        },
+        target: {
+          type: "string",
+          enum: ["ES3", "ES5", "ES6", "ES2015", "ES2016", "ES2017", "ES2018", "ES2019", "ES2020", "ES2021", "ES2022", "ES2023", "ES2024", "ES2025", "ESNext"],
+          description: "Set the JavaScript language version for emitted JavaScript."
+        },
+        module: {
+          type: "string",
+          enum: ["None", "CommonJS", "AMD", "UMD", "System", "ES6", "ES2015", "ES2020", "ES2022", "ESNext", "Node16", "Node18", "Node20", "NodeNext", "Preserve"],
+          description: "Specify what module code is generated."
+        },
+        moduleResolution: {
+          type: "string",
+          enum: ["Classic", "Node", "Node10", "Node16", "NodeNext", "Bundler"],
+          description: "Specify how modules are resolved from a given module specifier."
+        },
+        jsx: {
+          type: "string",
+          enum: ["Preserve", "React", "ReactNative", "ReactJSX", "ReactJSXDev"],
+          description: "Specify what JSX code is generated."
+        },
+        lib: {
+          type: "array",
+          items: { type: "string" },
+          description: "Specify bundled library declaration files."
+        },
+        declaration: { type: "boolean" },
+        noEmit: { type: "boolean" },
+        sourceMap: { type: "boolean" },
+        allowJs: { type: "boolean" },
+        checkJs: { type: "boolean" },
+        isolatedModules: { type: "boolean" },
+        esModuleInterop: { type: "boolean" },
+        skipLibCheck: { type: "boolean" },
+        noLib: { type: "boolean" },
+        noResolve: { type: "boolean" },
+        noImplicitAny: { type: "boolean" },
+        noImplicitReturns: { type: "boolean" },
+        noImplicitThis: { type: "boolean" },
+        strictNullChecks: { type: "boolean" },
+        strictFunctionTypes: { type: "boolean" },
+        strictBindCallApply: { type: "boolean" },
+        strictPropertyInitialization: { type: "boolean" },
+        strictBuiltinIteratorReturn: { type: "boolean" },
+        noUncheckedIndexedAccess: { type: "boolean" },
+        exactOptionalPropertyTypes: { type: "boolean" },
+        useUnknownInCatchVariables: { type: "boolean" },
+        rootDir: { type: "string" },
+        outDir: { type: "string" },
+        baseUrl: { type: "string" },
+        paths: {
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: { type: "string" }
+          }
+        }
+      },
+      additionalProperties: true
+    },
+    include: {
+      type: "array",
+      items: { type: "string" }
+    },
+    exclude: {
+      type: "array",
+      items: { type: "string" }
+    },
+    files: {
+      type: "array",
+      items: { type: "string" }
+    },
+    extends: {
+      type: "string"
+    },
+    references: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          path: { type: "string" }
+        }
+      }
+    }
+  },
+  additionalProperties: true
+};
+function createTsconfigText(strict) {
+  return JSON.stringify({
+    compilerOptions: {
+      strict,
+      module: "ESNext"
+    }
+  }, null, 2);
+}
+var SUPPORTED_BOOLEAN_COMPILER_OPTIONS = [
+  "strict",
+  "noImplicitAny",
+  "strictNullChecks",
+  "strictFunctionTypes",
+  "strictBindCallApply",
+  "strictPropertyInitialization",
+  "noImplicitReturns",
+  "noImplicitThis",
+  "useUnknownInCatchVariables",
+  "strictBuiltinIteratorReturn",
+  "noUncheckedIndexedAccess",
+  "exactOptionalPropertyTypes",
+  "noLib",
+  "allowJs",
+  "checkJs",
+  "declaration",
+  "sourceMap",
+  "noResolve"
+];
+var TS_TARGET_NUMERIC_VALUES = {
+  es3: 0,
+  es5: 1,
+  es6: 2,
+  es2015: 2,
+  es2016: 3,
+  es2017: 4,
+  es2018: 5,
+  es2019: 6,
+  es2020: 7,
+  es2021: 8,
+  es2022: 9,
+  es2023: 10,
+  es2024: 11,
+  es2025: 12,
+  esnext: 99
+};
+var TS_MODULE_NUMERIC_VALUES = {
+  none: 0,
+  commonjs: 1,
+  amd: 2,
+  umd: 3,
+  system: 4,
+  es6: 5,
+  es2015: 5,
+  es2020: 6,
+  es2022: 7,
+  esnext: 99,
+  node16: 100,
+  node18: 101,
+  node20: 102,
+  nodenext: 199,
+  preserve: 200
+};
+var TS_JSX_NUMERIC_VALUES = {
+  preserve: 1,
+  react: 2,
+  reactnative: 3,
+  "react-jsx": 4,
+  reactjsx: 4,
+  "react-jsxdev": 5,
+  reactjsxdev: 5
+};
+function normalizeTsconfigEnumValue(value) {
+  return String(value).trim().replace(/[\s_]/g, "").toLowerCase();
+}
+function coerceNumericCompilerOption(value, valueMap) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  return valueMap[normalizeTsconfigEnumValue(value)] ?? null;
+}
+function stripJsonComments(text) {
+  let output = "";
+  let inString = false;
+  let stringQuote = "";
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === stringQuote) {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      inString = true;
+      stringQuote = char;
+      output += char;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") {
+        i += 1;
+      }
+      output += "\n";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+        i += 1;
+      }
+      i += 1;
+      continue;
+    }
+    output += char;
+  }
+  return output;
+}
+function parseTsconfigText(text) {
+  const withoutComments = stripJsonComments(text);
+  const withoutTrailingCommas = withoutComments.replace(/,\s*([}\]])/g, "$1");
+  return JSON.parse(withoutTrailingCommas);
+}
+function readCompilerOptionsFromTsconfig(text) {
+  try {
+    const config = parseTsconfigText(text);
+    const compilerOptions = config?.compilerOptions;
+    if (!compilerOptions || typeof compilerOptions !== "object" || Array.isArray(compilerOptions)) {
+      return {};
+    }
+    const options = {};
+    for (const key of SUPPORTED_BOOLEAN_COMPILER_OPTIONS) {
+      if (typeof compilerOptions[key] === "boolean") {
+        options[key] = compilerOptions[key];
+      }
+    }
+    const target = coerceNumericCompilerOption(compilerOptions.target, TS_TARGET_NUMERIC_VALUES);
+    if (target !== null) {
+      options.target = target;
+    }
+    const module = coerceNumericCompilerOption(compilerOptions.module, TS_MODULE_NUMERIC_VALUES);
+    if (module !== null) {
+      options.module = module;
+    }
+    const jsx2 = coerceNumericCompilerOption(compilerOptions.jsx, TS_JSX_NUMERIC_VALUES);
+    if (jsx2 !== null) {
+      options.jsx = jsx2;
+    }
+    return options;
+  } catch {
+    return {};
+  }
+}
+function readStrictFromTsconfig(text) {
+  try {
+    const config = parseTsconfigText(text);
+    const strict = config?.compilerOptions?.strict;
+    return typeof strict === "boolean" ? strict : null;
+  } catch {
+    return null;
+  }
+}
+function updateTsconfigStrict(text, strict) {
+  try {
+    const config = parseTsconfigText(text);
+    const nextConfig = config && typeof config === "object" && !Array.isArray(config) ? config : {};
+    const compilerOptions = nextConfig.compilerOptions;
+    nextConfig.compilerOptions = compilerOptions && typeof compilerOptions === "object" && !Array.isArray(compilerOptions) ? compilerOptions : {};
+    nextConfig.compilerOptions.strict = strict;
+    return JSON.stringify(nextConfig, null, 2);
+  } catch {
+    return createTsconfigText(strict);
+  }
+}
 function getExampleFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const key = params.get("example");
@@ -24887,9 +25226,12 @@ function PlaygroundApp() {
   const editorContainerRef = (0, import_react.useRef)(null);
   const jsContainerRef = (0, import_react.useRef)(null);
   const dtsContainerRef = (0, import_react.useRef)(null);
+  const tsconfigContainerRef = (0, import_react.useRef)(null);
   const editorRef = (0, import_react.useRef)(null);
   const jsEditorRef = (0, import_react.useRef)(null);
   const dtsEditorRef = (0, import_react.useRef)(null);
+  const tsconfigEditorRef = (0, import_react.useRef)(null);
+  const tsconfigModelRef = (0, import_react.useRef)(null);
   const monacoRef = (0, import_react.useRef)(null);
   const wasmRef = (0, import_react.useRef)(null);
   const libFilesRef = (0, import_react.useRef)({});
@@ -24900,9 +25242,15 @@ function PlaygroundApp() {
   const outputCacheRef = (0, import_react.useRef)({ key: null, js: null, dts: null });
   const codeRef = (0, import_react.useRef)(initialExample.source);
   const strictModeRef = (0, import_react.useRef)(true);
+  const tsconfigRef = (0, import_react.useRef)(createTsconfigText(true));
+  const tsconfigSyncingRef = (0, import_react.useRef)(false);
+  const initialSoundMode = initialExampleKey.startsWith("sound_mode");
+  const soundModeRef = (0, import_react.useRef)(initialSoundMode);
   const [selectedExampleKey, setSelectedExampleKey] = (0, import_react.useState)(initialExampleKey);
   const [code, setCode] = (0, import_react.useState)(initialExample.source);
   const [strictMode, setStrictMode] = (0, import_react.useState)(true);
+  const [tsconfigText, setTsconfigText] = (0, import_react.useState)(() => createTsconfigText(true));
+  const [soundMode, setSoundMode] = (0, import_react.useState)(initialSoundMode);
   const [activePanel, setActivePanel] = (0, import_react.useState)("diagnostics");
   const [diagnostics, setDiagnostics] = (0, import_react.useState)([]);
   const [status, setStatus] = (0, import_react.useState)({ text: "loading editor...", className: "status-loading" });
@@ -24913,10 +25261,14 @@ function PlaygroundApp() {
   const [dtsOutput, setDtsOutput] = (0, import_react.useState)("");
   codeRef.current = code;
   strictModeRef.current = strictMode;
+  tsconfigRef.current = tsconfigText;
+  soundModeRef.current = soundMode;
   function getCurrentCompilerOptions() {
+    const tsconfigOptions = readCompilerOptionsFromTsconfig(tsconfigRef.current);
     return {
+      ...tsconfigOptions,
       strict: strictModeRef.current,
-      module: 99
+      soundMode: soundModeRef.current
     };
   }
   function resetOutputCache() {
@@ -24924,11 +25276,26 @@ function PlaygroundApp() {
     setJsOutput("");
     setDtsOutput("");
   }
+  function syncTsconfigEditorText(nextText) {
+    tsconfigSyncingRef.current = true;
+    tsconfigRef.current = nextText;
+    setTsconfigText(nextText);
+    if (tsconfigEditorRef.current && tsconfigEditorRef.current.getValue() !== nextText) {
+      tsconfigEditorRef.current.setValue(nextText);
+    }
+    window.setTimeout(() => {
+      tsconfigSyncingRef.current = false;
+    }, 0);
+  }
+  function setStrictEverywhere(nextStrict) {
+    setStrictMode(nextStrict);
+    syncTsconfigEditorText(updateTsconfigStrict(tsconfigRef.current, nextStrict));
+    resetOutputCache();
+  }
   function getOutputStateKey(nextCode, options) {
     return JSON.stringify({
       code: nextCode,
-      strict: options.strict,
-      module: options.module
+      options
     });
   }
   function disposeLspParser() {
@@ -24950,8 +25317,10 @@ function PlaygroundApp() {
     return program;
   }
   function createCheckProgram(nextCode, options) {
-    const ProgramCtor = wasmRef.current.WasmProgram || wasmRef.current.TsProgram;
-    const program = new ProgramCtor();
+    if (!wasmRef.current.WasmProgram) {
+      throw new Error("WasmProgram is required for playground diagnostics");
+    }
+    const program = new wasmRef.current.WasmProgram();
     program.setCompilerOptions(JSON.stringify(options));
     for (const [name, content] of Object.entries(libFilesRef.current)) {
       program.addLibFile(name, content);
@@ -24998,6 +25367,32 @@ function PlaygroundApp() {
     });
     return [];
   }
+  function getDiagnosticIdentity(diagnostic) {
+    return JSON.stringify({
+      start: diagnostic.start ?? 0,
+      length: diagnostic.length ?? 0,
+      code: diagnostic.code,
+      messageText: diagnostic.messageText || "",
+      category: diagnostic.category
+    });
+  }
+  function withSoundDiagnosticDisplayCodes(soundDiagnostics, baselineDiagnostics, forcedDisplayCode = null) {
+    const baselineIdentities = new Set(baselineDiagnostics.map(getDiagnosticIdentity));
+    return soundDiagnostics.map((diagnostic) => {
+      if (!forcedDisplayCode && baselineIdentities.has(getDiagnosticIdentity(diagnostic))) {
+        return diagnostic;
+      }
+      return {
+        ...diagnostic,
+        displayCode: forcedDisplayCode || "TSZ3006",
+        originalCode: `TS${diagnostic.code}`,
+        domain: "sound"
+      };
+    });
+  }
+  function formatDiagnosticCode(diagnostic) {
+    return diagnostic.displayCode || `TS${diagnostic.code}`;
+  }
   function toLspPosition(position) {
     return {
       line: Math.max(0, position.lineNumber - 1),
@@ -25019,7 +25414,7 @@ function PlaygroundApp() {
     const options = getCurrentCompilerOptions();
     const state = JSON.stringify({
       code: nextCode,
-      strict: options.strict,
+      options,
       libCount: Object.keys(libFilesRef.current).length
     });
     if (lspParserRef.current && lspParserStateRef.current === state) {
@@ -25044,6 +25439,21 @@ function PlaygroundApp() {
       disposeLspParser();
       return null;
     }
+  }
+  function configureTsconfigJsonLanguage(monaco) {
+    if (!monaco.languages?.json?.jsonDefaults) return;
+    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+      validate: true,
+      allowComments: true,
+      enableSchemaRequest: true,
+      schemas: [
+        {
+          uri: "https://json.schemastore.org/tsconfig",
+          fileMatch: [TSCONFIG_MODEL_URI, "tsconfig.json"],
+          schema: TSCONFIG_SCHEMA
+        }
+      ]
+    });
   }
   async function loadMonaco() {
     if (window.monaco) {
@@ -25111,7 +25521,7 @@ function PlaygroundApp() {
         try {
           const resultJson = wasmRef.current.transpileModule(
             codeRef.current,
-            JSON.stringify({ declaration: true })
+            JSON.stringify({ ...options, declaration: true })
           );
           const result = JSON.parse(resultJson || "{}");
           outputCacheRef.current.dts = typeof result.declarationText === "string" ? result.declarationText : typeof result.declaration_text === "string" ? result.declaration_text : "// (no declaration output)";
@@ -25134,6 +25544,7 @@ function PlaygroundApp() {
     debugDiagnosticsLog("runCheck:start", {
       example: selectedExampleKey,
       strict: options.strict,
+      soundMode: options.soundMode,
       code: codeRef.current
     });
     setStatus({ text: "checking...", className: "status-checking" });
@@ -25141,7 +25552,21 @@ function PlaygroundApp() {
     try {
       const program = createCheckProgram(codeRef.current, options);
       const parsedDiagnostics = normalizeDiagnostics(program, codeRef.current);
-      const userDiagnostics = parsedDiagnostics.filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+      let userDiagnostics = parsedDiagnostics.filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+      if (options.soundMode) {
+        const selectedExample = getExampleByKey(selectedExampleKey);
+        const baselineOptions = { ...options, soundMode: false };
+        const baselineProgram = createCheckProgram(codeRef.current, baselineOptions);
+        const baselineDiagnostics = normalizeDiagnostics(baselineProgram, codeRef.current).filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+        userDiagnostics = withSoundDiagnosticDisplayCodes(
+          userDiagnostics,
+          baselineDiagnostics,
+          selectedExample?.soundDiagnosticCode
+        );
+        if (typeof baselineProgram.dispose === "function") {
+          baselineProgram.dispose();
+        }
+      }
       const elapsed = `${(performance.now() - startedAt).toFixed(0)}ms`;
       debugDiagnosticsLog("runCheck:raw-diagnostics", parsedDiagnostics);
       setDiagnostics(userDiagnostics);
@@ -25166,7 +25591,7 @@ function PlaygroundApp() {
           startColumn: start.column,
           endLineNumber: end.lineNumber,
           endColumn: end.column,
-          code: `TS${diagnostic.code}`
+          code: formatDiagnosticCode(diagnostic)
         };
       });
       monacoRef.current.editor.setModelMarkers(model, "tsz", markers);
@@ -25252,6 +25677,7 @@ function PlaygroundApp() {
         codeActions: false
       });
     }
+    configureTsconfigJsonLanguage(monaco);
     jsEditorRef.current = monaco.editor.create(jsContainerRef.current, {
       value: "",
       language: "javascript",
@@ -25284,8 +25710,41 @@ function PlaygroundApp() {
       padding: { top: 12 },
       smoothScrolling: true
     });
+    tsconfigModelRef.current = monaco.editor.createModel(
+      tsconfigRef.current,
+      "json",
+      monaco.Uri.parse(TSCONFIG_MODEL_URI)
+    );
+    tsconfigEditorRef.current = monaco.editor.create(tsconfigContainerRef.current, {
+      model: tsconfigModelRef.current,
+      theme: isDark ? "vs-dark" : "vs",
+      minimap: { enabled: false },
+      fontSize: 14,
+      fontFamily: "'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
+      lineNumbers: "on",
+      scrollBeyondLastLine: false,
+      automaticLayout: true,
+      tabSize: 2,
+      renderLineHighlight: "all",
+      padding: { top: 12 },
+      smoothScrolling: true,
+      cursorBlinking: "smooth",
+      quickSuggestions: true,
+      suggestOnTriggerCharacters: true
+    });
     editorRef.current.onDidChangeModelContent(() => {
       setCode(editorRef.current.getValue());
+    });
+    tsconfigEditorRef.current.onDidChangeModelContent(() => {
+      const nextText = tsconfigEditorRef.current.getValue();
+      tsconfigRef.current = nextText;
+      setTsconfigText(nextText);
+      if (tsconfigSyncingRef.current) return;
+      const nextStrict = readStrictFromTsconfig(nextText);
+      if (typeof nextStrict === "boolean" && nextStrict !== strictModeRef.current) {
+        setStrictMode(nextStrict);
+        resetOutputCache();
+      }
     });
     monaco.languages.registerHoverProvider("typescript", {
       provideHover(model, position) {
@@ -25405,6 +25864,8 @@ function PlaygroundApp() {
       editorRef.current?.dispose();
       jsEditorRef.current?.dispose();
       dtsEditorRef.current?.dispose();
+      tsconfigEditorRef.current?.dispose();
+      tsconfigModelRef.current?.dispose();
     };
   }, [monacoRef.current]);
   (0, import_react.useEffect)(() => {
@@ -25414,7 +25875,7 @@ function PlaygroundApp() {
   }, [code]);
   (0, import_react.useEffect)(() => {
     disposeLspParser();
-  }, [code, strictMode]);
+  }, [code, strictMode, soundMode, tsconfigText]);
   (0, import_react.useEffect)(() => {
     if (!editorsReady || !wasmReady) return;
     if (!hasRunInitialCheckRef.current) {
@@ -25429,13 +25890,13 @@ function PlaygroundApp() {
         checkTimeoutRef.current = null;
       }
     };
-  }, [code, strictMode, editorsReady, wasmReady]);
+  }, [code, strictMode, soundMode, tsconfigText, editorsReady, wasmReady]);
   (0, import_react.useEffect)(() => {
     if (!editorsReady || !wasmReady) return;
     if (activePanel === "js" || activePanel === "dts") {
       updateActiveOutputPanel();
     }
-  }, [activePanel, editorsReady, wasmReady]);
+  }, [activePanel, tsconfigText, editorsReady, wasmReady]);
   function handleExampleChange(event) {
     const nextKey = event.target.value;
     const example = getExampleByKey(nextKey);
@@ -25443,7 +25904,10 @@ function PlaygroundApp() {
     window.location.assign(getExampleUrl(nextKey));
   }
   function handleStrictChange(event) {
-    setStrictMode(event.target.checked);
+    setStrictEverywhere(event.target.checked);
+  }
+  function handleSoundChange(event) {
+    setSoundMode(event.target.checked);
     resetOutputCache();
   }
   function handleDiagnosticClick(start) {
@@ -25471,11 +25935,14 @@ function PlaygroundApp() {
   ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "playground-toolbar", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "toolbar-left", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-title", children: "Playground" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedExampleKey, onChange: handleExampleChange, children: Object.entries(groupedExamples).map(([category, examples]) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("optgroup", { label: category, children: examples.map((example) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: example.key, children: example.title }, example.key)) }, category)) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toolbar-check", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: strictMode, onChange: handleStrictChange }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "strict" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toolbar-check", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: soundMode, onChange: handleSoundChange }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "sound" })
         ] })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "toolbar-right", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { id: "playground-status", className: status.className, children: status.text }) })
@@ -25514,6 +25981,15 @@ function PlaygroundApp() {
               type: "button",
               children: "DTS Output"
             }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              className: `output-tab${activePanel === "tsconfig" ? " active" : ""}`,
+              onClick: () => setActivePanel("tsconfig"),
+              type: "button",
+              children: "tsconfig"
+            }
           )
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `output-panel${activePanel === "diagnostics" ? " active" : ""}`, children: diagnostics.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: status.className === "status-loading" ? "diagnostics-empty" : "diagnostics-ok", children: status.className === "status-loading" ? "Type-check results appear here" : "No errors" }) : diagnostics.map((diagnostic) => {
@@ -25526,10 +26002,7 @@ function PlaygroundApp() {
               onClick: () => handleDiagnosticClick(diagnostic.start),
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "diag-header", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: `diag-code ${category}`, children: [
-                    "TS",
-                    diagnostic.code
-                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `diag-code ${category}`, children: formatDiagnosticCode(diagnostic) }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "diag-message", children: diagnostic.messageText })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "diag-location", children: [
@@ -25540,11 +26013,12 @@ function PlaygroundApp() {
                 ] })
               ]
             },
-            `${diagnostic.code}-${diagnostic.start}-${diagnostic.length}`
+            `${formatDiagnosticCode(diagnostic)}-${diagnostic.code}-${diagnostic.start}-${diagnostic.length}`
           );
         }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `output-panel${activePanel === "js" ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "js-output-editor", ref: jsContainerRef, "data-output": jsOutput }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `output-panel${activePanel === "dts" ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "dts-output-editor", ref: dtsContainerRef, "data-output": dtsOutput }) })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `output-panel${activePanel === "dts" ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "dts-output-editor", ref: dtsContainerRef, "data-output": dtsOutput }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `output-panel${activePanel === "tsconfig" ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "tsconfig-editor", ref: tsconfigContainerRef, "data-output": tsconfigText }) })
       ] })
     ] })
   ] });

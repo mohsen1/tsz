@@ -11,10 +11,11 @@
 
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, ObjectShapeId, ParamInfo,
-    TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
+    CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId,
+    ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils;
+use crate::visitor::array_element_type;
 use crate::{TypeSubstitution, instantiate_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -269,6 +270,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return false;
                 }
             } else {
+                // Fixed source params match against the element type of the rest array
+                // (e.g. `number` vs element of `unknown[]`); rest source params match
+                // array-to-array since those slots align at the rest level.
+                let rest_elem_type = array_element_type(self.interner(), rest_param.type_id)
+                    .unwrap_or(rest_param.type_id);
                 let mut local_visited = FxHashSet::default();
                 for source_param in remaining_params {
                     let source_param_type = if source_param.optional {
@@ -276,9 +282,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         source_param.type_id
                     };
+                    let pattern_type = if source_param.rest {
+                        rest_param.type_id
+                    } else {
+                        rest_elem_type
+                    };
                     if !self.match_infer_pattern(
                         source_param_type,
-                        rest_param.type_id,
+                        pattern_type,
                         bindings,
                         &mut local_visited,
                         checker,
@@ -1455,14 +1466,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let Some(source_sig) = source_sigs.last() else {
                         return false;
                     };
-                    match_return(source, source_sig.return_type, bindings)
+                    let erased_return = self.erase_return_type_for_infer(
+                        source_sig.return_type,
+                        &source_sig.type_params,
+                    );
+                    match_return(source, erased_return, bindings)
                 }
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
                     if is_construct_pattern && !source_fn.is_constructor {
                         return false;
                     }
-                    match_return(source, source_fn.return_type, bindings)
+                    let erased_return = self
+                        .erase_return_type_for_infer(source_fn.return_type, &source_fn.type_params);
+                    match_return(source, erased_return, bindings)
                 }
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
@@ -1488,11 +1505,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 let Some(source_sig) = source_sigs.last() else {
                                     return false;
                                 };
-                                if !match_return(
-                                    member,
+                                let erased_return = self.erase_return_type_for_infer(
                                     source_sig.return_type,
-                                    &mut member_bindings,
-                                ) {
+                                    &source_sig.type_params,
+                                );
+                                if !match_return(member, erased_return, &mut member_bindings) {
                                     return false;
                                 }
                             }
@@ -1501,11 +1518,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 if is_construct_pattern && !source_fn.is_constructor {
                                     return false;
                                 }
-                                if !match_return(
-                                    member,
+                                let erased_return = self.erase_return_type_for_infer(
                                     source_fn.return_type,
-                                    &mut member_bindings,
-                                ) {
+                                    &source_fn.type_params,
+                                );
+                                if !match_return(member, erased_return, &mut member_bindings) {
                                     return false;
                                 }
                             }
@@ -2061,92 +2078,177 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
-        let mut pos = 0;
-        let mut index = 0;
+        self.match_template_literal_string_from(source, pattern, 0, 0, bindings, checker)
+    }
 
-        while index < pattern.len() {
-            match pattern[index] {
-                TemplateSpan::Text(text) => {
-                    let text_value = self.interner().resolve_atom_ref(text);
-                    let text_value = text_value.as_ref();
-                    if !source[pos..].starts_with(text_value) {
-                        return false;
-                    }
-                    pos += text_value.len();
-                    index += 1;
-                }
-                TemplateSpan::Type(type_id) => {
-                    let next_text = pattern[index + 1..].iter().find_map(|span| match span {
-                        TemplateSpan::Text(text) => Some(*text),
-                        TemplateSpan::Type(_) => None,
-                    });
-                    // Check if the next span is another Type (no text separator).
-                    // In tsc, consecutive infer types like `${infer C}${infer R}`
-                    // require the first infer to capture exactly 1 character.
-                    // Without this, `""` would match both infers with empty strings,
-                    // causing infinite recursion in tail-recursive conditional types
-                    // like `type GetChars<S> = S extends `${infer C}${infer R}` ? ... : ...`.
-                    let next_is_type = pattern
-                        .get(index + 1)
-                        .is_some_and(|s| matches!(s, TemplateSpan::Type(_)));
-                    let end = if let Some(next_text) = next_text {
-                        let next_value = self.interner().resolve_atom_ref(next_text);
-                        // When there are no more Type (infer) spans after the next text
-                        // separator, the text must match at the END of the remaining string.
-                        // Use rfind (last occurrence) so the infer captures greedily.
-                        // Example: `${infer R} ` matching "hello  " → R = "hello " (rfind)
-                        //
-                        // When more Type spans follow, use find (first occurrence) so each
-                        // infer captures minimally, leaving content for later infers.
-                        // Example: `${infer A}.${infer B}` matching "a.b.c" → A = "a" (find)
-                        let has_more_types_after_separator = pattern[index + 1..]
-                            .iter()
-                            .skip_while(|s| !matches!(s, TemplateSpan::Text(_)))
-                            .skip(1) // skip the text separator itself
-                            .any(|s| matches!(s, TemplateSpan::Type(_)));
-                        let search_fn = if has_more_types_after_separator {
-                            str::find
-                        } else {
-                            str::rfind
-                        };
-                        match search_fn(&source[pos..], next_value.as_ref()) {
-                            Some(offset) => pos + offset,
-                            None => return false,
-                        }
-                    } else if next_is_type {
-                        // Consecutive infer types: capture exactly 1 character.
-                        // This matches tsc behavior where `${infer C}${infer R}`
-                        // splits "AB" as C="A", R="B" and fails on "".
-                        if pos >= source.len() {
-                            return false; // Not enough characters for this infer
-                        }
-                        // Find the next char boundary (for UTF-8 safety)
-
-                        source[pos..]
-                            .char_indices()
-                            .nth(1)
-                            .map_or(source.len(), |(idx, _)| pos + idx)
-                    } else {
-                        source.len()
-                    };
-
-                    let captured = &source[pos..end];
-                    pos = end;
-                    let captured_type = self.interner().literal_string(captured);
-
-                    if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
-                        if !self.bind_template_infer_capture(&info, captured, bindings, checker) {
-                            return false;
-                        }
-                    } else if !checker.is_subtype_of(captured_type, type_id) {
-                        return false;
-                    }
-                    index += 1;
-                }
+    fn match_template_segment_prefix(
+        &self,
+        source: &str,
+        pos: usize,
+        type_id: TypeId,
+    ) -> Option<usize> {
+        match self.interner().lookup(type_id)? {
+            TypeData::Literal(LiteralValue::String(atom)) => {
+                let text = self.interner().resolve_atom(atom);
+                source
+                    .get(pos..)?
+                    .starts_with(&text)
+                    .then_some(pos + text.len())
             }
+            TypeData::Union(list_id) => self
+                .interner()
+                .type_list(list_id)
+                .iter()
+                .find_map(|member| self.match_template_segment_prefix(source, pos, *member)),
+            TypeData::TemplateLiteral(template_id) => {
+                let spans = self.interner().template_list(template_id);
+                let mut text = String::new();
+                for span in spans.iter() {
+                    let TemplateSpan::Text(atom) = span else {
+                        return None;
+                    };
+                    text.push_str(&self.interner().resolve_atom(*atom));
+                }
+                source
+                    .get(pos..)?
+                    .starts_with(&text)
+                    .then_some(pos + text.len())
+            }
+            _ => None,
+        }
+    }
+
+    fn candidate_template_capture_ends(
+        &self,
+        source: &str,
+        pos: usize,
+        pattern: &[TemplateSpan],
+        index: usize,
+    ) -> Vec<usize> {
+        if index + 1 >= pattern.len() {
+            return vec![source.len()];
         }
 
-        pos == source.len()
+        if pattern
+            .get(index + 1)
+            .is_some_and(|s| matches!(s, TemplateSpan::Type(type_id) if matches!(self.interner().lookup(*type_id), Some(TypeData::Infer(_)))))
+        {
+            if pos >= source.len() {
+                return Vec::new();
+            }
+            return vec![
+                source[pos..]
+                    .char_indices()
+                    .nth(1)
+                    .map_or(source.len(), |(idx, _)| pos + idx),
+            ];
+        }
+
+        if let Some(next_text) = pattern[index + 1..].iter().find_map(|span| match span {
+            TemplateSpan::Text(text) => Some(*text),
+            TemplateSpan::Type(_) => None,
+        }) {
+            let next_value = self.interner().resolve_atom_ref(next_text);
+            let remaining = &source[pos..];
+            return remaining
+                .match_indices(next_value.as_ref())
+                .map(|(offset, _)| pos + offset)
+                .collect();
+        }
+
+        source[pos..]
+            .char_indices()
+            .map(|(offset, _)| pos + offset)
+            .chain(std::iter::once(source.len()))
+            .collect()
+    }
+
+    fn match_template_literal_string_from(
+        &self,
+        source: &str,
+        pattern: &[TemplateSpan],
+        pos: usize,
+        index: usize,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        if index == pattern.len() {
+            return pos == source.len();
+        }
+
+        match pattern[index] {
+            TemplateSpan::Text(text) => {
+                let text_value = self.interner().resolve_atom_ref(text);
+                let text_value = text_value.as_ref();
+                if !source[pos..].starts_with(text_value) {
+                    return false;
+                }
+                self.match_template_literal_string_from(
+                    source,
+                    pattern,
+                    pos + text_value.len(),
+                    index + 1,
+                    bindings,
+                    checker,
+                )
+            }
+            TemplateSpan::Type(type_id) => {
+                if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
+                    for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
+                        let mut next_bindings = bindings.clone();
+                        let captured = &source[pos..end];
+                        if !self.bind_template_infer_capture(
+                            &info,
+                            captured,
+                            &mut next_bindings,
+                            checker,
+                        ) {
+                            continue;
+                        }
+                        if self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            end,
+                            index + 1,
+                            &mut next_bindings,
+                            checker,
+                        ) {
+                            *bindings = next_bindings;
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+
+                if let Some(next_pos) = self.match_template_segment_prefix(source, pos, type_id) {
+                    return self.match_template_literal_string_from(
+                        source,
+                        pattern,
+                        next_pos,
+                        index + 1,
+                        bindings,
+                        checker,
+                    );
+                }
+
+                for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
+                    let captured_type = self.interner().literal_string(&source[pos..end]);
+                    if checker.is_subtype_of(captured_type, type_id)
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            end,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
     }
 
     /// Match template literal spans against a pattern.

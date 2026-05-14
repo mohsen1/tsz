@@ -22,11 +22,12 @@
 #      version, so a cached blob built with rustc 1.95 must not be
 #      restored into a workspace running 1.96.
 #
-#   4. Source mtimes are NOT touched. Cargo's content-hash check is the
-#      correctness backstop against using stale .rlib files; bypassing
-#      its mtime input via `touch -t 200001010000` (the prior trick) can
-#      let actual source changes slip through. sccache is the right tool
-#      for cross-commit Rust reuse — it keys on real compiler inputs.
+#   4. Source mtimes are refreshed after target-dir restore. The restored
+#      target cache is newer than the checkout, and Cargo's fast path can
+#      otherwise accept stale test binaries from the cache. Touching sources
+#      after extraction forces Cargo to revalidate fingerprints; sccache is
+#      the right tool for cross-commit Rust reuse because it keys on real
+#      compiler inputs.
 #
 # Run with TSZ_CI_DEBUG_CACHE=1 to enable bash xtrace for cache ops.
 set -Eeuo pipefail
@@ -274,6 +275,30 @@ restore_archive() {
   echo "Cache hit: ${label} (size=${size_h:-?}, download=${download_secs}s, extract=${extract_secs}s)"
 }
 
+refresh_rust_source_mtimes_after_target_restore() {
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "warning: cannot refresh Rust source mtimes outside a git worktree" >&2
+    return 0
+  fi
+
+  local manifest
+  manifest="$(mktemp)"
+  git ls-files -z \
+    '*.rs' \
+    'Cargo.toml' \
+    'Cargo.lock' \
+    '.cargo/config.toml' \
+    'build.rs' \
+    'crates/**/build.rs' \
+    'crates/**/tests/**' \
+    'crates/**/benches/**' > "$manifest"
+  if [[ -s "$manifest" ]]; then
+    xargs -0 touch -c -- < "$manifest"
+  fi
+  rm -f "$manifest"
+  echo "Refreshed Rust source mtimes after Cargo target cache restore"
+}
+
 # save_archive <label> <gs://...> <base> <path...>
 #
 # Cache write policy: only push-on-main runs publish blobs. PRs and
@@ -438,15 +463,11 @@ restore_caches() {
     for target_cache in $(suite_target_caches); do
       _restore_cargo_target_profile "$target_cache" "$cargo_target_key"
     done
-    # NOTE: we deliberately do NOT backdate source-file mtimes. A previous
-    # version of this script ran "touch -t 200001010000" over every .rs and
-    # Cargo.toml after a target-dir restore, on the theory that mtimes older
-    # than the cached fingerprints would let Cargo skip recompilation.
-    # That is exactly the case where Cargo's content-hash safety net is
-    # supposed to catch real source changes — and bypassing the mtime input
-    # to that check can mask genuine staleness. Correctness > cache hits.
-    # sccache handles cross-commit reuse via content-keyed lookups, which is
-    # the right tool for "same source, same compile flags, skip rustc."
+    # The restored target archive is newer than the checkout. Refresh tracked
+    # Rust inputs after extraction so Cargo revalidates fingerprints instead of
+    # accepting stale workspace test binaries from the cache. This is the
+    # inverse of the old backdating trick: correctness first, sccache for reuse.
+    refresh_rust_source_mtimes_after_target_restore
   else
     echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
   fi

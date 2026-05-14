@@ -180,6 +180,126 @@ mod tests {
     }
 
     #[test]
+    fn async_generator_es2017_lowers_and_forwards_parameters() {
+        let source = "async function* f1(x, y = z) {}\nasync function* f2({ [z]: x }) {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "function f1(x_1) { return __asyncGenerator(this, arguments, function* f1_1(x, y = z) { }); }"
+            ),
+            "ES2017 async generators should lower and evaluate default params inside the generator.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "function f2(_a) { return __asyncGenerator(this, arguments, function* f2_1({ [z]: x }) { }); }"
+            ),
+            "Destructured async-generator params should be forwarded through an outer placeholder.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("async function*"),
+            "Targets below ES2018 should not emit native async generators.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn async_generator_method_forwarding_scopes_temps_and_super_capture() {
+        let source = "async function* f1(x, y = z) {}\nclass Sub extends Super { async *m(x, y = z, { ...w }) { super.foo(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("function f1(x_1)")
+                && output.contains("m(x_1) { const _super = Object.create(null, {"),
+            "Lowered async generators should use function-local placeholder temp scopes.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "return __asyncGenerator(this, arguments, function* m_1(x, y = z, _a) { var w = __rest(_a, []); _super.foo.call(this); });"
+            ),
+            "Async-generator methods should move params into the generator, emit object-rest prologue, and call captured super.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_async_generator_uses_generator_state_machine_without_awaiter() {
+        let source = "var f1 = async function* () {};\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("__awaiter"),
+            "ES5 async generators should not request the async-function helper.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return __asyncGenerator(this, arguments, function () {\n        return __generator(this, function (_a) {"),
+            "Async generator function expressions should use an ES5 generator state machine.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_async_method_with_multiply_default_stays_async_function() {
+        let source = "declare var a: number, b: number;\ndeclare function g(): Promise<void>;\nvar o = { async m(x = a * b) { await g(); } };\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("__awaiter"),
+            "Normal async methods should keep async-function lowering.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("__asyncGenerator"),
+            "A multiply operator in a parameter default is not an async-generator marker.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_static_class_expression_uses_comma_initializer_alias() {
         let source = "var v = class C {\n    static a = 1;\n    static c = { x: \"hi\" };\n    static d = C.c.x + \" world\";\n};\n";
 

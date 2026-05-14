@@ -264,6 +264,9 @@ mod ts2347_tests;
 #[path = "../tests/ts2352_disjoint_literal_property_tests.rs"]
 mod ts2352_disjoint_literal_property_tests;
 #[cfg(test)]
+#[path = "../tests/ts2352_intersection_assertion_tests.rs"]
+mod ts2352_intersection_assertion_tests;
+#[cfg(test)]
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
 #[cfg(test)]
@@ -385,6 +388,9 @@ mod bigint_target_ts2737_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/call_spread_constructor_parameters_tests.rs"]
+mod call_spread_constructor_parameters_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
@@ -451,11 +457,17 @@ mod generic_inference_manual;
 #[path = "tests/generic_rest_satisfies_anchor_tests.rs"]
 mod generic_rest_satisfies_anchor_tests;
 #[cfg(test)]
+#[path = "tests/generic_spread_iterability_tests.rs"]
+mod generic_spread_iterability_tests;
+#[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
+#[cfg(test)]
+#[path = "../tests/interface_extends_array_json_tests.rs"]
+mod interface_extends_array_json_tests;
 #[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
@@ -558,6 +570,9 @@ mod object_spread_optional_merge_tests;
 #[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
+#[cfg(test)]
+#[path = "tests/partial_pick_indexed_access_write_tests.rs"]
+mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;

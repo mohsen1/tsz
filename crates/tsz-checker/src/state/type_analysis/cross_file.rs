@@ -11,29 +11,10 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
+
 thread_local! {
     static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// Typed identifier for cross-file query cache buckets. Discriminants are the
-/// historical storage values used in `DefinitionStore` cache keys.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(u8)]
-// Variant names mirror PERFORMANCE_PLAN.md §7 verbatim; the shared "Type"
-// suffix is part of the plan's API contract and must stay.
-#[allow(clippy::enum_variant_names)]
-pub(crate) enum CrossFileQueryKind {
-    InterfaceType = 1,
-    ClassInstanceType = 2,
-    InterfaceMemberSimpleType = 3,
-    SymbolType = 4,
-}
-
-impl CrossFileQueryKind {
-    #[inline]
-    pub(crate) const fn as_storage_kind(self) -> u8 {
-        self as u8
-    }
 }
 
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
@@ -684,7 +665,7 @@ impl<'a> CheckerState<'a> {
 
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
-                && let Some((cached_type, _cached_params)) =
+                && let Some((cached_type, cached_params)) =
                     self.ctx.lib_delegation_cache.get(&sym_id).cloned()
             {
                 if let Some(p) = perf {
@@ -692,7 +673,16 @@ impl<'a> CheckerState<'a> {
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 self.ctx.symbol_types.insert(sym_id, cached_type);
-                return Some((cached_type, Vec::new()));
+                let cached_params = if cached_params.is_empty()
+                    || !self
+                        .get_cross_file_symbol(sym_id)
+                        .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+                {
+                    Vec::new()
+                } else {
+                    cached_params
+                };
+                return Some((cached_type, cached_params));
             }
 
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
