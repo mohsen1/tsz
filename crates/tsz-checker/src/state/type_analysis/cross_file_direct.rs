@@ -25,6 +25,7 @@ fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
         name,
         "DecoratorMetadata"
             | "DecoratorMetadataObject"
+            | "FlatArray"
             | "LocalesArgument"
             | "NumberFormatOptionsCurrencyDisplay"
             | "NumberFormatOptionsSignDisplay"
@@ -1858,7 +1859,7 @@ mod tests {
 
     #[test]
     fn direct_actual_lib_alias_proof_matches_mapped_utility_fallback_bodies() {
-        let lib_files = load_lib_files(&["es5.d.ts"]);
+        let lib_files = load_lib_files(&["es5.d.ts", "es2019.array.d.ts"]);
         let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
         let root = parser.parse_source_file();
         let mut binder = BinderState::new();
@@ -1885,6 +1886,7 @@ mod tests {
         state.ctx.set_actual_lib_file_count(lib_files.len());
 
         for (name, expected_param_count, expected_outcome) in [
+            ("FlatArray", 2, DirectActualLibAliasBodyOutcome::Success),
             ("Record", 2, DirectActualLibAliasBodyOutcome::Success),
             ("Partial", 1, DirectActualLibAliasBodyOutcome::Success),
             ("Readonly", 1, DirectActualLibAliasBodyOutcome::Success),
