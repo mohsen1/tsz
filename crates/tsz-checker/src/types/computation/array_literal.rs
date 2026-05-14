@@ -802,7 +802,9 @@ impl<'a> CheckerState<'a> {
                             fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
                         });
                     match elem_ctx_type {
-                        Some(ty) => request.read().contextual(ty),
+                        Some(ty) => request.read().contextual(
+                            query_common::no_infer_inner_type(self.ctx.types, ty).unwrap_or(ty),
+                        ),
                         None => crate::context::TypingRequest::NONE,
                     }
                 }
