@@ -43,6 +43,7 @@ mod handlers_files;
 mod handlers_info;
 mod handlers_info_alias;
 mod handlers_legacy;
+mod handlers_project_info;
 mod handlers_quickinfo;
 mod handlers_quickinfo_text;
 mod handlers_structure;
@@ -628,7 +629,7 @@ pub(crate) struct Server {
     /// typecheck (the rename* fourslash tests time out if check.rs sees a
     /// populated `lib`).
     pub(crate) inferred_projectinfo_options:
-        Option<self::handlers_structure::InferredProjectInfoOptions>,
+        Option<self::handlers_project_info::InferredProjectInfoOptions>,
     /// Fallback auto-import gate for inferred projects (no nearby tsconfig/jsconfig).
     pub(crate) auto_imports_allowed_for_inferred_projects: bool,
     /// Whether inferred projects should be checked as `module:none`.

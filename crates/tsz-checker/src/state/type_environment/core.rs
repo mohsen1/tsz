@@ -572,24 +572,33 @@ impl<'a> CheckerState<'a> {
         let body_is_distributive_conditional = body_conditional
             .as_ref()
             .is_some_and(|cond| cond.is_distributive);
+        // Preserving Application-form args keeps generic identity intact so the solver's
+        // variance fast path can fire instead of falling back to full structural expansion.
+        let body_needs_concrete_args =
+            body_is_conditional || query::body_arg_requires_concrete_form(self.ctx.types, body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
+                let arg_is_application = query::application_info(self.ctx.types, arg).is_some();
                 match arg_preservation {
                     _ if body_is_distributive_conditional => arg,
                     _ if body_is_conditional && self.contains_type_parameters_cached(arg) => arg,
                     query::BodyArgPreservation::ConditionalInfer
-                        if self.contains_type_parameters_cached(arg)
-                            || query::application_info(self.ctx.types, arg).is_some() =>
+                        if self.contains_type_parameters_cached(arg) || arg_is_application =>
                     {
                         arg
                     }
                     query::BodyArgPreservation::ConditionalInfer
                     | query::BodyArgPreservation::ConditionalApplicationInfer
-                        if query::application_info(self.ctx.types, arg).is_some() =>
+                        if arg_is_application =>
                     {
                         // Preserve Application args so the conditional evaluator can
                         // match at the Application level for infer pattern matching.
+                        arg
+                    }
+                    query::BodyArgPreservation::EvaluateAll
+                        if !body_needs_concrete_args && arg_is_application =>
+                    {
                         arg
                     }
                     _ => {
