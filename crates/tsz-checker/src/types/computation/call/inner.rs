@@ -2955,25 +2955,17 @@ impl<'a> CheckerState<'a> {
         let finalized_contextual_param_types = generic_instantiated_params
             .as_ref()
             .map(|params| self.contextual_param_types_from_instantiated_params(params, args.len()));
-        self.emit_nominal_lib_object_callback_return_errors(
-            args,
-            &arg_types,
-            finalized_contextual_param_types.as_deref(),
-            &base_contextual_param_types,
+        self.emit_post_generic_callback_diagnostics(
+            (args, &arg_types),
+            (
+                finalized_contextual_param_types.as_deref(),
+                &base_contextual_param_types,
+            ),
             original_callee_shape.as_ref(),
+            is_generic_call && contextual_type.is_none(),
+            check_excess_properties,
+            callable_ctx,
         );
-        if is_generic_call
-            && contextual_type.is_none()
-            && let Some(shape) = original_callee_shape.as_ref()
-        {
-            self.emit_uninferred_callback_unknown_body_diagnostics(
-                shape,
-                args,
-                &arg_types,
-                check_excess_properties,
-                callable_ctx,
-            );
-        }
         let forced_block_body_callback_mismatch = self
             .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
                 finalized_contextual_param_types
