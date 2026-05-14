@@ -1024,18 +1024,10 @@ impl<'a> CheckerState<'a> {
             // parent can resolve Lazy(DefId) references for types nested inside
             // cross-file interfaces (e.g., IServer inside IConfig's properties).
             if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
-                let child_defs = child_env.snapshot_def_types();
-                drop(child_env);
-                if !child_defs.is_empty()
-                    && let Ok(mut parent_env) = self.ctx.type_env.try_borrow_mut()
-                {
-                    for (def_id_raw, type_id) in child_defs {
-                        let def_id = tsz_solver::def::DefId(def_id_raw);
-                        if parent_env.get_def(def_id).is_none() {
-                            parent_env.insert_def(def_id, type_id);
-                        }
-                    }
-                }
+                self.merge_child_type_env_snapshots(
+                    &child_env,
+                    "delegate_cross_arena_symbol_resolution",
+                );
             }
 
             let child_namespace_names: rustc_hash::FxHashMap<TypeId, String> =
@@ -1442,26 +1434,7 @@ impl<'a> CheckerState<'a> {
         // Without this merge, the parent cannot resolve Lazy(DefId) references
         // for those inner types after the child checker is dropped.
         if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
-            let child_defs = child_env.snapshot_def_types();
-            drop(child_env);
-            tracing::debug!(
-                "delegate_cross_arena_interface_type: merging {} child def_types into parent",
-                child_defs.len()
-            );
-            if !child_defs.is_empty() {
-                if let Ok(mut parent_env) = self.ctx.type_env.try_borrow_mut() {
-                    for (def_id_raw, type_id) in child_defs {
-                        let def_id = tsz_solver::def::DefId(def_id_raw);
-                        if parent_env.get_def(def_id).is_none() {
-                            parent_env.insert_def(def_id, type_id);
-                        }
-                    }
-                } else {
-                    tracing::warn!(
-                        "delegate_cross_arena_interface_type: could not borrow parent type_env for merge"
-                    );
-                }
-            }
+            self.merge_child_type_env_snapshots(&child_env, "delegate_cross_arena_interface_type");
         } else {
             tracing::warn!(
                 "delegate_cross_arena_interface_type: could not borrow child type_env for snapshot"
@@ -1570,6 +1543,7 @@ impl<'a> CheckerState<'a> {
             interface_arena,
             delegate_binder,
             type_args,
+            false,
         ) {
             if type_args.is_none()
                 && let Some(file_idx) = delegate_file_idx

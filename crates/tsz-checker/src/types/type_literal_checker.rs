@@ -561,6 +561,15 @@ impl<'a> CheckerState<'a> {
                 if required_count > 0 {
                     return TypeId::ERROR;
                 }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class && type_params.is_empty() {
+                    return self.type_reference_symbol_type(sym_id);
+                }
                 // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
                 // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
                 // Without this, bare Lazy(DefId) misses the default instantiation and causes false
@@ -576,6 +585,15 @@ impl<'a> CheckerState<'a> {
                         .get_or_create_def_id_with_params(sym_id, type_params);
                     let base_type_id = factory.lazy(def_id);
                     return factory.application(base_type_id, default_args);
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class {
+                    return self.type_reference_symbol_type(sym_id);
                 }
                 // Stable-identity: create Lazy(DefId) (body already resolved above)
                 return self.ctx.create_lazy_type_ref(sym_id);
@@ -612,6 +630,15 @@ impl<'a> CheckerState<'a> {
                 if required_count > 0 {
                     return TypeId::ERROR;
                 }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class && type_params.is_empty() {
+                    return self.type_reference_symbol_type(sym_id);
+                }
                 if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
                     let default_args: Vec<TypeId> =
                         crate::query_boundaries::common::resolve_default_type_args(
@@ -622,6 +649,15 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .get_or_create_def_id_with_params(sym_id, type_params);
                     return factory.application(factory.lazy(def_id), default_args);
+                }
+                let is_class = self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+                    || self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                    });
+                if is_class {
+                    return self.type_reference_symbol_type(sym_id);
                 }
                 return self.ctx.create_lazy_type_ref(sym_id);
             }
