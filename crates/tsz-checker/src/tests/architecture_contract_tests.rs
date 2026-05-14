@@ -2212,6 +2212,45 @@ fn test_emitter_direct_solver_access_does_not_grow() {
     );
 }
 
+/// Track 9/10 ratchet: emitter source-text recovery must not grow.
+///
+/// Existing JS/DTS emit still uses source text for parser-recovery and legacy
+/// transform details. New recovery facts should come from parser/lowering
+/// structures instead of adding more emitter substring scans.
+#[test]
+fn test_emitter_source_text_recovery_surface_does_not_grow() {
+    let emitter_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tsz-emitter/src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&emitter_src, &mut files);
+
+    let mut source_text_lines = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("source_text") {
+                source_text_lines.push(format!("{}:{}", path.display(), line_num + 1));
+            }
+        }
+    }
+
+    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 909;
+    assert!(
+        source_text_lines.len() <= SOURCE_TEXT_RECOVERY_LINE_CEILING,
+        "Emitter source-text recovery surface grew to {} lines (ceiling: {}). \
+         Route new malformed-syntax or transform recovery through parser/lowering \
+         facts instead of adding emitter substring scans. Source-text lines:\n  {}",
+        source_text_lines.len(),
+        SOURCE_TEXT_RECOVERY_LINE_CEILING,
+        source_text_lines.join("\n  ")
+    );
+}
+
 /// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]
