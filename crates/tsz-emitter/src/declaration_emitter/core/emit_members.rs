@@ -1566,7 +1566,7 @@ impl<'a> DeclarationEmitter<'a> {
             .find('\n')
             .map_or(source.len(), |idx| pos + idx);
         let line = source.get(line_start..line_end)?;
-        let start = line.rfind('[')?;
+        let start = Self::index_signature_open_bracket_before_pos(line, pos - line_start)?;
         let end = line[start + 1..].find(']')? + start + 1;
         let inner = line[start + 1..end].trim();
         (inner.contains(',') && !inner.contains('\n')).then(|| inner.to_string())
@@ -1625,7 +1625,7 @@ impl<'a> DeclarationEmitter<'a> {
             .find('\n')
             .map_or(source.len(), |idx| pos + idx);
         let line = source.get(line_start..line_end)?;
-        let open = line.rfind('[')?;
+        let open = Self::index_signature_open_bracket_before_pos(line, pos - line_start)?;
         let after_open = line.get(open + 1..)?;
         let colon = after_open.find(':')?;
         let candidate = after_open.get(..colon)?.trim();
@@ -1634,6 +1634,13 @@ impl<'a> DeclarationEmitter<'a> {
                 .chars()
                 .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
         .then(|| candidate.to_string())
+    }
+
+    fn index_signature_open_bracket_before_pos(line: &str, pos_in_line: usize) -> Option<usize> {
+        line[..pos_in_line.min(line.len())]
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| (ch == '[').then_some(idx))
     }
 
     pub(in crate::declaration_emitter) fn emit_type_alias_declaration(
