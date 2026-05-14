@@ -221,6 +221,7 @@ mod portability_check;
 mod portability_export_paths;
 mod portability_resolve;
 mod returned_function_initializer;
+mod returned_function_initializer_return;
 mod synthetic_dependencies;
 mod type_inference;
 mod type_inference_accessor_property;
