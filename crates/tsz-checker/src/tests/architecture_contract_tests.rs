@@ -4182,6 +4182,25 @@ fn test_cli_must_not_import_checker_internals() {
     );
 }
 
+/// Guard that the retired constructor boundary shortcut does not return.
+#[test]
+fn test_constructor_boundary_avoids_retired_construct_return_data_shortcut() {
+    let source = fs::read_to_string("src/query_boundaries/checkers/constructor.rs")
+        .expect("failed to read query_boundaries/checkers/constructor.rs");
+
+    assert!(
+        !source.contains("type_queries::data::construct_return_type_for_type"),
+        "constructor query boundary must not call the retired solver data shortcut. \
+         Use tsz_solver::type_queries::construct_return_type_for_type so the solver \
+         query layer owns construct-return access."
+    );
+    assert!(
+        source.contains("construct_return_type_for_type(db, type_id)"),
+        "constructor query boundary must keep construct-return access routed through \
+         its display helper."
+    );
+}
+
 /// Guard that cleaned-up checker modules do not regress by re-introducing
 /// direct `tsz_solver::type_queries::` calls (both `use` imports AND inline
 /// fully-qualified calls).
