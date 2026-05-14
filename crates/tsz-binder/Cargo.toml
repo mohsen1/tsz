@@ -39,3 +39,6 @@ path = "tests/lib_merge_external_module_tests.rs"
 
 [lints]
 workspace = true
+
+[lib]
+doctest = false

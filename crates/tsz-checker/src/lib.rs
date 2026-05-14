@@ -73,8 +73,8 @@ pub use state_domain::{state, state_checking, type_environment as state_type_env
 pub use symbols_domain::{scope_finder, symbol_resolver};
 
 pub use types_domain::{
-    class_type, computation, function_type, interface_type, literal_type, object_type,
-    type_checking, type_literal_checker, type_node,
+    class_type, computation, function_type, interface_type, object_type, type_checking,
+    type_literal_checker, type_node,
 };
 
 pub mod diagnostics {

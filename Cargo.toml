@@ -26,8 +26,6 @@ tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.9" }
 tsz-checker = { path = "crates/tsz-checker", version = "0.1.9" }
 tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.9" }
 tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.9" }
-tsz-cli = { path = "crates/tsz-cli", version = "0.1.9" }
-tsz-wasm = { path = "crates/tsz-wasm", version = "0.1.9" }
 
 # External dependencies (shared versions)
 anyhow = "1.0"
