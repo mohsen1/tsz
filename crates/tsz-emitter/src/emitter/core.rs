@@ -415,6 +415,13 @@ pub struct Printer<'a> {
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
 
+    /// Per-file counters for lowered async-generator inner function names.
+    pub(crate) async_generator_inner_name_counts: FxHashMap<String, u32>,
+
+    /// Environment names reserved for top-level using sub-blocks before hoisted
+    /// function declarations are emitted.
+    pub(crate) reserved_disposable_env_names: FxHashMap<NodeIndex, (String, String, String)>,
+
     /// When set, a block-level using-lowering try/catch is active. `using` variable
     /// statements should emit `const x = __addDisposableResource(env, expr, async)`
     /// instead of their own try/catch wrapper. The tuple is (`env_name`, `is_async`).
@@ -960,6 +967,8 @@ impl<'a> Printer<'a> {
             anonymous_default_export_name: None,
             next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
+            async_generator_inner_name_counts: FxHashMap::default(),
+            reserved_disposable_env_names: FxHashMap::default(),
             block_using_env: None,
             in_top_level_using_scope: false,
             metadata_class_type_params: None,

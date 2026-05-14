@@ -768,15 +768,18 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
-            for &stmt in &block.statements.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt) {
-                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                    self.emit_comments_before_pos(actual_start);
-                }
-                let before_emit_len = self.writer.len();
-                self.emit(stmt);
-                if self.writer.len() > before_emit_len && !self.writer.is_at_line_start() {
-                    self.write_line();
+            let statements = block.statements.clone();
+            if !self.emit_statement_list_with_using_scope(&statements) {
+                for &stmt in &statements.nodes {
+                    if let Some(stmt_node) = self.arena.get(stmt) {
+                        let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                        self.emit_comments_before_pos(actual_start);
+                    }
+                    let before_emit_len = self.writer.len();
+                    self.emit(stmt);
+                    if self.writer.len() > before_emit_len && !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
                 }
             }
         }
