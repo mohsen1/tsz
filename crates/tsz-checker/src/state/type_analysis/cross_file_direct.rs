@@ -155,31 +155,17 @@ fn is_direct_actual_intl_interface_candidate_name(name: &str) -> bool {
     is_direct_actual_intl_lib_interface_name(name) || name.ends_with("Info")
 }
 
-fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Date"
-            | "DateTimeFormatOptions"
-            | "Error"
-            | "Function"
-            | "Iterator"
-            | "IteratorObject"
-            | "Locale"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsSignDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
-            | "Object"
-            | "Promise"
-            | "RegExp"
-            | "Symbol"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
 impl<'a> CheckerState<'a> {
+    fn symbol_is_proven_direct_actual_lib_value_interface(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        name: &str,
+    ) -> bool {
+        symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::INTERFACE)
+            && self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, name)
+    }
+
     fn symbol_declarations_are_direct_actual_lib_only(
         &self,
         sym_id: SymbolId,
@@ -416,8 +402,11 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
+        let proven_value_interface =
+            self.symbol_is_proven_direct_actual_lib_value_interface(sym_id, &symbol, &name);
         if symbol.has_any_flags(symbol_flags::VALUE)
-            && !is_direct_actual_lib_value_interface_name(&name)
+            && !proven_value_interface
+            && !allow_actual_lib_declaration_proof_bypass(&name)
         {
             if intl_candidate {
                 record_direct_actual_lib_intl_interface_outcome(
@@ -445,7 +434,8 @@ impl<'a> CheckerState<'a> {
                 .insert_symbol_type(sym_id, (alias_type, params.clone()));
             return Some((alias_type, params));
         }
-        if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
+        if !proven_value_interface
+            && !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
             && !allow_actual_lib_declaration_proof_bypass(&name)
         {
             if intl_candidate {
@@ -1392,6 +1382,19 @@ mod tests {
                 .symbol_arenas
                 .get(&sym_id)
                 .map(std::convert::AsRef::as_ref);
+
+            let symbol = state
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .expect("symbol id should resolve")
+                .clone();
+            let proven_value_interface =
+                state.symbol_is_proven_direct_actual_lib_value_interface(sym_id, &symbol, name);
+            assert!(
+                proven_value_interface,
+                "{name} should be admitted by actual-lib value-interface proof",
+            );
 
             let Some((ty, params)) = state.direct_actual_lib_symbol_type(
                 sym_id,
