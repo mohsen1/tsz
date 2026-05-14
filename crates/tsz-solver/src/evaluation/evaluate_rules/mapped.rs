@@ -199,6 +199,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
+        if let Some(distributed) = self.try_distribute_mapped_over_union_source(mapped) {
+            return distributed;
+        }
+
         // Issue #6814: `interner.union` collapses `"foo" | string | number`
         // into `string | number`, so the eager-eval path below loses literal
         // keys that an `as` clause must filter per-iteration. Rescue them when
@@ -207,43 +211,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
-        let key_set = match self
-            .try_extract_keyof_keys_for_mapped_iteration(constraint)
-            .or_else(|| self.extract_mapped_keys(keys))
+        let key_set = if constraint == TypeId::ANY
+            && mapped.name_type.is_none()
+            && mapped.template == TypeId::NEVER
         {
-            Some(mut keys) => {
-                // Deduplicate string literals to handle overlapping enum members
-                // (e.g. `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
-                // produce key "cat") while preserving the original declaration
-                // order from the constraint. tsc walks the constraint union in
-                // source order, so the resulting mapped type's property order —
-                // and therefore the type printer's output for `T[keyof T]` —
-                // must follow that same order.
-                let mut seen: FxHashSet<Atom> = FxHashSet::default();
-                keys.keys.retain(|k| seen.insert(k.name));
-                keys
+            MappedKeys {
+                keys: Vec::new(),
+                has_string: true,
+                has_number: true,
+                template_literals: Vec::new(),
+                symbol_keys: Vec::new(),
             }
-            None => {
-                // When key extraction fails but the mapped type has an `as` clause
-                // and the constraint is a concrete union (of non-literal types like
-                // objects), we can still evaluate by iterating over the constraint
-                // members directly. Each member is substituted into both the `as`
-                // clause (to derive the property name) and the template (to get the
-                // property type).
-                //
-                // Example: { [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }
-                // → { a: {name:"a"}, b: {name:"b"} }
-                if mapped.name_type.is_some()
-                    && let Some(result) =
-                        self.try_evaluate_mapped_with_as_over_non_literal_constraint(mapped, keys)
-                {
-                    return result;
+        } else {
+            match self
+                .try_extract_keyof_keys_for_mapped_iteration(constraint)
+                .or_else(|| self.extract_mapped_keys(keys))
+            {
+                Some(mut keys) => {
+                    // Deduplicate string literals to handle overlapping enum members
+                    // (e.g. `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
+                    // produce key "cat") while preserving the original declaration
+                    // order from the constraint. tsc walks the constraint union in
+                    // source order, so the resulting mapped type's property order —
+                    // and therefore the type printer's output for `T[keyof T]` —
+                    // must follow that same order.
+                    let mut seen: FxHashSet<Atom> = FxHashSet::default();
+                    keys.keys.retain(|k| seen.insert(k.name));
+                    keys
                 }
-                tracing::trace!(
-                    keys_lookup = ?self.interner().lookup(keys),
-                    "evaluate_mapped: DEFERRED - could not extract concrete keys"
-                );
-                return self.interner().mapped(*mapped);
+                None => {
+                    // When key extraction fails but the mapped type has an `as` clause
+                    // and the constraint is a concrete union (of non-literal types like
+                    // objects), we can still evaluate by iterating over the constraint
+                    // members directly. Each member is substituted into both the `as`
+                    // clause (to derive the property name) and the template (to get the
+                    // property type).
+                    //
+                    // Example: { [Item in ({name:"a"} | {name:"b"}) as Item['name']]: Item }
+                    // → { a: {name:"a"}, b: {name:"b"} }
+                    if mapped.name_type.is_some()
+                        && let Some(result) = self
+                            .try_evaluate_mapped_with_as_over_non_literal_constraint(mapped, keys)
+                    {
+                        return result;
+                    }
+                    tracing::trace!(
+                        keys_lookup = ?self.interner().lookup(keys),
+                        "evaluate_mapped: DEFERRED - could not extract concrete keys"
+                    );
+                    return self.interner().mapped(*mapped);
+                }
             }
         };
 
@@ -952,6 +969,49 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         self.try_evaluate_mapped_over_array_like(mapped, resolved)
+    }
+
+    fn try_distribute_mapped_over_union_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        // Direct `{ [K in keyof (A | B)]: ... }` uses the mapped
+        // parameter's own declared constraint. Only distribute when a
+        // homomorphic alias instantiation has replaced the effective source.
+        if mapped.type_param.constraint == Some(mapped.constraint) {
+            return None;
+        }
+
+        let source = self.extract_source_from_keyof(mapped.constraint)?;
+        let resolved_source = self.evaluate(source);
+        let Some(TypeData::Union(list_id)) = self.interner().lookup(resolved_source) else {
+            return None;
+        };
+
+        let members: Vec<TypeId> = self.interner().type_list(list_id).to_vec();
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut results = Vec::with_capacity(members.len());
+        for member in members {
+            let member_keyof = self.interner().keyof(member);
+            let mut memo = FxHashMap::default();
+            let member_template =
+                self.substitute_exact_type(mapped.template, source, member, &mut memo);
+            let member_name_type = mapped.name_type.map(|name_type| {
+                let mut memo = FxHashMap::default();
+                self.substitute_exact_type(name_type, source, member, &mut memo)
+            });
+            let member_mapped = MappedType {
+                type_param: mapped.type_param,
+                constraint: member_keyof,
+                name_type: member_name_type,
+                template: member_template,
+                readonly_modifier: mapped.readonly_modifier,
+                optional_modifier: mapped.optional_modifier,
+            };
+            results.push(self.evaluate_mapped(&member_mapped));
+        }
+
+        Some(self.interner().union(results))
     }
 
     /// Try to evaluate a mapped type over a single array/tuple-like type.

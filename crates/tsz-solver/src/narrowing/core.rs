@@ -635,6 +635,18 @@ impl<'a> NarrowingContext<'a> {
                     break;
                 }
 
+                // 10. Mapped types — evaluate after generic instantiation so
+                // homomorphic mapped types over unions can distribute before
+                // property-presence narrowing filters members.
+                Some(TypeData::Mapped(_)) => {
+                    let evaluated = self.db.evaluate_type(type_id);
+                    if evaluated != type_id {
+                        type_id = evaluated;
+                        continue;
+                    }
+                    break;
+                }
+
                 // Structural types (Object, Union, Primitive, etc.) — done
                 _ => break,
             }
