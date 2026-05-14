@@ -1,13 +1,13 @@
 # 2026-05-14 - Sequential File-Session Reuse Default-On (monorepo-006)
 
-Follow-up on current `main` (`c3fc9dc7dc`) to flip sequential file-session
+Follow-up on current `main` (`7f124a76bb`) to flip sequential file-session
 reuse from env-gated to default-on behavior for no-emit checking.
 
 ## Reproducer
 
 | Item | Value |
 | --- | --- |
-| commit | `c3fc9dc7dc` |
+| commit | `71994a8eaf` |
 | branch | `codex/perf-next-slice-20260514` |
 | `tsz` build | `cargo build -p tsz-cli --bin tsz --release --features perf-tools` |
 | fixture path | `/private/tmp/tsz-bench-fixtures/monorepo-006` |
@@ -64,16 +64,17 @@ single-point timing claim.
 
 A/B pair 1 (`opt-out` -> `default-on`):
 
-- check: `86.62s -> 84.49s` (`-2.46%`)
-- total: `88.00s -> 86.01s` (`-2.27%`)
+- check: `77.37s -> 78.50s` (`+1.46%`)
+- total: `78.82s -> 79.94s` (`+1.42%`)
 
 A/B pair 2 (`opt-out` -> `default-on`):
 
-- check: `94.28s -> 68.21s` (`-27.65%`)
-- total: `96.36s -> 69.73s` (`-27.64%`)
+- check: `79.14s -> 65.25s` (`-17.55%`)
+- total: `80.89s -> 67.02s` (`-17.15%`)
 
 ## Decision
 
 Keep sequential file-session reuse default-on for no-emit checking, retain the
 `TSZ_DISABLE_FILE_SESSION_REUSE=1` escape hatch, and keep parallel reuse as
-explicit opt-in.
+explicit opt-in. Treat this as a checker-construction/counter improvement with
+mixed wall-time evidence under noisy runners rather than a stable timing win.

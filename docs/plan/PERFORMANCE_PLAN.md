@@ -1529,8 +1529,8 @@ runs with and without `TSZ_DISABLE_FILE_SESSION_REUSE=1` keep diagnostics
 stable at `10,198` and deterministically collapse checker construction from
 `state_constructed=5,251` to `2` with `file_session_resets=5,249` (and
 `checker.with_parent_cache_constructed` remains `0` in both modes). Timing is
-runner-noisy but both A/B pairs favored default-on sequential reuse in this
-slice. Decision record:
+runner-noisy and mixed across A/B pairs, so this is a counter/constructor
+improvement slice rather than a stable timing claim. Decision record:
 [`perf-runs/2026-05-14-sequential-file-session-reuse-default.md`](perf-runs/2026-05-14-sequential-file-session-reuse-default.md).
 Claim:
 [`claims/perf-sequential-file-session-reuse-default-2026-05-14.md`](claims/perf-sequential-file-session-reuse-default-2026-05-14.md).

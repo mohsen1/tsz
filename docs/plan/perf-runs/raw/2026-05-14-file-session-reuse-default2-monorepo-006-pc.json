@@ -60,9 +60,9 @@
     "conditional_intern_calls": 1968,
     "mapped_intern_calls": 2715,
     "lock_wait_histogram_ns": [
-      179098,
-      149,
-      2,
+      179149,
+      95,
+      5,
       0,
       0,
       0,
