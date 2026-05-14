@@ -1892,7 +1892,7 @@ type T2 = Merge<{ x: number }, { y: string }>;
     no_ts2304(&diags, "A & B extends infer V");
 }
 
-/// Real-world RequiredByKeys pattern with Omit & Required<Pick>.
+/// Real-world `RequiredByKeys` pattern with Omit & Required<Pick>.
 #[test]
 fn infer_binding_visible_in_required_by_keys_pattern() {
     let source = r#"
