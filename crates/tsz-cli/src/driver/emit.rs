@@ -549,7 +549,6 @@ pub(crate) fn emit_outputs(
 
                 let mut contents = emitter.emit(file.source_file);
                 record_seen_duplicate_global_var_types(
-                    &contents,
                     file,
                     &duplicate_global_var_names,
                     &mut seen_duplicate_global_var_types,
@@ -1084,9 +1083,12 @@ fn build_duplicate_global_var_names(program: &MergedProgram) -> FxHashSet<String
         if file.is_external_module || is_declaration_file(Path::new(&file.file_name)) {
             continue;
         }
-        collect_top_level_var_declarations(file, |name, _initializer, _is_js_file| {
-            *counts.entry(name).or_default() += 1;
-        });
+        collect_top_level_var_declarations(
+            file,
+            |name, _type_annotation, _initializer, _is_js_file| {
+                *counts.entry(name).or_default() += 1;
+            },
+        );
     }
     counts
         .into_iter()
@@ -1100,26 +1102,28 @@ fn bundled_duplicate_global_var_types_for_file(
     seen_types: &FxHashMap<String, String>,
 ) -> FxHashMap<String, String> {
     let mut overrides = FxHashMap::default();
-    collect_top_level_var_declarations(file, |name, initializer, decl_is_js_file| {
-        if !duplicate_names.contains(name.as_str()) {
-            return;
-        }
-        let override_type = if decl_is_js_file {
-            initializer
-                .and_then(|idx| primitive_initializer_type_text(&file.arena, idx))
-                .map(str::to_string)
-        } else {
-            seen_types.get(name.as_str()).cloned()
-        };
-        if let Some(type_text) = override_type {
-            overrides.insert(name, type_text);
-        }
-    });
+    collect_top_level_var_declarations(
+        file,
+        |name, _type_annotation, initializer, decl_is_js_file| {
+            if !duplicate_names.contains(name.as_str()) {
+                return;
+            }
+            let override_type = if decl_is_js_file {
+                initializer
+                    .and_then(|idx| primitive_initializer_type_text(&file.arena, idx))
+                    .map(str::to_string)
+            } else {
+                seen_types.get(name.as_str()).cloned()
+            };
+            if let Some(type_text) = override_type {
+                overrides.insert(name, type_text);
+            }
+        },
+    );
     overrides
 }
 
 fn record_seen_duplicate_global_var_types(
-    contents: &str,
     file: &BoundFile,
     duplicate_names: &FxHashSet<String>,
     seen_types: &mut FxHashMap<String, String>,
@@ -1127,19 +1131,23 @@ fn record_seen_duplicate_global_var_types(
     if duplicate_names.is_empty() || file.is_external_module {
         return;
     }
-    collect_top_level_var_declarations(file, |name, _initializer, _decl_is_js_file| {
-        if duplicate_names.contains(name.as_str())
-            && !seen_types.contains_key(name.as_str())
-            && let Some(type_text) = declaration_line_type(contents, name.as_str())
-        {
-            seen_types.insert(name, type_text);
-        }
-    });
+    collect_top_level_var_declarations(
+        file,
+        |name, type_annotation, initializer, _decl_is_js_file| {
+            if duplicate_names.contains(name.as_str())
+                && !seen_types.contains_key(name.as_str())
+                && let Some(type_text) =
+                    duplicate_global_var_declaration_type_text(file, type_annotation, initializer)
+            {
+                seen_types.insert(name, type_text);
+            }
+        },
+    );
 }
 
 fn collect_top_level_var_declarations(
     file: &BoundFile,
-    mut visit: impl FnMut(String, Option<NodeIndex>, bool),
+    mut visit: impl FnMut(String, NodeIndex, Option<NodeIndex>, bool),
 ) {
     let is_js_file = source_file_is_js(&file.file_name);
     let Some(statements) = source_statements(file) else {
@@ -1183,12 +1191,45 @@ fn collect_top_level_var_declarations(
                 };
                 visit(
                     name,
+                    decl.type_annotation,
                     decl.initializer.is_some().then_some(decl.initializer),
                     is_js_file,
                 );
             }
         }
     }
+}
+
+fn duplicate_global_var_declaration_type_text(
+    file: &BoundFile,
+    type_annotation: NodeIndex,
+    initializer: Option<NodeIndex>,
+) -> Option<String> {
+    if type_annotation.is_some() {
+        return node_source_text(&file.arena, file.source_file, type_annotation);
+    }
+    initializer
+        .and_then(|idx| primitive_initializer_type_text(&file.arena, idx))
+        .map(str::to_string)
+}
+
+fn node_source_text(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    node_idx: NodeIndex,
+) -> Option<String> {
+    let source = arena
+        .get(source_file)
+        .and_then(|node| arena.get_source_file(node))?;
+    let node = arena.get(node_idx)?;
+    let start = usize::try_from(node.pos).ok()?;
+    let end = usize::try_from(node.end).ok()?;
+    source
+        .text
+        .get(start..end)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
 }
 
 fn source_file_is_js(file_name: &str) -> bool {
@@ -1217,17 +1258,6 @@ fn primitive_initializer_type_text(
         k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint"),
         _ => None,
     }
-}
-
-fn declaration_line_type(contents: &str, name: &str) -> Option<String> {
-    let const_prefix = format!("declare const {name}: ");
-    let var_prefix = format!("declare var {name}: ");
-    contents.lines().find_map(|line| {
-        line.strip_prefix(&const_prefix)
-            .or_else(|| line.strip_prefix(&var_prefix))
-            .and_then(|rest| rest.strip_suffix(';'))
-            .map(str::to_string)
-    })
 }
 
 fn identifier_text(arena: &NodeArena, idx: NodeIndex) -> String {
