@@ -1414,6 +1414,17 @@ impl TypeInterner {
         if app.args.contains(&evaluated) {
             return;
         }
+        // Conditional aliases can first record the resolved branch as an
+        // intersection display alias (for example `Omit<A, K> & B`) and then
+        // later attempt to repaint the same evaluated object as the outer
+        // application alias. Keep the branch display because it is the surface
+        // tsc shows in TS2339 receivers.
+        let existing_is_intersection = self.get_display_alias(evaluated).is_some_and(|existing| {
+            matches!(self.lookup(existing), Some(TypeData::Intersection(_)))
+        });
+        if existing_is_intersection {
+            return;
+        }
         let application_has_generic_args = app
             .args
             .iter()
