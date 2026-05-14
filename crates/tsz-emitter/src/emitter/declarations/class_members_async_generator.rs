@@ -15,6 +15,8 @@ impl<'a> Printer<'a> {
         } else {
             String::new()
         };
+        let inner_name =
+            (!method_name.is_empty()).then(|| self.next_async_generator_inner_name(&method_name));
         let move_params_to_generator = self.async_generator_params_need_forwarding(params);
         let body_is_empty_single_line = self
             .arena
@@ -85,9 +87,8 @@ impl<'a> Printer<'a> {
             self.write("return ");
             self.write_helper("__asyncGenerator");
             self.write("(this, arguments, ");
-            let inner_name = (!method_name.is_empty()).then(|| format!("{method_name}_1"));
             self.emit_async_generator_es5_inner_function(
-                inner_name,
+                inner_name.clone(),
                 params,
                 body,
                 move_params_to_generator,
@@ -149,9 +150,8 @@ impl<'a> Printer<'a> {
             self.write(" return ");
             self.write_helper("__asyncGenerator");
             self.write("(this, arguments, function* ");
-            if !method_name.is_empty() {
-                self.write(&method_name);
-                self.write("_1");
+            if let Some(inner_name) = inner_name.as_deref() {
+                self.write(inner_name);
             }
             self.write("(");
             let saved_await = self.ctx.emit_await_as_yield_await;
@@ -185,9 +185,12 @@ impl<'a> Printer<'a> {
                 if let Some(body_node) = self.arena.get(body)
                     && let Some(block) = self.arena.get_block(body_node)
                 {
-                    for &stmt in &block.statements.nodes {
-                        self.write(" ");
-                        self.emit(stmt);
+                    let statements = block.statements.clone();
+                    if !self.emit_statement_list_with_using_scope(&statements) {
+                        for &stmt in &statements.nodes {
+                            self.write(" ");
+                            self.emit(stmt);
+                        }
                     }
                 }
                 self.function_scope_depth -= 1;
@@ -258,9 +261,8 @@ impl<'a> Printer<'a> {
         self.write("return ");
         self.write_helper("__asyncGenerator");
         self.write("(this, arguments, function* ");
-        if !method_name.is_empty() {
-            self.write(&method_name);
-            self.write("_1");
+        if let Some(inner_name) = inner_name.as_deref() {
+            self.write(inner_name);
         }
         self.write("(");
         let saved_await = self.ctx.emit_await_as_yield_await;
@@ -297,9 +299,12 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
-            for &stmt in &block.statements.nodes {
-                self.emit(stmt);
-                self.write_line();
+            let statements = block.statements.clone();
+            if !self.emit_statement_list_with_using_scope(&statements) {
+                for &stmt in &statements.nodes {
+                    self.emit(stmt);
+                    self.write_line();
+                }
             }
         }
 
