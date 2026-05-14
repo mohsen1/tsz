@@ -1463,16 +1463,16 @@ relaxing any guard. Decision record:
 Claim:
 [`claims/perf-simple-object-provenance-residues-2026-05-14.md`](claims/perf-simple-object-provenance-residues-2026-05-14.md).
 
-**2026-05-14 simple-object missing-interface lib resolution:** the behavior
-follow-up admits the conformance-safe non-iterator
-`reject_missing_interface_decl` rows via existing lib metadata resolvers. On
-regenerated monorepo-006, diagnostics remain `10,198`, simple-object hits and
-successes remain `24,762`, `reject_missing_interface_decl` drops from `7` to
-`4`, and the remaining declaration/provenance residue is the iterator-family
-missing-interface tail plus the six-row `reject_out_of_arena_decl` family.
-`delegate.misses` and `checker.with_parent_cache_constructed` remain `2`, so
-this is a shortcut-residue cleanup rather than a child-checker reduction. The
-run is attribution-mode only. Decision record:
+**2026-05-14 simple-object missing-interface lib resolution negative result:**
+a behavior follow-up tried to admit the named
+`reject_missing_interface_decl` rows through existing lib metadata resolvers.
+The regenerated monorepo-006 attribution run looked bounded
+(`reject_missing_interface_decl` dropped from `7` to `4` with diagnostics still
+at `10,198`), but CI conformance rejected both the broad iterator-inclusive
+allowlist and the narrowed non-iterator allowlist. The attempted behavior is
+therefore not safe to merge. Keep the shortcut guards closed until lib reuse is
+keyed by proven semantic identity and preserves type-parameter instantiation,
+not by a string allowlist plus resolver fallback. Decision record:
 [`perf-runs/2026-05-14-simple-object-missing-interface-lib.md`](perf-runs/2026-05-14-simple-object-missing-interface-lib.md).
 Claim:
 [`claims/perf-simple-object-missing-interface-lib-2026-05-14.md`](claims/perf-simple-object-missing-interface-lib-2026-05-14.md).

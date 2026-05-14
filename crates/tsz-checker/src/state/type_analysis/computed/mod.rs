@@ -15,14 +15,6 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
-
-fn should_resolve_simple_object_missing_interface_decl_from_lib(name: &str) -> bool {
-    matches!(
-        name,
-        "PropertyDescriptor" | "PropertyDescriptorMap" | "RegExpIndicesArray"
-    )
-}
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn normalize_namespace_export_declaration_order(props: &mut [PropertyInfo]) {
         props.sort_by(
@@ -1560,47 +1552,35 @@ impl<'a> CheckerState<'a> {
             // user has local interface declarations that augment/extend the lib
             // type (e.g., `interface Node { forEachChild(...) }`), we must fall
             // through to the full merge path so user-declared members are included.
-            let should_resolve_missing_interface_decl_from_lib = !has_local_interface_decl
-                && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                && should_resolve_simple_object_missing_interface_decl_from_lib(&escaped_name);
-            let can_resolve_lib_interface_without_local_decl = !has_local_interface_decl
-                && (has_out_of_arena_decl
-                    || is_lib_symbol
-                    || should_resolve_missing_interface_decl_from_lib);
-
-            if can_resolve_lib_interface_without_local_decl && !self.ctx.lib_contexts.is_empty() {
-                let lib_type = if should_resolve_missing_interface_decl_from_lib {
-                    self.resolve_lib_type_by_name(&escaped_name)
-                        .or_else(|| self.resolve_lib_type_with_params(&escaped_name).0)
-                } else {
-                    self.resolve_lib_type_by_name(&escaped_name)
-                };
-                if let Some(lib_type) = lib_type {
-                    // Preserve diagnostic formatting for canonical lib interfaces
-                    // by recording the resolved object shape on this symbol's DefId.
-                    let def_id = self.ctx.get_or_create_def_id(sym_id);
-                    if let Some(shape) = type_environment::object_shape(self.ctx.types, lib_type) {
-                        self.ctx.definition_store.set_instance_shape(def_id, shape);
-                    }
-
-                    // Register the TypeId→DefId mapping so the type formatter can
-                    // display "ObjectConstructor", "SymbolConstructor", etc. instead
-                    // of expanding the full object literal.  Guard: only register
-                    // when no mapping exists yet, to avoid overwriting a mapping
-                    // established by a prior, more specific resolution.
-                    if self
-                        .ctx
-                        .definition_store
-                        .find_def_for_type(lib_type)
-                        .is_none()
-                    {
-                        self.ctx
-                            .definition_store
-                            .register_type_to_def(lib_type, def_id);
-                    }
-
-                    return (lib_type, Vec::new());
+            if (has_out_of_arena_decl || is_lib_symbol)
+                && !has_local_interface_decl
+                && !self.ctx.lib_contexts.is_empty()
+                && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
+            {
+                // Preserve diagnostic formatting for canonical lib interfaces
+                // by recording the resolved object shape on this symbol's DefId.
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                if let Some(shape) = type_environment::object_shape(self.ctx.types, lib_type) {
+                    self.ctx.definition_store.set_instance_shape(def_id, shape);
                 }
+
+                // Register the TypeId→DefId mapping so the type formatter can
+                // display "ObjectConstructor", "SymbolConstructor", etc. instead
+                // of expanding the full object literal.  Guard: only register
+                // when no mapping exists yet, to avoid overwriting a mapping
+                // established by a prior, more specific resolution.
+                if self
+                    .ctx
+                    .definition_store
+                    .find_def_for_type(lib_type)
+                    .is_none()
+                {
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(lib_type, def_id);
+                }
+
+                return (lib_type, Vec::new());
             }
 
             if let Some(interface_type) = self.try_lower_simple_local_interface_object(
