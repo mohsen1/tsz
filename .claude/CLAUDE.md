@@ -208,21 +208,46 @@ into hard errors. Both bite often enough to keep in mind upfront:
 - Run `cargo clippy --workspace --all-targets --all-features -- -D warnings`
   locally before pushing when the change needs lint feedback. CI runs it too.
 
-## 20) Skills (Operational)
-Available skills and triggers:
-- `architecture-guardrails`: detect forbidden architecture patterns.
-- `bench-gatekeeper`: benchmark vs baseline.
-- `rust-test-runner`: run Rust tests via Docker wrapper.
-- `sync-and-merge-assistant`: safe sync/merge workflow.
-- `worker-assignment-orchestrator`: assign high-impact tasks.
-- `skill-creator`: create/update skills.
-- `skill-installer`: install curated/repo skills.
+## 19.7) Tracing And Debug Instrumentation
 
-Skill usage rules:
-- If user names a skill or task clearly matches it, use that skill this turn.
-- Read `SKILL.md` minimally; load only needed referenced files.
-- Reuse scripts/assets/templates from skill directories when available.
-- If blocked/missing, state issue briefly and proceed with best fallback.
+The repo has real tracing infrastructure. Use it for internal diagnostics;
+do not add ad-hoc print debugging.
+
+- **Use `tracing`, not `printf`-style debugging.** For Rust internals, prefer
+  `tracing::trace!`, `debug!`, `info!`, `warn!`, `error!`, `trace_span!`, and
+  `debug_span!` with structured fields:
+  ```rust
+  tracing::trace!(type_id = type_id.0, symbol = symbol_id.0, "resolved type");
+  ```
+- **Keep stdout for intentional user output only.** `println!` / `print!` are
+  acceptable for tsc-compatible CLI output, help/version text, protocol output,
+  and explicit tool reports. They are not acceptable as temporary compiler
+  instrumentation. Shell scripts may still use `printf` for their own
+  user-facing output.
+- **Use the existing subscriber knobs.** `tsz`, `tsz-lsp`, and `tsz-server`
+  initialize tracing through `tsz_cli::tracing_config::init_tracing()`. Run with
+  `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -p tsz-cli -- file.ts`, or narrow
+  filters such as `TSZ_LOG="tsz_checker=debug,tsz_solver::narrowing=trace"`.
+  Use `TSZ_LOG_FORMAT=json` for machine-readable traces and
+  `TSZ_LOG=tsz::query_json=trace TSZ_LOG_FORMAT=json` for solver query events.
+- **Avoid eager formatting in hot paths.** Put raw ids and small scalars in
+  tracing fields. For type display in solver traces, use lazy helpers such as
+  `TypeDisplay` and `RelationDisplay`; guard genuinely expensive trace-only
+  work with `tracing::enabled!`.
+- **If trace/debug output is missing, rebuild appropriately before adding
+  prints.** Release-like profiles may compile low-level tracing out for
+  performance; use `cargo run`, `cargo build`, or another debug/dev profile
+  when investigating `trace!` / `debug!` instrumentation.
+- **Tests that assert instrumentation should capture tracing, not stdout.** Use
+  existing test tracing helpers where available instead of printing diagnostics
+  and eyeballing `cargo nextest` output.
+
+## 20) Repo-Local Skills
+
+No repo-local `SKILL.md` files are currently checked in. Do not list or rely on
+TSZ-specific skills here unless their implementation is committed in the repo.
+Runtime-provided global skills may exist outside this checkout; do not document
+them as TSZ repo skills.
 
 ## 20.1) Agent Identity & Collaboration
 
@@ -235,6 +260,9 @@ Skill usage rules:
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
   account — check WIP claims, draft PRs, and open issues before starting work,
   and address other agents by their AgentName when relevant.
+- **Use `gh` for GitHub operations.** The GitHub CLI is available in this
+  workspace and should be preferred over connector/integration tools for
+  inspecting PRs/issues, creating or updating PRs, and checking CI status.
 - **Stacked PRs for dependent work.** If your new PR depends on another PR
   that should land first, open it as a stacked PR (base = the dependency
   branch, not `main`). When the dependency merges, GitHub automatically
