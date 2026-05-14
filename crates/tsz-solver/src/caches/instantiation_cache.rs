@@ -20,8 +20,8 @@
 //!   pairs sorted by `Atom`, so two `TypeSubstitution`s with the same
 //!   `{name -> type_id}` multiset hash and compare equal regardless of the
 //!   underlying `FxHashMap` insertion order. The pairs live directly in the
-//!   key — see the design doc §1 ("Why no `TypeInterner` intern handle") for
-//!   why we deliberately do not intern substitutions on `TypeInterner`.
+//!   key because this cache is scoped to `QueryCache`; substitutions are not
+//!   interned on the longer-lived `TypeInterner`.
 //! - `mode_bits` packs the instantiator walk shape. Different walk modes can
 //!   produce different answers for the same `(TypeId, CanonicalSubst)`, so the
 //!   mode byte is part of the key:
@@ -39,8 +39,8 @@
 //! `QueryCache::clear()` is the authoritative cache-invalidation boundary;
 //! `TypeInterner` survives clears and is not counted in
 //! `estimated_size_bytes`. A substitution-keyed cache on `TypeInterner` would
-//! grow unbounded on large repos. Per the design doc §2, cache hooks live on
-//! `QueryDatabase` (not `TypeDatabase`) so the boundary stays clean.
+//! grow unbounded on large repos. Cache hooks live on `QueryDatabase` (not
+//! `TypeDatabase`) so the boundary stays clean.
 //!
 //! ### Invalidation and stats
 //!
@@ -58,8 +58,8 @@ use tsz_common::interner::Atom;
 /// Canonical, content-hashable form of a `TypeSubstitution`.
 ///
 /// Wraps the `SmallVec<[(Atom, TypeId); 4]>` returned by
-/// `TypeSubstitution::canonical_pairs()` (added in PR 1, #1040). The pairs
-/// are sorted by `Atom`, so two substitutions with the same
+/// `TypeSubstitution::canonical_pairs()`. The pairs are sorted by `Atom`, so
+/// two substitutions with the same
 /// `{name -> type_id}` entries always produce equal `CanonicalSubst` values
 /// regardless of insertion order.
 ///

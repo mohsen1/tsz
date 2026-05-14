@@ -260,12 +260,9 @@ impl TypeSubstitution {
     /// with the same contents but different insertion sequences would
     /// otherwise produce different iteration shapes.
     ///
-    /// PR 1 of the `instantiate_type` cross-call cache
-    /// workstream in `docs/plan/ROADMAP.md`. The returned
-    /// form is the eventual cache key seed; PR 2 will key
-    /// `QueryCache::instantiation_cache` on an `Arc<[(Atom, TypeId)]>`
-    /// built directly from this output. Substitution *interning* (a
-    /// `u32` handle) intentionally does **not** live here — the cache
+    /// The returned form is the substitution component of
+    /// `InstantiationCacheKey`. Substitution *interning* (for example, a
+    /// global `u32` handle) intentionally does not live here: the cache
     /// lifetime is owned by `QueryCache`, not the global `TypeInterner`.
     ///
     /// Most substitutions have 1-4 entries (matching the shape of the
@@ -2015,8 +2012,8 @@ pub fn instantiate_type_cached(
     match interner.lookup(type_id) {
         // Fast path: TypeParameter directly in the substitution — return immediately.
         // This is the most common leaf case in mapped type template instantiation.
-        // MUST run BEFORE any CanonicalSubst construction (design §5 PR 3) so
-        // we don't pay hash/alloc for trivial leaf substitutions.
+        // MUST run BEFORE any CanonicalSubst construction so we don't pay
+        // hash/alloc for trivial leaf substitutions.
         Some(TypeData::TypeParameter(info)) => {
             if let Some(result) = substitution.get(info.name) {
                 return result;
@@ -2407,9 +2404,9 @@ pub fn substitute_this_type(
 
 /// Cache-aware variant of [`substitute_this_type`].
 ///
-/// Per the design carve-out (§5), we DO probe the cache here even though
-/// the substitution is empty, because `this_type.is_some()` makes the
-/// `(type_id, this_type)` tuple a meaningful cache key.
+/// We DO probe the cache here even though the substitution is empty, because
+/// `this_type.is_some()` makes the `(type_id, this_type)` tuple a meaningful
+/// cache key.
 pub fn substitute_this_type_cached(
     interner: &dyn TypeDatabase,
     query_db: Option<&dyn QueryDatabase>,

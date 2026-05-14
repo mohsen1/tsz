@@ -1370,7 +1370,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_source_to_mapped_expansion(
         &mut self,
         source: TypeId,
-        _target: TypeId,
+        target: TypeId,
         mapped_id: MappedTypeId,
     ) -> SubtypeResult {
         // Try distributing homomorphic mapped types over intersection arguments
@@ -1413,6 +1413,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // and the mapped type doesn't remove optional.
                 if self.check_source_to_homomorphic_mapped(source, mapped_id) {
                     return SubtypeResult::True;
+                }
+
+                let mapped = self.interner.get_mapped(mapped_id);
+                if mapped.constraint == TypeId::ANY
+                    && mapped.name_type.is_none()
+                    && mapped.template == TypeId::NEVER
+                {
+                    let evaluated = self.evaluate_type(target);
+                    if evaluated != target {
+                        let result = self.check_subtype(source, evaluated);
+                        if result.is_true() {
+                            return result;
+                        }
+                    }
                 }
 
                 SubtypeResult::False

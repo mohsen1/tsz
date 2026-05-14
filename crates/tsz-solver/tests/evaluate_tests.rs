@@ -12190,6 +12190,47 @@ fn test_mapped_type_basic() {
 }
 
 #[test]
+fn test_mapped_type_any_keys_with_never_template_produces_indexes() {
+    let interner = TypeInterner::new();
+
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: interner.intern_string("K"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: TypeId::ANY,
+        name_type: None,
+        template: TypeId::NEVER,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let result = evaluate_mapped(&interner, &mapped);
+    let Some(TypeData::ObjectWithIndex(shape_id)) = interner.lookup(result) else {
+        panic!("expected mapped any keys to evaluate to object indexes, got {result:?}");
+    };
+    let shape = interner.object_shape(shape_id);
+
+    assert_eq!(shape.properties.len(), 0);
+    assert_eq!(
+        shape
+            .string_index
+            .expect("expected string index")
+            .value_type,
+        TypeId::NEVER
+    );
+    assert_eq!(
+        shape
+            .number_index
+            .expect("expected number index")
+            .value_type,
+        TypeId::NEVER
+    );
+}
+
+#[test]
 fn test_mapped_type_over_string_keys() {
     let interner = TypeInterner::new();
 
