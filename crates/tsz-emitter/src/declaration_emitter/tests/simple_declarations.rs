@@ -3089,8 +3089,8 @@ declare namespace foo {
 }
 declare function bar(): void;
 declare namespace bar {
-    let async: boolean;
-    let normal: boolean;
+    export let async: boolean;
+    export let normal: boolean;
 }
 declare function baz(): void;
 declare namespace baz {
@@ -3320,12 +3320,10 @@ declare class MyClass {
     method(): void;
 }
 declare namespace MyClass {
-    function staticMethod(): void;
-    let staticProperty: number;
-}
-declare namespace MyClass {
     export { staticMethod, staticProperty, DoneCB };
 }
+declare function staticMethod(): void;
+declare var staticProperty: number;
 /**
  * Callback to be invoked when test execution is complete.
  */
@@ -4287,11 +4285,9 @@ declare class Handler {
     process(): void;
 }
 declare namespace Handler {
-    function statische(): void;
-}
-declare namespace Handler {
     export { statische, Strings, HandlerOptions };
 }
+declare function statische(): void;
 declare namespace Strings {
     let a: string;
     let b: string;
@@ -6102,6 +6098,63 @@ function f2() {
     assert!(
         output.contains("declare function f2(): (a: string, b: string) => string;"),
         "Expected returned function expression signature to use attached @type JSDoc: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_equals_function_static_assignments_stay_top_level() {
+    let output = emit_js_dts(
+        r#"
+module.exports = MyClass;
+
+function MyClass() {}
+MyClass.staticMethod = function() {}
+MyClass.prototype.method = function() {}
+MyClass.staticProperty = 123;
+"#,
+    );
+
+    assert!(
+        output.contains("export = MyClass;"),
+        "Expected CommonJS export assignment: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare namespace MyClass {\n    export { staticMethod, staticProperty };\n}"
+        ),
+        "Expected namespace to re-export top-level expando declarations: {output}"
+    );
+    assert!(
+        output.contains("declare function staticMethod(): void;"),
+        "Expected static function expando to remain a top-level declaration: {output}"
+    );
+    assert!(
+        output.contains("declare var staticProperty: number;"),
+        "Expected static value expando to remain a top-level declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare namespace MyClass {\n    function staticMethod(): void;"),
+        "Did not expect static expandos to be folded into the namespace body: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_properties_export_from_merged_namespace() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.x = 1;
+foo.default = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace foo {\n    export let x: number;"),
+        "Expected ordinary expando property to be exported from merged namespace: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved expando property to use local alias plus export specifier: {output}"
     );
 }
 
