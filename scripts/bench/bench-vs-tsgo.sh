@@ -1330,17 +1330,47 @@ function fallbackCompatibility(row) {
   };
 }
 
+function normalizedDiagnosticDeltas(recorded) {
+  if (!Array.isArray(recorded.diagnostic_deltas)) return [];
+  return recorded.diagnostic_deltas
+    .map((line) => String(line || "").trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function diagnosticCodesFrom(deltas) {
+  const codes = [];
+  const seen = new Set();
+  for (const line of deltas) {
+    for (const match of line.matchAll(/\bTS\d{4,5}\b/g)) {
+      const code = match[0];
+      if (seen.has(code)) continue;
+      seen.add(code);
+      codes.push(code);
+      if (codes.length >= 8) return codes;
+    }
+  }
+  return codes;
+}
+
+function reductionCandidatesFrom(deltas) {
+  const coded = deltas.filter((line) => /\bTS\d{4,5}\b/.test(line));
+  const source = coded.length ? coded : deltas;
+  return source.slice(0, 5);
+}
+
 function compatibilityFor(row, compatibilityRows) {
   const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
   if (!recorded) return {};
+  const diagnosticDeltas = normalizedDiagnosticDeltas(recorded);
   return {
     compatibility: {
       exit_class: recorded.exit_class || "unknown",
       phase: recorded.phase || "unknown",
       diagnostic_status: recorded.diagnostic_status || "unknown",
-      diagnostic_deltas: Array.isArray(recorded.diagnostic_deltas)
-        ? recorded.diagnostic_deltas.slice(0, 20)
-        : [],
+      diagnostic_deltas: diagnosticDeltas,
+      diagnostic_codes: diagnosticCodesFrom(diagnosticDeltas),
+      reduction_candidates: reductionCandidatesFrom(diagnosticDeltas),
       semantic_owner_family: PROJECT_OWNER_FAMILIES[row.name] || "not classified",
       files_reached: recorded.files_reached ?? null,
       peak_memory_bytes: recorded.peak_memory_bytes ?? null,
