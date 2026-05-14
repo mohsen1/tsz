@@ -30,8 +30,7 @@ fn assert_no_ts2322(source: &str, label: &str) {
     let errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
     assert!(
         errors.is_empty(),
-        "[{label}] expected no TS2322, got:\n{:#?}",
-        errors
+        "[{label}] expected no TS2322, got:\n{errors:#?}"
     );
 }
 
@@ -47,12 +46,11 @@ fn assert_has_assignment_error(source: &str, label: &str) {
         .collect();
     assert!(
         !errors.is_empty(),
-        "[{label}] expected a TS2322 or TS2353, got none. All diagnostics: {:#?}",
-        diagnostics
+        "[{label}] expected a TS2322 or TS2353, got none. All diagnostics: {diagnostics:#?}"
     );
 }
 
-/// The exact reproduction from #6533: DeepPick with a dot-separated path
+/// The exact reproduction from #6533: `DeepPick` with a dot-separated path
 /// drives a recursive conditional whose true branch is `{ [K in Key]: ... }`.
 /// `Key` is captured by the outer infer; the mapped type's constraint must
 /// see the substituted literal type, not the original infer node.
