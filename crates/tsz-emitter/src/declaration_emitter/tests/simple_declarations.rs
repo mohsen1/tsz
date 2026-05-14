@@ -64,6 +64,22 @@ export interface I {
 }
 
 #[test]
+fn test_index_signature_preserves_inline_parameter_comment() {
+    let source = r#"
+export interface I {
+    /** indexer */
+    [/** key param */ key: string]: any;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("[/** key param */ key: string]: any;"),
+        "Expected index signature parameter comment to be preserved: {output}"
+    );
+}
+
+#[test]
 fn test_non_exported_namespace_hidden_inside_non_ambient_namespace() {
     let source = r#"
 export namespace Outer {

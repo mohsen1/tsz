@@ -1606,6 +1606,11 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(param) = self.arena.get_parameter(param_node) else {
                 continue;
             };
+            let comment_pos = self
+                .arena
+                .get(param.name)
+                .map_or(param_node.pos, |name_node| name_node.pos);
+            self.emit_inline_parameter_comment(comment_pos);
             self.emit_member_modifiers(&param.modifiers);
             if param.dot_dot_dot_token {
                 self.write("...");
