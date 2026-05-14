@@ -80,3 +80,34 @@ or snapshot an explicit input instead of reading ambient `CheckerContext` state.
 - Program-stable shared caches need explicit owners: `ProgramContext` for
   cross-file checker orchestration, query-boundary helpers for semantic
   request answers, and solver caches for pure type/relation evaluation.
+
+## Retained Cache Invariants
+
+Retaining a cache across a file boundary is allowed only when the key and value
+identity are stable for the next file's checker context. The retained cache must
+fit one of these ownership shapes:
+
+- Checker orchestration caches may be retained when their keys are
+  program-stable strings, module specifiers with an explicit requesting-file
+  component, or shared `ProgramContext` indexes.
+- Query-boundary caches may be retained when the semantic request inputs are
+  explicit in the key and no hidden current-file state participates in the
+  answer.
+- Solver caches may be retained only inside solver-owned structures such as
+  `NarrowingCache`, where the solver defines key identity and invalidation.
+
+The following caches are deliberately checker-owned even though they look
+semantic:
+
+- `lib_type_resolution_cache` and `shared_lib_type_cache` memoize lib-name
+  lookup through checker/binder state, not pure type evaluation.
+- `cross_file_type_params_cache` memoizes checker extraction of declared type
+  parameters for a cross-file declaration identity.
+- `flow_analysis_cache`, `symbol_flow_confirmed`, and the flow helper caches
+  depend on the active flow graph and must reset with the file session.
+- `class_*`, heritage, base-expression, and JSX singleton caches are source-node
+  or active-file namespace shortcuts, so they remain checker/query-boundary
+  owned until their request keys are made file-stable.
+- `env_eval_cache` remains query-boundary owned because the answer depends on
+  the active `TypeEnvironment`; moving it further requires making environment
+  identity an explicit key dimension.

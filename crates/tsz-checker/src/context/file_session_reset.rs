@@ -8,12 +8,15 @@
 //! Scope of this first pass: the critical subset shown in plan §6's
 //! illustrative impl — file-keyed diagnostic buffers, node-keyed
 //! request/class caches, resolution-stack debug invariants, and the
-//! speculative depth counters that gate recursion. Many other
-//! `FileLocalReset` manifest entries are caches keyed by stable solver
-//! values (e.g. `SymbolId`) and are safe to leave populated across
-//! files — clearing them would just force a re-fetch with no
-//! correctness gain. Those entries will be drained in follow-up PRs
-//! only if attribution data shows the cold-start cost matters.
+//! speculative depth counters that gate recursion.
+//!
+//! Retained caches are retained only when their ownership invariant is explicit:
+//! program-stable lib/type caches are checker orchestration state, query-boundary
+//! caches carry an explicit semantic request shape, and solver caches are owned
+//! by solver data structures. Caches keyed by `NodeIndex`, `FlowNodeId`, or
+//! binder-local `SymbolId` must be cleared or rebuilt when the active file or
+//! binder changes. See `docs/architecture/CHECKER_CONTEXT_CACHE_OWNERSHIP.md`
+//! for the field-level inventory.
 //!
 //! This helper is **not yet called from anywhere** — it exists as the
 //! boundary API so that the future T2.1.B "sequential session-reuse
