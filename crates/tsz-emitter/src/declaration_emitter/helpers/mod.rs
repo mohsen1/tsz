@@ -248,6 +248,7 @@ mod type_inference_truncation_expansion;
 mod type_inference_type_annotations;
 mod type_inference_type_nodes;
 mod type_param_rewrite;
+mod type_predicate_text;
 mod type_printing;
 mod type_printing_paths;
 mod unexported_alias_literal;

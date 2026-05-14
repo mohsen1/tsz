@@ -1688,6 +1688,7 @@ impl<'a> DeclarationEmitter<'a> {
             Self::elide_type_reference_names(&printed, &elided_alias_names)
         }
     }
+
     pub(crate) fn collect_type_param_names(&self, type_params: &NodeList) -> Vec<String> {
         let mut names = Vec::new();
         for &param_idx in &type_params.nodes {
