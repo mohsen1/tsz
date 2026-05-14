@@ -137,7 +137,44 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        if !self.type_contains_abstract_class(base_arg_type) {
+            refined_return = self.clear_constructor_abstract_flag(refined_return);
+        }
+
         refined_return
+    }
+
+    fn clear_constructor_abstract_flag(&self, ctor_type: TypeId) -> TypeId {
+        match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
+            ConstructorReturnMergeKind::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                if !shape.is_abstract {
+                    return ctor_type;
+                }
+                let mut new_shape = (*shape).clone();
+                new_shape.is_abstract = false;
+                self.ctx.types.factory().callable(new_shape)
+            }
+            ConstructorReturnMergeKind::Intersection(members) => {
+                let mut updated_members = Vec::with_capacity(members.len());
+                let mut changed = false;
+                for member in members {
+                    let updated = self.clear_constructor_abstract_flag(member);
+                    if updated != member {
+                        changed = true;
+                    }
+                    updated_members.push(updated);
+                }
+                if changed {
+                    self.ctx.types.factory().intersection(updated_members)
+                } else {
+                    ctor_type
+                }
+            }
+            ConstructorReturnMergeKind::Function(_) | ConstructorReturnMergeKind::Other => {
+                ctor_type
+            }
+        }
     }
 
     fn mixin_call_type_parameter_substitution(

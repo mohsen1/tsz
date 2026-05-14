@@ -25,6 +25,182 @@ impl<'a> Printer<'a> {
         })
     }
 
+    fn collect_top_level_using_block_envs(
+        &self,
+        statements: &NodeList,
+        start_idx: usize,
+    ) -> Vec<NodeIndex> {
+        let mut block_indices = Vec::new();
+        for &stmt_idx in &statements.nodes[start_idx..] {
+            self.collect_top_level_using_block_envs_in_statement(stmt_idx, &mut block_indices);
+        }
+        block_indices
+    }
+
+    fn collect_top_level_using_block_envs_in_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        block_indices: &mut Vec<NodeIndex>,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.arena.get_block(stmt_node) {
+                    let child_statements = block.statements.clone();
+                    if self.block_has_using_declarations(&child_statements) {
+                        block_indices.push(stmt_idx);
+                    }
+                    for &child_idx in &child_statements.nodes {
+                        self.collect_top_level_using_block_envs_in_statement(
+                            child_idx,
+                            block_indices,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::CASE_BLOCK => {
+                if let Some(block) = self.arena.get_block(stmt_node) {
+                    let child_statements = block.statements.clone();
+                    for &child_idx in &child_statements.nodes {
+                        self.collect_top_level_using_block_envs_in_statement(
+                            child_idx,
+                            block_indices,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.arena.get_if_statement(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        if_stmt.then_statement,
+                        block_indices,
+                    );
+                    self.collect_top_level_using_block_envs_in_statement(
+                        if_stmt.else_statement,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_stmt) = self.arena.get_try(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        try_stmt.try_block,
+                        block_indices,
+                    );
+                    self.collect_top_level_using_block_envs_in_statement(
+                        try_stmt.catch_clause,
+                        block_indices,
+                    );
+                    self.collect_top_level_using_block_envs_in_statement(
+                        try_stmt.finally_block,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_clause) = self.arena.get_catch_clause(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        catch_clause.block,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                if let Some(loop_stmt) = self.arena.get_loop(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        loop_stmt.statement,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
+                if let Some(for_in_of) = self.arena.get_for_in_of(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        for_in_of.statement,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_stmt) = self.arena.get_switch(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        switch_stmt.case_block,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(stmt_node) {
+                    let child_statements = clause.statements.clone();
+                    for &child_idx in &child_statements.nodes {
+                        self.collect_top_level_using_block_envs_in_statement(
+                            child_idx,
+                            block_indices,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        labeled.statement,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_stmt) = self.arena.get_with_statement(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        with_stmt.then_statement,
+                        block_indices,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn reserve_top_level_using_env_names(
+        &mut self,
+        env_start_id: u32,
+        outer_error_id: u32,
+        block_indices: &[NodeIndex],
+    ) -> (String, String, String) {
+        let outer_names = (
+            format!("env_{env_start_id}"),
+            format!("e_{outer_error_id}"),
+            format!("result_{outer_error_id}"),
+        );
+        self.generated_temp_names.insert(outer_names.0.clone());
+        self.generated_temp_names.insert(outer_names.1.clone());
+        self.generated_temp_names.insert(outer_names.2.clone());
+
+        for (offset, &block_idx) in block_indices.iter().enumerate() {
+            let error_id = env_start_id + offset as u32;
+            let env_id = env_start_id + 1 + offset as u32;
+            let names = (
+                format!("env_{env_id}"),
+                format!("e_{error_id}"),
+                format!("result_{error_id}"),
+            );
+            self.generated_temp_names.insert(names.0.clone());
+            self.generated_temp_names.insert(names.1.clone());
+            self.generated_temp_names.insert(names.2.clone());
+            self.reserved_disposable_env_names.insert(block_idx, names);
+        }
+
+        self.next_disposable_env_id = outer_error_id + 1;
+        outer_names
+    }
+
     pub(in crate::emitter) fn emit_top_level_using_scope(
         &mut self,
         statements: &NodeList,
@@ -48,7 +224,11 @@ impl<'a> Printer<'a> {
                 })
             })
         });
-        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        let reserved_blocks = self.collect_top_level_using_block_envs(statements, start_idx);
+        let env_start_id = self.next_disposable_env_id;
+        let outer_error_id = env_start_id + reserved_blocks.len() as u32;
+        let (env_name, error_name, result_name) =
+            self.reserve_top_level_using_env_names(env_start_id, outer_error_id, &reserved_blocks);
         let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
 
         if is_es_module_output {
@@ -1009,7 +1189,6 @@ impl<'a> Printer<'a> {
         };
         let value_specs = self.collect_value_specifiers(&named_exports.elements);
         if value_specs.is_empty() {
-            self.write("export {};");
             return;
         }
         self.write("export {");
@@ -1624,7 +1803,14 @@ impl<'a> Printer<'a> {
                 self.write(&rewritten);
             }
         } else {
+            let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
+            if let Some(stripped) = rewritten.strip_prefix(&leading_indent) {
+                rewritten = stripped.to_string();
+            }
             self.write(&rewritten);
+            if !rewritten.trim_end().ends_with(';') {
+                self.write(";");
+            }
         }
         if let Some(export_name) = export_name.as_ref()
             && !is_es_module_output

@@ -269,6 +269,9 @@ impl<'a> Printer<'a> {
             // so the export assignment observes the initialized value.
         } else if self.in_system_execute_body {
             self.emit_for_initializer_strip_var(loop_stmt.initializer);
+        } else if self.emit_async_generator_shadow_for_initializer(loop_stmt.initializer) {
+            // Rewritten from `var x = y` to `x = y`; the declaration is hoisted
+            // at the top of the generated async generator body.
         } else {
             self.emit(loop_stmt.initializer);
         }
@@ -313,6 +316,9 @@ impl<'a> Printer<'a> {
             // The recovery path emitted the initializer.
         } else if self.in_system_execute_body {
             self.emit_for_initializer_strip_var(for_in_of.initializer);
+        } else if self.emit_async_generator_shadow_for_in_of_initializer(for_in_of.initializer) {
+            // Rewritten from `var x in y` to `x in y`; the declaration is hoisted
+            // at the top of the generated async generator body.
         } else {
             self.emit(for_in_of.initializer);
         }
@@ -415,6 +421,9 @@ impl<'a> Printer<'a> {
         self.write("(");
         if self.in_system_execute_body {
             self.emit_for_initializer_strip_var(for_in_of.initializer);
+        } else if self.emit_async_generator_shadow_for_in_of_initializer(for_in_of.initializer) {
+            // Rewritten from `var x of y` to `x of y`; the declaration is hoisted
+            // at the top of the generated async generator body.
         } else {
             self.emit(for_in_of.initializer);
         }

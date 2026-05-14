@@ -20,7 +20,7 @@
 //! TSZ_LOG=debug tsz file.ts
 //!
 //! # Fine-grained filtering
-//! TSZ_LOG="wasm::checker=debug,wasm::solver=trace" TSZ_LOG_FORMAT=tree tsz file.ts
+//! TSZ_LOG="tsz_checker=debug,tsz_solver=trace" TSZ_LOG_FORMAT=tree tsz file.ts
 //! ```
 //!
 //! The subscriber is only initialised when `TSZ_LOG` (or `RUST_LOG`) is set,
@@ -59,7 +59,7 @@ impl LogFormat {
 /// Build an `EnvFilter` from `TSZ_LOG`, falling back to `RUST_LOG`.
 ///
 /// `TSZ_LOG` takes precedence when both are set. Values use the same
-/// syntax as `RUST_LOG` (e.g. `debug`, `wasm::checker=trace`).
+/// syntax as `RUST_LOG` (e.g. `debug`, `tsz_checker=trace`).
 fn build_filter() -> EnvFilter {
     if let Ok(val) = std::env::var("TSZ_LOG") {
         EnvFilter::builder().parse_lossy(val)
@@ -190,11 +190,11 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         let mut env = TestEnv::new();
 
-        env.set("TSZ_LOG", "wasm::checker=trace");
-        env.set("RUST_LOG", "wasm::solver=debug");
+        env.set("TSZ_LOG", "tsz_checker=trace");
+        env.set("RUST_LOG", "tsz_solver=debug");
 
         let filter = build_filter();
-        let expected = EnvFilter::builder().parse_lossy("wasm::checker=trace");
+        let expected = EnvFilter::builder().parse_lossy("tsz_checker=trace");
 
         assert_eq!(filter.to_string(), expected.to_string());
     }
@@ -205,7 +205,7 @@ mod tests {
         let mut env = TestEnv::new();
 
         env.unset("TSZ_LOG");
-        env.set("RUST_LOG", "wasm::solver=debug");
+        env.set("RUST_LOG", "tsz_solver=debug");
 
         let filter = build_filter();
         let expected = EnvFilter::from_default_env();

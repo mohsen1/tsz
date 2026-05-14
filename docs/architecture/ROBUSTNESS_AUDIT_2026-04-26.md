@@ -10,9 +10,9 @@ Each entry below identifies precise file/line anchors, the failure mode, and a
 suggested **small, behavior-preserving** PR that addresses it. PRs land in the
 priority order documented under [Sequencing](#sequencing).
 
-This is a durable architecture/quality artifact, not roadmap status; per
-`docs/plan/ROADMAP.md` rules, individual landing claims for each PR live in
-`Active Implementation Claims` of the living roadmap and link back here.
+This is a historical architecture/quality audit, not roadmap status. Current
+ownership and implementation notes belong in GitHub draft PRs and PR comments,
+not in claim documents.
 
 ## Background
 
@@ -501,9 +501,9 @@ invariant.
 
 ## How to use this document
 
-1. When you start an item, claim it in `docs/plan/ROADMAP.md` ->
-   `Active Implementation Claims` with a timestamped entry that links here.
-2. Open a draft `WIP` PR per CLAUDE.md.
+1. When you start an item, open a draft PR with your `AgentName`, scope,
+   invariant, verification plan, and any coordination notes.
+2. Link this audit from the PR body if it is useful context.
 3. Implement the smallest PR that addresses the item without scope-creep.
 4. Update the entry's status emoji from ⏳ → 🚧 → ✅ on the corresponding
    PR ready/merge.

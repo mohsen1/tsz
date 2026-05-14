@@ -673,6 +673,9 @@ impl<'a> DeclarationEmitter<'a> {
         let mut members = Vec::new();
         let declared_members = self.declared_late_bound_namespace_member_names(&root_name);
         for &stmt_idx in &source_file.statements.nodes {
+            if self.source_is_js_file && self.js_class_static_member_stmts.contains(&stmt_idx) {
+                continue;
+            }
             self.collect_late_bound_assignment_members_from_node(
                 stmt_idx,
                 &root_name,

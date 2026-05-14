@@ -104,7 +104,7 @@ use tracing::trace;
 trace!(type_id = %id.0, "Resolved type");
 ```
 
-Run with: `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -- file.ts`
+Run with: `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -p tsz-cli -- file.ts`
 
 ### Prefer `pub(crate)` over `pub`
 
@@ -242,8 +242,9 @@ When multiple `TypeVisitor` implementors differ only in which field they extract
 
 Likewise, if two visitors share identical helper logic (e.g. extracting a parameter type from a `&[ParamInfo]`), extract that logic into a free function rather than duplicating it.
 
-Full list of abstraction opportunities: `docs/DRY_AUDIT_2026-04-21.md` (the
-DRY audit doubles as the abstraction-opportunity backlog).
+Use `docs/plan/ROADMAP.md` Track 10 for current refactor/tooling priorities.
+Historical audit files and claim documents are not the coordination surface;
+open a draft PR and keep the PR body current instead.
 
 ---
 
@@ -398,8 +399,8 @@ For solver/checker recursion limits, use `RecursionProfile` (see Recursion Safet
 ## Debugging
 
 1. Write a minimal `.ts` file that reproduces the issue.
-2. Run with tracing: `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -- test.ts 2>&1 | head -200`
-3. Narrow the filter: `TSZ_LOG="wasm::solver::narrowing=trace"`
+2. Run with tracing: `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -p tsz-cli -- test.ts 2>&1 | head -200`
+3. Narrow the filter: `TSZ_LOG="tsz_solver::narrowing=trace"`
 4. Find where actual behavior diverges from expected.
 5. Compare against `tsc` output: `npx tsc --noEmit test.ts`
 
