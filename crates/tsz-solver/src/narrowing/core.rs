@@ -10,7 +10,7 @@ use crate::visitor::{
     type_param_info, union_list_id,
 };
 use crate::{QueryDatabase, TypeDatabase};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::sync::Arc;
 use tracing::{Level, span, trace};
@@ -286,6 +286,11 @@ type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
 pub struct NarrowingCache {
     /// Cache for type resolution (Lazy/App/Template -> Structural)
     pub resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    /// In-progress type resolution set. `resolve_cache` only records completed
+    /// resolutions, so recursive `keyof` / indexed-access / conditional graphs
+    /// can re-enter before a cache entry exists. Returning the original deferred
+    /// type on a cycle preserves generic form and prevents stack overflow.
+    pub resolve_visiting: RefCell<FxHashSet<TypeId>>,
     /// Cache for top-level property type lookups (TypeId, `PropName`) -> `PropType`
     pub property_cache: RefCell<FxHashMap<(TypeId, Atom), Option<TypeId>>>,
     /// Cache for split-nullish decomposition (TypeId -> (`non_nullish`, nullish)).
@@ -319,6 +324,7 @@ impl NarrowingCache {
                 1024,
                 Default::default(),
             )),
+            resolve_visiting: RefCell::new(FxHashSet::default()),
             property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
                 Default::default(),
@@ -409,7 +415,11 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
+        if !self.cache.resolve_visiting.borrow_mut().insert(type_id) {
+            return type_id;
+        }
         let result = self.resolve_type_uncached(type_id);
+        self.cache.resolve_visiting.borrow_mut().remove(&type_id);
         // Only cache if we actually resolved it — don't cache Lazy → Lazy self-mappings
         // since the TypeEnvironment may be populated later with the real mapping.
         let is_unresolved_symbolic = result == type_id

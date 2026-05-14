@@ -3,6 +3,7 @@
 
 mod builtin_iterator_return_alias;
 mod jsx_runtime_bridge;
+mod simple_local_interface;
 mod type_alias_merged_value;
 mod type_alias_variable_alias;
 
@@ -1802,105 +1803,6 @@ impl<'a> CheckerState<'a> {
             &escaped_name,
             &factory,
         )
-    }
-
-    fn try_lower_simple_local_interface_object(
-        &mut self,
-        sym_id: SymbolId,
-        declarations: &[NodeIndex],
-        has_out_of_arena_decl: bool,
-        has_cross_file_same_index: bool,
-        has_local_interface_decl: bool,
-        has_local_interface_heritage_extends: bool,
-        has_local_computed_property_name: bool,
-    ) -> Option<TypeId> {
-        use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
-
-        if has_out_of_arena_decl
-            || has_cross_file_same_index
-            || !has_local_interface_decl
-            || has_local_interface_heritage_extends
-            || has_local_computed_property_name
-            || declarations.len() != 1
-        {
-            return None;
-        }
-
-        let decl_idx = declarations[0];
-        let node = self.ctx.arena.get(decl_idx)?;
-        let interface = self.ctx.arena.get_interface(node)?;
-        if interface
-            .type_parameters
-            .as_ref()
-            .is_some_and(|params| !params.nodes.is_empty())
-            || interface.members.nodes.is_empty()
-        {
-            return None;
-        }
-
-        let mut properties = Vec::with_capacity(interface.members.nodes.len());
-        for (member_order, &member_idx) in interface.members.nodes.iter().enumerate() {
-            let member_node = self.ctx.arena.get(member_idx)?;
-            if member_node.kind != PROPERTY_SIGNATURE {
-                return None;
-            }
-            let sig = self.ctx.arena.get_signature(member_node)?;
-            let name_atom = self
-                .get_property_name_resolved(sig.name)
-                .map(|name| self.ctx.types.intern_string(&name))?;
-            let type_id = if sig.type_annotation.is_some() {
-                if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
-                    return None;
-                }
-                self.get_type_from_type_node_in_type_literal(sig.type_annotation)
-            } else {
-                TypeId::ANY
-            };
-            let is_symbol_named = self.is_symbol_property_name(sig.name);
-            properties.push(PropertyInfo {
-                name: name_atom,
-                type_id,
-                write_type: type_id,
-                optional: sig.question_token,
-                readonly: self.has_readonly_modifier(&sig.modifiers),
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: member_order as u32 + 1,
-                is_string_named: false,
-                is_symbol_named,
-                single_quoted_name: false,
-            });
-        }
-
-        let factory = self.ctx.types.factory();
-        if properties.is_empty() {
-            Some(TypeId::ANY)
-        } else {
-            Some(factory.object_with_symbol(properties, Some(sym_id)))
-        }
-    }
-
-    fn is_simple_local_interface_fastpath_type(&self, type_idx: NodeIndex) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        self.ctx.arena.get(type_idx).is_some_and(|node| {
-            matches!(
-                node.kind,
-                kind if kind == SyntaxKind::AnyKeyword as u16
-                    || kind == SyntaxKind::BigIntKeyword as u16
-                    || kind == SyntaxKind::BooleanKeyword as u16
-                    || kind == SyntaxKind::NeverKeyword as u16
-                    || kind == SyntaxKind::NumberKeyword as u16
-                    || kind == SyntaxKind::ObjectKeyword as u16
-                    || kind == SyntaxKind::StringKeyword as u16
-                    || kind == SyntaxKind::SymbolKeyword as u16
-                    || kind == SyntaxKind::UndefinedKeyword as u16
-                    || kind == SyntaxKind::UnknownKeyword as u16
-                    || kind == SyntaxKind::VoidKeyword as u16
-            )
-        })
     }
 }
 

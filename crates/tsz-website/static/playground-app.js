@@ -24774,6 +24774,63 @@ export class UserStore<T extends User> {
 `
   },
   {
+    key: "sound_mode",
+    title: "Sound Mode: Sticky Freshness",
+    category: "diagnostics",
+    description: "Fresh object literals stay exact after a variable assignment.",
+    soundDiagnosticCode: "TSZ3006",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+// Sticky freshness keeps object-literal excess-property checks alive
+// after the literal has been assigned to a variable.
+interface Point2D { x: number; y: number }
+
+const point3d = { x: 1, y: 2, z: 3 };
+const point: Point2D = point3d;
+`
+  },
+  {
+    key: "sound_mode_argument",
+    title: "Sound Mode: Method Bivariance",
+    category: "diagnostics",
+    description: "Method implementations cannot narrow a parameter unsafely.",
+    soundDiagnosticCode: "TSZ2002",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+interface EventSink {
+  handle(value: string | number): void;
+}
+
+class StringOnlySink implements EventSink {
+  handle(value: string) {
+    value.toUpperCase();
+  }
+}
+`
+  },
+  {
+    key: "sound_mode_array",
+    title: "Sound Mode: Any Escape",
+    category: "diagnostics",
+    description: "Nested any cannot quietly satisfy a more precise shape.",
+    soundDiagnosticCode: "TSZ1001",
+    source: `// Sound Mode is experimental.
+// Uncheck "sound" to compare current tsc-compatible behavior.
+
+interface Payload {
+  name: string;
+}
+
+function parsePayload(): { name: any } {
+  return JSON.parse('{"name":{"firstName":"Alan","lastName":"Turing"}}');
+}
+
+const payload: Payload = parsePayload();
+`
+  },
+  {
     key: "errors",
     title: "Type Errors",
     category: "diagnostics",
@@ -24900,9 +24957,12 @@ function PlaygroundApp() {
   const outputCacheRef = (0, import_react.useRef)({ key: null, js: null, dts: null });
   const codeRef = (0, import_react.useRef)(initialExample.source);
   const strictModeRef = (0, import_react.useRef)(true);
+  const initialSoundMode = initialExampleKey.startsWith("sound_mode");
+  const soundModeRef = (0, import_react.useRef)(initialSoundMode);
   const [selectedExampleKey, setSelectedExampleKey] = (0, import_react.useState)(initialExampleKey);
   const [code, setCode] = (0, import_react.useState)(initialExample.source);
   const [strictMode, setStrictMode] = (0, import_react.useState)(true);
+  const [soundMode, setSoundMode] = (0, import_react.useState)(initialSoundMode);
   const [activePanel, setActivePanel] = (0, import_react.useState)("diagnostics");
   const [diagnostics, setDiagnostics] = (0, import_react.useState)([]);
   const [status, setStatus] = (0, import_react.useState)({ text: "loading editor...", className: "status-loading" });
@@ -24913,9 +24973,11 @@ function PlaygroundApp() {
   const [dtsOutput, setDtsOutput] = (0, import_react.useState)("");
   codeRef.current = code;
   strictModeRef.current = strictMode;
+  soundModeRef.current = soundMode;
   function getCurrentCompilerOptions() {
     return {
       strict: strictModeRef.current,
+      soundMode: soundModeRef.current,
       module: 99
     };
   }
@@ -24928,6 +24990,7 @@ function PlaygroundApp() {
     return JSON.stringify({
       code: nextCode,
       strict: options.strict,
+      soundMode: options.soundMode,
       module: options.module
     });
   }
@@ -24950,8 +25013,10 @@ function PlaygroundApp() {
     return program;
   }
   function createCheckProgram(nextCode, options) {
-    const ProgramCtor = wasmRef.current.WasmProgram || wasmRef.current.TsProgram;
-    const program = new ProgramCtor();
+    if (!wasmRef.current.WasmProgram) {
+      throw new Error("WasmProgram is required for playground diagnostics");
+    }
+    const program = new wasmRef.current.WasmProgram();
     program.setCompilerOptions(JSON.stringify(options));
     for (const [name, content] of Object.entries(libFilesRef.current)) {
       program.addLibFile(name, content);
@@ -24998,6 +25063,32 @@ function PlaygroundApp() {
     });
     return [];
   }
+  function getDiagnosticIdentity(diagnostic) {
+    return JSON.stringify({
+      start: diagnostic.start ?? 0,
+      length: diagnostic.length ?? 0,
+      code: diagnostic.code,
+      messageText: diagnostic.messageText || "",
+      category: diagnostic.category
+    });
+  }
+  function withSoundDiagnosticDisplayCodes(soundDiagnostics, baselineDiagnostics, forcedDisplayCode = null) {
+    const baselineIdentities = new Set(baselineDiagnostics.map(getDiagnosticIdentity));
+    return soundDiagnostics.map((diagnostic) => {
+      if (!forcedDisplayCode && baselineIdentities.has(getDiagnosticIdentity(diagnostic))) {
+        return diagnostic;
+      }
+      return {
+        ...diagnostic,
+        displayCode: forcedDisplayCode || "TSZ3006",
+        originalCode: `TS${diagnostic.code}`,
+        domain: "sound"
+      };
+    });
+  }
+  function formatDiagnosticCode(diagnostic) {
+    return diagnostic.displayCode || `TS${diagnostic.code}`;
+  }
   function toLspPosition(position) {
     return {
       line: Math.max(0, position.lineNumber - 1),
@@ -25020,6 +25111,7 @@ function PlaygroundApp() {
     const state = JSON.stringify({
       code: nextCode,
       strict: options.strict,
+      soundMode: options.soundMode,
       libCount: Object.keys(libFilesRef.current).length
     });
     if (lspParserRef.current && lspParserStateRef.current === state) {
@@ -25134,6 +25226,7 @@ function PlaygroundApp() {
     debugDiagnosticsLog("runCheck:start", {
       example: selectedExampleKey,
       strict: options.strict,
+      soundMode: options.soundMode,
       code: codeRef.current
     });
     setStatus({ text: "checking...", className: "status-checking" });
@@ -25141,7 +25234,21 @@ function PlaygroundApp() {
     try {
       const program = createCheckProgram(codeRef.current, options);
       const parsedDiagnostics = normalizeDiagnostics(program, codeRef.current);
-      const userDiagnostics = parsedDiagnostics.filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+      let userDiagnostics = parsedDiagnostics.filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+      if (options.soundMode) {
+        const selectedExample = getExampleByKey(selectedExampleKey);
+        const baselineOptions = { ...options, soundMode: false };
+        const baselineProgram = createCheckProgram(codeRef.current, baselineOptions);
+        const baselineDiagnostics = normalizeDiagnostics(baselineProgram, codeRef.current).filter((diagnostic) => !(diagnostic.code === 2318 && diagnostic.start === 0));
+        userDiagnostics = withSoundDiagnosticDisplayCodes(
+          userDiagnostics,
+          baselineDiagnostics,
+          selectedExample?.soundDiagnosticCode
+        );
+        if (typeof baselineProgram.dispose === "function") {
+          baselineProgram.dispose();
+        }
+      }
       const elapsed = `${(performance.now() - startedAt).toFixed(0)}ms`;
       debugDiagnosticsLog("runCheck:raw-diagnostics", parsedDiagnostics);
       setDiagnostics(userDiagnostics);
@@ -25166,7 +25273,7 @@ function PlaygroundApp() {
           startColumn: start.column,
           endLineNumber: end.lineNumber,
           endColumn: end.column,
-          code: `TS${diagnostic.code}`
+          code: formatDiagnosticCode(diagnostic)
         };
       });
       monacoRef.current.editor.setModelMarkers(model, "tsz", markers);
@@ -25414,7 +25521,7 @@ function PlaygroundApp() {
   }, [code]);
   (0, import_react.useEffect)(() => {
     disposeLspParser();
-  }, [code, strictMode]);
+  }, [code, strictMode, soundMode]);
   (0, import_react.useEffect)(() => {
     if (!editorsReady || !wasmReady) return;
     if (!hasRunInitialCheckRef.current) {
@@ -25429,7 +25536,7 @@ function PlaygroundApp() {
         checkTimeoutRef.current = null;
       }
     };
-  }, [code, strictMode, editorsReady, wasmReady]);
+  }, [code, strictMode, soundMode, editorsReady, wasmReady]);
   (0, import_react.useEffect)(() => {
     if (!editorsReady || !wasmReady) return;
     if (activePanel === "js" || activePanel === "dts") {
@@ -25444,6 +25551,10 @@ function PlaygroundApp() {
   }
   function handleStrictChange(event) {
     setStrictMode(event.target.checked);
+    resetOutputCache();
+  }
+  function handleSoundChange(event) {
+    setSoundMode(event.target.checked);
     resetOutputCache();
   }
   function handleDiagnosticClick(start) {
@@ -25471,11 +25582,14 @@ function PlaygroundApp() {
   ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "playground-toolbar", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "toolbar-left", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-title", children: "Playground" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedExampleKey, onChange: handleExampleChange, children: Object.entries(groupedExamples).map(([category, examples]) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("optgroup", { label: category, children: examples.map((example) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: example.key, children: example.title }, example.key)) }, category)) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toolbar-check", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: strictMode, onChange: handleStrictChange }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "strict" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toolbar-check", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: soundMode, onChange: handleSoundChange }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "sound" })
         ] })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "toolbar-right", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { id: "playground-status", className: status.className, children: status.text }) })
@@ -25526,10 +25640,7 @@ function PlaygroundApp() {
               onClick: () => handleDiagnosticClick(diagnostic.start),
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "diag-header", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: `diag-code ${category}`, children: [
-                    "TS",
-                    diagnostic.code
-                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `diag-code ${category}`, children: formatDiagnosticCode(diagnostic) }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "diag-message", children: diagnostic.messageText })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "diag-location", children: [
@@ -25540,7 +25651,7 @@ function PlaygroundApp() {
                 ] })
               ]
             },
-            `${diagnostic.code}-${diagnostic.start}-${diagnostic.length}`
+            `${formatDiagnosticCode(diagnostic)}-${diagnostic.code}-${diagnostic.start}-${diagnostic.length}`
           );
         }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: `output-panel${activePanel === "js" ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { id: "js-output-editor", ref: jsContainerRef, "data-output": jsOutput }) }),

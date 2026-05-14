@@ -87,7 +87,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(SymbolRef(symbol_ref))
     }
 
-    fn unique_symbol_ref_from_symbol_named_atom(&self, name: Atom) -> Option<SymbolRef> {
+    pub(super) fn unique_symbol_ref_from_symbol_named_atom(&self, name: Atom) -> Option<SymbolRef> {
         self.unique_symbol_ref_from_synthetic_atom(name)
             .or_else(|| {
                 let name_text = self.interner().resolve_atom_ref(name);

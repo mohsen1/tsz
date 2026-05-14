@@ -167,8 +167,23 @@ impl<'a> CheckerState<'a> {
             Entry::Occupied(mut slot) => {
                 if prop.optional {
                     let earlier = slot.get().clone();
-                    let merged_type = self.ctx.types.union2(earlier.type_id, prop.type_id);
-                    let merged_write = self.ctx.types.union2(earlier.write_type, prop.write_type);
+                    let (spread_type, spread_write_type) =
+                        if !self.ctx.exact_optional_property_types() && !earlier.optional {
+                            (
+                                crate::query_boundaries::common::remove_undefined(
+                                    self.ctx.types,
+                                    prop.type_id,
+                                ),
+                                crate::query_boundaries::common::remove_undefined(
+                                    self.ctx.types,
+                                    prop.write_type,
+                                ),
+                            )
+                        } else {
+                            (prop.type_id, prop.write_type)
+                        };
+                    let merged_type = self.ctx.types.union2(earlier.type_id, spread_type);
+                    let merged_write = self.ctx.types.union2(earlier.write_type, spread_write_type);
                     slot.insert(PropertyInfo {
                         name: prop.name,
                         type_id: merged_type,
@@ -1686,8 +1701,15 @@ impl<'a> CheckerState<'a> {
                     let method_context_type = contextual_type.and_then(|ctx_type| {
                         self.contextual_method_context_type_for_lookup(ctx_type, &name)
                     });
+                    let method_property_context_type = contextual_type.and_then(|ctx_type| {
+                        self.contextual_object_property_type_for_lookup(ctx_type, &name)
+                    });
                     let method_context_type = self.substitute_contextual_this_type(
                         method_context_type,
+                        contextual_receiver_this_type,
+                    );
+                    let method_property_context_type = self.substitute_contextual_this_type(
+                        method_property_context_type,
                         contextual_receiver_this_type,
                     );
                     let method_request = base_request.contextual_opt(
@@ -1926,7 +1948,18 @@ impl<'a> CheckerState<'a> {
                         method_type = refined_method_type;
                     }
 
-                    let method_type = jsdoc_declared_type.unwrap_or(method_type);
+                    let method_type = jsdoc_declared_type.unwrap_or_else(|| {
+                        if name == "return" || matches!(method_type, TypeId::ANY | TypeId::UNKNOWN)
+                        {
+                            method_property_context_type
+                                .filter(|&context_type| {
+                                    !matches!(context_type, TypeId::ANY | TypeId::UNKNOWN)
+                                })
+                                .unwrap_or(method_type)
+                        } else {
+                            method_type
+                        }
+                    });
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
@@ -2770,7 +2803,7 @@ impl<'a> CheckerState<'a> {
                                 // First union spread: fork from the main properties
                                 let mut branch = properties.clone();
                                 for prop in member_props {
-                                    branch.insert(prop.name, prop);
+                                    self.merge_spread_property(&mut branch, &prop);
                                 }
                                 new_branches.push(branch);
                             } else {
@@ -2778,7 +2811,7 @@ impl<'a> CheckerState<'a> {
                                 for existing in &union_spread_branches {
                                     let mut branch = existing.clone();
                                     for prop in &member_props {
-                                        branch.insert(prop.name, prop.clone());
+                                        self.merge_spread_property(&mut branch, prop);
                                     }
                                     new_branches.push(branch);
                                 }

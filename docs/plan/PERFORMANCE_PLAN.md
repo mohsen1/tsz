@@ -78,11 +78,11 @@ measurement once available.
 | --- | --- | --- |
 | Gate local `large-ts-repo` fallback | Done | Audit completed: `LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"` at `scripts/bench/bench-vs-tsgo.sh:105` is the only local fixture fallback, and it is already gated behind `TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1` (lines 112-114). No other implicit local-fixture paths found. Fixture provenance in diagnostics JSON is the T0.2 piece (#4970). |
 | Perf-only diagnostics JSON | Done (#4945, #4970) | T0.2 shipped. `PhaseTimings` sub-buckets (`config_discovery_ms`, `source_discovery_ms`, `module_resolution_ms`, `load_libs_ms`) split in #4970. |
-| Perf-only counter JSON | Done (#4948, follow-ups in #4960/#4993/#5009/#5015/#5060/#5061/#5064/#5069/#5072/#5843/#5863) | T0.3 shipped. `interner.intern_calls`/`hits`/`misses` and `resolver.is_file_calls`/`is_dir_calls`/`read_dir_calls` are now wired and exposed in JSON. `lock_wait_histogram_ns` is now wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061), still gated on the `perf-counters-timing` cargo feature per §3. The `delegate.calls` / `delegate.misses` / `delegate.cache_hits_cross_file` trio is now wired at all 11 cross-arena child-checker construction sites: 4 in `cross_file.rs` (#5061 + #5064), 7 in non-cross_file paths (ExpandoProperty / CallableTruthiness / CallHelpers / ImportType — #5069 added `calls`, #5072 added `misses`). At every construction site `calls = misses + cache_hits_cross_file + cache_hits_lib` holds, making attribution-mode bench output self-consistent. **#5843 added** the four classification arrays the text dump prints — `delegate_miss_classification` (by_source, by_kind, declaration-file/source-file totals), `alias_shortcut_outcomes`, `direct_interface_lowering_outcomes` — to `PerfCounterSnapshot` JSON. **#5863 added** `cross_file_cache_miss_causes` (4 buckets: `gate_off` / `bucket_empty` / `sentinel_error_unknown` / `type_id_not_interned`) wired into the four reader helpers in `crates/tsz-checker/src/context/cross_file_query.rs`. **#6208 refines #6203** as `source_file_symbol_arena_cache_eligibility_outcomes`, splitting stable-key availability from concrete structural rejections for source-file symbol-arena delegations. **The declaration-file residue naming slice adds** `delegate_declaration_file_miss_residues`, a bounded `(name, kind, source, target_file, count)` table for the remaining declaration-file child-checker tail. **The alias-outcome instrumentation slice adds** `direct_actual_lib_alias_body_outcomes`, splitting the actual-lib alias-body helper into success, conservative name-gate rejection, resolver/definition-store proof failures, and generic-alias rejection. |
+| Perf-only counter JSON | Done (#4948, follow-ups in #4960/#4993/#5009/#5015/#5060/#5061/#5064/#5069/#5072/#5843/#5863) | T0.3 shipped. `interner.intern_calls`/`hits`/`misses` and `resolver.is_file_calls`/`is_dir_calls`/`read_dir_calls` are now wired and exposed in JSON. `lock_wait_histogram_ns` is now wrapped at all interner write paths (#5060) and all cross-arena delegate paths (#5061), still gated on the `perf-counters-timing` cargo feature per section 3. The `delegate.calls` / `delegate.misses` / `delegate.cache_hits_cross_file` trio is now wired at all 11 cross-arena child-checker construction sites: 4 in `cross_file.rs` (#5061 + #5064), 7 in non-cross_file paths (ExpandoProperty / CallableTruthiness / CallHelpers / ImportType - #5069 added `calls`, #5072 added `misses`). At every construction site `calls = misses + cache_hits_cross_file + cache_hits_lib` holds, making attribution-mode bench output self-consistent. **#5843 added** the four classification arrays the text dump prints - `delegate_miss_classification` (by_source, by_kind, declaration-file/source-file totals), `alias_shortcut_outcomes`, `direct_interface_lowering_outcomes` - to `PerfCounterSnapshot` JSON. **#5863 added** `cross_file_cache_miss_causes` (4 buckets: `gate_off` / `bucket_empty` / `sentinel_error_unknown` / `type_id_not_interned`) wired into the four reader helpers in `crates/tsz-checker/src/context/cross_file_query.rs`. **#6208 refines #6203** as `source_file_symbol_arena_cache_eligibility_outcomes`, splitting stable-key availability from concrete structural rejections for source-file symbol-arena delegations. **The declaration-file residue naming slice adds** `delegate_declaration_file_miss_residues`, a bounded `(name, kind, source, target_file, count)` table for the remaining declaration-file child-checker tail. **The alias-outcome instrumentation slice adds** `direct_actual_lib_alias_body_outcomes`, splitting the actual-lib alias-body helper into success, conservative name-gate rejection, resolver/definition-store proof failures, and generic-alias rejection. **The simple-object residue naming slice adds** `compute_type_of_symbol_interface_simple_object_type_reference_reject_residues`, a bounded `(name, outcome, count)` table for the guarded local-interface shortcut's rejected type-reference annotations. |
 | Fresh phase split | Done (refreshed 2026-05-13) | See `docs/plan/perf-runs/2026-05-13-typeenv-arena-direct-attribution.md`. After the #6144 TypeEnvironmentCore arena-direct slice, the cliff remains checker-dominated (monorepo-003..006: check ≈ 97-98 % in attribution mode). `large-ts-repo` remains deferred (previous OOM / stack-overflow blocker); re-measure after one more measured child-checker path is removed or stack behavior is re-audited. |
 | Resolver/source-discovery fast path | **Deferred** | Resolver lookups ~1/file, package.json reads ~1/package on cliff. Not on the hot path. Revisit only after T2.2 lands. |
 | Checker lifetime split | **Promoted** | T0.4 measured `with_parent_cache_constructed = 1.28 × files` on monorepo-006. The 2026-05-11 attribution run, post-#5090 (`reset_for_next_file` boundary), measures 1.22 × files — a ~5 % drop from the same fixture. **T2.1.A** scaffolding (inventory + shells + reset boundary) is on `perf/master`. **T2.1.B** sequential session-reuse path behind `TSZ_FILE_SESSION_REUSE` shipped at `32d1c20bfe`; the `CheckerContext::switch_to_file` boundary in `crates/tsz-checker/src/context/file_session_reset.rs` clears file-local state while preserving the shared `QueryCache` and program-stable caches. **T2.1.C** parallel session reuse (#5842, merged `ee20f50f0e`) extends the same boundary to the rayon-chunked parallel driver path. **T2.1.D** ("replace the hottest child-checker path with an explicit session lease or typed query") is the next concrete code PR; the data driving the target choice should come from the refreshed attribution run that consumes the #5843/#5863 classification + miss-cause buckets. Decision record: [`perf-runs/2026-05-11-attribution-lock-wait.md`](perf-runs/2026-05-11-attribution-lock-wait.md). |
-| Typed cross-file query migration | **Promoted — highest Tier 2 priority** | #6111 landed the first `DelegateCrossArenaSymbol` source-file symbol-arena gateway path. #6144 then removes the dominant `TypeEnvironmentCore` arena-only type-param child-checker path. #6191 converts 96 stable source-file symbol-arena bucket-empty misses into cross-file cache hits on monorepo-006, dropping `DelegateCrossArenaSymbol` from 924 to 828. #6203 classifies the residue: 247 stable source-file keys are cold first reads, 540 are source-file variable symbols outside the current stability proof, and 41 are declaration-file targets. #6212 proves and admits the annotated single-declaration variable slice, dropping the variable-driven `not_class_or_interface` outcome from 540 to 0 and `DelegateCrossArenaSymbol` from 828 to 539 on monorepo-006. #6231 adds a direct source-file interface query for scope-independent stable interfaces, dropping `DelegateCrossArenaSymbol` from 539 to 292 on monorepo-006. #6243 adds a direct source-file variable annotation query for scope-independent annotations and same-file direct interfaces, dropping `DelegateCrossArenaSymbol` from 292 to 41 on monorepo-006. #6260/#6286 route a conservative actual bundled-lib option/registry interface slice through the existing lib resolver, dropping `DelegateCrossArenaSymbol` from 41 to 40 and `checker.with_parent_cache_constructed` from 56 to 55 on monorepo-006. #6314 broadens the proven non-DOM/non-webworker interface slice, dropping `DelegateCrossArenaSymbol` from 40 to 31 and `checker.with_parent_cache_constructed` from 55 to 40 while keeping aliases and value-merged symbols on fallback paths. #6302 adds the first namespace-qualified actual-lib slice for `Intl.CollatorOptions`; its isolated pre-#6314 run dropped `DelegateCrossArenaSymbol` from 40 to 39 and `checker.with_parent_cache_constructed` from 55 to 54. The post-#6314/#6302 refresh measures `DelegateCrossArenaSymbol = 30` and `checker.with_parent_cache_constructed = 39` on monorepo-006. This allowlist-expansion follow-up keeps those main safety gates and the `Intl.CollatorOptions` namespace path, while routing additional iterator/regexp/disposable lib interfaces through `resolve_lib_type_with_params`; its isolated measured branch dropped `DelegateCrossArenaSymbol` from 40 to 30, `checker.with_parent_cache_constructed` from 55 to 33, and `delegate.misses` from 54 to 32. The latest attribution slice names the remaining declaration-file misses as concrete rows; the repeated utility-alias shortcut failed full conformance, so the next alias work should first make the direct/lib delegation cache preserve generic type parameters and then introduce a typed actual-lib alias-body query or canonical `DefinitionStore` entry rather than expanding a name allowlist. The proof/admission stack admits only `Readonly<T>` as the first generic alias slice, removing one measured miss (`checker.with_parent_cache_constructed` 29 -> 28, `delegate.misses` 28 -> 27 on the regenerated monorepo-006 fixture) while leaving other utility aliases on fallback. Decision records: [`perf-runs/2026-05-13-delegate-bucket-empty-attribution.md`](perf-runs/2026-05-13-delegate-bucket-empty-attribution.md), [`perf-runs/2026-05-13-delegate-residue-classification.md`](perf-runs/2026-05-13-delegate-residue-classification.md), [`perf-runs/2026-05-13-delegate-variable-symbol-cache.md`](perf-runs/2026-05-13-delegate-variable-symbol-cache.md), [`perf-runs/2026-05-13-delegate-source-file-direct-interface.md`](perf-runs/2026-05-13-delegate-source-file-direct-interface.md), [`perf-runs/2026-05-13-delegate-source-file-variable-direct.md`](perf-runs/2026-05-13-delegate-source-file-variable-direct.md), [`perf-runs/2026-05-13-delegate-actual-lib-direct.md`](perf-runs/2026-05-13-delegate-actual-lib-direct.md), [`perf-runs/2026-05-13-delegate-intl-lib-direct.md`](perf-runs/2026-05-13-delegate-intl-lib-direct.md), [`perf-runs/2026-05-13-delegate-actual-lib-allowlist-expansion.md`](perf-runs/2026-05-13-delegate-actual-lib-allowlist-expansion.md), [`perf-runs/2026-05-13-delegate-post-lib-residue.md`](perf-runs/2026-05-13-delegate-post-lib-residue.md), [`perf-runs/2026-05-13-delegate-decl-residue-names.md`](perf-runs/2026-05-13-delegate-decl-residue-names.md), [`perf-runs/2026-05-13-actual-lib-readonly-alias-admission-attribution.md`](perf-runs/2026-05-13-actual-lib-readonly-alias-admission-attribution.md). |
+| Typed cross-file query migration | **Promoted — highest Tier 2 priority** | #6111 landed the first `DelegateCrossArenaSymbol` source-file symbol-arena gateway path. #6144 then removes the dominant `TypeEnvironmentCore` arena-only type-param child-checker path. #6191 converts 96 stable source-file symbol-arena bucket-empty misses into cross-file cache hits on monorepo-006, dropping `DelegateCrossArenaSymbol` from 924 to 828. #6203 classifies the residue: 247 stable source-file keys are cold first reads, 540 are source-file variable symbols outside the current stability proof, and 41 are declaration-file targets. #6212 proves and admits the annotated single-declaration variable slice, dropping the variable-driven `not_class_or_interface` outcome from 540 to 0 and `DelegateCrossArenaSymbol` from 828 to 539 on monorepo-006. #6231 adds a direct source-file interface query for scope-independent stable interfaces, dropping `DelegateCrossArenaSymbol` from 539 to 292 on monorepo-006. #6243 adds a direct source-file variable annotation query for scope-independent annotations and same-file direct interfaces, dropping `DelegateCrossArenaSymbol` from 292 to 41 on monorepo-006. #6260/#6286 route a conservative actual bundled-lib option/registry interface slice through the existing lib resolver, dropping `DelegateCrossArenaSymbol` from 41 to 40 and `checker.with_parent_cache_constructed` from 56 to 55 on monorepo-006. #6314 broadens the proven non-DOM/non-webworker interface slice, dropping `DelegateCrossArenaSymbol` from 40 to 31 and `checker.with_parent_cache_constructed` from 55 to 40 while keeping aliases and value-merged symbols on fallback paths. #6302 adds the first namespace-qualified actual-lib slice for `Intl.CollatorOptions`; its isolated pre-#6314 run dropped `DelegateCrossArenaSymbol` from 40 to 39 and `checker.with_parent_cache_constructed` from 55 to 54. The post-#6314/#6302 refresh measures `DelegateCrossArenaSymbol = 30` and `checker.with_parent_cache_constructed = 39` on monorepo-006. This allowlist-expansion follow-up keeps those main safety gates and the `Intl.CollatorOptions` namespace path, while routing additional iterator/regexp/disposable lib interfaces through `resolve_lib_type_with_params`; its isolated measured branch dropped `DelegateCrossArenaSymbol` from 40 to 30, `checker.with_parent_cache_constructed` from 55 to 33, and `delegate.misses` from 54 to 32. The latest attribution slice names the remaining declaration-file misses as concrete rows; the repeated utility-alias shortcut failed full conformance, so the next alias work should first make the direct/lib delegation cache preserve generic type parameters and then introduce a typed actual-lib alias-body query or canonical `DefinitionStore` entry rather than expanding a name allowlist. The proof/admission stack admits only `Readonly<T>` as the first generic alias slice, removing one measured miss (`checker.with_parent_cache_constructed` 29 -> 28, `delegate.misses` 28 -> 27 on the regenerated monorepo-006 fixture) while leaving other utility aliases on fallback. A narrow follow-up now admits value-merged iterator interfaces (`Iterator` / `IteratorObject`) through the existing parameterized lib resolver, reducing declaration-file `DelegateCrossArenaSymbol` children from 26 to 24 and `delegate.misses` from 28 to 24 on monorepo-006 with unchanged diagnostics. A second narrow follow-up admits a namespace-qualified Intl options/registry family and reduces declaration-file `DelegateCrossArenaSymbol` children from 24 to 18 and `delegate.misses` from 24 to 18, also with unchanged diagnostics. A third follow-up admits `NumberFormatOptionsSignDisplayRegistry` and drops declaration-file `DelegateCrossArenaSymbol` children from 18 to 17 and `delegate.misses` from 18 to 17 with unchanged diagnostics. A fourth follow-up admits `Intl.Locale` through a bounded heritage-aware direct path and drops declaration-file `DelegateCrossArenaSymbol` children from 17 to 16 and `delegate.misses` from 17 to 16, still with unchanged diagnostics. A fifth follow-up adds a narrow `Iterator` declaration-proof bypass under existing actual-lib provenance checks and drops declaration-file `DelegateCrossArenaSymbol` children from 16 to 14 and `delegate.misses` from 16 to 14 while keeping diagnostics unchanged. A sixth follow-up admits `PropertyKey` in the direct alias-body allowlist and drops declaration-file `DelegateCrossArenaSymbol` children from 14 to 13 and `delegate.misses` from 14 to 13 with unchanged diagnostics. A seventh follow-up admits `Record` in the direct alias-body allowlist and drops declaration-file `DelegateCrossArenaSymbol` children from 13 to 11 and `delegate.misses` from 13 to 11 while keeping diagnostics unchanged. Decision records: [`perf-runs/2026-05-13-delegate-bucket-empty-attribution.md`](perf-runs/2026-05-13-delegate-bucket-empty-attribution.md), [`perf-runs/2026-05-13-delegate-residue-classification.md`](perf-runs/2026-05-13-delegate-residue-classification.md), [`perf-runs/2026-05-13-delegate-variable-symbol-cache.md`](perf-runs/2026-05-13-delegate-variable-symbol-cache.md), [`perf-runs/2026-05-13-delegate-source-file-direct-interface.md`](perf-runs/2026-05-13-delegate-source-file-direct-interface.md), [`perf-runs/2026-05-13-delegate-source-file-variable-direct.md`](perf-runs/2026-05-13-delegate-source-file-variable-direct.md), [`perf-runs/2026-05-13-delegate-actual-lib-direct.md`](perf-runs/2026-05-13-delegate-actual-lib-direct.md), [`perf-runs/2026-05-13-delegate-intl-lib-direct.md`](perf-runs/2026-05-13-delegate-intl-lib-direct.md), [`perf-runs/2026-05-13-delegate-actual-lib-allowlist-expansion.md`](perf-runs/2026-05-13-delegate-actual-lib-allowlist-expansion.md), [`perf-runs/2026-05-13-delegate-post-lib-residue.md`](perf-runs/2026-05-13-delegate-post-lib-residue.md), [`perf-runs/2026-05-13-delegate-decl-residue-names.md`](perf-runs/2026-05-13-delegate-decl-residue-names.md), [`perf-runs/2026-05-13-actual-lib-readonly-alias-admission-attribution.md`](perf-runs/2026-05-13-actual-lib-readonly-alias-admission-attribution.md), [`perf-runs/2026-05-13-delegate-actual-lib-iterator-value-merged.md`](perf-runs/2026-05-13-delegate-actual-lib-iterator-value-merged.md), [`perf-runs/2026-05-13-delegate-actual-lib-intl-options-value-merged.md`](perf-runs/2026-05-13-delegate-actual-lib-intl-options-value-merged.md), [`perf-runs/2026-05-13-delegate-actual-lib-intl-sign-display-registry.md`](perf-runs/2026-05-13-delegate-actual-lib-intl-sign-display-registry.md), [`perf-runs/2026-05-13-delegate-actual-lib-locale-heritage.md`](perf-runs/2026-05-13-delegate-actual-lib-locale-heritage.md), [`perf-runs/2026-05-14-delegate-actual-lib-iterator-proof-bypass.md`](perf-runs/2026-05-14-delegate-actual-lib-iterator-proof-bypass.md), [`perf-runs/2026-05-14-delegate-actual-lib-property-key.md`](perf-runs/2026-05-14-delegate-actual-lib-property-key.md), [`perf-runs/2026-05-14-delegate-actual-lib-record.md`](perf-runs/2026-05-14-delegate-actual-lib-record.md). |
 | Lib snapshot Phase 2/3 | Demoted | Revive only if lib construction/merge is measured as non-trivial. |
 | Interner redesign | **De-prioritised — not contention-bound** | 2026-05-11 attribution run with `--features perf-tools` (transitively enabling `tsz-common/perf-counters-timing`) measured the lock-wait histogram across monorepo-001..006. At the cliff (monorepo-006, 2.4 M intern calls): 97.5 % of waits land in `<100ns`, only 4 observations exceeded `100µs`, and zero exceeded `10ms`. The interner is not contention-bound on the current single-threaded checking workload. Revisit only if a future change introduces parallel checking, multi-worker interning, or a workload that materially shifts the histogram tail. Decision record: [`perf-runs/2026-05-11-attribution-lock-wait.md`](perf-runs/2026-05-11-attribution-lock-wait.md). |
 
@@ -1171,6 +1171,94 @@ from 30 to 28 with unchanged diagnostics (`10,198`). Decision record:
 [`perf-runs/2026-05-13-delegate-actual-lib-alias-body-query.md`](perf-runs/2026-05-13-delegate-actual-lib-alias-body-query.md).
 Claim: [`claims/perf-actual-lib-alias-body-query-2026-05-13.md`](claims/perf-actual-lib-alias-body-query-2026-05-13.md).
 
+**2026-05-13 value-merged iterator follow-up:** a narrow declaration-file
+interface slice now admits value-merged actual-lib iterator interfaces
+(`Iterator` and `IteratorObject`) through `resolve_lib_type_with_params`.
+Admission remains restricted to this pair; other value-merged interfaces stay
+on fallback. On monorepo-006 this drops `DelegateCrossArenaSymbol` children
+from 26 to 24, `delegate.misses` from 28 to 24, and
+`checker.with_parent_cache_constructed` from 29 to 24 with unchanged
+diagnostics (`10,198`). Residue rows removed: `IteratorObject`, `Symbol`.
+Decision record:
+[`perf-runs/2026-05-13-delegate-actual-lib-iterator-value-merged.md`](perf-runs/2026-05-13-delegate-actual-lib-iterator-value-merged.md).
+Claim:
+[`claims/perf-delegate-actual-lib-iterator-value-merged-2026-05-13.md`](claims/perf-delegate-actual-lib-iterator-value-merged-2026-05-13.md).
+
+**2026-05-13 Intl options follow-up:** a second declaration-file interface
+slice now admits a namespace-qualified Intl options/registry family
+(`DateTimeFormatOptions`, `NumberFormatOptions`,
+`NumberFormatOptionsCurrencyDisplayRegistry`,
+`NumberFormatOptionsStyleRegistry`, `NumberFormatOptionsUseGroupingRegistry`).
+This keeps utility aliases and `Locale` on fallback. On monorepo-006 this
+drops `DelegateCrossArenaSymbol` children from 24 to 18, `delegate.misses`
+from 24 to 18, and `checker.with_parent_cache_constructed` from 24 to 18 with
+unchanged diagnostics (`10,198`). Interface residue rows removed:
+`DateTimeFormatOptions`, `Function`, `NumberFormatOptions`,
+`NumberFormatOptionsCurrencyDisplayRegistry`,
+`NumberFormatOptionsStyleRegistry`, `NumberFormatOptionsUseGroupingRegistry`,
+`Object`, and `RegExp`. Decision record:
+[`perf-runs/2026-05-13-delegate-actual-lib-intl-options-value-merged.md`](perf-runs/2026-05-13-delegate-actual-lib-intl-options-value-merged.md).
+Claim:
+[`claims/perf-delegate-actual-lib-intl-options-value-merged-2026-05-13.md`](claims/perf-delegate-actual-lib-intl-options-value-merged-2026-05-13.md).
+
+**2026-05-13 Intl sign-display registry follow-up:** a third narrow slice
+admits `NumberFormatOptionsSignDisplayRegistry` into that same
+namespace-qualified Intl direct path. On monorepo-006 this drops
+`DelegateCrossArenaSymbol` children from 18 to 17, `delegate.misses` from
+18 to 17, and `checker.with_parent_cache_constructed` from 18 to 17 with
+unchanged diagnostics (`10,198`). Decision record:
+[`perf-runs/2026-05-13-delegate-actual-lib-intl-sign-display-registry.md`](perf-runs/2026-05-13-delegate-actual-lib-intl-sign-display-registry.md).
+Claim:
+[`claims/perf-delegate-actual-lib-intl-sign-display-registry-2026-05-13.md`](claims/perf-delegate-actual-lib-intl-sign-display-registry-2026-05-13.md).
+
+**2026-05-13 Intl.Locale heritage follow-up:** a fourth narrow slice now
+admits `Locale` through the same Intl namespace-qualified direct path with a
+bounded heritage-aware exception (`Intl.Locale`, `Iterator`) and a guarded
+`Iterator` symbol fallback when parameterized lib lookup returns `None`. On
+monorepo-006 this drops `DelegateCrossArenaSymbol` children from 17 to 16,
+`delegate.misses` from 17 to 16, and
+`checker.with_parent_cache_constructed` from 17 to 16 with unchanged
+diagnostics (`10,198`). Interface residue row removed: `Locale`; remaining
+interface residue: `Iterator`. Decision record:
+[`perf-runs/2026-05-13-delegate-actual-lib-locale-heritage.md`](perf-runs/2026-05-13-delegate-actual-lib-locale-heritage.md).
+Claim:
+[`claims/perf-delegate-actual-lib-locale-heritage-2026-05-13.md`](claims/perf-delegate-actual-lib-locale-heritage-2026-05-13.md).
+
+**2026-05-14 Iterator declaration-proof bypass follow-up:** a fifth narrow
+slice keeps the same direct actual-lib path but allows `Iterator` to proceed
+when full declaration-arena proof is unavailable, as long as existing bundled
+lib provenance checks already hold. On monorepo-006 this drops
+`DelegateCrossArenaSymbol` children from 16 to 14, `delegate.misses` from
+16 to 14, and `checker.with_parent_cache_constructed` from 16 to 14 with
+unchanged diagnostics (`10,198`). Residue rows removed: `Iterator`
+(`interface`) and `Readonly` (`type_alias`). Decision record:
+[`perf-runs/2026-05-14-delegate-actual-lib-iterator-proof-bypass.md`](perf-runs/2026-05-14-delegate-actual-lib-iterator-proof-bypass.md).
+Claim:
+[`claims/perf-delegate-actual-lib-iterator-proof-bypass-2026-05-14.md`](claims/perf-delegate-actual-lib-iterator-proof-bypass-2026-05-14.md).
+
+**2026-05-14 PropertyKey alias follow-up:** a sixth narrow slice admits
+`PropertyKey` in the existing direct actual-lib alias-body allowlist. On
+monorepo-006 this drops `DelegateCrossArenaSymbol` children from 14 to 13,
+`delegate.misses` from 14 to 13, and
+`checker.with_parent_cache_constructed` from 14 to 13 with unchanged
+diagnostics (`10,198`). Declaration-file residue row removed: `PropertyKey`.
+Decision record:
+[`perf-runs/2026-05-14-delegate-actual-lib-property-key.md`](perf-runs/2026-05-14-delegate-actual-lib-property-key.md).
+Claim:
+[`claims/perf-delegate-actual-lib-property-key-2026-05-14.md`](claims/perf-delegate-actual-lib-property-key-2026-05-14.md).
+
+**2026-05-14 Record alias follow-up:** a seventh narrow slice admits
+`Record` in the existing direct actual-lib alias-body allowlist while keeping
+`Partial` as the generic fallback sentinel. On monorepo-006 this drops
+`DelegateCrossArenaSymbol` children from 13 to 11, `delegate.misses` from
+13 to 11, and `checker.with_parent_cache_constructed` from 13 to 11 with
+unchanged diagnostics (`10,198`). Declaration-file residue row removed:
+`Record` (count `2`).
+Decision record:
+[`perf-runs/2026-05-14-delegate-actual-lib-record.md`](perf-runs/2026-05-14-delegate-actual-lib-record.md).
+Claim:
+[`claims/perf-delegate-actual-lib-record-2026-05-14.md`](claims/perf-delegate-actual-lib-record-2026-05-14.md).
+
 **2026-05-13 `compute_type_of_symbol` interface fast path:** for local
 single-declaration interfaces, we now skip three high-frequency costs when not
 needed: computed-name precompute maps, member type-parameter prewarm scans, and
@@ -1208,7 +1296,7 @@ shortcut measured a large monorepo-006 win (`95.75s -> 84.24s` total), but it
 also admitted empty interfaces and annotations that require hybrid type
 resolution; after targeted unit failures, the guarded branch now falls back to
 the full interface lowering path for those cases. Treat the original timing as
-historical until the narrowed guard is remeasured. Decision record:
+historical broad-shortcut evidence. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-fastpath.md).
 
 **2026-05-13 `compute_type_of_symbol` simple-local-interface hit counter:** a
@@ -1218,9 +1306,93 @@ records every interface-symbol call that returns through the simple local-object
 shortcut. The original broad shortcut reported `24,760` hits against `24,796`
 interface-kind calls (`99.85%`); this is no longer the guarded-branch baseline.
 Keep the counter as the direct guardrail for future interface root-demand or
-lowering-cost edits, and refresh monorepo-006 before quoting hit-rate claims.
+lowering-cost edits.
 Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-hit-counter.md).
+
+**2026-05-13 `compute_type_of_symbol` simple-object outcome buckets:** a new
+named outcome array,
+`compute_type_of_symbol_interface_simple_object_outcomes`, classifies why the
+shortcut succeeded or rejected per interface call. On monorepo-006, `success`
+is `24,760 / 24,796` (`99.85%`); the active reject residue is tiny and concrete
+(`reject_out_of_arena_decl=16`, `reject_missing_interface_decl=7`,
+`reject_declaration_count=1`, `reject_heritage_extends=1`, all others zero).
+This narrows future shortcut-expansion work to those live buckets and avoids
+spending time on inactive gates. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-outcomes.md).
+
+**2026-05-13 guarded simple-local-object rerun:** monorepo-006 has now been
+remeasured on the guarded branch
+([`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-local-object-guarded-rerun.md)).
+The counter signal stays clear: `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits = 0` and
+`compute_type_of_symbol_interface_simple_object_outcomes.success = 0`.
+The active residue remains `reject_out_of_arena_decl=16`,
+`reject_missing_interface_decl=7`, `reject_declaration_count=1`,
+`reject_heritage_extends=1`, and
+`reject_non_primitive_annotation=24,760`. A new annotation-kind split shows the
+non-primitive residue is entirely `type_reference` (`24,760`) with all other
+kind buckets at `0`. A follow-up reject-outcome split then shows all
+`type_reference` rows are `identifier_not_found_symbol` (`24,760`), with
+every other type-reference reject-outcome bucket at `0`. That makes direct
+guard relaxation unsafe: this residue currently lacks stable type-symbol
+resolution in the shortcut context. Timing remains noisy under shared-runner
+contention (`94.74s/93.16s` total/check in the latest run), so treat this
+rerun as a counter-baseline refresh, not a timing claim. The next measurement
+slice adds a bounded
+`compute_type_of_symbol_interface_simple_object_type_reference_reject_residues`
+table so the `identifier_not_found_symbol` bucket can be attributed by
+type-reference name before choosing between a conformance-proven
+symbol-resolution strategy and dead-path simplification. Decision record:
+[`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-type-reference-reject-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-type-reference-reject-outcomes.md).
+
+**2026-05-14 simple-object type-reference residue names:** after #6734, the
+new residue table was run on regenerated monorepo-006 at `95fafc52ff`. The
+guarded shortcut still has `success = 0`, and the live reject residue is
+`reject_non_primitive_annotation=24,762`. The type-reference split is now
+actionable: `identifier_not_found_symbol=24,761`, and the bounded name table
+contains a single row, `number=24,761`. One remaining non-primitive row is
+`union_or_intersection=1`. The next behavior slice should not be a broad
+resolver rewrite; first prove why primitive-looking `number` reaches the
+shortcut as a type reference, then either normalize/admit that primitive case
+or fix the parser/classification boundary if it should be a `NumberKeyword`.
+Decision record:
+[`perf-runs/2026-05-14-simple-object-type-reference-residues.md`](perf-runs/2026-05-14-simple-object-type-reference-residues.md).
+
+**2026-05-14 primitive/literal simple-object admission:** the follow-up admits
+only no-argument primitive intrinsic type references and literal/template
+literal annotations into the existing simple local-interface shortcut. The
+property `TypeId` still comes from `get_type_from_type_node_in_type_literal`.
+On regenerated monorepo-006, diagnostics stay at `10,198`, simple-object hits
+move from `0` to `24,760`, `success` moves from `0` to `24,760`, and
+`reject_non_primitive_annotation` drops from `24,762` to `2`. The
+type-reference residue table is empty after the change. Timing in this
+attribution run is noisy and not a timing claim. The next possible admission
+target is now the two remaining concrete rows:
+`union_or_intersection=1` and `array_or_tuple=1`. Decision record:
+[`perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md`](perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md).
+
+**2026-05-14 simple-object residual annotation admission:** the next slice
+admits recursively simple union/intersection, array, and tuple annotations when
+every child annotation is already accepted by the same local shortcut guard.
+This keeps arbitrary type references and resolver-dependent shapes on fallback.
+On regenerated monorepo-006, diagnostics stay at `10,198`,
+`checker.compute_type_of_symbol_interface_simple_object_fastpath_hits` moves
+from `24,760` to `24,762`, `success` moves from `24,760` to `24,762`, and
+`reject_non_primitive_annotation` drops from `2` to `0`. The measured
+annotation-kind residue is now exhausted; the remaining shortcut rejects are
+declaration/provenance guards (`reject_out_of_arena_decl=6`,
+`reject_missing_interface_decl=7`). No timing claim is made from this
+attribution-mode run. Decision record:
+[`perf-runs/2026-05-14-simple-object-residual-annotations.md`](perf-runs/2026-05-14-simple-object-residual-annotations.md).
+
+**2026-05-14 composite/array attribution companion:** a follow-up attribution
+record for the same guarded union/intersection, array, and tuple admission
+shows the remaining annotation-kind buckets (`union_or_intersection`,
+`array_or_tuple`) at `0`. In that run, `checker.with_parent_cache_constructed`
+and `delegate.misses` drop from `11` to `5`; the remaining declaration-file
+residue is `FlatArray` (2), `IteratorResult` (2), and `Partial` (1). This
+attribution run is not a timing claim. Decision record:
+[`perf-runs/2026-05-14-simple-object-composite-array-tuple.md`](perf-runs/2026-05-14-simple-object-composite-array-tuple.md).
 
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
 any more aliases, add `direct_actual_lib_alias_body_outcomes` to the perf

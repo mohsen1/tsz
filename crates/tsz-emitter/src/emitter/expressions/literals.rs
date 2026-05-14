@@ -932,6 +932,34 @@ impl<'a> Printer<'a> {
             self.emit_decl_name(prop.name);
         }
         self.write(": ");
+        if self.ctx.target_es5
+            && let Some(init_node) = self.arena.get(prop.initializer)
+            && let Some(func) = self.arena.get_function(init_node)
+            && func.is_async
+        {
+            let has_generator_asterisk = func.asterisk_token
+                || self
+                    .source_text
+                    .and_then(|text| {
+                        let start = (init_node.pos as usize).min(text.len());
+                        let end = self
+                            .arena
+                            .get(func.body)
+                            .map_or(init_node.end as usize, |body| body.pos as usize)
+                            .min(text.len());
+                        (start < end).then(|| &text[start..end])
+                    })
+                    .is_some_and(|prefix| prefix.contains('*'));
+            if !has_generator_asterisk {
+                self.emit_expression(prop.initializer);
+                return;
+            }
+            let property_name =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, prop.name);
+            let inner_name = (!property_name.is_empty()).then(|| format!("{property_name}_1"));
+            self.emit_async_generator_es5_function_wrapper(func, "", inner_name);
+            return;
+        }
         self.emit_expression(prop.initializer);
     }
 

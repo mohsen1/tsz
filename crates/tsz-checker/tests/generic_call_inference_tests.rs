@@ -102,6 +102,24 @@ fn relevant_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn relevant_strict_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = tsz_checker::test_utils::load_default_lib_files();
+    check_source_with_libs_code_messages(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|(code, _)| *code != 2318)
+    .collect()
+}
+
 #[test]
 fn variadic_rest_tuple_satisfies_array_rest_constraint() {
     let source = r#"
@@ -2920,6 +2938,56 @@ const wrongString: number = madeString.props.stuff;
 }
 
 #[test]
+fn generic_constructor_options_infer_from_context_sensitive_object_member_return() {
+    let source = r#"
+declare class Connection {
+    ok(): void;
+}
+
+declare class Pending<R> {
+    promise: Promise<R>;
+}
+
+interface PoolOptions<R> {
+    create: () => R | Promise<R>;
+    destroy: (resource: R) => void;
+    validate?: (resource: R) => boolean;
+}
+
+declare class Pool<R> {
+    constructor(options: PoolOptions<R>);
+    acquire(): Pending<R>;
+    release(resource: R): void;
+}
+
+declare const tarn: {
+    Pool: typeof Pool;
+};
+
+const pool = new tarn.Pool({
+    create: async () => new Connection(),
+    destroy: (connection) => {
+        connection.ok();
+    },
+    validate: (connection) => true,
+});
+
+const keep: Pending<Connection> = pool.acquire();
+const reject: Pending<string> = pool.acquire();
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "generic constructor options should infer callback parameter types during Round 2. Got: {diags:#?}"
+    );
+    let ts2322_count = diags.iter().filter(|(code, _)| *code == 2322).count();
+    assert_eq!(
+        ts2322_count, 1,
+        "Pool should infer R = Connection from create(), accept Connection assignment, and reject string assignment exactly once. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn conflicting_contextual_instantiation_keeps_enclosing_return_type_param() {
     let source = r#"
 declare function accept<R>(fn: (a: string, b: number) => R): R;
@@ -3774,5 +3842,111 @@ const ws: WrapStr = { value: "hello", wrapped: 42 };
     assert!(
         diags.iter().all(|(code, _)| *code != 2322),
         "conditional default depending on earlier known type parameter must evaluate. Got: {diags:#?}"
+    );
+}
+
+// ─── Template literal type parameter inference (issue #6147) ─────────────────
+
+/// f(x: prefix-T) where T extends string — call with matching literal should infer T.
+#[test]
+fn template_literal_infers_type_param_trailing_span() {
+    let source = r#"
+declare function f<T extends string>(x: `prefix-${T}`): T;
+const result = f("prefix-hello");
+const _check: "hello" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"hello\" from template literal argument. Got: {diags:#?}"
+    );
+}
+
+/// Same rule with a renamed type parameter (`K`) to confirm no identifier is hardcoded.
+#[test]
+fn template_literal_infers_type_param_renamed() {
+    let source = r#"
+declare function get<K extends string>(x: `get-${K}`): K;
+const result = get("get-name");
+const _check: "name" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "K should be inferred as \"name\" from template literal argument. Got: {diags:#?}"
+    );
+}
+
+/// f(x: pre-T-suf) where T extends string — T is surrounded by text anchors.
+#[test]
+fn template_literal_infers_type_param_prefix_and_suffix() {
+    let source = r#"
+declare function f<T extends string>(x: `pre-${T}-suf`): T;
+const result = f("pre-mid-suf");
+const _check: "mid" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"mid\" from surrounded template. Got: {diags:#?}"
+    );
+}
+
+/// f(x: T-U) where T and U extend string — two type params inferred from a separator-delimited literal.
+#[test]
+fn template_literal_infers_multiple_type_params() {
+    let source = r#"
+declare function f<T extends string, U extends string>(x: `${T}-${U}`): [T, U];
+const result = f("hello-world");
+const _check: ["hello", "world"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T and U should be inferred from two-param template. Got: {diags:#?}"
+    );
+}
+
+/// Same two-param rule using different names (`A`, `B`) to confirm generality.
+#[test]
+fn template_literal_infers_multiple_type_params_renamed() {
+    let source = r#"
+declare function split<A extends string, B extends string>(x: `${A}/${B}`): [A, B];
+const result = split("foo/bar");
+const _check: ["foo", "bar"] = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "A and B should be inferred from split template. Got: {diags:#?}"
+    );
+}
+
+/// When the argument does not match the template pattern, a TS2345 error is expected.
+#[test]
+fn template_literal_type_param_mismatch_errors() {
+    let source = r#"
+declare function f<T extends string>(x: `prefix-${T}`): T;
+f("wrong");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2345),
+        "passing a non-matching literal should raise TS2345. Got: {diags:#?}"
+    );
+}
+
+/// f(x: T-suffix) where T extends string — T is a leading span with a fixed suffix.
+#[test]
+fn template_literal_type_param_leading_span() {
+    let source = r#"
+declare function f<T extends string>(x: `${T}-suffix`): T;
+const result = f("hello-suffix");
+const _check: "hello" = result;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as \"hello\" from leading template span. Got: {diags:#?}"
     );
 }

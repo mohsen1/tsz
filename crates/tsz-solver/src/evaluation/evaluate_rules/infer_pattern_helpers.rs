@@ -1466,14 +1466,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let Some(source_sig) = source_sigs.last() else {
                         return false;
                     };
-                    match_return(source, source_sig.return_type, bindings)
+                    let erased_return = self.erase_return_type_for_infer(
+                        source_sig.return_type,
+                        &source_sig.type_params,
+                    );
+                    match_return(source, erased_return, bindings)
                 }
                 Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
                     if is_construct_pattern && !source_fn.is_constructor {
                         return false;
                     }
-                    match_return(source, source_fn.return_type, bindings)
+                    let erased_return = self
+                        .erase_return_type_for_infer(source_fn.return_type, &source_fn.type_params);
+                    match_return(source, erased_return, bindings)
                 }
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
@@ -1499,11 +1505,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 let Some(source_sig) = source_sigs.last() else {
                                     return false;
                                 };
-                                if !match_return(
-                                    member,
+                                let erased_return = self.erase_return_type_for_infer(
                                     source_sig.return_type,
-                                    &mut member_bindings,
-                                ) {
+                                    &source_sig.type_params,
+                                );
+                                if !match_return(member, erased_return, &mut member_bindings) {
                                     return false;
                                 }
                             }
@@ -1512,11 +1518,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 if is_construct_pattern && !source_fn.is_constructor {
                                     return false;
                                 }
-                                if !match_return(
-                                    member,
+                                let erased_return = self.erase_return_type_for_infer(
                                     source_fn.return_type,
-                                    &mut member_bindings,
-                                ) {
+                                    &source_fn.type_params,
+                                );
+                                if !match_return(member, erased_return, &mut member_bindings) {
                                     return false;
                                 }
                             }

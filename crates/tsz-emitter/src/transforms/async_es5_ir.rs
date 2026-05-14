@@ -143,11 +143,14 @@ struct ES5ClassFactoryParts {
 /// It converts async functions to ES5 code using __awaiter and __generator helpers.
 pub struct AsyncES5Transformer<'a> {
     pub(crate) arena: &'a NodeArena,
-    source_text: Option<&'a str>,
+    pub(super) source_text: Option<&'a str>,
     pub(crate) state: AsyncTransformState,
     helpers_needed: HelpersNeeded,
     /// When true, looks for yield instead of await.
     pub(crate) generator_mode: bool,
+    /// When true, generator-mode yields feed `__await(...)` values to
+    /// `__asyncGenerator`.
+    pub(crate) async_generator_mode: bool,
     temp_var_counter: Cell<u32>,
     lexical_this_capture: Cell<bool>,
     capture_this_references: Cell<bool>,
@@ -163,6 +166,7 @@ impl<'a> AsyncES5Transformer<'a> {
             state: AsyncTransformState::new(),
             helpers_needed: HelpersNeeded::default(),
             generator_mode: false,
+            async_generator_mode: false,
             temp_var_counter: Cell::new(0),
             lexical_this_capture: Cell::new(false),
             capture_this_references: Cell::new(false),
@@ -436,9 +440,10 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     pub(crate) fn is_suspension_expression(&self, idx: NodeIndex) -> bool {
-        self.arena
-            .get(idx)
-            .is_some_and(|n| n.kind == self.suspension_kind())
+        self.arena.get(idx).is_some_and(|n| {
+            n.kind == self.suspension_kind()
+                || (self.async_generator_mode && n.kind == syntax_kind_ext::AWAIT_EXPRESSION)
+        })
     }
 
     pub const fn get_helpers_needed(&self) -> &HelpersNeeded {
@@ -721,6 +726,91 @@ impl<'a> AsyncES5Transformer<'a> {
                 is_expression_body: false,
                 body_source_range: None,
             }
+        }
+    }
+
+    pub fn transform_async_generator_inner_function(
+        &mut self,
+        name: Option<String>,
+        params: &[NodeIndex],
+        body_idx: NodeIndex,
+        include_params: bool,
+    ) -> IRNode {
+        self.state.reset();
+        self.reset_loop_exit_placeholders();
+        self.generator_mode = true;
+        self.async_generator_mode = true;
+        self.helpers_needed.await_helper = true;
+        self.helpers_needed.async_generator = true;
+        self.helpers_needed.generator = true;
+
+        let mut param_binding_names = Vec::new();
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.collect_binding_name(param.name, &mut param_binding_names);
+        }
+
+        let has_yield = self.body_contains_await(body_idx);
+        self.state.has_await = has_yield;
+        self.state.captures_arguments =
+            tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        if self.state.captures_arguments {
+            self.state.arguments_capture_name =
+                self.fresh_arguments_capture_name(body_idx, &param_binding_names);
+        }
+
+        let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
+        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
+        let mut body = Vec::new();
+        for group in hoisted_var_groups {
+            let declarations = group
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            body.push(IRNode::VarDeclList(declarations));
+        }
+        if self.state.captures_arguments {
+            body.push(IRNode::VarDecl {
+                name: self.state.arguments_capture_name.clone().into(),
+                initializer: Some(Box::new(IRNode::Raw("arguments".to_string().into()))),
+            });
+        }
+        body.push(generator_body);
+
+        self.generator_mode = false;
+        self.async_generator_mode = false;
+
+        let ir_params = if include_params {
+            params
+                .iter()
+                .filter_map(|&param_idx| {
+                    let param_node = self.arena.get(param_idx)?;
+                    let param = self.arena.get_parameter(param_node)?;
+                    Some(IRParam::new(
+                        crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena, param.name,
+                        ),
+                    ))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        IRNode::FunctionExpr {
+            name: name.map(Into::into),
+            parameters: ir_params,
+            body,
+            is_expression_body: false,
+            body_source_range: None,
         }
     }
 
@@ -1168,6 +1258,23 @@ impl<'a> AsyncES5Transformer<'a> {
             ) {
                 return;
             }
+            if self.async_generator_mode
+                && (node.kind == syntax_kind_ext::YIELD_EXPRESSION
+                    || self.node_text_contains_yield(idx))
+            {
+                self.emit_nested_suspension(idx, cases, current_statements, current_label);
+                self.push_generator_yield(
+                    opcodes::YIELD,
+                    IRNode::GeneratorSent,
+                    "yield",
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+                current_statements
+                    .push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
+                return;
+            }
             self.emit_nested_suspension(idx, cases, current_statements, current_label);
             let ir = self.expression_to_ir(idx);
             current_statements.push(IRNode::ExpressionStatement(Box::new(ir)));
@@ -1193,7 +1300,9 @@ impl<'a> AsyncES5Transformer<'a> {
 
     fn find_suspension_expression(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.arena.get(idx)?;
-        if node.kind == self.suspension_kind() {
+        if node.kind == self.suspension_kind()
+            || (self.async_generator_mode && node.kind == syntax_kind_ext::AWAIT_EXPRESSION)
+        {
             return Some(idx);
         }
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
@@ -1316,15 +1425,33 @@ impl<'a> AsyncES5Transformer<'a> {
             return;
         };
 
-        // await uses UnaryExprDataEx
+        // await/yield uses UnaryExprDataEx
         if let Some(await_expr) = self.arena.get_unary_expr_ex(node) {
+            if self.async_generator_mode && node.kind == syntax_kind_ext::YIELD_EXPRESSION {
+                self.process_async_generator_yield_expression(
+                    await_expr,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+                return;
+            }
+
             // Get the awaited expression
             let operand = if await_expr.expression.is_none() {
                 IRNode::Raw("".to_string().into())
-            } else if self.generator_mode {
+            } else if self.generator_mode && node.kind == syntax_kind_ext::YIELD_EXPRESSION {
                 self.generator_yield_operand_to_ir(await_expr.expression)
             } else {
-                self.expression_to_ir(await_expr.expression)
+                let operand = self.expression_to_ir(await_expr.expression);
+                if self.async_generator_mode && node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+                    IRNode::CallExpr {
+                        callee: Box::new(IRNode::RuntimeHelper("__await".into())),
+                        arguments: vec![operand],
+                    }
+                } else {
+                    operand
+                }
             };
 
             // Emit: return [4 /*yield*/, operand];
@@ -1344,6 +1471,143 @@ impl<'a> AsyncES5Transformer<'a> {
 
             *current_label = self.state.next_label();
         }
+    }
+
+    fn process_async_generator_yield_expression(
+        &mut self,
+        yield_expr: &tsz_parser::parser::node::UnaryExprDataEx,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        if yield_expr.asterisk_token {
+            let delegated = IRNode::CallExpr {
+                callee: Box::new(IRNode::RuntimeHelper("__values".into())),
+                arguments: vec![IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__asyncDelegator".into())),
+                    arguments: vec![IRNode::CallExpr {
+                        callee: Box::new(IRNode::RuntimeHelper("__asyncValues".into())),
+                        arguments: vec![self.expression_to_ir(yield_expr.expression)],
+                    }],
+                }],
+            };
+            self.push_generator_yield(
+                opcodes::YIELD_STAR,
+                delegated,
+                "yield*",
+                cases,
+                current_statements,
+                current_label,
+            );
+
+            let awaited_delegated_value = IRNode::CallExpr {
+                callee: Box::new(IRNode::PropertyAccess {
+                    object: Box::new(IRNode::RuntimeHelper("__await".into())),
+                    property: "apply".into(),
+                }),
+                arguments: vec![
+                    IRNode::Undefined,
+                    IRNode::ArrayLiteral(vec![IRNode::GeneratorSent]),
+                ],
+            };
+            self.push_generator_yield(
+                opcodes::YIELD,
+                awaited_delegated_value,
+                "yield",
+                cases,
+                current_statements,
+                current_label,
+            );
+            return;
+        }
+
+        let operand = if self
+            .arena
+            .get(yield_expr.expression)
+            .is_some_and(|n| n.kind == syntax_kind_ext::AWAIT_EXPRESSION)
+        {
+            let awaited = self
+                .arena
+                .get(yield_expr.expression)
+                .and_then(|n| self.arena.get_unary_expr_ex(n))
+                .map_or(IRNode::Undefined, |await_expr| {
+                    self.wrap_async_generator_await(await_expr.expression)
+                });
+            self.push_generator_yield(
+                opcodes::YIELD,
+                awaited,
+                "yield",
+                cases,
+                current_statements,
+                current_label,
+            );
+            IRNode::GeneratorSent
+        } else {
+            self.wrap_async_generator_await(yield_expr.expression)
+        };
+
+        self.push_generator_yield(
+            opcodes::YIELD,
+            operand,
+            "yield",
+            cases,
+            current_statements,
+            current_label,
+        );
+        self.push_generator_yield(
+            opcodes::YIELD,
+            IRNode::GeneratorSent,
+            "yield",
+            cases,
+            current_statements,
+            current_label,
+        );
+    }
+
+    fn push_generator_yield(
+        &mut self,
+        opcode: u32,
+        value: IRNode,
+        comment: &str,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode,
+                value: Some(Box::new(value)),
+                comment: Some(comment.to_string().into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = self.state.next_label();
+    }
+
+    fn wrap_async_generator_await(&self, expression: NodeIndex) -> IRNode {
+        IRNode::CallExpr {
+            callee: Box::new(IRNode::RuntimeHelper("__await".into())),
+            arguments: vec![self.expression_to_ir(expression)],
+        }
+    }
+
+    fn node_text_contains_yield(&self, idx: NodeIndex) -> bool {
+        self.node_text_contains(idx, "yield")
+    }
+
+    fn node_text_contains(&self, idx: NodeIndex, needle: &str) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        start < end && text[start..end].contains(needle)
     }
 
     fn process_variable_declaration(
@@ -2625,7 +2889,9 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         // Check if this is an await expression
-        if node.kind == self.suspension_kind() {
+        if node.kind == self.suspension_kind()
+            || (self.async_generator_mode && node.kind == syntax_kind_ext::AWAIT_EXPRESSION)
+        {
             return true;
         }
 

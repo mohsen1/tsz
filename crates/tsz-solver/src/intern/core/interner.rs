@@ -579,6 +579,12 @@ pub struct TypeInterner {
     /// The formatter checks this to show `Dictionary<string>` instead
     /// of `{ [index: string]: string; }` in error messages.
     pub(super) display_alias: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// Application bases whose type-alias body is a conditional type.
+    ///
+    /// Conditional aliases often evaluate to a branch with its own display
+    /// surface. Keep this small provenance bit so application-preferring alias
+    /// storage can avoid repainting an already-recorded branch intersection.
+    pub(super) conditional_alias_bases: DashMap<TypeId, (), FxBuildHasher>,
     /// As-written origin members for a Union TypeId, used to preserve top-level
     /// alias names that would otherwise be lost during union flattening.
     ///
@@ -660,6 +666,7 @@ impl TypeInterner {
             exact_optional_property_types: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
+            conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
@@ -1414,6 +1421,13 @@ impl TypeInterner {
         if app.args.contains(&evaluated) {
             return;
         }
+        let preserves_conditional_branch_alias = self.is_conditional_alias_base(app.base)
+            && self.get_display_alias(evaluated).is_some_and(|existing| {
+                matches!(self.lookup(existing), Some(TypeData::Intersection(_)))
+            });
+        if preserves_conditional_branch_alias {
+            return;
+        }
         let application_has_generic_args = app
             .args
             .iter()
@@ -1440,6 +1454,16 @@ impl TypeInterner {
     /// Returns `None` if this type was not produced from an Application evaluation.
     pub fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         self.display_alias.get(&type_id).map(|r| *r)
+    }
+
+    /// Record that an application base belongs to a type alias whose body is a
+    /// conditional type. This is diagnostic-only provenance.
+    pub fn mark_conditional_alias_base(&self, base: TypeId) {
+        self.conditional_alias_bases.insert(base, ());
+    }
+
+    pub fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        self.conditional_alias_bases.contains_key(&base)
     }
 
     /// Record the as-written origin members for a flattened Union TypeId.

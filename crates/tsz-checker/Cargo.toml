@@ -158,6 +158,10 @@ name = "ts1240_tests"
 path = "tests/ts1240_tests.rs"
 
 [[test]]
+name = "ts1240_accessor_decorator_tests"
+path = "tests/ts1240_accessor_decorator_tests.rs"
+
+[[test]]
 name = "ts2802_downlevel_iteration_tests"
 path = "tests/ts2802_downlevel_iteration_tests.rs"
 
@@ -250,6 +254,10 @@ name = "readonly_tuple_source_display_tests"
 path = "tests/readonly_tuple_source_display_tests.rs"
 
 [[test]]
+name = "module_augmentation_isolation_tests"
+path = "tests/module_augmentation_isolation_tests.rs"
+
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 
@@ -304,6 +312,10 @@ path = "tests/typeof_import_commonjs_object_literal_export_tests.rs"
 [[test]]
 name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
+
+[[test]]
+name = "conditional_extends_readonly_identity_tests"
+path = "tests/conditional_extends_readonly_identity_tests.rs"
 
 [[test]]
 name = "ts2322_property_decl_annotation_tests"
@@ -1084,6 +1096,22 @@ path = "tests/template_literal_record_key_tests.rs"
 [[test]]
 name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
+
+[[test]]
+name = "string_iterable_overload_matching_tests"
+path = "tests/string_iterable_overload_matching_tests.rs"
+
+[[test]]
+name = "abstract_method_overload_ts2416_tests"
+path = "tests/abstract_method_overload_ts2416_tests.rs"
+
+[[test]]
+name = "self_module_augmentation_isolation_tests"
+path = "tests/self_module_augmentation_isolation_tests.rs"
+
+[[test]]
+name = "simple_local_interface_fastpath_tests"
+path = "tests/simple_local_interface_fastpath_tests.rs"
 
 [[test]]
 name = "ts2344_infer_positional_constraint_tests"

@@ -1,38 +1,54 @@
 //! Class-member decorator signature validation helpers.
 
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
+/// Decorator-type sentinels that short-circuit signature validation. `ERROR`
+/// is an unresolved type (we have already reported it elsewhere); `ANY` and
+/// `UNKNOWN` are explicitly permissive and tsc does not emit a follow-on
+/// TS1239/TS1240 for them.
+#[inline]
+const fn decorator_type_is_unchecked(t: TypeId) -> bool {
+    matches!(t, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
+}
+
 impl<'a> CheckerState<'a> {
-    /// TS1240 for ES field decorators: the runtime invokes field decorators as
-    /// `decorator(undefined, context)`. Resolve the decorator expression against
-    /// that value argument so signatures that require the field value itself are
-    /// rejected like tsc.
-    pub(crate) fn check_es_property_decorator_call_signature(
+    /// TS1240 for ES class-member decorators (TC39 stage 3).
+    ///
+    /// The runtime calling convention for the first argument varies by member kind:
+    ///
+    /// - Plain field (`x = …`): `undefined`
+    /// - Auto-accessor (`accessor x = …`): a `ClassAccessorDecoratorTarget<This, V>`
+    ///   object — `{ get(this: This): V; set(this: This, value: V): void }`
+    ///
+    /// Callers select the first-arg type per member kind; this helper resolves
+    /// the decorator type and verifies it is callable with `(first_arg, ANY)`,
+    /// emitting TS1240 otherwise. The second argument (the decorator context)
+    /// is `ANY` because the calling convention is distinguished by the first
+    /// argument shape alone — the context object differs by kind but tsc
+    /// reports the same TS1240 either way.
+    pub(crate) fn check_es_member_decorator_call_signature(
         &mut self,
         decorator_node: NodeIndex,
         decorator_type: TypeId,
+        first_arg: TypeId,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use crate::query_boundaries::common::CallResult;
-
-        if decorator_type == TypeId::ERROR
-            || decorator_type == TypeId::ANY
-            || decorator_type == TypeId::UNKNOWN
-        {
+        if decorator_type_is_unchecked(decorator_type) {
             return;
         }
 
         self.ensure_relation_input_ready(decorator_type);
         let resolved = self.evaluate_type_for_assignability(decorator_type);
-        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
+        if decorator_type_is_unchecked(resolved) {
             return;
         }
 
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
-            &[TypeId::UNDEFINED, TypeId::ANY],
+            &[first_arg, TypeId::ANY],
             false,
             None,
             None,
@@ -47,6 +63,26 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve `ClassAccessorDecoratorTarget<any, any>` from the lib globals.
+    ///
+    /// Returns `None` if the lib is not available (e.g. `--noLib`); callers
+    /// fall back to a permissive shape so absent libs do not cause false
+    /// positives.
+    pub(crate) fn resolve_class_accessor_decorator_target_any(&mut self) -> Option<TypeId> {
+        let lib_binders = self.get_lib_binders();
+        let sym_id = self
+            .ctx
+            .binder
+            .get_global_type_with_libs("ClassAccessorDecoratorTarget", &lib_binders)?;
+        let base = self.ctx.create_lazy_type_ref(sym_id);
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .application(base, vec![TypeId::ANY, TypeId::ANY]),
+        )
+    }
+
     /// TS1329: Check if a method/accessor decorator accepts too few arguments.
     ///
     /// For experimental decorators, method/accessor decorators are called as
@@ -59,12 +95,7 @@ impl<'a> CheckerState<'a> {
         decorator_type: TypeId,
         decorator_node: NodeIndex,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-        if decorator_type == TypeId::ERROR
-            || decorator_type == TypeId::ANY
-            || decorator_type == TypeId::UNKNOWN
-        {
+        if decorator_type_is_unchecked(decorator_type) {
             return;
         }
 
@@ -127,19 +158,13 @@ impl<'a> CheckerState<'a> {
         decorator_type: TypeId,
         is_constructor_parameter: bool,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use crate::query_boundaries::common::CallResult;
-
-        if decorator_type == TypeId::ERROR
-            || decorator_type == TypeId::ANY
-            || decorator_type == TypeId::UNKNOWN
-        {
+        if decorator_type_is_unchecked(decorator_type) {
             return;
         }
 
         self.ensure_relation_input_ready(decorator_type);
         let resolved = self.evaluate_type_for_assignability(decorator_type);
-        if resolved == TypeId::ERROR || resolved == TypeId::ANY || resolved == TypeId::UNKNOWN {
+        if decorator_type_is_unchecked(resolved) {
             return;
         }
 

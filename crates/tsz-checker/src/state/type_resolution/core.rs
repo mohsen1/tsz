@@ -294,7 +294,7 @@ impl<'a> CheckerState<'a> {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             let (message, code) = if exceeded
                                 && is_type_alias
-                                && self.type_alias_symbol_contains_tuple_spread(sym_id)
+                                && self.type_alias_is_unconditional_tuple_spread(sym_id)
                             {
                                 (
                                     diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
@@ -939,7 +939,7 @@ impl<'a> CheckerState<'a> {
                             });
                             let tuple_spread_alias =
                                 application_alias_symbol.is_some_and(|ref_sym| {
-                                    self.type_alias_symbol_contains_tuple_spread(ref_sym)
+                                    self.type_alias_is_unconditional_tuple_spread(ref_sym)
                                 });
 
                             if exceeded || circular_mapped {

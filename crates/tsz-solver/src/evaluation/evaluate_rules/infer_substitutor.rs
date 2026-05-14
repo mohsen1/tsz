@@ -65,6 +65,19 @@ impl<'a> InferSubstitutor<'a> {
                     if substituted != element.type_id {
                         changed = true;
                     }
+                    // When a rest element is substituted with a concrete Tuple (or
+                    // ReadonlyType wrapping one), flatten its elements into the parent
+                    // tuple — matching the same invariant enforced by instantiate.rs.
+                    if element.rest {
+                        let inner =
+                            crate::type_queries::data::unwrap_readonly(self.interner, substituted);
+                        if let Some(TypeData::Tuple(inner_list)) = self.interner.lookup(inner) {
+                            new_elements
+                                .extend(self.interner.tuple_list(inner_list).iter().copied());
+                            changed = true;
+                            continue;
+                        }
+                    }
                     new_elements.push(TupleElement {
                         type_id: substituted,
                         name: element.name,

@@ -681,6 +681,9 @@ impl<'a> IRPrinter<'a> {
                     self.write(name);
                 }
             }
+            IRNode::RuntimeHelper(name) => {
+                self.write_helper(name);
+            }
             IRNode::This { captured } => {
                 self.write(if *captured { "_this" } else { "this" });
             }

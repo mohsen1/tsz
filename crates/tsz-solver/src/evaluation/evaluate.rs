@@ -669,10 +669,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
             let def_kind = self.resolver.get_def_kind(def_id);
             let is_type_alias_def = matches!(def_kind, Some(crate::def::DefKind::TypeAlias));
-            let prefer_application_display_alias = is_type_alias_def
-                && resolved.is_some_and(|body| {
-                    !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
-                });
+            let resolved_has_conditional_body = resolved.is_some_and(|body| {
+                matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            });
+            if is_type_alias_def && resolved_has_conditional_body {
+                self.interner.mark_conditional_alias_base(app.base);
+            }
+            let prefer_application_display_alias =
+                is_type_alias_def && !resolved_has_conditional_body;
 
             tracing::trace!(
                 ?def_id,
@@ -1103,7 +1107,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             _ => result.0 <= display_origin.0,
                         }
                         && result_is_non_empty_structural;
-                    if !skip_type_alias_repaint {
+                    let keep_existing_conditional_branch_alias = is_type_alias_def
+                        && !prefer_application_display_alias
+                        && matches!(
+                            self.interner.lookup(display_origin),
+                            Some(TypeData::Application(_))
+                        )
+                        && self.interner.get_display_alias(result).is_some();
+                    if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
                         if prefer_application_display_alias
                             || (self.expand_application_display_alias_args
                                 && matches!(
@@ -1215,6 +1226,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
         let app = self.interner.type_application(app_id);
         if app.args.is_empty() {
+            return;
+        }
+        let app_def = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver
+                .get_def_kind(def_id)
+                .map(|kind| (def_id, kind)),
+            Some(TypeData::TypeQuery(sym_ref)) => {
+                self.resolver.symbol_to_def_id(sym_ref).and_then(|def_id| {
+                    self.resolver
+                        .get_def_kind(def_id)
+                        .map(|kind| (def_id, kind))
+                })
+            }
+            _ => None,
+        };
+        // This back-reference is for nominal parametric shapes. Type-alias
+        // applications still need their evaluated structural form for displays
+        // such as TS2339 on conditional helper aliases.
+        let is_type_alias = matches!(app_def, Some((_, crate::def::DefKind::TypeAlias)));
+        if is_type_alias {
             return;
         }
         // Fast path: all-intrinsic args trivially have no free type
@@ -2344,10 +2376,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let elements = self.interner.tuple_list(tuple_list_id);
 
-        // Quick check: does any element need evaluation?
-        let needs_eval = elements
-            .iter()
-            .any(|elem| Self::is_evaluable_meta_type(self.interner, elem.type_id));
+        // Quick check: does any element need evaluation or structural normalization?
+        // Also triggers when a rest element holds a concrete Tuple that must be
+        // flattened — e.g. `[L, ...R]` after infer-binding R to `[1, 2]`.
+        // ReadonlyType(Tuple) rest elements are already caught by is_evaluable_meta_type.
+        let needs_eval = elements.iter().any(|elem| {
+            Self::is_evaluable_meta_type(self.interner, elem.type_id)
+                || (elem.rest
+                    && matches!(self.interner.lookup(elem.type_id), Some(TypeData::Tuple(_))))
+        });
         if !needs_eval {
             return original_type_id;
         }
@@ -2380,7 +2417,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
 
-                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
+                let evaluated_inner =
+                    crate::type_queries::data::unwrap_readonly(self.interner, evaluated);
+                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated_inner)
+                {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
                     for alternative in &mut alternatives {
                         alternative.extend(inner_elements.iter().copied());
