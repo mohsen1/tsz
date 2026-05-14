@@ -1,5 +1,7 @@
 use super::*;
 use crate::TypeInterner;
+use crate::def::resolver::TypeResolver;
+use crate::{TypeDatabase, types::SymbolRef};
 
 // =============================================================================
 // Discriminant Detection Tests
@@ -152,6 +154,87 @@ fn test_definitely_nullish_union() {
 fn test_narrowing_cache_contains_type_parameters_cache_starts_empty() {
     let cache = NarrowingCache::new();
     assert!(cache.contains_type_parameters_cache.borrow().is_empty());
+}
+
+#[test]
+fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation() {
+    struct GenerationResolver(u64);
+
+    impl TypeResolver for GenerationResolver {
+        fn resolver_generation(&self) -> u64 {
+            self.0
+        }
+
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+    }
+
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let string_predicate = TypeGuard::Predicate {
+        type_id: Some(TypeId::STRING),
+        asserts: false,
+    };
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    assert_eq!(
+        ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(
+        ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 1);
+
+    assert_eq!(
+        ctx.narrow_type(
+            TypeId::UNKNOWN,
+            &TypeGuard::Typeof(TypeofKind::String),
+            GuardSense::Positive
+        ),
+        TypeId::STRING
+    );
+    assert_eq!(
+        cache.narrow_type_cache.borrow().len(),
+        1,
+        "non-predicate guards keep their existing dynamic narrowing path"
+    );
+
+    let number_predicate = TypeGuard::Predicate {
+        type_id: Some(TypeId::NUMBER),
+        asserts: false,
+    };
+    assert_eq!(
+        ctx.narrow_type(TypeId::UNKNOWN, &number_predicate, GuardSense::Positive),
+        TypeId::NUMBER
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 2);
+
+    interner.set_no_unchecked_indexed_access(true);
+    let flags_ctx = NarrowingContext::with_cache(&interner, &cache);
+    assert_eq!(
+        flags_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 3);
+
+    let resolver_one = GenerationResolver(1);
+    let resolver_ctx = NarrowingContext::with_cache(&interner, &cache).with_resolver(&resolver_one);
+    assert_eq!(
+        resolver_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 4);
+
+    let resolver_two = GenerationResolver(2);
+    let resolver_ctx = NarrowingContext::with_cache(&interner, &cache).with_resolver(&resolver_two);
+    assert_eq!(
+        resolver_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 5);
 }
 
 // =============================================================================

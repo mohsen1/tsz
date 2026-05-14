@@ -18,6 +18,7 @@ use tsz_solver::{FunctionShape, ParamInfo, TypeId};
 
 use super::super::call_result::CallResultContext;
 use super::super::complex::is_contextually_sensitive;
+use super::post_generic::PostGenericCallDiagnostics;
 
 impl<'a> CheckerState<'a> {
     fn fresh_direct_function_call_signature(
@@ -2951,22 +2952,19 @@ impl<'a> CheckerState<'a> {
         let finalized_contextual_param_types = generic_instantiated_params
             .as_ref()
             .map(|params| self.contextual_param_types_from_instantiated_params(params, args.len()));
-        self.repair_abstract_constructor_argument_mismatch(
-            &mut result,
-            &mut allow_contextual_mismatch_deferral,
+        self.run_post_generic_call_diagnostics(PostGenericCallDiagnostics {
+            result: &mut result,
+            allow_contextual_mismatch_deferral: &mut allow_contextual_mismatch_deferral,
             callee_type_for_call,
             args,
-            &arg_types,
-            &base_contextual_param_types,
-            finalized_contextual_param_types.as_deref(),
-        );
-        self.emit_nominal_lib_object_callback_return_errors(
-            args,
-            &arg_types,
-            finalized_contextual_param_types.as_deref(),
-            &base_contextual_param_types,
-            original_callee_shape.as_ref(),
-        );
+            arg_types: &arg_types,
+            base_contextual_param_types: &base_contextual_param_types,
+            finalized_contextual_param_types: finalized_contextual_param_types.as_deref(),
+            original_callee_shape: original_callee_shape.as_ref(),
+            emit_unknown_callback_body_diagnostics: is_generic_call && contextual_type.is_none(),
+            check_excess_properties,
+            callable_ctx,
+        });
         let forced_block_body_callback_mismatch = self
             .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
                 finalized_contextual_param_types
