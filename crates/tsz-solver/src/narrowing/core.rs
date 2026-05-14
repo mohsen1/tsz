@@ -18,7 +18,7 @@ use tsz_common::interner::Atom;
 
 /// Describes whether a type guard should be applied in its positive (truthy)
 /// or negative (falsy) sense.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GuardSense {
     /// The guard condition is true (e.g., `typeof x === "string"`).
     Positive,
@@ -37,6 +37,15 @@ impl From<bool> for GuardSense {
 }
 
 type SplitNullishParts = (Option<TypeId>, Option<TypeId>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct NarrowTypeCacheKey {
+    source_type: TypeId,
+    guard: TypeGuard,
+    sense: GuardSense,
+    compiler_flags: u8,
+    resolver_generation: u64,
+}
 
 /// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
 ///
@@ -99,7 +108,7 @@ impl TypeofKind {
 /// x                         -> TypeGuard::Truthy
 /// x.kind === "circle"       -> TypeGuard::Discriminant { property: "kind", value: "circle" }
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeGuard {
     /// `typeof x === "typename"`
     ///
@@ -315,6 +324,12 @@ pub struct NarrowingCache {
     /// Built once per (union, property) pair, then O(1) lookup per case clause.
     /// Without this, each case clause iterates ALL union members (O(N) per case = O(N²) total).
     pub discriminant_index: RefCell<DiscriminantIndex>,
+    /// Cache for applying a semantic guard to an input type.
+    ///
+    /// Keyed by input `TypeId`, guard payload, branch sense, compiler option
+    /// bits, and resolver generation so lazy alias changes cannot reuse stale
+    /// predicate results.
+    pub(crate) narrow_type_cache: RefCell<FxHashMap<NarrowTypeCacheKey, TypeId>>,
 }
 
 impl NarrowingCache {
@@ -346,6 +361,10 @@ impl NarrowingCache {
                 Default::default(),
             )),
             discriminant_index: RefCell::new(FxHashMap::default()),
+            narrow_type_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                1024,
+                Default::default(),
+            )),
         }
     }
 }
@@ -386,6 +405,23 @@ impl<'a> NarrowingContext<'a> {
     pub fn with_resolver(mut self, resolver: &'a dyn TypeResolver) -> Self {
         self.resolver = Some(resolver);
         self
+    }
+
+    fn cache_compiler_flags(&self) -> u8 {
+        let mut flags = 0;
+        if QueryDatabase::no_unchecked_indexed_access(self.db) {
+            flags |= 1 << 0;
+        }
+        if QueryDatabase::exact_optional_property_types(self.db) {
+            flags |= 1 << 1;
+        }
+        flags
+    }
+
+    fn resolver_generation(&self) -> u64 {
+        self.resolver
+            .map(|resolver| resolver.resolver_generation().saturating_add(1))
+            .unwrap_or(0)
     }
 
     /// Resolve a type to its structural representation.
@@ -1897,6 +1933,31 @@ impl<'a> NarrowingContext<'a> {
     }
 
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: GuardSense) -> TypeId {
+        let key = NarrowTypeCacheKey {
+            source_type,
+            guard: guard.clone(),
+            sense,
+            compiler_flags: self.cache_compiler_flags(),
+            resolver_generation: self.resolver_generation(),
+        };
+        if let Some(cached) = self.cache.narrow_type_cache.borrow().get(&key).copied() {
+            return cached;
+        }
+
+        let narrowed = self.narrow_type_uncached(source_type, guard, sense);
+        self.cache
+            .narrow_type_cache
+            .borrow_mut()
+            .insert(key, narrowed);
+        narrowed
+    }
+
+    fn narrow_type_uncached(
+        &self,
+        source_type: TypeId,
+        guard: &TypeGuard,
+        sense: GuardSense,
+    ) -> TypeId {
         let sense = matches!(sense, GuardSense::Positive);
 
         // For generic IndexAccess types (e.g., `Entries[EntryId]` where EntryId is a

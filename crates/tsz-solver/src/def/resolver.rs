@@ -17,6 +17,15 @@ use tsz_binder::SymbolId;
 /// This allows the `SubtypeChecker` to lazily resolve Ref types
 /// without being tightly coupled to the binder/checker.
 pub trait TypeResolver {
+    /// Monotonic generation for resolver-visible state.
+    ///
+    /// Narrowing and relation caches include this value when they depend on
+    /// lazy `DefId` resolution. Resolver implementations should bump the
+    /// generation whenever a later resolve call can return a different type.
+    fn resolver_generation(&self) -> u64 {
+        0
+    }
+
     /// Resolve a symbol reference to its structural type.
     /// Returns None if the symbol cannot be resolved.
     ///
@@ -289,6 +298,10 @@ impl TypeResolver for NoopResolver {
 /// This allows `&dyn TypeResolver` (which is Sized) to be used wherever
 /// `R: TypeResolver` is expected.
 impl<T: TypeResolver + ?Sized> TypeResolver for &T {
+    fn resolver_generation(&self) -> u64 {
+        (**self).resolver_generation()
+    }
+
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
         (**self).resolve_ref(symbol, interner)
     }
@@ -405,6 +418,8 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 /// This is populated before type checking and passed to the `SubtypeChecker`.
 #[derive(Clone, Debug, Default)]
 pub struct TypeEnvironment {
+    /// Monotonic revision for local resolver-visible mutations.
+    generation: u64,
     /// Maps symbol references to their resolved structural types.
     types: FxHashMap<u32, TypeId>,
     /// Maps symbol references to their type parameters (for generic types).
@@ -465,6 +480,7 @@ pub struct TypeEnvironment {
 impl TypeEnvironment {
     pub fn new() -> Self {
         Self {
+            generation: 1,
             types: FxHashMap::default(),
             type_params: FxHashMap::default(),
             boxed_types: FxHashMap::default(),
@@ -491,11 +507,25 @@ impl TypeEnvironment {
         }
     }
 
+    const fn bump_generation(&mut self) {
+        self.generation = self.generation.saturating_add(1);
+    }
+
+    /// Current resolver-visible generation for this environment and shared store.
+    pub fn generation(&self) -> u64 {
+        self.generation.saturating_add(
+            self.definition_store
+                .as_ref()
+                .map_or(0, |store| store.generation()),
+        )
+    }
+
     /// Record a `name -> DefId` mapping recovered by a wider resolver
     /// (typically `CheckerContext`) so the next solver-side evaluator
     /// pass can reduce `Application(UnresolvedTypeName(name), args)`.
     pub fn insert_unresolved_resolution(&mut self, name: String, def_id: DefId) {
         self.unresolved_name_resolutions.insert(name, def_id);
+        self.bump_generation();
     }
 
     /// Look up a previously-recorded resolution for an `UnresolvedTypeName`
@@ -508,6 +538,7 @@ impl TypeEnvironment {
     /// (e.g. `"[Symbol.iterator]"`).
     pub fn register_well_known_symbol_name(&mut self, name: String, symbol_ref: SymbolRef) {
         self.well_known_symbol_name_to_ref.insert(name, symbol_ref);
+        self.bump_generation();
     }
 
     /// Look up a registered well-known symbol key name.
@@ -522,21 +553,25 @@ impl TypeEnvironment {
     /// subtype/identity comparisons.
     pub const fn set_this_type(&mut self, this_type: Option<TypeId>) {
         self.this_type = this_type;
+        self.bump_generation();
     }
 
     /// Set the shared `DefinitionStore` for fallback `DefKind` lookups.
     pub fn set_definition_store(&mut self, store: Arc<DefinitionStore>) {
         self.definition_store = Some(store);
+        self.bump_generation();
     }
 
     /// Register a symbol's resolved type.
     pub fn insert(&mut self, symbol: SymbolRef, type_id: TypeId) {
         self.types.insert(symbol.0, type_id);
+        self.bump_generation();
     }
 
     /// Register a boxed type for a primitive (Rule #33).
     pub fn set_boxed_type(&mut self, kind: IntrinsicKind, type_id: TypeId) {
         self.boxed_types.insert(kind, type_id);
+        self.bump_generation();
     }
 
     /// Get the boxed type for a primitive.
@@ -547,6 +582,7 @@ impl TypeEnvironment {
     /// Register a `DefId` as belonging to a boxed type.
     pub fn register_boxed_def_id(&mut self, kind: IntrinsicKind, def_id: DefId) {
         self.boxed_def_ids.entry(kind).or_default().push(def_id);
+        self.bump_generation();
     }
 
     /// Check if a `DefId` corresponds to a boxed type of the given kind.
@@ -587,6 +623,7 @@ impl TypeEnvironment {
     pub fn set_array_base_type(&mut self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
         self.array_base_type = Some(type_id);
         self.array_base_type_params = type_params;
+        self.bump_generation();
     }
 
     /// Get the Array<T> interface type.
@@ -602,6 +639,7 @@ impl TypeEnvironment {
     /// Register the `ReadonlyArray<T>` interface type from lib.d.ts.
     pub const fn set_readonly_array_base_type(&mut self, type_id: TypeId) {
         self.readonly_array_base_type = Some(type_id);
+        self.bump_generation();
     }
 
     /// Get the `ReadonlyArray<T>` interface type.
@@ -620,6 +658,7 @@ impl TypeEnvironment {
         if !params.is_empty() {
             self.type_params.insert(symbol.0, params);
         }
+        self.bump_generation();
     }
 
     /// Get a symbol's resolved type.
@@ -652,6 +691,7 @@ impl TypeEnvironment {
         if let Some(ref store) = self.definition_store {
             store.set_body(def_id, type_id);
         }
+        self.bump_generation();
     }
 
     /// Get a class `DefId`'s registered instance type.
@@ -666,6 +706,7 @@ impl TypeEnvironment {
         // This is critical for instanceof narrowing to identify class types after
         // they've been resolved from Lazy(DefId) to Object types.
         self.instance_type_to_class.insert(instance_type.0, def_id);
+        self.bump_generation();
     }
 
     /// Register a `DefId`'s resolved type with type parameters.
@@ -689,6 +730,7 @@ impl TypeEnvironment {
                 store.set_type_params(def_id, params);
             }
         }
+        self.bump_generation();
     }
 
     pub fn insert_declared_variances(&mut self, def_id: DefId, variances: Arc<[Variance]>) {
@@ -697,6 +739,7 @@ impl TypeEnvironment {
                 .insert(symbol.0, Arc::clone(&variances));
         }
         self.declared_variances.insert(def_id.0, variances);
+        self.bump_generation();
     }
 
     /// Get a `DefId`'s resolved type.
@@ -748,14 +791,23 @@ impl TypeEnvironment {
 
     /// Merge def entries (types and type params) from this environment into another.
     pub fn merge_defs_into(&self, target: &mut Self) {
+        let mut changed = false;
         for (&key, &type_id) in &self.def_types {
-            target.def_types.entry(key).or_insert(type_id);
+            if let std::collections::hash_map::Entry::Vacant(entry) = target.def_types.entry(key) {
+                entry.insert(type_id);
+                changed = true;
+            }
         }
         for (key, params) in &self.def_type_params {
-            target
-                .def_type_params
-                .entry(*key)
-                .or_insert_with(|| params.clone());
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                target.def_type_params.entry(*key)
+            {
+                entry.insert(params.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            target.bump_generation();
         }
     }
 
@@ -776,6 +828,7 @@ impl TypeEnvironment {
     /// Register a `DefId`'s `DefKind`.
     pub fn insert_def_kind(&mut self, def_id: DefId, kind: crate::def::DefKind) {
         self.def_kinds.insert(def_id.0, kind);
+        self.bump_generation();
     }
 
     /// Get a `DefId`'s `DefKind`.
@@ -801,11 +854,13 @@ impl TypeEnvironment {
     pub fn register_def_symbol_mapping(&mut self, def_id: DefId, sym_id: SymbolId) {
         self.def_to_symbol.insert(def_id.0, sym_id);
         self.symbol_to_def.insert(sym_id.0, def_id);
+        self.bump_generation();
     }
 
     /// Register a `DefId` as a numeric enum.
     pub fn register_numeric_enum(&mut self, def_id: DefId) {
         self.numeric_enums.insert(def_id.0);
+        self.bump_generation();
     }
 
     /// Check if a `DefId` is a numeric enum.
@@ -816,6 +871,7 @@ impl TypeEnvironment {
     /// Register an enum's namespace object type (for `typeof Enum`).
     pub fn register_enum_namespace_type(&mut self, def_id: DefId, ns_type: TypeId) {
         self.enum_namespace_types.insert(def_id.0, ns_type);
+        self.bump_generation();
     }
 
     /// Get an enum's namespace object type.
@@ -830,6 +886,7 @@ impl TypeEnvironment {
     /// Register an enum member's parent enum `DefId`.
     pub fn register_enum_parent(&mut self, member_def_id: DefId, parent_def_id: DefId) {
         self.enum_parents.insert(member_def_id.0, parent_def_id);
+        self.bump_generation();
     }
 
     /// Get the parent enum `DefId` for an enum member `DefId`.
@@ -844,6 +901,7 @@ impl TypeEnvironment {
     /// Register a class's parent class `DefId`.
     pub fn register_class_extends(&mut self, child_def_id: DefId, parent_def_id: DefId) {
         self.class_extends.insert(child_def_id.0, parent_def_id);
+        self.bump_generation();
     }
 
     /// Get the parent class `DefId` for a class.
@@ -858,6 +916,10 @@ impl TypeEnvironment {
 }
 
 impl TypeResolver for TypeEnvironment {
+    fn resolver_generation(&self) -> u64 {
+        self.generation()
+    }
+
     fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         self.get(symbol)
     }
@@ -1042,6 +1104,7 @@ impl TypeResolver for TypeEnvironment {
 mod tests {
     use super::*;
     use crate::types::IntrinsicKind;
+    use std::sync::Arc;
 
     /// Regression test: `is_boxed_type_id` must not match a TypeId that is
     /// registered as the direct boxed type for a DIFFERENT kind.
@@ -1084,5 +1147,23 @@ mod tests {
             env.is_boxed_type_id(string_type, IntrinsicKind::String),
             "String TypeId should match String kind"
         );
+    }
+
+    #[test]
+    fn test_type_environment_generation_tracks_shared_store_mutations() {
+        let store = Arc::new(DefinitionStore::new());
+        let mut env = TypeEnvironment::new();
+
+        let initial_generation = env.resolver_generation();
+        env.set_definition_store(Arc::clone(&store));
+        assert!(env.resolver_generation() > initial_generation);
+
+        let before_store_write = env.resolver_generation();
+        store.set_body(DefId(1), TypeId::STRING);
+        assert!(env.resolver_generation() > before_store_write);
+
+        let before_local_write = env.resolver_generation();
+        env.insert_def(DefId(2), TypeId::NUMBER);
+        assert!(env.resolver_generation() > before_local_write);
     }
 }
