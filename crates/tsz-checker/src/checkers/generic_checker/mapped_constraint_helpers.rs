@@ -7,8 +7,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
-const MAX_CONSTRAINT_BASE_RECURSION: usize = 128;
-
 impl<'a> CheckerState<'a> {
     pub(super) fn type_node_is_generic_ref_with_scoped_type_param_arg(
         &self,
@@ -138,9 +136,6 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         seen: &mut FxHashSet<TypeId>,
     ) -> TypeId {
-        if seen.len() >= MAX_CONSTRAINT_BASE_RECURSION {
-            return TypeId::UNKNOWN;
-        }
         if !seen.insert(type_id) {
             return TypeId::UNKNOWN;
         }
