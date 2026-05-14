@@ -550,6 +550,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        self.check_await_expression(decl_idx);
+
         // TS1155: Check if const declarations must be initialized
         // Skip check for ambient declarations (e.g., declare const x;)
         // Skip when file has real syntax errors — the parse error is sufficient.

@@ -497,8 +497,8 @@ impl<'a> CheckerState<'a> {
     /// - Emits TS1308 if await is used outside async function
     /// - Iteratively checks child expressions for await expressions (no recursion)
     pub(crate) fn check_await_expression(&mut self, expr_idx: NodeIndex) {
-        // Use iterative approach with explicit stack to handle deeply nested expressions
-        // This prevents stack overflow for expressions like `0 + 0 + 0 + ... + 0` (50K+ deep)
+        // Use iterative approach with explicit stack to handle deeply nested expressions.
+        // This prevents stack overflow for expressions like `0 + 0 + 0 + ... + 0` (50K+ deep).
         let mut stack = vec![expr_idx];
 
         while let Some(current_idx) = stack.pop() {
@@ -506,26 +506,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Push child expressions onto stack for iterative processing
+            if Self::await_expression_traversal_boundary(node.kind) {
+                continue;
+            }
+
             match node.kind {
-                syntax_kind_ext::BINARY_EXPRESSION => {
-                    if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
-                        if bin_expr.right.is_some() {
-                            stack.push(bin_expr.right);
-                        }
-                        if bin_expr.left.is_some() {
-                            stack.push(bin_expr.left);
-                        }
-                    }
-                }
-                syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
-                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node)
-                        && unary_expr.expression.is_some()
-                    {
-                        stack.push(unary_expr.expression);
-                    }
-                }
                 syntax_kind_ext::AWAIT_EXPRESSION => {
                     // Validate await expression context.
                     // tsc suppresses these grammar checks when the file has parse errors
@@ -560,47 +545,31 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node)
-                        && unary_expr.expression.is_some()
-                    {
-                        stack.push(unary_expr.expression);
-                    }
-                }
-                syntax_kind_ext::CALL_EXPRESSION => {
-                    if let Some(call_expr) = self.ctx.arena.get_call_expr(node) {
-                        // Check arguments (push in reverse order for correct traversal)
-                        if let Some(ref args) = call_expr.arguments {
-                            for &arg in args.nodes.iter().rev() {
-                                if arg.is_some() {
-                                    stack.push(arg);
-                                }
-                            }
-                        }
-                        if call_expr.expression.is_some() {
-                            stack.push(call_expr.expression);
-                        }
-                    }
-                }
-                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                    if let Some(access_expr) = self.ctx.arena.get_access_expr(node)
-                        && access_expr.expression.is_some()
-                    {
-                        stack.push(access_expr.expression);
-                    }
-                }
-                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    if let Some(paren_expr) = self.ctx.arena.get_parenthesized(node)
-                        && paren_expr.expression.is_some()
-                    {
-                        stack.push(paren_expr.expression);
-                    }
                 }
                 _ => {
-                    // For other expression types, don't recurse into children
-                    // to avoid infinite recursion or performance issues
+                    for child in self.ctx.arena.get_children(current_idx) {
+                        if child.is_some() {
+                            stack.push(child);
+                        }
+                    }
                 }
             }
         }
+    }
+
+    const fn await_expression_traversal_boundary(kind: u16) -> bool {
+        matches!(
+            kind,
+            syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CONSTRUCTOR
+        )
     }
 
     // --- Variable Statement Validation ---
