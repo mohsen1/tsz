@@ -191,12 +191,7 @@ lint, unit, conformance, emit, fourslash, and WASM verification run in CI.
 In fast mode it runs these checks in order:
 
 1. **Submodule block** — prevents committing TypeScript submodule changes
-2. **Optional submodule reset** — resets TypeScript only when `TSZ_PRECOMMIT_RESET_TYPESCRIPT=1`
-3. **Crate detection** — identifies directly changed and transitively affected crates
-4. **Formatting** — `cargo fmt` with auto-fix and re-stage
-5. **Clippy** — `cargo clippy --lib -D warnings` for directly changed crates
-6. **Architecture guard** — `check-checker-boundaries.sh` when checker or architecture files changed
-7. **Tests** — `cargo nextest run` for directly changed crates by default
+2. **Formatting** — `cargo fmt` with auto-fix and re-stage
 
 Environment variables to control behavior:
 - `TSZ_SKIP_HOOKS=1` — skip all checks

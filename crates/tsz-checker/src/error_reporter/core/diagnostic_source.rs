@@ -1116,6 +1116,11 @@ impl<'a> CheckerState<'a> {
 
         let literal = self.ctx.arena.get_literal_expr(node)?;
         let target = target.map(|target| self.evaluate_type_for_assignability(target));
+        if let Some(display) =
+            self.computed_index_signature_object_literal_source_display(expr_idx, target)
+        {
+            return Some(display);
+        }
         let preserve_literal_source_for_normalized_union =
             target.is_some_and(|target| self.target_is_normalized_object_literal_union(target));
         let target_shape = target.and_then(|target| {
