@@ -1086,11 +1086,10 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
 
-        // Property access on `never` emits TS2339 and returns `error` type.
+        // Property access on `never` emits TS2339 and returns an any-like
+        // fallback. This preserves tsc's follow-on TS2322 when the failed
+        // access is assigned to `never`.
         // In TypeScript, `never` has no properties — accessing any property is an error.
-        // Returning `error` (not `never`) matches tsc behavior: when a property doesn't
-        // exist, tsc returns `errorType` which suppresses cascading diagnostics (e.g.
-        // TS2322 on `ab.y = 'hello'` when `ab: never`).
         // Also handle intersections that contain `never`.
         if object_type == TypeId::NEVER
             || access_query::contains_never_type(self.ctx.types, object_type)
@@ -1100,7 +1099,7 @@ impl<'a> CheckerState<'a> {
                 access.name_or_argument,
                 access.name_or_argument,
             ) else {
-                return TypeId::ERROR;
+                return TypeId::ANY;
             };
             object_type = receiver;
         }

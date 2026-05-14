@@ -73,6 +73,51 @@ var p = x.Green;
 }
 
 #[test]
+fn test_string_enum_member_targets_reject_raw_string_literals() {
+    let source = r#"
+enum Direction {
+    Up = "UP",
+    Down = "DOWN",
+    Side = "SIDE",
+}
+
+enum OtherDirection {
+    Up = "UP",
+}
+
+enum Count {
+    Zero,
+    One,
+}
+
+type Vertical = Direction.Up | Direction.Down;
+type RawVertical = "UP" | "DOWN";
+
+const rawToMember: Direction.Up = "UP";
+const rawToUnion: Vertical = "UP";
+const rawUnionToUnion: Vertical = "UP" as RawVertical;
+const rawToEnum: Direction = "UP";
+const crossEnum: Direction.Up = OtherDirection.Up;
+
+const enumMemberToUnion: Vertical = Direction.Up;
+const enumMemberToString: string = Direction.Up;
+const enumUnionToString: string = Direction.Up as Vertical;
+const numericLiteralToMember: Count.Zero = 0;
+const numericLiteralToEnum: Count = 1;
+
+export {};
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+
+    assert_eq!(
+        ts2322_count, 5,
+        "Expected raw string-like and cross-enum sources to be rejected for string enum targets, while enum-to-string and numeric enum cases stay accepted. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 #[ignore = "merged backlog: needs tsc-compatible enum member widening for enum object targets"]
 fn test_enum_member_assignment_to_enum_object_target_displays_whole_enum() {
     let source = r#"

@@ -1400,6 +1400,81 @@ function f(obj: { x: string | number }) {
     );
 }
 
+#[test]
+fn type_predicate_narrowing_does_not_leak_after_if_without_else() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function isNumber(value: unknown): value is number {
+    return typeof value === "number";
+}
+
+function test(x: unknown) {
+    if (isNumber(x)) {
+        let n: number = x;
+    }
+    x.toFixed(2);
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 18046 && message.contains("'x' is of type 'unknown'")
+        }),
+        "expected TS18046 after predicate branch rejoins with the original type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renamed_type_predicate_narrowing_does_not_leak_after_if_else_join() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function keepsText(input: unknown): input is string {
+    return typeof input === "string";
+}
+
+function use(candidate: unknown) {
+    if (keepsText(candidate)) {
+        let s: string = candidate;
+    } else {
+        let u: unknown = candidate;
+    }
+    candidate.trim();
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 18046 && message.contains("'candidate' is of type 'unknown'")
+        }),
+        "expected TS18046 after both predicate branches can reach the join, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn type_predicate_narrowing_survives_when_false_branch_terminates() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function isNumber(value: unknown): value is number {
+    return typeof value === "number";
+}
+
+function test(x: unknown) {
+    if (!isNumber(x)) {
+        return;
+    }
+    let n: number = x;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "predicate narrowing should survive after terminating false branch, got: {diagnostics:?}"
+    );
+}
+
 /// Regression test: type predicate narrowing with discriminated union members.
 ///
 /// When interfaces have string literal discriminant properties (e.g., `kind: "a"`),
@@ -1887,6 +1962,97 @@ function f(obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: number }) {
         ts2339.is_empty(),
         "Expected no TS2339: switch(kind) should narrow obj via destructured discriminant alias, \
          got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn destructured_boolean_discriminant_truthiness_narrows_source_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function processResult(
+    result: { ok: true; value: string } | { ok: false; error: string }
+): string {
+    const { ok } = result;
+    if (ok) {
+        return result.value;
+    }
+    return result.error;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2339),
+        "Expected destructured boolean discriminant to narrow source object, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn renamed_destructured_boolean_discriminant_truthiness_narrows_source_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function readState(
+    state: { ready: true; payload: number } | { ready: false; reason: string }
+) {
+    const { ready: isReady } = state;
+    if (isReady) {
+        const payload: number = state.payload;
+    } else {
+        const reason: string = state.reason;
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2339),
+        "Expected renamed destructured discriminant to narrow source object, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn non_const_destructured_discriminant_truthiness_does_not_narrow_source_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function processResult(
+    result: { ok: true; value: string } | { ok: false; error: string }
+) {
+    let { ok } = result;
+    if (ok) {
+        return result.value;
+    }
+    return result.error;
+}
+"#,
+    );
+
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected non-const destructured discriminant not to narrow source object, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn destructured_discriminant_with_default_does_not_narrow_source_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function processResult(
+    result: { ok: true; value: string } | { ok: false; error: string }
+) {
+    const { ok = true } = result;
+    if (ok) {
+        return result.value;
+    }
+    return result.error;
+}
+"#,
+    );
+
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected defaulted destructured discriminant not to narrow source object, got: {diagnostics:#?}"
     );
 }
 

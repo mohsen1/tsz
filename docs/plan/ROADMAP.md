@@ -447,6 +447,8 @@ Acceptance:
 
 ### Track 9: Emit Robustness, DTS Boundary, LSP, And WASM Consumers
 
+Current owner: M4-T9-10.
+
 Scope: JS emit, declaration emit, LSP, WASM, and compiler-service facade work.
 Emit/DTS has enough failures and architectural risk to be its own recovery
 campaign inside this track, not a bucket of baseline whack-a-mole. LSP/WASM
@@ -485,6 +487,8 @@ Acceptance:
    not infer malformed syntax behavior by scanning substrings.
 
 ### Track 10: Guardrails, Tooling, Residency, And Performance Substrate
+
+Current owner: M4-T9-10.
 
 Scope: large-repo memory/runtime, stable skeleton indexes, bounded arena
 residency, project graph reuse, compiler-service orchestration, incremental

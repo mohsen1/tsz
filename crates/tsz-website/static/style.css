@@ -762,69 +762,63 @@ tr:nth-child(even) { background: var(--table-stripe); }
 }
 
 .compat-dashboard {
-  margin: 2rem 0 2.5rem;
+  margin: 2.5rem 0;
 }
 
 .compat-summary {
-  display: inline-block;
-  margin: 0.25rem 0 0.75rem;
+  margin: 0.15rem 0 0.65rem;
   font-family: var(--mono);
   font-size: 0.82rem;
   color: var(--text-secondary);
 }
 
-.compat-table-wrap {
-  overflow-x: auto;
+.compat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border-subtle);
 }
 
-.compat-table {
-  min-width: 48rem;
-}
-
-.compat-table td {
-  font-size: 0.86rem;
+.compat-item {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.9rem;
   line-height: 1.45;
 }
 
-.compat-meta {
-  margin-top: 0.15rem;
-  color: var(--text-tertiary);
+.compat-item a {
+  font-weight: 600;
+}
+
+.compat-state {
+  font-family: var(--mono);
   font-size: 0.78rem;
+  font-weight: 600;
 }
 
-.compat-pill {
-  display: inline-block;
-  min-width: 4.25rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.76rem;
-  font-weight: 700;
-  text-align: center;
-  border: 1px solid var(--border);
-}
-
-.compat-pill.green {
+.compat-state.green {
   color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 45%, transparent);
-  background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 
-.compat-pill.yellow {
+.compat-state.yellow {
   color: var(--scanner-color);
-  border-color: color-mix(in srgb, var(--scanner-color) 45%, transparent);
-  background: color-mix(in srgb, var(--scanner-color) 12%, transparent);
 }
 
-.compat-pill.red {
+.compat-state.red {
   color: var(--solver-color);
-  border-color: color-mix(in srgb, var(--solver-color) 45%, transparent);
-  background: color-mix(in srgb, var(--solver-color) 10%, transparent);
 }
 
-.compat-pill.gray {
+.compat-state.gray {
   color: var(--text-secondary);
-  border-color: var(--border);
-  background: var(--bg-subtle);
+}
+
+.compat-detail {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
 }
 
 .benchmark-mean-card {

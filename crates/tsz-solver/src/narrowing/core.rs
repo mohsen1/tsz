@@ -937,6 +937,14 @@ impl<'a> NarrowingContext<'a> {
         // Lazy type resolution for the top-level source is handled in narrow_type()
         // before dispatching to this function.
 
+        // Decompose `Enum(D, inner)` so exclusion runs on the inner literal
+        // union and the nominal wrapper survives (issue #6823).
+        if let Some(narrowed) =
+            self.narrow_enum_excluding_types(source_type, std::slice::from_ref(&excluded_type))
+        {
+            return narrowed;
+        }
+
         if let Some(members) = intersection_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let mut narrowed_members = Vec::with_capacity(members.len());
@@ -1070,6 +1078,11 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
+        // Enum decomposition for the batched path (issue #6823).
+        if let Some(narrowed) = self.narrow_enum_excluding_types(source_type, excluded_types) {
+            return narrowed;
+        }
+
         // For small lists, use sequential narrowing (avoids HashSet overhead)
         if excluded_types.len() <= 4 {
             let mut result = source_type;
@@ -1170,6 +1183,43 @@ impl<'a> NarrowingContext<'a> {
         }
 
         Some(self.db.intersection2(source, narrowed_constraint))
+    }
+
+    /// Unwrap `TypeData::Enum(D, inner)` so exclusion runs on the inner literal
+    /// union and rewraps the result with the same `DefId`, preserving nominal
+    /// enum identity. Excluded values of the same nominal enum are normalised
+    /// to their inner literal so identity-based union filtering can drop them.
+    /// Returns `None` for non-enum sources so callers fall through.
+    fn narrow_enum_excluding_types(
+        &self,
+        source_type: TypeId,
+        excluded_types: &[TypeId],
+    ) -> Option<TypeId> {
+        let (enum_def, inner) = crate::visitor::enum_components(self.db, source_type)?;
+
+        let normalized: Vec<TypeId> = excluded_types
+            .iter()
+            .map(
+                |&excluded| match crate::visitor::enum_components(self.db, excluded) {
+                    Some((excluded_def, excluded_inner))
+                        if self.class_defs_equivalent_for_narrowing(enum_def, excluded_def) =>
+                    {
+                        excluded_inner
+                    }
+                    _ => excluded,
+                },
+            )
+            .collect();
+
+        let narrowed_inner = self.narrow_excluding_types(inner, &normalized);
+
+        if narrowed_inner == TypeId::NEVER {
+            return Some(TypeId::NEVER);
+        }
+        if narrowed_inner == inner {
+            return Some(source_type);
+        }
+        Some(self.db.enum_type(enum_def, narrowed_inner))
     }
 
     /// Narrow to function types only.

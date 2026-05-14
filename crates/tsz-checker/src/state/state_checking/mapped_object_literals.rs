@@ -501,11 +501,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut emitted = false;
-        let target_display_properties =
-            self.ctx.types.get_display_properties(target).or_else(|| {
-                let evaluated = self.evaluate_type_for_assignability(target);
-                self.ctx.types.get_display_properties(evaluated)
-            });
+        let target_display_properties = (target_is_mapped || has_partial_annotation)
+            .then(|| {
+                self.ctx.types.get_display_properties(target).or_else(|| {
+                    let evaluated = self.evaluate_type_for_assignability(target);
+                    self.ctx.types.get_display_properties(evaluated)
+                })
+            })
+            .flatten();
         for &elem_idx in &obj_lit.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;

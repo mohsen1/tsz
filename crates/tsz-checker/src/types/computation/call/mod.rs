@@ -72,9 +72,8 @@ impl<'a> CheckerState<'a> {
         callee_idx: NodeIndex,
         predicate: (TypePredicate, Vec<ParamInfo>),
     ) {
-        let assertion_target_is_valid = !predicate.0.asserts
-            || matches!(predicate.0.target, TypePredicateTarget::This)
-            || self.validate_assertion_call_target(call_idx, callee_idx);
+        let assertion_target_is_valid =
+            !predicate.0.asserts || self.validate_assertion_call_target(call_idx, callee_idx);
         if assertion_target_is_valid {
             self.ctx.call_type_predicates.insert(call_idx.0, predicate);
         }
@@ -294,6 +293,7 @@ impl<'a> CheckerState<'a> {
             return var_decl.type_annotation.is_some()
                 || self.declaration_has_jsdoc_type_tag(decl_idx)
                 || self.declaration_has_jsdoc_assertion_return(decl_idx)
+                || self.for_of_variable_has_explicit_iterable_source_annotation(decl_idx)
                 || self
                     .require_initializer_exports_explicit_assertion_function(var_decl.initializer);
         }
@@ -325,6 +325,44 @@ impl<'a> CheckerState<'a> {
             return sig.type_annotation.is_some();
         }
         true
+    }
+
+    fn for_of_variable_has_explicit_iterable_source_annotation(
+        &mut self,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(list_idx) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent) else {
+            return false;
+        };
+        let Some(for_idx) = self.ctx.arena.get_extended(list_idx).map(|ext| ext.parent) else {
+            return false;
+        };
+        let Some(for_node) = self.ctx.arena.get(for_idx) else {
+            return false;
+        };
+        if for_node.kind != syntax_kind_ext::FOR_OF_STATEMENT {
+            return false;
+        }
+        let Some(for_data) = self.ctx.arena.get_for_in_of(for_node) else {
+            return false;
+        };
+        let expression = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(for_data.expression);
+        let Some(expr_node) = self.ctx.arena.get(expression) else {
+            return false;
+        };
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16
+                || k == SyntaxKind::ThisKeyword as u16
+                || k == SyntaxKind::SuperKeyword as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
+            {
+                self.assertion_call_target_has_explicit_annotations(expression)
+            }
+            _ => false,
+        }
     }
 
     fn require_initializer_exports_explicit_assertion_function(
