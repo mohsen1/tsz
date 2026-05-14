@@ -28,9 +28,6 @@ pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 pub(super) type NodeIndexResolver<'a, T> = dyn Fn(NodeIndex) -> Option<T> + 'a;
 pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
-/// Resolver for `import("./module").Type` patterns: given the `import(...)`
-/// `CALL_EXPRESSION` node and the member-access segments, returns the type.
-pub(super) type ImportCallResolver<'a> = dyn Fn(NodeIndex, &[String]) -> Option<TypeId> + 'a;
 pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 pub(super) type TypeofParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 
@@ -89,9 +86,6 @@ pub struct TypeLowering<'a> {
     /// This enables flow-sensitive narrowing for `typeof expr` in type positions
     /// (e.g., inside type alias bodies where flow narrowing has already been computed).
     pub(super) type_query_override: Option<&'a NodeIndexResolver<'a, TypeId>>,
-    /// Optional resolver for `import("./module").Type` patterns in type positions.
-    /// See `with_import_call_resolver`.
-    pub(super) import_call_resolver: Option<&'a ImportCallResolver<'a>>,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -364,7 +358,6 @@ impl<'a> TypeLowering<'a> {
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
             type_query_override: None,
-            import_call_resolver: None,
         }
     }
 
@@ -474,7 +467,6 @@ impl<'a> TypeLowering<'a> {
             name_def_id_resolver: self.name_def_id_resolver,
             strict_null_checks: self.strict_null_checks,
             type_query_override: self.type_query_override,
-            import_call_resolver: self.import_call_resolver,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
             typeof_param_scopes: Rc::clone(&self.typeof_param_scopes),
@@ -783,18 +775,6 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(NodeIndex) -> Option<TypeId>,
     ) -> Self {
         self.type_query_override = Some(resolver);
-        self
-    }
-
-    /// Set a resolver for `import("./module").Type` patterns in type positions.
-    ///
-    /// The callback receives the `CALL_EXPRESSION` node for `import(...)` and
-    /// the collected member-access segments (e.g. `["OnlyType"]` for
-    /// `import("./m").OnlyType`).  Returning `Some(type_id)` supplies the
-    /// resolved type directly, bypassing the ordinary qualified-name lookup
-    /// that cannot cross file boundaries during lowering.
-    pub fn with_import_call_resolver(mut self, resolver: &'a ImportCallResolver<'a>) -> Self {
-        self.import_call_resolver = Some(resolver);
         self
     }
 

@@ -321,7 +321,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         name: &str,
     ) -> tsz_solver::def::DefId {
-        let def_id = self.ctx.get_or_create_def_id_for_symbol_name(sym_id, name);
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
 
         // Step 2: extract and cache type parameters if not already cached.
         let should_extract_params = self

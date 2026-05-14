@@ -1834,25 +1834,18 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
-                    let expected_name = self
-                        .ctx
-                        .binder
-                        .symbols
-                        .get(sym_id)
-                        .filter(|symbol| symbol.escaped_name == ident.escaped_text)
-                        .map_or_else(
-                            || {
-                                let lib_binders = self.get_lib_binders();
-                                self.ctx
-                                    .binder
-                                    .get_symbol_with_libs(sym_id, &lib_binders)
-                                    .map_or_else(
-                                        || ident.escaped_text.clone(),
-                                        |symbol| symbol.escaped_name.clone(),
-                                    )
-                            },
-                            |symbol| symbol.escaped_name.clone(),
-                        );
+                    let expected_name = if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
+                        symbol.escaped_name.clone()
+                    } else {
+                        let lib_binders = self.get_lib_binders();
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sym_id, &lib_binders)
+                            .map_or_else(
+                                || ident.escaped_text.clone(),
+                                |symbol| symbol.escaped_name.clone(),
+                            )
+                    };
                     return self
                         .ctx
                         .get_or_create_def_id_for_symbol_name(sym_id, expected_name.as_str());

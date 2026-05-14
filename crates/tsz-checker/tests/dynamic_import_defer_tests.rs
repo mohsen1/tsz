@@ -1,10 +1,10 @@
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
-use crate::test_utils::check_source;
+use crate::test_utils::{check_multi_file, check_source};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::BinderState;
-use tsz_common::common::ModuleKind;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -147,5 +147,46 @@ fn import_defer_cross_file_js_specifier_does_not_emit_ts2307() {
     assert!(
         diagnostics.iter().all(|(code, _)| *code != 2307),
         "Expected import.defer('./a.js') to resolve via module-specifier candidates, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn dynamic_import_namespace_union_members_remain_assignable() {
+    let diagnostics = check_multi_file(
+        &[
+            ("case0.ts", "export default 0;"),
+            ("case1.ts", "export default 1;"),
+            ("caseFallback.ts", "export default 'fallback';"),
+            (
+                "index.ts",
+                r#"
+interface Promise<T> {}
+
+export const mod = await (async () => {
+  const x: number = 0;
+  switch (x) {
+    case 0:
+      return await import("./case0.js");
+    case 1:
+      return await import("./case1.js");
+    default:
+      return await import("./caseFallback.js");
+  }
+})();
+"#,
+            ),
+        ],
+        "index.ts",
+        CheckerOptions {
+            module: ModuleKind::NodeNext,
+            target: ScriptTarget::ESNext,
+            emit_declarations: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "Dynamic import namespace union members should remain assignable to the inferred union, got: {diagnostics:#?}"
     );
 }
