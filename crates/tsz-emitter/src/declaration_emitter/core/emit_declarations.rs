@@ -346,13 +346,22 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                    self.arena.get_function(stmt_node).is_some_and(|func| {
-                        self.arena
-                            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                            || self.get_identifier_text(func.name).is_some_and(|name| {
-                                js_hoistable_function_export_names.contains(&name)
-                            })
-                    })
+                    let is_exported_or_named_export =
+                        self.arena.get_function(stmt_node).is_some_and(|func| {
+                            self.arena
+                                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                                || self.get_identifier_text(func.name).is_some_and(|name| {
+                                    js_hoistable_function_export_names.contains(&name)
+                                })
+                        });
+                    if is_exported_or_named_export {
+                        true
+                    } else {
+                        let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
+                        jsdoc_chain
+                            .iter()
+                            .any(|jsdoc| !Self::parse_jsdoc_template_params(jsdoc).is_empty())
+                    }
                 } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                     self.arena
                         .get_export_decl(stmt_node)
