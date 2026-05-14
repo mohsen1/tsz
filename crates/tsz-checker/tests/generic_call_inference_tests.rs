@@ -1815,6 +1815,22 @@ choose([1, 2], 3);
     );
 }
 
+#[test]
+fn noinfer_array_of_inferred_literal_accepts_same_literal() {
+    let source = r#"
+function test<T extends string>(value: T, options: NoInfer<T>[]): T {
+    return value;
+}
+
+const t = test("hello", ["hello"]);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "NoInfer<T>[] should check against the literal inferred from the first argument without self-contradictory TS2322. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Inference with multiple callbacks ────────────────────────────────
 
 #[test]
