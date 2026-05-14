@@ -67,6 +67,33 @@ fn get_var_initializer(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
     decl.initializer
 }
 
+fn get_first_function_var_initializer(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
+    let func_idx = get_first_statement(arena, root);
+    let func_node = arena.get(func_idx).expect("function decl");
+    let func = arena
+        .get_function(func_node)
+        .expect("function declaration data");
+    let body_node = arena.get(func.body).expect("function body");
+    let block = arena.get_block(body_node).expect("block data");
+    let var_stmt_node = arena
+        .get(block.statements.nodes[0])
+        .expect("variable statement");
+    let var_stmt = arena.get_variable(var_stmt_node).expect("variable data");
+    let decl_list_node = arena
+        .get(var_stmt.declarations.nodes[0])
+        .expect("declaration list");
+    let decl_list = arena
+        .get_variable(decl_list_node)
+        .expect("declaration-list data");
+    let decl_node = arena
+        .get(decl_list.declarations.nodes[0])
+        .expect("declaration");
+    let decl = arena
+        .get_variable_declaration(decl_node)
+        .expect("variable declaration data");
+    decl.initializer
+}
+
 fn get_var_type_annotation(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
     let decl_idx = get_first_variable_declaration(arena, root);
     let decl_node = arena.get(decl_idx).expect("var decl node");
@@ -170,6 +197,32 @@ fn precedence_ternary_nesting_right_associative() {
         syntax_kind_ext::CONDITIONAL_EXPRESSION,
         "false branch should be nested conditional"
     );
+}
+
+#[test]
+fn await_call_in_non_async_function_parses_as_identifier_call() {
+    let (parser, root) = parse_source("function f() { const x = await(Promise.resolve(1)); }");
+    assert_no_errors(&parser, "await call identifier parse");
+
+    let arena = parser.get_arena();
+    let init = get_first_function_var_initializer(arena, root);
+    let call_node = arena.get(init).expect("initializer");
+
+    assert_eq!(call_node.kind, syntax_kind_ext::CALL_EXPRESSION);
+    let call = arena.get_call_expr(call_node).expect("call data");
+    let callee = arena.get(call.expression).expect("callee");
+    assert_eq!(callee.kind, SyntaxKind::Identifier as u16);
+}
+
+#[test]
+fn await_operand_in_non_async_function_stays_await_expression() {
+    let (parser, root) = parse_source("function f() { const x = await Promise.resolve(1); }");
+    assert_no_errors(&parser, "await operand expression parse");
+
+    let arena = parser.get_arena();
+    let init = get_first_function_var_initializer(arena, root);
+    let init_node = arena.get(init).expect("initializer");
+    assert_eq!(init_node.kind, syntax_kind_ext::AWAIT_EXPRESSION);
 }
 
 #[test]
