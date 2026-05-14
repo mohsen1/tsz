@@ -11,7 +11,6 @@
 //! - `compiler_options` - Compiler option accessors and solver config derivation
 //! - `lib_queries` - Library/global type availability queries
 //! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
-
 mod aliases;
 mod caches;
 mod compiler_options;
@@ -22,6 +21,7 @@ pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
 mod constructors;
 mod core;
 mod cross_file_query;
+mod env_eval_cache;
 mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
@@ -350,8 +350,6 @@ pub struct CheckerContext<'a> {
     pub types_extending_array: FxHashSet<TypeId>,
 
     // --- Caches ---
-    // Ownership and reset behavior for these fields is inventoried in
-    // docs/architecture/CHECKER_CONTEXT_CACHE_OWNERSHIP.md.
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).
     pub symbol_types: SymbolTypeCache,
 
