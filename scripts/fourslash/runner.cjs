@@ -1169,10 +1169,21 @@ function patchSessionClient(SessionClient, ts) {
                     const tszMatchesExistingSpecifier = [...tszImportSpecs].some(spec =>
                         programUsesSpecifier(spec) && !nativeImportSpecs.has(spec)
                     );
-                    const tszHasPackageSubpathSpecifier = [...tszImportSpecs].some(spec =>
-                        !spec.startsWith(".") && spec.includes("/") && !nativeImportSpecs.has(spec)
+                    const isBarePackageSpecifier = (spec) => {
+                        if (!spec || spec.startsWith(".")) return false;
+                        const parts = spec.split("/");
+                        return spec.startsWith("@") ? parts.length === 2 : parts.length === 1;
+                    };
+                    const tszMatchesNestedManifestName = [...tszImportSpecs].some(spec =>
+                        !spec.startsWith(".") &&
+                        spec.includes("/") &&
+                        !nativeImportSpecs.has(spec) &&
+                        [...nativeImportSpecs].some(nativeSpec =>
+                            isBarePackageSpecifier(nativeSpec) &&
+                            spec.endsWith(`/${nativeSpec}`)
+                        )
                     );
-                    if ((hasAutoImportExclusionPreferences() || tszMatchesExistingSpecifier || tszHasPackageSubpathSpecifier) && tszHasImportFix) {
+                    if ((hasAutoImportExclusionPreferences() || tszMatchesExistingSpecifier || tszMatchesNestedManifestName) && tszHasImportFix) {
                         finalResult = tszResult;
                     } else {
                         finalResult = nativeResult;
