@@ -98,10 +98,12 @@ impl<'a> CheckerState<'a> {
                 // in its shape. Private names are lexically scoped and unique per
                 // class, so if the object type has `#field`, it must be from the
                 // same class declaration.
-                self.ctx
-                    .types
-                    .property_access_type(object_type, private_name)
-                    .is_success()
+                crate::query_boundaries::property_access::resolve_private_identifier_property_access(
+                    self.ctx.types,
+                    object_type,
+                    private_name,
+                )
+                .is_success()
             }
             _ => self.is_assignable_to(object_type, declaring_type),
         }
@@ -673,9 +675,11 @@ impl<'a> CheckerState<'a> {
             symbols.len() == 1
                 && self.get_private_brand(object_type_for_check).is_none()
                 && matches!(
-                    self.ctx
-                        .types
-                        .property_access_type(object_type_for_check, &property_name),
+                    crate::query_boundaries::property_access::resolve_private_identifier_property_access(
+                        self.ctx.types,
+                        object_type_for_check,
+                        &property_name,
+                    ),
                     PropertyAccessResult::Success { .. }
                 )
         };
@@ -781,11 +785,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let declaring_type = self.resolve_type_for_property_access(declaring_type);
-        let mut result_type = match self
-            .ctx
-            .types
-            .property_access_type(declaring_type, &property_name)
-        {
+        let mut result_type =
+            match crate::query_boundaries::property_access::resolve_private_identifier_property_access(
+                self.ctx.types,
+                declaring_type,
+                &property_name,
+            ) {
             PropertyAccessResult::Success {
                 type_id,
                 write_type,
