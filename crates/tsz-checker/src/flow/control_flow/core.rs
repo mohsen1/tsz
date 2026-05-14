@@ -1221,6 +1221,8 @@ impl<'a> FlowAnalyzer<'a> {
                 };
             let skip_cache_for_explicit_unknown_switch = initial_type == TypeId::UNKNOWN
                 && self.flow_chain_contains_switch_clause(current_flow);
+            let skip_cache_for_exhaustive_unknown_typeof = initial_type == TypeId::UNKNOWN
+                && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference);
 
             // Use cache if: 1) not a switch clause, AND
             // 2) either initial type is concrete OR this is a loop label.
@@ -1230,6 +1232,7 @@ impl<'a> FlowAnalyzer<'a> {
             if !is_switch_clause
                 && (!skip_cache_for_control_flow_typed_any || is_loop_label_node)
                 && !skip_cache_for_explicit_unknown_switch
+                && !skip_cache_for_exhaustive_unknown_typeof
                 && (!initial_has_type_params || is_loop_label_node)
                 && let Some(cache) = self.flow_cache
             {
@@ -1446,14 +1449,20 @@ impl<'a> FlowAnalyzer<'a> {
                     (current_type, FlowNodeId::NONE)
                 };
 
-                let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
-                self.narrow_type_by_condition(
-                    pre_type,
-                    flow.node,
-                    reference,
-                    is_true_branch,
-                    antecedent_id,
-                )
+                if initial_type == TypeId::UNKNOWN
+                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference)
+                {
+                    query::empty_object_type(self.interner)
+                } else {
+                    let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
+                    self.narrow_type_by_condition(
+                        pre_type,
+                        flow.node,
+                        reference,
+                        is_true_branch,
+                        antecedent_id,
+                    )
+                }
             } else if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
                 // Defer if the pre-switch antecedent hasn't been computed yet.
                 // Without this, switch clause narrowing uses the stale current_type
@@ -2053,16 +2062,22 @@ impl<'a> FlowAnalyzer<'a> {
                 };
                 let ant_types = self.simplify_flow_merge_types(ant_types);
 
-                match ant_types.len() {
-                    0 => result_type,
-                    1 => ant_types[0],
-                    _ if initial_type == TypeId::ANY
-                        && !control_flow_typed_any_symbol
-                        && ant_types.contains(&TypeId::ANY) =>
-                    {
-                        TypeId::ANY
+                if initial_type == TypeId::UNKNOWN
+                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference)
+                {
+                    query::empty_object_type(self.interner)
+                } else {
+                    match ant_types.len() {
+                        0 => result_type,
+                        1 => ant_types[0],
+                        _ if initial_type == TypeId::ANY
+                            && !control_flow_typed_any_symbol
+                            && ant_types.contains(&TypeId::ANY) =>
+                        {
+                            TypeId::ANY
+                        }
+                        _ => self.interner.union_preserve_members(ant_types),
                     }
-                    _ => self.interner.union_preserve_members(ant_types),
                 }
             } else {
                 result_type
@@ -2081,6 +2096,8 @@ impl<'a> FlowAnalyzer<'a> {
                     || flow.has_any_flags(flow_flags::LOOP_LABEL))
                 && !(initial_type == TypeId::UNKNOWN
                     && self.flow_chain_contains_switch_clause(current_flow))
+                && !(initial_type == TypeId::UNKNOWN
+                    && self.flow_has_exhaustive_typeof_exclusions(current_flow, reference))
             {
                 let final_has_type_params = self.contains_type_parameters_cached(final_type);
 

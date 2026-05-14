@@ -1400,6 +1400,91 @@ function f(obj: { x: string | number }) {
     );
 }
 
+#[test]
+fn exhaustive_typeof_chain_on_unknown_leaves_empty_object_residual() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function narrowUnknown(x: unknown) {
+    if (typeof x === "string") return;
+    if (typeof x === "number") return;
+    if (typeof x === "boolean") return;
+    if (typeof x === "undefined") return;
+    if (typeof x === "object") return;
+    if (typeof x === "function") return;
+    if (typeof x === "symbol") return;
+    if (typeof x === "bigint") return;
+
+    const remaining: never = x;
+    return remaining;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '{}' is not assignable to type 'never'")
+        }),
+        "expected exhaustive typeof exclusions from unknown to leave {{}}, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message
+                .contains("Type 'unknown' is not assignable to type 'never'")),
+        "exhaustive typeof exclusions should not leave unknown, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn exhaustive_typeof_chain_with_renamed_value_and_negated_conditions_leaves_empty_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function narrowCandidate(candidate: unknown) {
+    if (!(typeof candidate !== "string")) return;
+    if (!(typeof candidate !== "number")) return;
+    if (!(typeof candidate !== "boolean")) return;
+    if (!(typeof candidate !== "undefined")) return;
+    if (!(typeof candidate !== "object")) return;
+    if (!(typeof candidate !== "function")) return;
+    if (!(typeof candidate !== "symbol")) return;
+    if (!(typeof candidate !== "bigint")) return;
+
+    const remaining: never = candidate;
+    return remaining;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '{}' is not assignable to type 'never'")
+        }),
+        "renamed negated typeof exclusions should leave {{}}, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn partial_typeof_chain_on_unknown_stays_unknown() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function partial(x: unknown) {
+    if (typeof x === "string") return;
+    if (typeof x === "number") return;
+
+    const remaining: never = x;
+    return remaining;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'unknown' is not assignable to type 'never'")
+        }),
+        "partial typeof exclusions should keep unknown, got: {diagnostics:?}"
+    );
+}
+
 /// Regression test: type predicate narrowing with discriminated union members.
 ///
 /// When interfaces have string literal discriminant properties (e.g., `kind: "a"`),
