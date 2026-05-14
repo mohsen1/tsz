@@ -1,5 +1,6 @@
 mod const_enums;
 mod emit;
+mod recovery;
 mod top_level_using;
 
 #[cfg(test)]
