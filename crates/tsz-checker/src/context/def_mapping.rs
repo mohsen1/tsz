@@ -273,6 +273,115 @@ impl<'a> CheckerContext<'a> {
         def_id
     }
 
+    /// Classify a binder `Symbol` into the `DefKind` used for its `DefId`.
+    ///
+    /// `CLASS` is checked before `INTERFACE` because declaration merging can give
+    /// a symbol both flags (e.g. `class Component` plus an interface augmentation);
+    /// such a symbol is semantically still a class. Symbols that match none of the
+    /// known flags (type parameters, etc.) default to `TypeAlias`.
+    fn def_kind_for_symbol(symbol: &tsz_binder::Symbol) -> tsz_solver::def::DefKind {
+        use tsz_binder::symbol_flags;
+        use tsz_solver::def::DefKind;
+
+        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            DefKind::TypeAlias
+        } else if symbol.has_any_flags(symbol_flags::CLASS) {
+            DefKind::Class
+        } else if symbol.has_any_flags(symbol_flags::INTERFACE) {
+            DefKind::Interface
+        } else if symbol.has_any_flags(symbol_flags::ENUM) {
+            DefKind::Enum
+        } else if symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+        {
+            DefKind::Namespace
+        } else if symbol.has_any_flags(symbol_flags::FUNCTION) {
+            DefKind::Function
+        } else if symbol.has_any_flags(
+            symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::FUNCTION_SCOPED_VARIABLE,
+        ) {
+            DefKind::Variable
+        } else {
+            DefKind::TypeAlias
+        }
+    }
+
+    /// Pick the most stable declaration span for a symbol's `DefinitionInfo`.
+    ///
+    /// Prefers the binder-owned declaration span over a value-declaration span so
+    /// fallback identity does not treat raw syntax handles as semantic coordinates.
+    fn definition_span_for_symbol(symbol: &tsz_binder::Symbol) -> Option<tsz_common::Span> {
+        symbol.first_declaration_span.or_else(|| {
+            symbol
+                .value_declaration
+                .is_some()
+                .then_some(symbol.value_declaration_span)?
+        })
+    }
+
+    /// Get or create a `DefId` for a cross-file symbol using its target file directly.
+    ///
+    /// Unlike `get_or_create_def_id`, this variant:
+    /// - Uses the composite key `(sym_id, target_file_idx)` directly.
+    /// - Does NOT read or write `cross_file_symbol_targets`.
+    /// - Does NOT update the `symbol_to_def` local cache.
+    ///
+    /// This avoids the cross-file `SymbolId` collision bug where two binders can
+    /// assign the same raw `SymbolId` to different symbols.  Callers that already
+    /// hold the target binder (e.g. `import_call_resolver`) must use this variant
+    /// so that local-symbol `DefId` lookups in the same checker context are not
+    /// corrupted by a `register_symbol_file_target` side-effect.
+    pub(crate) fn get_or_create_def_id_for_cross_file_symbol(
+        &self,
+        sym_id: SymbolId,
+        target_file_idx: usize,
+        target_binder: &tsz_binder::BinderState,
+    ) -> tsz_solver::def::DefId {
+        use tsz_solver::def::{DefId, DefinitionInfo};
+
+        // Fast path: composite-key lookup (no side effects).
+        if let Some(def_id) = self
+            .definition_store
+            .lookup_by_symbol(sym_id.0, target_file_idx as u32)
+        {
+            return def_id;
+        }
+
+        let Some(symbol) = target_binder.get_symbol(sym_id) else {
+            return DefId::INVALID;
+        };
+
+        let kind = Self::def_kind_for_symbol(symbol);
+        let info = DefinitionInfo {
+            kind,
+            name: self.types.intern_string(&symbol.escaped_name),
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            file_id: Some(target_file_idx as u32),
+            span: Self::definition_span_for_symbol(symbol),
+            symbol_id: Some(sym_id.0),
+            heritage_names: Vec::new(),
+            is_abstract: false,
+            is_const: false,
+            is_exported: false,
+            is_global_augmentation: false,
+            is_declare: false,
+        };
+
+        let def_id = self.definition_store.register(info);
+        // Register only the composite key; do NOT touch symbol_to_def or
+        // cross_file_symbol_targets to avoid corrupting local-symbol lookups.
+        self.definition_store
+            .register_symbol_mapping(sym_id.0, target_file_idx as u32, def_id);
+        self.register_def_kind_in_envs(def_id, kind);
+        def_id
+    }
+
     /// Get or create a `DefId` for a symbol when the syntactic reference name is known.
     ///
     /// Raw `SymbolId` values are only unique within a binder. Type lowering can see a

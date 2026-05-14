@@ -165,6 +165,48 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             None
         };
 
+        let current_file_idx = self.ctx.current_file_idx;
+        let import_call_resolver = |call_node: tsz_parser::parser::NodeIndex,
+                                    segments: &[String]|
+         -> Option<tsz_solver::TypeId> {
+            if segments.is_empty() {
+                return None;
+            }
+            let call_nd = self.ctx.arena.get(call_node)?;
+            let call = self.ctx.arena.get_call_expr(call_nd)?;
+            let first_arg = *call.arguments.as_ref()?.nodes.first()?;
+            let arg_nd = self.ctx.arena.get(first_arg)?;
+            let module_spec = self.ctx.arena.get_literal(arg_nd)?.text.clone();
+            let target_file_idx = self
+                .ctx
+                .resolve_import_target_from_file_with_mode(current_file_idx, &module_spec, None)
+                .or_else(|| self.ctx.resolve_import_target(&module_spec))?;
+            let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+            let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+            let target_file_name = target_arena.source_files.first()?.file_name.clone();
+            let (mut current_sym, _) = target_binder
+                .resolve_import_with_reexports_type_only(&target_file_name, &segments[0])?;
+            for seg in segments.iter().skip(1) {
+                let symbol = target_binder
+                    .get_symbol(current_sym)
+                    .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
+                current_sym = symbol
+                    .exports
+                    .as_deref()
+                    .and_then(|e| e.get(seg.as_str()))
+                    .or_else(|| symbol.members.as_deref().and_then(|m| m.get(seg.as_str())))?;
+            }
+            // Use the collision-safe variant to avoid corrupting cross_file_symbol_targets
+            // for local symbols that share the same raw SymbolId as the target symbol.
+            let def_id = self.ctx.get_or_create_def_id_for_cross_file_symbol(
+                current_sym,
+                target_file_idx,
+                target_binder,
+            );
+            self.ensure_type_alias_resolved(current_sym, def_id);
+            Some(self.ctx.types.lazy(def_id))
+        };
+
         let mut lowering = TypeLowering::with_hybrid_resolver(
             self.ctx.arena,
             self.ctx.types,
@@ -175,7 +217,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         .with_strict_null_checks(self.ctx.strict_null_checks())
         .with_name_def_id_resolver(&name_def_id_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
-        .with_type_query_override(&type_query_override);
+        .with_type_query_override(&type_query_override)
+        .with_import_call_resolver(&import_call_resolver);
         if use_qualified_names {
             lowering = lowering.prefer_name_def_id_resolution();
         }

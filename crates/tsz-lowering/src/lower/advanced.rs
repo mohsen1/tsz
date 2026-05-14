@@ -611,31 +611,60 @@ impl<'a> TypeLowering<'a> {
         //
         // Cross-arena lib lowering opts into name-first resolution because raw
         // NodeIndex values are arena-local and cannot be resolved across arenas.
-        if self.prefer_name_def_id_resolution {
-            if let Some(name) = self.type_name_text(node_idx)
-                && let Some(def_id) = self.resolve_def_id_by_name(&name)
-            {
-                return self.interner.lazy(def_id);
-            }
-            if let Some(def_id) = self.resolve_def_id(node_idx) {
-                return self.interner.lazy(def_id);
-            }
+        let by_name = || {
+            let name = self.type_name_text(node_idx)?;
+            self.resolve_def_id_by_name(&name)
+        };
+        let by_node = || self.resolve_def_id(node_idx);
+        let resolved_def_id = if self.prefer_name_def_id_resolution {
+            by_name().or_else(by_node)
         } else {
-            if let Some(def_id) = self.resolve_def_id(node_idx) {
-                return self.interner.lazy(def_id);
-            }
-            if let Some(name) = self.type_name_text(node_idx)
-                && let Some(def_id) = self.resolve_def_id_by_name(&name)
-            {
-                return self.interner.lazy(def_id);
-            }
+            by_node().or_else(by_name)
+        };
+        if let Some(def_id) = resolved_def_id {
+            return self.interner.lazy(def_id);
         }
         if let Some(name) = self.type_name_text(node_idx) {
             return self
                 .interner
                 .unresolved_type_name(self.interner.intern_string(&name));
         }
+        // Last-chance resolution: detect `import("./m").Type` patterns where the
+        // left side of the QUALIFIED_NAME chain is an `import(...)` CALL_EXPRESSION.
+        // Normal name-text and def-id paths can't cross file boundaries at lowering
+        // time, so an optional checker-supplied callback handles this case.
+        if let Some(resolver) = self.import_call_resolver
+            && let Some((call_node, segments)) = self.find_import_call_root(node_idx)
+            && let Some(resolved) = resolver(call_node, &segments)
+        {
+            return resolved;
+        }
         TypeId::ERROR
+    }
+
+    /// Walk a `QUALIFIED_NAME` chain to find an `import(...)` `CALL_EXPRESSION` root.
+    ///
+    /// For `import("./m").A.B` the AST is `QN(QN(CALL, "A"), "B")`.
+    /// Returns `(call_node, ["A", "B"])` when the root is a call expression,
+    /// or `None` for ordinary qualified names like `Ns.Type`.
+    fn find_import_call_root(&self, node_idx: NodeIndex) -> Option<(NodeIndex, Vec<String>)> {
+        let mut segments: Vec<String> = Vec::new();
+        let mut current = node_idx;
+        loop {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let qn = self.arena.get_qualified_name(node)?;
+                let right_node = self.arena.get(qn.right)?;
+                let right_ident = self.arena.get_identifier(right_node)?;
+                segments.push(right_ident.escaped_text.clone());
+                current = qn.left;
+            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                segments.reverse();
+                return Some((current, segments));
+            } else {
+                return None;
+            }
+        }
     }
 
     /// Lower an identifier as a type (simple type reference)

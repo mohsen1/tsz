@@ -1372,6 +1372,25 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx.register_symbol_file_target(sym_id, file_idx);
         }
+
+        // Fast path: if the shared DefinitionStore already holds a concrete body
+        // for this DefId, use it directly instead of calling get_type_of_symbol.
+        //
+        // Two symbols from different binders can share the same raw SymbolId.
+        // When symbol_types[raw_sym_id] holds a same-file symbol's type from
+        // build_type_environment, get_type_of_symbol(raw_sym_id) returns that
+        // cached type for an unrelated cross-file DefId that happens to share
+        // the ID — overwriting the correct body in type_env.
+        if let Some(body) = self.ctx.definition_store.get_body(def_id)
+            && body != TypeId::ERROR
+            && body != TypeId::ANY
+            && body != TypeId::UNKNOWN
+            && lazy_def_id(self.ctx.types, body) != Some(def_id)
+        {
+            self.try_insert_def_in_type_env(def_id, body);
+            return Some(body);
+        }
+
         let resolved = if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
             if symbol.has_any_flags(symbol_flags::CLASS) {
                 // Keep class references in type position as instance types to avoid
