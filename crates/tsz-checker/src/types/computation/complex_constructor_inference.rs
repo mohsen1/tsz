@@ -3,6 +3,146 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn default_current_infer_placeholders_to_unknown(&self, type_id: TypeId) -> TypeId {
+        let mut substitution = tsz_solver::TypeSubstitution::new();
+        for ty in crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id) {
+            let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, ty)
+            else {
+                continue;
+            };
+            let name = self.ctx.types.resolve_atom_ref(info.name);
+            if name.starts_with("__infer_") && !name.starts_with("__infer_src_") {
+                substitution.insert(info.name, TypeId::UNKNOWN);
+            }
+        }
+        if substitution.is_empty() {
+            type_id
+        } else {
+            crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                type_id,
+                &substitution,
+            )
+        }
+    }
+
+    pub(super) fn report_direct_constructor_type_param_constraint_mismatches(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+        args: &[tsz_parser::NodeIndex],
+        arg_types: &[TypeId],
+    ) {
+        for (i, param) in shape.params.iter().enumerate() {
+            let Some(&arg_idx) = args.get(i) else {
+                continue;
+            };
+            let Some(&actual) = arg_types.get(i) else {
+                continue;
+            };
+            let Some(param_info) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, param.type_id)
+            else {
+                continue;
+            };
+            let Some(type_param) = shape
+                .type_params
+                .iter()
+                .find(|type_param| type_param.name == param_info.name)
+            else {
+                continue;
+            };
+            let Some(constraint) = type_param.constraint else {
+                continue;
+            };
+            let constraint = self.evaluate_type_with_env(constraint);
+            let actual_for_check =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, actual);
+            if !self.is_assignable_to(actual_for_check, constraint) {
+                let _ =
+                    self.check_argument_assignable_or_report(actual_for_check, constraint, arg_idx);
+            }
+        }
+    }
+
+    pub(super) fn generic_constructor_nested_constraint_failure_return(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+        arg_types: &[TypeId],
+    ) -> Option<TypeId> {
+        let mut failed = false;
+        for (i, param) in shape.params.iter().enumerate() {
+            if crate::query_boundaries::common::type_param_info(self.ctx.types, param.type_id)
+                .is_some()
+            {
+                continue;
+            }
+            let Some(&actual) = arg_types.get(i) else {
+                continue;
+            };
+            for param_part in
+                crate::query_boundaries::common::collect_all_types(self.ctx.types, param.type_id)
+            {
+                let Some(param_info) =
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, param_part)
+                else {
+                    continue;
+                };
+                let Some(type_param) = shape
+                    .type_params
+                    .iter()
+                    .find(|type_param| type_param.name == param_info.name)
+                else {
+                    continue;
+                };
+                let Some(constraint) = type_param.constraint else {
+                    continue;
+                };
+                let constraint = self.evaluate_type_with_env(constraint);
+                if self
+                    .primitive_parts(actual)
+                    .into_iter()
+                    .any(|part| !self.is_assignable_to(part, constraint))
+                {
+                    failed = true;
+                }
+            }
+        }
+        if !failed {
+            return None;
+        }
+
+        let mut substitution = tsz_solver::TypeSubstitution::new();
+        for type_param in &shape.type_params {
+            let replacement = type_param
+                .constraint
+                .map(|constraint| self.evaluate_type_with_env(constraint))
+                .unwrap_or(TypeId::UNKNOWN);
+            substitution.insert(type_param.name, replacement);
+        }
+        Some(crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            shape.return_type,
+            &substitution,
+        ))
+    }
+
+    fn primitive_parts(&self, type_id: TypeId) -> Vec<TypeId> {
+        crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id)
+            .into_iter()
+            .map(|part| crate::query_boundaries::common::widen_literal_type(self.ctx.types, part))
+            .filter(|&part| {
+                matches!(
+                    part,
+                    TypeId::STRING
+                        | TypeId::NUMBER
+                        | TypeId::BOOLEAN
+                        | TypeId::BIGINT
+                        | TypeId::SYMBOL
+                )
+            })
+            .collect()
+    }
+
     pub(super) fn seed_substitution_from_partial_function_returns(
         &mut self,
         substitution: &mut tsz_solver::TypeSubstitution,
