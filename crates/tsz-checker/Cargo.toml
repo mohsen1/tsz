@@ -1110,6 +1110,10 @@ name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
 
 [[test]]
+name = "abstract_parameter_property_impl_tests"
+path = "tests/abstract_parameter_property_impl_tests.rs"
+
+[[test]]
 name = "self_module_augmentation_isolation_tests"
 path = "tests/self_module_augmentation_isolation_tests.rs"
 
