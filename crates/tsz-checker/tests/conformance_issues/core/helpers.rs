@@ -2040,3 +2040,37 @@ class Customers {
         "Expected TS2394 for constructor overload/implementation arity mismatch, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_repeated_generic_call_does_not_reuse_prior_inferred_literal_object() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Named { name: string }
+interface Aged { age: number }
+
+function greet<T extends Named & Aged>(person: T): string {
+  return person.name;
+}
+
+greet({ name: "Alice", age: 30 });
+greet({ name: "Bob" });
+
+export {};
+"#,
+        CheckerOptions {
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for the second call missing age, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Bob") && message.contains("Alice")
+        }),
+        "A later generic call must not compare against a previous call's inferred literal object, got: {diagnostics:?}"
+    );
+}
