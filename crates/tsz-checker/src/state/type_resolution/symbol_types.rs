@@ -414,7 +414,12 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         structural_type,
                     ) {
-                    self.evaluate_type_with_resolution(structural_type)
+                    let evaluated = self.evaluate_type_with_resolution(structural_type);
+                    if matches!(evaluated, TypeId::ERROR | TypeId::UNKNOWN) {
+                        structural_type
+                    } else {
+                        evaluated
+                    }
                 } else {
                     structural_type
                 };
@@ -1760,14 +1765,12 @@ impl<'a> CheckerState<'a> {
                 // First try the standard heritage merge (works for user-arena interfaces).
                 let mut merged =
                     self.merge_interface_heritage_types(&symbol.declarations, interface_type);
-                // If standard merge didn't propagate heritage (common for lib interfaces
-                // whose declarations live in lib arenas invisible to self.ctx.arena),
-                // fall back to the lib-aware heritage merge.
+                // If standard merge didn't propagate lib-arena heritage, fall
+                // back to the lib-aware heritage merge.
                 if merged == interface_type {
                     let name = symbol.escaped_name.clone();
                     merged = self.merge_lib_interface_heritage(merged, &name);
                 }
-
                 self.pop_type_parameters(updates);
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                     let canonical_params = self.get_type_params_for_symbol(sym_id);

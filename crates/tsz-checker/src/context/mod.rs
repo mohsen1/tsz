@@ -1283,6 +1283,11 @@ pub struct CheckerContext<'a> {
     /// This prevents widening of literal types in object/array literals.
     pub in_const_assertion: bool,
 
+    /// True while checking a `satisfies T` operand. Object-literal property
+    /// widening then uses tsc's exact `isLiteralOfContextualType` per-property
+    /// gate instead of tsz's normal coarser policy.
+    pub in_satisfies_operand: bool,
+
     /// When true, preserve literal types instead of widening.
     /// Set during evaluation of compound expression branches (conditional `?:`,
     /// logical `||`/`&&`/`??`) so that `const x = cond ? "a" : "b"` infers
