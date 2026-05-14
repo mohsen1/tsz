@@ -1,8 +1,7 @@
 //! Cross-call cache for `remove_subtypes_for_bct`.
 //!
-//! Mirrors the `instantiation_cache` shape (PR 3/4 of
-//! `docs/plan/perf-instantiate-type-cache-design.md`). The key is the
-//! sorted list of input `TypeId`s plus a small `mode_bits` byte that
+//! Mirrors the `instantiation_cache` shape. The key is the sorted list of
+//! input `TypeId`s plus a small `mode_bits` byte that
 //! captures any inputs other than the type list which can affect the
 //! reduction result (currently: whether a `TypeResolver` was provided,
 //! which enables nominal class-hierarchy subtype resolution).
