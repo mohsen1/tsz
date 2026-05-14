@@ -219,6 +219,7 @@ mod type_inference_accessor_property;
 mod type_inference_class_expression;
 mod type_inference_const_assertions;
 mod type_inference_enum_access;
+mod type_inference_fallback_types;
 mod type_inference_flat_map;
 mod type_inference_foreign_names;
 mod type_inference_function_text;
