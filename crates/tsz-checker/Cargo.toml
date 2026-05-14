@@ -326,6 +326,10 @@ name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
 [[test]]
+name = "accessor_assignment_read_surface_tests"
+path = "tests/accessor_assignment_read_surface_tests.rs"
+
+[[test]]
 name = "conditional_extends_readonly_identity_tests"
 path = "tests/conditional_extends_readonly_identity_tests.rs"
 
