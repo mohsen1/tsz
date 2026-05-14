@@ -645,6 +645,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Process rest tuple in Round 1
         if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
+            let direct_rest_tuple = self
+                .interner
+                .lookup(tuple_type)
+                .and_then(|data| match data {
+                    TypeData::Tuple(elements_id) => Some(self.interner.tuple_list(elements_id)),
+                    _ => None,
+                })
+                .is_some_and(|elements| elements.iter().all(|element| !element.rest));
+            let was_type_annotation = infer_ctx.source_is_type_annotation;
+            if direct_rest_tuple {
+                infer_ctx.source_is_type_annotation = true;
+            }
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,
@@ -652,6 +664,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 target_type,
                 InferencePriority::NakedTypeVariable,
             );
+            infer_ctx.source_is_type_annotation = was_type_annotation;
         }
 
         // 4. Fix variables with enough information from Round 1

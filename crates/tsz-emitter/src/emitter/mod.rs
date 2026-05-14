@@ -37,6 +37,7 @@ mod expressions;
 mod function_parameters;
 mod function_scopes;
 mod functions;
+mod functions_arrow;
 mod helpers;
 mod jsx;
 mod literals;

@@ -6,6 +6,113 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn emit_statement_list_with_using_scope(
+        &mut self,
+        statements: &NodeList,
+    ) -> bool {
+        if self.ctx.options.target.supports_es2025()
+            || !self.block_has_using_declarations(statements)
+        {
+            return false;
+        }
+
+        let using_async = self.block_has_await_using(statements);
+        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
+        let prev_block_using_env = self
+            .block_using_env
+            .replace((env_name.clone(), using_async));
+
+        self.write(env_decl_keyword);
+        self.write(" ");
+        self.write(&env_name);
+        self.write(" = { stack: [], error: void 0, hasError: false };");
+        self.write_line();
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        for &stmt in &statements.nodes {
+            if let Some(stmt_node) = self.arena.get(stmt) {
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                self.emit_comments_before_pos(actual_start);
+            }
+            let before_emit_len = self.writer.len();
+            self.emit(stmt);
+            if self.writer.len() > before_emit_len && !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+        }
+
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("catch (");
+        self.write(&error_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        self.write(&env_name);
+        self.write(".error = ");
+        self.write(&error_name);
+        self.write(";");
+        self.write_line();
+        self.write(&env_name);
+        self.write(".hasError = true;");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("finally {");
+        self.write_line();
+        self.increase_indent();
+        if using_async {
+            let await_kw = if self.ctx.emit_await_as_yield || self.ctx.emit_await_as_yield_await {
+                "yield"
+            } else {
+                "await"
+            };
+            self.write(env_decl_keyword);
+            self.write(" ");
+            self.write(&result_name);
+            self.write(" = ");
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+            self.write("if (");
+            self.write(&result_name);
+            self.write(")");
+            self.write_line();
+            self.increase_indent();
+            self.write(await_kw);
+            self.write(" ");
+            if self.ctx.emit_await_as_yield_await {
+                self.write_helper("__await");
+                self.write("(");
+                self.write(&result_name);
+                self.write(")");
+            } else {
+                self.write(&result_name);
+            }
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+        } else {
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&env_name);
+            self.write(");");
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.block_using_env = prev_block_using_env;
+        true
+    }
+
     pub(in crate::emitter) fn emit_recovered_class_keyword_variable_statement_tail(
         &mut self,
         node: &Node,

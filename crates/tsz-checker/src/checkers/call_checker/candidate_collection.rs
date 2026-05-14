@@ -12,6 +12,8 @@ use crate::query_boundaries::checkers::call::{
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TupleElement, TypeId};
 
@@ -105,15 +107,39 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         arg_type_count: usize,
     ) -> Vec<bool> {
-        if args.len() != arg_type_count {
-            return vec![false; arg_type_count];
+        if args.len() == arg_type_count {
+            return args
+                .iter()
+                .map(|&arg_idx| {
+                    self.call_arg_source_is_type_assertion(arg_idx)
+                        || self.call_arg_source_is_typed_identifier(arg_idx)
+                })
+                .collect();
         }
-        args.iter()
-            .map(|&arg_idx| {
+
+        let mut markers = Vec::with_capacity(arg_type_count);
+        for &arg_idx in args {
+            if let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                && let Some(spread_expression) = self.spread_expression_from_node(arg_idx, arg_node)
+                && let Some((elements, const_asserted)) =
+                    self.const_asserted_array_literal_spread_elements(spread_expression)
+            {
+                markers.extend(
+                    elements
+                        .into_iter()
+                        .filter(|idx| idx.is_some())
+                        .map(|_| const_asserted),
+                );
+                continue;
+            }
+            markers.push(
                 self.call_arg_source_is_type_assertion(arg_idx)
-                    || self.call_arg_source_is_typed_identifier(arg_idx)
-            })
-            .collect()
+                    || self.call_arg_source_is_typed_identifier(arg_idx),
+            );
+        }
+        markers.resize(arg_type_count, false);
+        markers
     }
 
     fn call_arg_source_is_type_assertion(&self, arg_idx: NodeIndex) -> bool {
@@ -228,20 +254,32 @@ impl<'a> CheckerState<'a> {
         for &arg_idx in args {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx)
                 && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+                && let Some(spread_expression) = self.spread_expression_from_node(arg_idx, arg_node)
             {
-                let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                let spread_type = self.normalized_spread_argument_type(spread_expression);
+                if let Some((elements, _)) =
+                    self.const_asserted_array_literal_spread_elements(spread_expression)
+                {
+                    expanded_count += elements.len();
+                    continue;
+                }
                 if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
-                    expanded_count += elems.len();
+                    expanded_count += self.expanded_tuple_spread_len(&elems);
                     continue;
                 }
                 // Check if it's an array literal spread (skip parentheses)
                 if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
-                    let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                    let inner_idx = self.ctx.arena.skip_parenthesized(spread_expression);
                     if let Some(expr_node) = self.ctx.arena.get(inner_idx)
                         && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
                     {
                         expanded_count += literal.elements.nodes.len();
+                        continue;
+                    }
+                    if let Some((elements, _)) =
+                        self.const_asserted_array_literal_spread_elements(spread_expression)
+                    {
+                        expanded_count += elements.len();
                         continue;
                     }
                 }
@@ -280,9 +318,10 @@ impl<'a> CheckerState<'a> {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
                 // Handle spread elements specially - expand tuple types
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                    && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+                    && let Some(spread_expression) =
+                        self.spread_expression_from_node(arg_idx, arg_node)
                 {
-                    let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+                    let spread_type = self.normalized_spread_argument_type(spread_expression);
                     let expected_at_spread = expected_for_index(effective_index, expanded_count);
                     let recursive_mapped_tuple_depth = expected_at_spread.is_some_and(|expected| {
                         Self::recursive_mapped_tuple_spread_may_exceed_depth_in_types(
@@ -292,7 +331,7 @@ impl<'a> CheckerState<'a> {
                         )
                     });
                     if recursive_mapped_tuple_depth {
-                        let anchor = self.spread_iterability_error_anchor(spread_data.expression);
+                        let anchor = self.spread_iterability_error_anchor(spread_expression);
                         if let Some((start, end)) = self.get_node_span(anchor)
                             && !self.has_diagnostic_code_within_span(
                                 start,
@@ -309,18 +348,47 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Check if spread argument is iterable, emit TS2488 if not
-                    self.check_spread_iterability(spread_type, spread_data.expression);
+                    self.check_spread_iterability(spread_type, spread_expression);
 
-                    if self
-                        .aggregate_rest_type_for_spread(
-                            callable_ctx,
-                            effective_index,
-                            expanded_count,
-                        )
-                        .is_some()
+                    if let Some((elements, const_asserted)) =
+                        self.const_asserted_array_literal_spread_elements(spread_expression)
                     {
-                        arg_types.push(self.spread_argument_marker_type(spread_type));
-                        effective_index += 1;
+                        for elem_idx in elements {
+                            if elem_idx.is_none() {
+                                continue;
+                            }
+                            if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                                && elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                            {
+                                if let Some(elem_type) =
+                                    array_element_type_for_type(self.ctx.types, spread_type)
+                                {
+                                    arg_types.push(elem_type);
+                                    effective_index += 1;
+                                }
+                                continue;
+                            }
+                            let elem_type = if const_asserted {
+                                self.literal_type_from_initializer(elem_idx)
+                                    .unwrap_or_else(|| {
+                                        let previous_const_assertion = self.ctx.in_const_assertion;
+                                        let previous_preserve_literals =
+                                            self.ctx.preserve_literal_types;
+                                        self.ctx.in_const_assertion = true;
+                                        self.ctx.preserve_literal_types = true;
+                                        self.invalidate_expression_for_contextual_retry(elem_idx);
+                                        let elem_type = self.get_type_of_node(elem_idx);
+                                        self.ctx.in_const_assertion = previous_const_assertion;
+                                        self.ctx.preserve_literal_types =
+                                            previous_preserve_literals;
+                                        elem_type
+                                    })
+                            } else {
+                                self.get_type_of_node(elem_idx)
+                            };
+                            arg_types.push(elem_type);
+                            effective_index += 1;
+                        }
                         continue;
                     }
 
@@ -329,15 +397,11 @@ impl<'a> CheckerState<'a> {
                         for elem in &elems {
                             if elem.rest {
                                 // Rest element (e.g., `...boolean[]` in `[number, string, ...boolean[]]`).
-                                // Extract the array element type and push one representative
-                                // argument so the solver matches it against the rest parameter's
-                                // element type rather than the whole array type.
-                                if let Some(inner) =
-                                    array_element_type_for_type(self.ctx.types, elem.type_id)
-                                {
-                                    arg_types.push(inner);
-                                    effective_index += 1;
-                                } else if let Some(sub_elems) =
+                                // If the rest element is itself a concrete tuple (including
+                                // readonly tuple wrappers), expand that tuple first. Only fall
+                                // back to one representative array element for genuinely
+                                // variadic array rests.
+                                if let Some(sub_elems) =
                                     tuple_elements_for_type(self.ctx.types, elem.type_id)
                                 {
                                     // Rest element is a nested tuple (variadic tuple spread).
@@ -365,6 +429,11 @@ impl<'a> CheckerState<'a> {
                                             effective_index += 1;
                                         }
                                     }
+                                } else if let Some(inner) =
+                                    array_element_type_for_type(self.ctx.types, elem.type_id)
+                                {
+                                    arg_types.push(inner);
+                                    effective_index += 1;
                                 }
                                 // else: unknown rest type — skip (no args pushed)
                             } else {
@@ -380,6 +449,19 @@ impl<'a> CheckerState<'a> {
                                 effective_index += 1;
                             }
                         }
+                        continue;
+                    }
+
+                    if self
+                        .aggregate_rest_type_for_spread(
+                            callable_ctx,
+                            effective_index,
+                            expanded_count,
+                        )
+                        .is_some()
+                    {
+                        arg_types.push(self.spread_argument_marker_type(spread_type));
+                        effective_index += 1;
                         continue;
                     }
 
@@ -419,7 +501,7 @@ impl<'a> CheckerState<'a> {
                     // For non-literal arrays, treat as variadic (check element type against remaining params)
                     if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
                         // Check if the spread expression is an array literal (skip parentheses)
-                        let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                        let inner_idx = self.ctx.arena.skip_parenthesized(spread_expression);
                         if let Some(expr_node) = self.ctx.arena.get(inner_idx)
                             && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
                         {
@@ -443,6 +525,51 @@ impl<'a> CheckerState<'a> {
                                 }
                                 // Get the type of this specific element
                                 let elem_type = self.get_type_of_node(elem_idx);
+                                arg_types.push(elem_type);
+                                effective_index += 1;
+                            }
+                            continue;
+                        }
+                        if let Some((elements, const_asserted)) =
+                            self.const_asserted_array_literal_spread_elements(spread_expression)
+                        {
+                            for elem_idx in elements {
+                                if elem_idx.is_none() {
+                                    continue;
+                                }
+                                if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                                    && elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                                {
+                                    if let Some(elem_type) =
+                                        array_element_type_for_type(self.ctx.types, spread_type)
+                                    {
+                                        arg_types.push(elem_type);
+                                        effective_index += 1;
+                                    }
+                                    continue;
+                                }
+                                let elem_type = if const_asserted {
+                                    self.literal_type_from_initializer(elem_idx).unwrap_or_else(
+                                        || {
+                                            let previous_const_assertion =
+                                                self.ctx.in_const_assertion;
+                                            let previous_preserve_literals =
+                                                self.ctx.preserve_literal_types;
+                                            self.ctx.in_const_assertion = true;
+                                            self.ctx.preserve_literal_types = true;
+                                            self.invalidate_expression_for_contextual_retry(
+                                                elem_idx,
+                                            );
+                                            let elem_type = self.get_type_of_node(elem_idx);
+                                            self.ctx.in_const_assertion = previous_const_assertion;
+                                            self.ctx.preserve_literal_types =
+                                                previous_preserve_literals;
+                                            elem_type
+                                        },
+                                    )
+                                } else {
+                                    self.get_type_of_node(elem_idx)
+                                };
                                 arg_types.push(elem_type);
                                 effective_index += 1;
                             }
@@ -1107,6 +1234,92 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         needs_aggregate.then_some(rest_type)
+    }
+
+    fn const_asserted_array_literal_spread_elements(
+        &self,
+        expr: NodeIndex,
+    ) -> Option<(Vec<NodeIndex>, bool)> {
+        let direct_const_asserted = self.expression_is_const_assertion(expr);
+        let expr = self.ctx.arena.skip_parenthesized_and_assertions(expr);
+        if let Some(node) = self.ctx.arena.get(expr)
+            && node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        {
+            let literal = self.ctx.arena.get_literal_expr(node)?;
+            return direct_const_asserted.then(|| (literal.elements.nodes.clone(), true));
+        }
+
+        let node = self.ctx.arena.get(expr)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let symbol_id = self
+            .ctx
+            .binder
+            .get_node_symbol(expr)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr))?;
+        let symbol = self.ctx.binder.get_symbol(symbol_id)?;
+        let mut var_decl = None;
+        for candidate in
+            std::iter::once(symbol.value_declaration).chain(symbol.declarations.iter().copied())
+        {
+            let mut current = candidate;
+            for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+                if current.is_none() {
+                    break;
+                }
+                let Some(current_node) = self.ctx.arena.get(current) else {
+                    break;
+                };
+                if let Some(decl) = self.ctx.arena.get_variable_declaration(current_node) {
+                    var_decl = Some(decl);
+                    break;
+                }
+                current = self.ctx.arena.get_extended(current)?.parent;
+            }
+            if var_decl.is_some() {
+                break;
+            }
+        }
+        let var_decl = var_decl?;
+        let init = var_decl.initializer;
+        if init.is_none() || !self.expression_is_const_assertion(init) {
+            return None;
+        }
+        let init = self.ctx.arena.skip_parenthesized_and_assertions(init);
+        let init_node = self.ctx.arena.get(init)?;
+        if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.ctx.arena.get_literal_expr(init_node)?;
+        Some((literal.elements.nodes.clone(), true))
+    }
+
+    fn expanded_tuple_spread_len(&self, elems: &[TupleElement]) -> usize {
+        let mut count = 0;
+        for elem in elems {
+            if elem.rest
+                && let Some(sub_elems) = tuple_elements_for_type(self.ctx.types, elem.type_id)
+            {
+                count += self.expanded_tuple_spread_len(&sub_elems);
+            } else {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn spread_expression_from_node(
+        &self,
+        spread_idx: NodeIndex,
+        spread_node: &Node,
+    ) -> Option<NodeIndex> {
+        self.ctx
+            .arena
+            .get_spread(spread_node)
+            .map(|spread| spread.expression)
+            .or_else(|| self.ctx.arena.get_children(spread_idx).first().copied())
     }
 
     fn rest_type_is_declared_on_callable(&self, callable_type: TypeId, rest_type: TypeId) -> bool {

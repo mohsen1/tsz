@@ -40,7 +40,8 @@ default_cargo_build_jobs() {
     unit|unit-archive|unit-shard)
       # Unit builds compile large lib-test targets concurrently with downstream
       # crates; keep more headroom than dist/wasm to avoid rustc SIGKILLs.
-      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-12288}"
+      # On the 32 GiB GitHub runners, this intentionally caps unit builds at 1.
+      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-16384}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
@@ -1053,17 +1054,25 @@ run_conformance_aggregate() {
   fi
 
   local total_passed=0 total_tests=0 shard_count=0
+  local total_expected_passed=0 total_expected_tests=0
   for f in "$tmp_dir"/shard-*.json; do
     [[ -f "$f" ]] || continue
-    local p t
+    local p t ep et
     p="$(jq -r '.passed // 0' "$f" 2>/dev/null)"
     t="$(jq -r '.total // 0' "$f" 2>/dev/null)"
+    ep="$(jq -r '.expected_passed // 0' "$f" 2>/dev/null)"
+    et="$(jq -r '.expected_total // 0' "$f" 2>/dev/null)"
     total_passed=$(( total_passed + $(num_or_zero "$p") ))
     total_tests=$(( total_tests + $(num_or_zero "$t") ))
+    total_expected_passed=$(( total_expected_passed + $(num_or_zero "$ep") ))
+    total_expected_tests=$(( total_expected_tests + $(num_or_zero "$et") ))
     shard_count=$(( shard_count + 1 ))
   done
 
   echo "Conformance aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards"
+  if [[ "$total_expected_tests" -gt 0 ]]; then
+    echo "Conformance expected aggregate: ${total_expected_passed}/${total_expected_tests}"
+  fi
 
   if [[ "$shard_count" -lt "$expected_shards" ]]; then
     echo "error: only ${shard_count}/${expected_shards} shard results collected; some shards may have crashed" >&2
@@ -1073,18 +1082,26 @@ run_conformance_aggregate() {
   local baseline baseline_total
   baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
   baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
+  local coverage_baseline_total="$baseline_total"
+  if [[ "$total_expected_tests" -gt 0 ]]; then
+    coverage_baseline_total="$total_expected_tests"
+  fi
   local total_tolerance=5
-  if [[ "$baseline_total" -gt 0 && "$total_tests" -lt $(( baseline_total - total_tolerance )) ]]; then
-    echo "error: conformance coverage is incomplete: ${total_tests} < ${baseline_total} (tolerance ${total_tolerance})" >&2
+  if [[ "$coverage_baseline_total" -gt 0 && "$total_tests" -lt $(( coverage_baseline_total - total_tolerance )) ]]; then
+    echo "error: conformance coverage is incomplete: ${total_tests} < ${coverage_baseline_total} (tolerance ${total_tolerance})" >&2
     return 1
   fi
-  if [[ "$baseline" -gt 0 && "$total_passed" -lt "$baseline" ]]; then
+  local pass_baseline="$baseline"
+  if [[ "$total_expected_passed" -gt 0 ]]; then
+    pass_baseline="$total_expected_passed"
+  fi
+  if [[ "$pass_baseline" -gt 0 && "$total_passed" -lt "$pass_baseline" ]]; then
     local pass_tolerance=5
-    if [[ "$total_passed" -ge $(( baseline - pass_tolerance )) ]]; then
-      echo "warning: conformance aggregate below baseline within tolerance: ${total_passed} < ${baseline} (tolerance ${pass_tolerance})" >&2
+    if [[ "$total_passed" -ge $(( pass_baseline - pass_tolerance )) ]]; then
+      echo "warning: conformance aggregate below baseline within tolerance: ${total_passed} < ${pass_baseline} (tolerance ${pass_tolerance})" >&2
     else
-      echo "error: conformance regression: ${total_passed} < ${baseline}" >&2
-      _show_conformance_regressions "$tmp_dir" "$prefix" "$baseline"
+      echo "error: conformance regression: ${total_passed} < ${pass_baseline}" >&2
+      _show_conformance_regressions "$tmp_dir" "$prefix" "$pass_baseline"
       return 1
     fi
   fi
