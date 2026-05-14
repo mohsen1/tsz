@@ -309,10 +309,7 @@ impl<'a> CheckerState<'a> {
             def_id
         } else {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
-            // Namespace-qualified lib aliases (for example Intl.* aliases) may not
-            // be directly discoverable by resolve_lib_type_by_name(name). When that
-            // happens, lower the proven declaration arena directly and materialize
-            // the canonical alias body into DefinitionStore.
+            // If resolver lookup misses (for example Intl.* aliases), lower the proven declaration arena directly.
             let mut lowered: Option<(TypeId, Vec<TypeParamInfo>)> = None;
             for &decl_idx in &symbol.declarations {
                 let decl_arenas = self
