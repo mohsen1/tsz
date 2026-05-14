@@ -233,6 +233,31 @@ jobs:
       - name: Run lint suite
         run: scripts/ci/github-suite.sh lint
 
+  cargo-shear:
+    name: cargo-shear
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 10
+    env:
+      CARGO_SHEAR_VERSION: "1.11.2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Install cargo-shear
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v cargo-shear >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-shear v${CARGO_SHEAR_VERSION}:"; then
+            echo "cargo-shear ${CARGO_SHEAR_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-shear --version "${CARGO_SHEAR_VERSION}" --locked
+      - name: Run cargo shear
+        run: cargo shear
+
   dist-binaries:
     name: dist-binaries
     needs: gate
@@ -575,6 +600,7 @@ jobs:
     needs:
       - gate
       - lint
+      - cargo-shear
       - dist-binaries
       - project-compile-guard
       - wasm
@@ -611,7 +637,7 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "dist-binaries", "unit"}
+          required = {"lint", "cargo-shear", "dist-binaries", "unit"}
           if full_run:
               required.update({
                   "wasm",
@@ -640,5 +666,5 @@ jobs:
           if full_run:
               print("All required CI jobs passed.")
           else:
-              print("Draft/light CI passed: lint, dist-binaries, and unit.")
+              print("Draft/light CI passed: lint, cargo-shear, dist-binaries, and unit.")
           PY

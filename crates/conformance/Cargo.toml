@@ -7,11 +7,6 @@ homepage.workspace = true
 autotests = false
 publish = false
 
-[dependencies.tsz]
-path = "../tsz-core"
-package = "tsz-core"
-features = []
-
 [dependencies]
 # Async runtime
 tokio = { version = "1.44", features = ["full", "tracing"] }
@@ -39,7 +34,6 @@ walkdir = "2.5"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "2.0"
 
 # Concurrent hashmap for error tracking
 dashmap = "6.1"
@@ -48,12 +42,14 @@ dashmap = "6.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Progress reporting
-indicatif = "0.17"
-
 # Temporary files for compilation
 tempfile = "3"
 libc = "0.2.183"
 
-[dev-dependencies]
-criterion = "0.5"
+[dev-dependencies.tsz]
+path = "../tsz-core"
+package = "tsz-core"
+features = []
+
+[package.metadata.cargo-shear]
+ignored = ["tsz"]

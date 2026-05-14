@@ -144,3 +144,6 @@ path = "tests/async_arrow_default_param_3758_tests.rs"
 
 [lints]
 workspace = true
+
+[lib]
+doctest = false
