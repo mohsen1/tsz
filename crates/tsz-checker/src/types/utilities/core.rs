@@ -1307,7 +1307,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let cached_eval = self.ctx.env_eval_cache.borrow().get(&type_id).copied();
+        let cached_eval = self.ctx.lookup_env_eval_cache(type_id);
         if let Some(cached) = cached_eval
             && cached.result != type_id
         {

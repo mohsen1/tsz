@@ -11,7 +11,6 @@
 //! - `compiler_options` - Compiler option accessors and solver config derivation
 //! - `lib_queries` - Library/global type availability queries
 //! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
-
 mod aliases;
 mod caches;
 mod compiler_options;
@@ -22,6 +21,7 @@ pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
 mod constructors;
 mod core;
 mod cross_file_query;
+mod env_eval_cache;
 mod file_session_reset;
 pub mod lifetime_shells;
 pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};

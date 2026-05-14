@@ -366,13 +366,7 @@ impl<'a> CheckerState<'a> {
             && !query::contains_infer_types_db(self.ctx.types, result)
         {
             self.ctx
-                .env_eval_cache
-                .borrow_mut()
-                .entry(type_id)
-                .or_insert(crate::context::EnvEvalCacheEntry {
-                    result,
-                    depth_exceeded: false,
-                });
+                .cache_env_eval_result_if_absent(type_id, result, false);
         }
 
         result
