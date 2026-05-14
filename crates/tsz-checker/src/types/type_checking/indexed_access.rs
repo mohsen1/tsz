@@ -541,7 +541,11 @@ impl<'a> CheckerState<'a> {
             };
             if node.kind == syntax_kind_ext::INFER_TYPE {
                 result.push(idx);
-                continue; // Don't recurse into infer's children
+                // Nested `infer Y` inside the constraint is in the same scope.
+                if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
+                    stack.push(infer_data.type_parameter);
+                }
+                continue;
             }
             // Push children based on node type
             self.push_type_node_children(idx, node, &mut stack);
@@ -600,6 +604,10 @@ impl<'a> CheckerState<'a> {
         // Type operator (keyof, readonly, unique)
         if let Some(type_op) = self.ctx.arena.get_type_operator(node) {
             stack.push(type_op.type_node);
+            return;
+        }
+        if let Some(tp) = self.ctx.arena.get_type_parameter(node) {
+            stack.extend_from_slice(&[tp.constraint, tp.default]);
         }
     }
 

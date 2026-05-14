@@ -942,27 +942,32 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if node.kind == syntax_kind_ext::INFER_TYPE {
-                if let Some(infer_data) = self.ctx.arena.get_infer_type(node)
-                    && let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
-                    && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
-                    && let Some(name_node) = self.ctx.arena.get(tp_data.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    let name = ident.escaped_text.clone();
-                    let atom = self.ctx.types.intern_string(&name);
-                    let provisional = factory.type_param(tsz_solver::TypeParamInfo {
-                        name: atom,
-                        constraint: None,
-                        default: None,
-                        is_const: false,
-                    });
-                    let previous = self
-                        .ctx
-                        .type_parameter_scope
-                        .insert(name.clone(), provisional);
-                    pushes.push((name, previous));
+                if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
+                    if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+                        && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                        && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let name = ident.escaped_text.clone();
+                        let atom = self.ctx.types.intern_string(&name);
+                        let provisional = factory.type_param(tsz_solver::TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        });
+                        let previous = self
+                            .ctx
+                            .type_parameter_scope
+                            .insert(name.clone(), provisional);
+                        pushes.push((name, previous));
+                    }
+                    // The constraint of `infer X extends Constraint` may itself
+                    // contain `infer Y extends C2`; tsc binds those nested names
+                    // in the true branch too. Descend into the type-parameter
+                    // subtree to pick them up.
+                    stack.push(infer_data.type_parameter);
                 }
-                // Do not recurse past the binding site.
                 continue;
             }
             for child in self.ctx.arena.get_children(idx) {
