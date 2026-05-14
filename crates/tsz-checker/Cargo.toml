@@ -1141,5 +1141,9 @@ path = "tests/mapped_type_numeric_literal_key_tests.rs"
 name = "ts2344_infer_positional_constraint_tests"
 path = "tests/ts2344_infer_positional_constraint_tests.rs"
 
+[[test]]
+name = "satisfies_generic_inference_literal_widening_tests"
+path = "tests/satisfies_generic_inference_literal_widening_tests.rs"
+
 [lints]
 workspace = true

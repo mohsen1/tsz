@@ -277,6 +277,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            in_satisfies_operand: false,
             preserve_literal_types: false,
             use_declared_type_for_identifier: false,
             skip_array_contextual_supertype_collapse: false,

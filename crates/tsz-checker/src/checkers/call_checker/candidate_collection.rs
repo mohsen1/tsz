@@ -116,6 +116,10 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
+    /// True when the argument node is an explicit user-written type assertion
+    /// (`as T`, `<T>expr`, or `expr satisfies T`). These mark the argument as a
+    /// type-annotated source: generic inference must not re-widen its literal
+    /// members.
     fn call_arg_source_is_type_assertion(&self, arg_idx: NodeIndex) -> bool {
         let idx = self.ctx.arena.skip_parenthesized(arg_idx);
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -123,6 +127,7 @@ impl<'a> CheckerState<'a> {
         };
         if node.kind != syntax_kind_ext::AS_EXPRESSION
             && node.kind != syntax_kind_ext::TYPE_ASSERTION
+            && node.kind != syntax_kind_ext::SATISFIES_EXPRESSION
         {
             return false;
         }
