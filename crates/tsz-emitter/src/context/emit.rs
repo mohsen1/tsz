@@ -263,6 +263,11 @@ pub struct EmitContext {
     /// File-level counter for generated `arguments_N` capture bindings.
     pub arguments_capture_counter: u32,
 
+    /// Async ES2015+ lowering emits a nested `function*`. When a `var`
+    /// declaration in that generator redeclares an async parameter, tsc hoists
+    /// the declaration and leaves an assignment at the original site.
+    pub async_generator_shadowed_parameter_names: Vec<String>,
+
     /// Auto-detect module mode: if true, detect imports/exports and apply `CommonJS`
     pub auto_detect_module: bool,
 
@@ -301,6 +306,7 @@ impl EmitContext {
             rewrite_arguments_to_arguments_1: false,
             arguments_capture_name: None,
             arguments_capture_counter: 0,
+            async_generator_shadowed_parameter_names: Vec::new(),
             auto_detect_module: false,
             original_module_kind: None,
             file_is_module: false,

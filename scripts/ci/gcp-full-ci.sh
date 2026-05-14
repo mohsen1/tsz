@@ -36,7 +36,16 @@ default_cargo_build_jobs() {
   local cpu_jobs mem_mb mem_per_job_mb mem_jobs
   cpu_jobs="$HOST_CPUS"
   mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
-  mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
+  case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
+    unit|unit-archive|unit-shard)
+      # Unit builds compile large lib-test targets concurrently with downstream
+      # crates; keep more headroom than dist/wasm to avoid rustc SIGKILLs.
+      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-12288}"
+      ;;
+    *)
+      mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
+      ;;
+  esac
   if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_job_mb" =~ ^[0-9]+$ && "$mem_per_job_mb" -gt 0 ]]; then
     mem_jobs=$((mem_mb / mem_per_job_mb))
     if (( mem_jobs < 1 )); then mem_jobs=1; fi

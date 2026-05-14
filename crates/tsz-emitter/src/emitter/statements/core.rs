@@ -833,13 +833,14 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // VariableStatement.declarations contains a VARIABLE_DECLARATION_LIST
-        // Emit the declaration list (which handles the let/const/var keyword)
-        if self
+        if self.emit_async_generator_shadow_variable_statement(node) {
+            return;
+        }
+        let is_accessor = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword)
-            || self.has_recovered_accessor_modifier(node)
-        {
+            || self.has_recovered_accessor_modifier(node);
+        if is_accessor {
             self.write("accessor ");
         }
         for &decl_list_idx in &var_stmt.declarations.nodes {
@@ -1513,23 +1514,6 @@ impl<'a> Printer<'a> {
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);
-    }
-
-    fn expression_statement_consumed_invalid_backslash_semicolon(
-        &self,
-        node: &Node,
-        expression: NodeIndex,
-    ) -> bool {
-        let (Some(source_text), Some(expr_node)) = (self.source_text, self.arena.get(expression))
-        else {
-            return false;
-        };
-        let start = expr_node.end as usize;
-        let end = node.end as usize;
-        start < end
-            && end <= source_text.len()
-            && source_text[start..end].contains('\\')
-            && source_text[start..end].contains(';')
     }
 
     /// Emit an arbitrary expression as a standalone statement expression.
