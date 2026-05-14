@@ -680,12 +680,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.get_type_of_node(member_idx)
                 };
-                // Optional `prop?: T` reads as `T | undefined`, so that's the type TS2411 must check.
-                let prop_type = if sig.question_token {
-                    self.ctx.types.union2(base_type, TypeId::UNDEFINED)
-                } else {
-                    base_type
-                };
+                let prop_type = self.index_sig_optional_type(base_type, sig.question_token);
                 (name, sig.name, prop_type, false)
             } else if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
                 let Some(sig) = self.ctx.arena.get_signature(member_node) else {
@@ -712,11 +707,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.get_type_of_node(member_idx)
                 };
-                let prop_type = if prop.question_token {
-                    self.ctx.types.union2(base_type, TypeId::UNDEFINED)
-                } else {
-                    base_type
-                };
+                let prop_type = self.index_sig_optional_type(base_type, prop.question_token);
                 (name, prop.name, prop_type, is_static)
             } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
                 let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
@@ -1227,12 +1218,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Optional inherited property has effective type `T | undefined` for TS2411.
-            let prop_type = if prop.optional {
-                self.ctx.types.union2(prop.type_id, TypeId::UNDEFINED)
-            } else {
-                prop.type_id
-            };
+            let prop_type = self.index_sig_optional_type(prop.type_id, prop.optional);
             if self.type_contains_error(prop_type) {
                 continue;
             }
