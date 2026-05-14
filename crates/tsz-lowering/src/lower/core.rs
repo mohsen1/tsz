@@ -28,6 +28,9 @@ pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 pub(super) type NodeIndexResolver<'a, T> = dyn Fn(NodeIndex) -> Option<T> + 'a;
 pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
+/// Resolver for `import("./module").Type` patterns: given the `import(...)`
+/// `CALL_EXPRESSION` node and the member-access segments, returns the type.
+pub(super) type ImportCallResolver<'a> = dyn Fn(NodeIndex, &[String]) -> Option<TypeId> + 'a;
 pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 pub(super) type TypeofParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 
@@ -88,8 +91,7 @@ pub struct TypeLowering<'a> {
     pub(super) type_query_override: Option<&'a NodeIndexResolver<'a, TypeId>>,
     /// Optional resolver for `import("./module").Type` patterns in type positions.
     /// See `with_import_call_resolver`.
-    #[allow(clippy::type_complexity)]
-    pub(super) import_call_resolver: Option<&'a dyn Fn(NodeIndex, &[String]) -> Option<TypeId>>,
+    pub(super) import_call_resolver: Option<&'a ImportCallResolver<'a>>,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -774,11 +776,7 @@ impl<'a> TypeLowering<'a> {
     /// `import("./m").OnlyType`).  Returning `Some(type_id)` supplies the
     /// resolved type directly, bypassing the ordinary qualified-name lookup
     /// that cannot cross file boundaries during lowering.
-    #[allow(clippy::type_complexity)]
-    pub fn with_import_call_resolver(
-        mut self,
-        resolver: &'a dyn Fn(NodeIndex, &[String]) -> Option<TypeId>,
-    ) -> Self {
+    pub fn with_import_call_resolver(mut self, resolver: &'a ImportCallResolver<'a>) -> Self {
         self.import_call_resolver = Some(resolver);
         self
     }
