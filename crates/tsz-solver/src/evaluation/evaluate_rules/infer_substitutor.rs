@@ -5,8 +5,9 @@
 
 use crate::TypeDatabase;
 use crate::types::{
-    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, ObjectShape,
-    ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId,
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
+    ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId,
+    TypeParamInfo,
 };
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -244,6 +245,45 @@ impl<'a> InferSubstitutor<'a> {
                         true_type,
                         false_type,
                         is_distributive: cond.is_distributive,
+                    })
+                }
+            }
+            TypeData::Mapped(mapped_id) => {
+                // Every TypeId reachable from the mapped type must be visited so
+                // that infer variables captured by an outer conditional flow into
+                // the constraint (the `in` clause), the key remapping (`as`), the
+                // value template, and the binder's own constraint/default. Without
+                // this arm, patterns like
+                //     P extends `${infer K}.${infer R}` ? { [X in K]: F<T[K], R> } : ...
+                // leave `K` and `R` unbound inside the mapped type after the outer
+                // match succeeds, which makes `evaluate_mapped` defer and collapse
+                // the outer object level.
+                let mapped = self.interner.get_mapped(mapped_id);
+                let tp_constraint = mapped.type_param.constraint.map(|c| self.substitute(c));
+                let tp_default = mapped.type_param.default.map(|d| self.substitute(d));
+                let constraint = self.substitute(mapped.constraint);
+                let name_type = mapped.name_type.map(|n| self.substitute(n));
+                let template = self.substitute(mapped.template);
+                let unchanged = tp_constraint == mapped.type_param.constraint
+                    && tp_default == mapped.type_param.default
+                    && constraint == mapped.constraint
+                    && name_type == mapped.name_type
+                    && template == mapped.template;
+                if unchanged {
+                    type_id
+                } else {
+                    self.interner.mapped(MappedType {
+                        type_param: TypeParamInfo {
+                            name: mapped.type_param.name,
+                            constraint: tp_constraint,
+                            default: tp_default,
+                            is_const: mapped.type_param.is_const,
+                        },
+                        constraint,
+                        name_type,
+                        template,
+                        readonly_modifier: mapped.readonly_modifier,
+                        optional_modifier: mapped.optional_modifier,
                     })
                 }
             }
