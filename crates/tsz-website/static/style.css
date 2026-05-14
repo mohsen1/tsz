@@ -780,14 +780,18 @@ tr:nth-child(even) { background: var(--table-stripe); }
 }
 
 .compat-item {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.45rem;
   padding: 0.45rem 0;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 0.9rem;
   line-height: 1.45;
+}
+
+.compat-row-main,
+.compat-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .compat-item a {
@@ -819,6 +823,27 @@ tr:nth-child(even) { background: var(--table-stripe); }
 .compat-detail {
   color: var(--text-secondary);
   font-size: 0.82rem;
+}
+
+.compat-meta {
+  margin-top: 0.12rem;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 0.76rem;
+}
+
+.compat-deltas {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.compat-deltas code {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .benchmark-mean-card {
