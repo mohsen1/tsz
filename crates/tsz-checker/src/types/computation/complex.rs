@@ -812,7 +812,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut inferred_new_type_args: Option<Vec<TypeId>> = None;
-        let arg_types = if is_generic_new {
+        let mut arg_types = if is_generic_new {
             if let Some(ref shape) = constructor_shape {
                 // Pre-compute which parameter positions should skip excess property
                 // checking because the original parameter type contains a type parameter.
@@ -1326,6 +1326,19 @@ impl<'a> CheckerState<'a> {
                 .collect();
             if self.new_type_args_are_applyable(shape, &type_args, &substitution) {
                 inferred_new_type_args = Some(type_args);
+            }
+        }
+
+        // For generic constructors (without const type params), widen scalar literal
+        // arg types for error display. During arg collection, preserve_literal_types
+        // was true so that generic inference gets precise literal types (e.g., `true`
+        // for `T = true`). But for TS2345 error messages, tsc displays the widened
+        // type (`boolean`, not `true`). The function call path achieves this via its
+        // multi-pass inference; here we widen explicitly post-collection.
+        if is_generic_new && !has_const_type_params {
+            for arg_type in arg_types.iter_mut() {
+                *arg_type =
+                    tsz_solver::operations::widening::widen_literal_type(self.ctx.types, *arg_type);
             }
         }
         if let Some(type_args) = &inferred_new_type_args {
