@@ -228,6 +228,7 @@ mod type_inference_instantiation;
 mod type_inference_object_members;
 mod type_inference_object_rewrites;
 mod type_inference_package_matching;
+mod type_inference_portable_mapped_objects;
 mod type_inference_return_unions;
 mod type_inference_source_call;
 mod type_inference_type_nodes;
