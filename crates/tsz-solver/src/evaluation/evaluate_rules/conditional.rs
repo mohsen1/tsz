@@ -2382,25 +2382,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // back-reference to one (recorded for parametric structural bodies).
         // For intrinsics, type parameters, unions, and other shapes the
         // reducer would just do one no-op lookup before returning None.
-        if Self::is_alias_reducible_candidate(self.interner(), cond.check_type)
-            && let Some(reduced) = self.reduce_alias_body_to_application_form(cond.check_type)
-            && reduced != cond.check_type
-            && reduced != check_type
-        {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
-            checker.allow_bivariant_rest = true;
-            let mut bindings = FxHashMap::default();
-            let mut visited = FxHashSet::default();
-            let matched = self.match_infer_pattern(
-                reduced,
-                cond.extends_type,
-                &mut bindings,
-                &mut visited,
-                &mut checker,
-            );
-            if matched && !bindings.is_empty() {
-                let substituted_true = self.substitute_infer(cond.true_type, &bindings);
-                return Some(self.evaluate(substituted_true));
+        for candidate in [cond.check_type, check_type] {
+            if Self::is_alias_reducible_candidate(self.interner(), candidate)
+                && let Some(reduced) = self.reduce_alias_body_to_application_form(candidate)
+                && reduced != candidate
+                && reduced != check_type
+            {
+                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                checker.allow_bivariant_rest = true;
+                let mut bindings = FxHashMap::default();
+                let mut visited = FxHashSet::default();
+                let matched = self.match_infer_pattern(
+                    reduced,
+                    cond.extends_type,
+                    &mut bindings,
+                    &mut visited,
+                    &mut checker,
+                );
+                if matched && !bindings.is_empty() {
+                    let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                    return Some(self.evaluate(substituted_true));
+                }
             }
         }
 

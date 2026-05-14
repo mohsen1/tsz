@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
 
             // Handle keyof operator
             if operator == SyntaxKind::KeyOfKeyword as u16 {
-                return factory.keyof(inner_type);
+                return self.get_keyof_type(inner_type);
             }
 
             // Handle unique operator
@@ -158,7 +158,9 @@ impl<'a> CheckerState<'a> {
         match classify_for_type_resolution(self.ctx.types, operand) {
             TypeResolutionKind::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    let resolved = self.get_type_of_symbol(sym_id);
+                    let env_resolved = { self.ctx.type_env.borrow().get_def(def_id) };
+                    let resolved =
+                        env_resolved.unwrap_or_else(|| self.type_reference_symbol_type(sym_id));
                     // Guard: if resolution returned the same Lazy type (symbol is
                     // currently being resolved — circular placeholder), bail out.
                     // Without this, the recursive get_keyof_type call loops forever
