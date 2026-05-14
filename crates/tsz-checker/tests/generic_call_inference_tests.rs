@@ -121,6 +121,26 @@ fn relevant_strict_default_lib_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn readonly_const_tuple_spread_into_fixed_arity_generic_call_no_ts2554() {
+    let diagnostics = relevant_default_lib_diagnostics(
+        r#"
+function infer<T, U, V>(a: T, b: U, c: V): [T, U, V] {
+    return [a, b, c];
+}
+
+const args = [1, 'hello', true] as const;
+const result = infer(...args);
+const check: [1, 'hello', true] = result;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected readonly const tuple spread to satisfy fixed-arity generic call; got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn variadic_rest_tuple_satisfies_array_rest_constraint() {
     let source = r#"
 export {};
@@ -143,6 +163,25 @@ opt1.zip(opt2, opt3);
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2345),
         "rest tuple should satisfy Array<Option<any>> constraint: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn generic_rest_parameter_infers_literal_tuple_under_primitive_array_constraint() {
+    let diagnostics = relevant_default_lib_diagnostics(
+        r#"
+function typed<T extends string[]>(...args: T): T {
+    return args;
+}
+
+const t1 = typed("a", "b", "c");
+const check1: ["a", "b", "c"] = t1;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "generic rest parameter should infer a tuple of string literal types; got: {diagnostics:#?}"
     );
 }
 
@@ -2984,6 +3023,71 @@ const reject: Pending<string> = pool.acquire();
     assert_eq!(
         ts2322_count, 1,
         "Pool should infer R = Connection from create(), accept Connection assignment, and reject string assignment exactly once. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_constructor_options_infer_through_method_signature_and_omit_spread() {
+    let source = r#"
+declare class Connection {
+    ok(): void;
+}
+
+declare class Pending<R> {
+    promise: Promise<R>;
+}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+interface PoolOptions<R> {
+    create(cb: (err: Error | null, resource: R) => void): any | (() => Promise<R>);
+    destroy(resource: R): any;
+    validate?(resource: R): boolean;
+    min: number;
+    max: number;
+}
+
+declare class Pool<R> {
+    constructor(options: PoolOptions<R>);
+    acquire(): Pending<R>;
+}
+
+declare const tarn: {
+    options: Omit<PoolOptions<any>, "create" | "destroy" | "validate"> & {
+        validateConnections?: false;
+    };
+    Pool: typeof Pool;
+};
+
+const { validateConnections, ...poolOptions } = tarn.options;
+
+const pool: Pool<Connection> = new tarn.Pool({
+    ...poolOptions,
+    create: async () => new Connection(),
+    destroy: async (connection) => {
+        connection.ok();
+    },
+    validate:
+        validateConnections === false
+            ? undefined
+            : (connection) => {
+                connection.ok();
+                return true;
+            },
+});
+
+const keep: Pending<Connection> = pool.acquire();
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "generic constructor options should contextually type callback parameters through method signatures and spreads. Got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "Pool should infer R = Connection through method-style create and Omit spread. Got: {diags:#?}"
     );
 }
 

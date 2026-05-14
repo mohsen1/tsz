@@ -128,7 +128,8 @@ impl<'a> CheckerState<'a> {
         let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
         let return_type =
             self.apply_direct_callable_this_substitution(return_type, callee_expr, callee_type);
-        let return_type = self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
+        let return_type =
+            self.refine_mixin_call_return_type(callee_expr, callee_type, arg_types, return_type);
         let return_type = if !self.ctx.compiler_options.sound_mode {
             common::widen_freshness(self.ctx.types, return_type)
         } else {
@@ -1564,6 +1565,13 @@ impl<'a> CheckerState<'a> {
         if common::contains_this_type(self.ctx.types, expected) {
             return false;
         }
+        // Bare __infer_N expected + concrete actual: inference is done, mismatch is definitive.
+        if common::is_bare_infer_placeholder(self.ctx.types, expected)
+            && !assign_query::contains_infer_types(self.ctx.types, actual)
+            && actual != expected
+        {
+            return false;
+        }
         // When both types are Applications of the same base (e.g., F<CP> vs F<unknown>),
         // the mismatch comes from variance checking, not from contextual typing.
         // Don't defer — the variance rejection is definitive. This matches tsc which
@@ -1650,14 +1658,8 @@ impl<'a> CheckerState<'a> {
             if !refined_still_has_holes {
                 return false;
             }
-            // When neither callable has its own generic signatures, check if holes are
-            // only in the expected type (not the actual). This covers cases like
-            // `pipe(() => true, ...)` where the expected `(...args: A) => B` has type
-            // params A and B from pipe's outer inference context, while the actual
-            // `() => boolean` is fully concrete. Deferring is correct because the outer
-            // inference will resolve A and B. Contrast with `(x: T) => void` passed where
-            // T is from an *outer* function scope — in that case T appears in the actual,
-            // so we don't defer (the holes are structural, not inference-in-progress).
+            // Defer only when holes are in expected (outer inference will resolve them),
+            // not when holes are in actual (those are permanent outer-scope type params).
             if !actual_has_generic_signatures && !expected_has_generic_signatures {
                 let actual_has_holes =
                     assign_query::contains_infer_types(self.ctx.types, refined_actual)
@@ -1684,12 +1686,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        // Defer callable mismatches only when the actual or expected has its own generic
-        // signatures (e.g., `<T>(x: T) => T`), which indicates the mismatch may be resolved
-        // by higher-order generic inference. Don't defer just because the callable references
-        // type parameters from an enclosing scope (e.g., `(x: T) => void` where T is from
-        // the outer function). Those type parameters are permanent — deferral won't resolve
-        // them, and suppressing the error causes false negatives (missing TS2345).
+        // Defer callable mismatches only when a callable has its own generic signatures
+        // (higher-order inference may still resolve them), not for outer-scope type params.
         if callable_mismatch && (actual_has_generic_signatures || expected_has_generic_signatures) {
             return true;
         }
@@ -1863,28 +1861,29 @@ impl<'a> CheckerState<'a> {
         for &arg_idx in args {
             if let Some(n) = self.ctx.arena.get(arg_idx)
                 && n.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread_data) = self.ctx.arena.get_spread(n)
+                && let Some(spread_expression) = self
+                    .ctx
+                    .arena
+                    .get_spread(n)
+                    .map(|spread| spread.expression)
+                    .or_else(|| self.ctx.arena.get_children(arg_idx).first().copied())
             {
-                let spread_type = self.get_type_of_node(spread_data.expression);
+                let spread_type = self.get_type_of_node(spread_expression);
                 let spread_type = self.resolve_type_for_property_access(spread_type);
                 let spread_type = self.resolve_lazy_type(spread_type);
                 if let Some(elems) =
                     crate::query_boundaries::common::tuple_elements(self.ctx.types, spread_type)
                 {
-                    for _ in &elems {
-                        expanded.push(arg_idx);
-                    }
+                    expanded.extend(std::iter::repeat_n(arg_idx, elems.len()));
                     continue;
                 }
                 // Array literal spreads have known element count — expand them
-                let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                let inner_idx = self.ctx.arena.skip_parenthesized(spread_expression);
                 if let Some(expr_node) = self.ctx.arena.get(inner_idx)
                     && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
                 {
-                    for _ in &literal.elements.nodes {
-                        expanded.push(arg_idx);
-                    }
+                    expanded.extend(std::iter::repeat_n(arg_idx, literal.elements.nodes.len()));
                     continue;
                 }
             }

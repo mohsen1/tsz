@@ -25,6 +25,182 @@ impl<'a> Printer<'a> {
         })
     }
 
+    fn collect_top_level_using_block_envs(
+        &self,
+        statements: &NodeList,
+        start_idx: usize,
+    ) -> Vec<NodeIndex> {
+        let mut block_indices = Vec::new();
+        for &stmt_idx in &statements.nodes[start_idx..] {
+            self.collect_top_level_using_block_envs_in_statement(stmt_idx, &mut block_indices);
+        }
+        block_indices
+    }
+
+    fn collect_top_level_using_block_envs_in_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        block_indices: &mut Vec<NodeIndex>,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.arena.get_block(stmt_node) {
+                    let child_statements = block.statements.clone();
+                    if self.block_has_using_declarations(&child_statements) {
+                        block_indices.push(stmt_idx);
+                    }
+                    for &child_idx in &child_statements.nodes {
+                        self.collect_top_level_using_block_envs_in_statement(
+                            child_idx,
+                            block_indices,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::CASE_BLOCK => {
+                if let Some(block) = self.arena.get_block(stmt_node) {
+                    let child_statements = block.statements.clone();
+                    for &child_idx in &child_statements.nodes {
+                        self.collect_top_level_using_block_envs_in_statement(
+                            child_idx,
+                            block_indices,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.arena.get_if_statement(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        if_stmt.then_statement,
+                        block_indices,
+                    );
+                    self.collect_top_level_using_block_envs_in_statement(
+                        if_stmt.else_statement,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_stmt) = self.arena.get_try(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        try_stmt.try_block,
+                        block_indices,
+                    );
+                    self.collect_top_level_using_block_envs_in_statement(
+                        try_stmt.catch_clause,
+                        block_indices,
+                    );
+                    self.collect_top_level_using_block_envs_in_statement(
+                        try_stmt.finally_block,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_clause) = self.arena.get_catch_clause(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        catch_clause.block,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                if let Some(loop_stmt) = self.arena.get_loop(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        loop_stmt.statement,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
+                if let Some(for_in_of) = self.arena.get_for_in_of(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        for_in_of.statement,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_stmt) = self.arena.get_switch(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        switch_stmt.case_block,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(stmt_node) {
+                    let child_statements = clause.statements.clone();
+                    for &child_idx in &child_statements.nodes {
+                        self.collect_top_level_using_block_envs_in_statement(
+                            child_idx,
+                            block_indices,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        labeled.statement,
+                        block_indices,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_stmt) = self.arena.get_with_statement(stmt_node) {
+                    self.collect_top_level_using_block_envs_in_statement(
+                        with_stmt.then_statement,
+                        block_indices,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn reserve_top_level_using_env_names(
+        &mut self,
+        env_start_id: u32,
+        outer_error_id: u32,
+        block_indices: &[NodeIndex],
+    ) -> (String, String, String) {
+        let outer_names = (
+            format!("env_{env_start_id}"),
+            format!("e_{outer_error_id}"),
+            format!("result_{outer_error_id}"),
+        );
+        self.generated_temp_names.insert(outer_names.0.clone());
+        self.generated_temp_names.insert(outer_names.1.clone());
+        self.generated_temp_names.insert(outer_names.2.clone());
+
+        for (offset, &block_idx) in block_indices.iter().enumerate() {
+            let error_id = env_start_id + offset as u32;
+            let env_id = env_start_id + 1 + offset as u32;
+            let names = (
+                format!("env_{env_id}"),
+                format!("e_{error_id}"),
+                format!("result_{error_id}"),
+            );
+            self.generated_temp_names.insert(names.0.clone());
+            self.generated_temp_names.insert(names.1.clone());
+            self.generated_temp_names.insert(names.2.clone());
+            self.reserved_disposable_env_names.insert(block_idx, names);
+        }
+
+        self.next_disposable_env_id = outer_error_id + 1;
+        outer_names
+    }
+
     pub(in crate::emitter) fn emit_top_level_using_scope(
         &mut self,
         statements: &NodeList,
@@ -48,7 +224,11 @@ impl<'a> Printer<'a> {
                 })
             })
         });
-        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        let reserved_blocks = self.collect_top_level_using_block_envs(statements, start_idx);
+        let env_start_id = self.next_disposable_env_id;
+        let outer_error_id = env_start_id + reserved_blocks.len() as u32;
+        let (env_name, error_name, result_name) =
+            self.reserve_top_level_using_env_names(env_start_id, outer_error_id, &reserved_blocks);
         let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
 
         if is_es_module_output {
@@ -634,16 +814,35 @@ impl<'a> Printer<'a> {
         seen_local: &mut FxHashSet<String>,
         export_named_bindings: &mut Vec<String>,
     ) {
-        let name = match node.kind {
-            k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                .arena
-                .get_class(node)
-                .and_then(|class| self.get_identifier_text_opt(class.name)),
+        let (name, is_legacy_decorated_class) = match node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                let Some(class) = self.arena.get_class(node) else {
+                    return;
+                };
+                let name = self.get_identifier_text_opt(class.name).or_else(|| {
+                    if is_default_export {
+                        Some(
+                            self.anonymous_default_export_name
+                                .clone()
+                                .unwrap_or_else(|| "default_1".to_string()),
+                        )
+                    } else {
+                        None
+                    }
+                });
+                (
+                    name,
+                    self.ctx.options.legacy_decorators
+                        && !self.collect_class_decorators(&class.modifiers).is_empty(),
+                )
+            }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
                 .arena
                 .get_function(node)
-                .and_then(|func| self.get_identifier_text_opt(func.name)),
-            _ => None,
+                .and_then(|func| self.get_identifier_text_opt(func.name))
+                .map(|name| (Some(name), false))
+                .unwrap_or((None, false)),
+            _ => (None, false),
         };
         let Some(name) = name else {
             return;
@@ -651,7 +850,17 @@ impl<'a> Printer<'a> {
         if seen_local.insert(name.clone()) {
             local_names.push(name.clone());
         }
-        if is_exported && is_es_module_output {
+        if is_default_export
+            && is_legacy_decorated_class
+            && !self.ctx.options.target.supports_es2025()
+        {
+            if seen_local.insert("_default".to_string()) {
+                local_names.push("_default".to_string());
+            }
+            if is_es_module_output {
+                export_named_bindings.push("export { _default as default };".to_string());
+            }
+        } else if is_exported && is_es_module_output {
             if is_default_export {
                 export_named_bindings.push(format!("export {{ {name} as default }};"));
             } else {
@@ -682,8 +891,21 @@ impl<'a> Printer<'a> {
                         .get_class(stmt_node)
                         .and_then(|class| self.get_identifier_text_opt(class.name))
                         .filter(|name| cjs_deferred_export_names.contains(name))
+                        .map(|name| {
+                            self.deferred_local_export_bindings
+                                .as_ref()
+                                .and_then(|bindings| bindings.get(&name))
+                                .cloned()
+                                .unwrap_or(name)
+                        })
                 };
-                self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name, false)
+                self.emit_top_level_using_class_assignment(
+                    stmt_node,
+                    stmt_idx,
+                    export_name,
+                    false,
+                    is_es_module_output,
+                )
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 let export_name = if is_es_module_output {
@@ -717,16 +939,17 @@ impl<'a> Printer<'a> {
                         .emit_top_level_using_class_assignment(
                             clause_node,
                             export.export_clause,
-                            if is_es_module_output {
-                                None
-                            } else if export.is_default_export {
+                            if export.is_default_export {
                                 Some("default".to_string())
+                            } else if is_es_module_output {
+                                None
                             } else {
                                 self.arena
                                     .get_class(clause_node)
                                     .and_then(|class| self.get_identifier_text_opt(class.name))
                             },
                             !export.is_default_export,
+                            is_es_module_output,
                         ),
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
                         .emit_top_level_using_function_assignment(
@@ -793,6 +1016,11 @@ impl<'a> Printer<'a> {
                                 .module_state
                                 .iife_exported_names
                                 .contains(&local_name)
+                                || self
+                                    .ctx
+                                    .module_state
+                                    .inline_exported_names
+                                    .contains(&export_name)
                             {
                                 continue;
                             }
@@ -961,7 +1189,6 @@ impl<'a> Printer<'a> {
         };
         let value_specs = self.collect_value_specifiers(&named_exports.elements);
         if value_specs.is_empty() {
-            self.write("export {};");
             return;
         }
         self.write("export {");
@@ -1040,6 +1267,35 @@ impl<'a> Printer<'a> {
             emitted = stripped.to_string();
         }
 
+        if is_legacy_decorator_class && !self.in_top_level_using_scope {
+            let export_stmt = self.top_level_using_export_binding_stmt(export_name, binding_name);
+            if self.ctx.target_es5 {
+                if !emitted.ends_with('\n') {
+                    emitted.push('\n');
+                }
+                emitted.push_str(&export_stmt);
+            } else {
+                let export_prefix = self.top_level_using_export_binding_prefix(export_name);
+                let decorate_pattern = format!("{binding_name} = __decorate(");
+                let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
+                if let Some(first_stmt_end) = emitted.find(';') {
+                    emitted.insert_str(first_stmt_end + 1, &format!("\n{export_stmt}"));
+                }
+                if !emitted.contains(&exported_decorate) {
+                    emitted = emitted.replacen(&decorate_pattern, &exported_decorate, 1);
+                    if self.in_system_execute_body
+                        && let Some(relative_end) = emitted.rfind(");")
+                    {
+                        emitted.replace_range(relative_end..relative_end + 2, "));\n");
+                        if emitted.ends_with("\n\n") {
+                            emitted.pop();
+                        }
+                    }
+                }
+            }
+            return emitted;
+        }
+
         let export_stmt = self.top_level_using_export_binding_stmt(export_name, binding_name);
         emitted = emitted
             .lines()
@@ -1050,13 +1306,14 @@ impl<'a> Printer<'a> {
         let export_prefix = self.top_level_using_export_binding_prefix(export_name);
         let export_suffix = self.top_level_using_export_binding_suffix();
 
-        if is_legacy_decorator_class && self.ctx.target_es5 {
+        if is_legacy_decorator_class && self.ctx.target_es5 && self.in_top_level_using_scope {
             let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
             emitted = emitted.replace(&exported_decorate, &format!("{binding_name} = __decorate("));
         }
 
         if is_legacy_decorator_class
             && !self.ctx.target_es5
+            && self.in_top_level_using_scope
             && let Some(first_stmt_end) = emitted.find(';')
         {
             let first_stmt = emitted[..first_stmt_end].trim_start();
@@ -1095,12 +1352,9 @@ impl<'a> Printer<'a> {
         mut emitted: String,
         binding_name: &str,
         export_name: &str,
+        is_es_module_output: bool,
     ) -> String {
-        let leading_indent = if self.in_system_execute_body {
-            Some("    ".repeat(self.writer.indent_level() as usize))
-        } else {
-            None
-        };
+        let leading_indent = Some("    ".repeat(self.writer.indent_level() as usize));
         if let Some(indent) = leading_indent.as_ref()
             && let Some(stripped) = emitted.strip_prefix(indent)
         {
@@ -1116,7 +1370,6 @@ impl<'a> Printer<'a> {
         // `using` (ES2025+) skips the tracker since the export sits at
         // module top level rather than inside a try/catch.
         let local_expr = if export_name == "default"
-            && self.in_system_execute_body
             && self.in_top_level_using_scope
             && !self.ctx.options.target.supports_es2025()
         {
@@ -1124,7 +1377,21 @@ impl<'a> Printer<'a> {
         } else {
             binding_name.to_string()
         };
-        let export_stmt = if let Some(indent) = leading_indent.as_ref() {
+
+        let plain_export_stmt = self.top_level_using_export_binding_stmt(export_name, binding_name);
+        let local_export_stmt = self.top_level_using_export_binding_stmt(export_name, &local_expr);
+        emitted = emitted
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                trimmed != plain_export_stmt && trimmed != local_export_stmt
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let export_stmt = if is_es_module_output {
+            format!("{local_expr};")
+        } else if let Some(indent) = leading_indent.as_ref() {
             format!(
                 "{indent}{}",
                 self.top_level_using_export_binding_stmt(export_name, &local_expr)
@@ -1134,6 +1401,9 @@ impl<'a> Printer<'a> {
         };
 
         if export_name == "default" {
+            if is_es_module_output && !self.in_top_level_using_scope {
+                return emitted;
+            }
             if !emitted.ends_with('\n') {
                 emitted.push('\n');
             }
@@ -1141,9 +1411,45 @@ impl<'a> Printer<'a> {
             return emitted;
         }
 
+        let export_prefix = self.top_level_using_export_binding_prefix(export_name);
+        let export_suffix = self.top_level_using_export_binding_suffix();
+        if self.in_top_level_using_scope && self.ctx.target_es5 {
+            let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
+            emitted = emitted.replace(&exported_decorate, &format!("{binding_name} = __decorate("));
+            let trimmed = emitted.trim_end();
+            let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed);
+            return format!("{export_prefix}{trimmed}{export_suffix}");
+        }
+
         if let Some(first_stmt_end) = emitted.find(';')
             && (!self.in_system_execute_body || !self.ctx.target_es5)
         {
+            if self.in_top_level_using_scope && !self.ctx.target_es5 {
+                let first_stmt = emitted[..first_stmt_end].trim_start();
+                let mut remainder = emitted[first_stmt_end + 1..]
+                    .trim_start_matches(['\n', '\r'])
+                    .to_string();
+                let decorate_pattern = format!("{binding_name} = __decorate(");
+                let exported_decorate = format!("{export_prefix}{binding_name} = __decorate(");
+                if !remainder.contains(&exported_decorate) {
+                    remainder = remainder.replacen(&decorate_pattern, &exported_decorate, 1);
+                    if self.in_system_execute_body
+                        && let Some(relative_end) = remainder.rfind(");")
+                    {
+                        let end = relative_end;
+                        remainder.replace_range(end..end + 2, "));\n");
+                        if remainder.ends_with("\n\n") {
+                            remainder.pop();
+                        }
+                    }
+                }
+                let mut rewritten = format!("{export_prefix}{first_stmt}{export_suffix}");
+                if !remainder.trim().is_empty() {
+                    rewritten.push('\n');
+                    rewritten.push_str(&remainder);
+                }
+                return rewritten;
+            }
             emitted.insert_str(first_stmt_end + 1, &format!("\n{export_stmt}"));
         }
 
@@ -1158,10 +1464,7 @@ impl<'a> Printer<'a> {
         let decorate_pattern = format!("{binding_name} = __decorate(");
         let mut replaced_decorate_assignment = false;
         if let Some(decorate_start) = emitted.rfind(&decorate_pattern) {
-            let replacement = format!(
-                "{}{binding_name} = __decorate(",
-                self.top_level_using_export_binding_prefix(export_name)
-            );
+            let replacement = format!("{export_prefix}{binding_name} = __decorate(");
             emitted.replace_range(
                 decorate_start..decorate_start + decorate_pattern.len(),
                 &replacement,
@@ -1197,6 +1500,7 @@ impl<'a> Printer<'a> {
         idx: NodeIndex,
         export_name: Option<String>,
         rewrite_as_direct_export: bool,
+        is_es_module_output: bool,
     ) -> bool {
         let Some(class) = self.arena.get_class(node) else {
             return false;
@@ -1273,7 +1577,9 @@ impl<'a> Printer<'a> {
             if !self.writer.is_at_line_start() {
                 self.write_line();
             }
-            self.write_export_binding_start("default");
+            if !is_es_module_output {
+                self.write_export_binding_start("default");
+            }
             // Inside a top-level System using-block, anonymous default
             // classes thread through a `_default` tracker variable so
             // the export call mirrors tsc's
@@ -1284,7 +1590,11 @@ impl<'a> Printer<'a> {
                 self.write("_default = ");
             }
             self.write(&binding_name);
-            self.write_export_binding_end();
+            if !is_es_module_output {
+                self.write_export_binding_end();
+            } else {
+                self.write(";");
+            }
             return true;
         }
         if self.ctx.options.target.supports_es2025()
@@ -1386,6 +1696,7 @@ impl<'a> Printer<'a> {
                     rewritten,
                     &binding_name,
                     export_name,
+                    is_es_module_output,
                 ));
             } else if let Some(mut rewritten) =
                 self.render_simple_tc39_decorated_class_es5(node, idx, &binding_name, &display_name)
@@ -1492,7 +1803,22 @@ impl<'a> Printer<'a> {
                 self.write(&rewritten);
             }
         } else {
+            let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
+            if let Some(stripped) = rewritten.strip_prefix(&leading_indent) {
+                rewritten = stripped.to_string();
+            }
             self.write(&rewritten);
+            if !rewritten.trim_end().ends_with(';') {
+                self.write(";");
+            }
+        }
+        if let Some(export_name) = export_name.as_ref()
+            && !is_es_module_output
+        {
+            self.ctx
+                .module_state
+                .inline_exported_names
+                .insert(export_name.clone());
         }
         true
     }

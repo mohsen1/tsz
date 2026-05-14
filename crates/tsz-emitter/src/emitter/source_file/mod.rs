@@ -1,5 +1,6 @@
 mod const_enums;
 mod emit;
+mod recovery;
 mod top_level_using;
 
 #[cfg(test)]
@@ -233,13 +234,14 @@ mod tests {
 
         assert!(
             output.contains("function f1(x_1)")
-                && output.contains("m(x_1) { const _super = Object.create(null, {"),
+                && output.contains("m(x_1) {\n        const _super = Object.create(null, {"),
             "Lowered async generators should use function-local placeholder temp scopes.\nOutput:\n{output}"
         );
         assert!(
-            output.contains(
-                "return __asyncGenerator(this, arguments, function* m_1(x, y = z, _a) { var w = __rest(_a, []); _super.foo.call(this); });"
-            ),
+            output
+                .contains("return __asyncGenerator(this, arguments, function* m_1(x, y = z, _a) {")
+                && output.contains("var w = __rest(_a, []);")
+                && output.contains("_super.foo.call(this);"),
             "Async-generator methods should move params into the generator, emit object-rest prologue, and call captured super.\nOutput:\n{output}"
         );
     }

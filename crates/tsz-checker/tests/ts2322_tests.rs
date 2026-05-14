@@ -2872,6 +2872,41 @@ ab = {};
 }
 
 #[test]
+fn test_private_public_intersection_reduces_to_never_for_asserts_this() {
+    let diags = with_lib_contexts(
+        r#"
+class Value<T> {
+  constructor(private value: T | null) {}
+
+  assertHasValue(): asserts this is { value: T } & Value<T> {
+    if (this.value === null) {
+      throw new Error("No value");
+    }
+  }
+
+  getValue(): T {
+    this.assertHasValue();
+    return this.value;
+  }
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && message.contains("Property 'value' does not exist on type 'never'")
+        }),
+        "Expected TS2339 for private/public impossible intersection reduced to never, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_check_mjs_false_does_not_enforce_annotation_type() {
     // No @ts-check: JSDoc types should NOT be enforced when checkJs is false.
     let source = r#"
@@ -4875,6 +4910,40 @@ preferredRevision = PUPPETEER_REVISIONS.firefox;
     );
 }
 
+#[test]
+fn object_seal_widens_mutable_literal_property_values() {
+    let source = r#"
+const sealed = Object.seal({ x: 1 });
+sealed.x = 2;
+
+const frozen = Object.freeze({ x: 1 });
+frozen.x = 2;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let seal_assignment_start = source
+        .find("sealed.x = 2")
+        .expect("sealed assignment should exist") as u32;
+    let frozen_assignment_start = source
+        .find("frozen.x = 2")
+        .expect("frozen assignment should exist") as u32;
+    let seal_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.start == seal_assignment_start)
+        .collect();
+    assert_eq!(
+        seal_diagnostics.len(),
+        0,
+        "Expected Object.seal property assignment to remain mutable and widened. Got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic.code
+            == diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY
+            && diagnostic.start == frozen_assignment_start + "frozen.".len() as u32),
+        "Expected Object.freeze assignment to remain readonly. Got: {diagnostics:?}"
+    );
+}
+
 /// Regression: assignFromStringInterface2.ts
 /// When both source and target have number index signatures but the source is
 /// missing named properties from the target, TS2739/TS2740 should be emitted
@@ -5455,6 +5524,32 @@ const t = f({ a: 1, b: "c", d: ["e", 2] });
     assert!(
         !has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Should not emit TS2322 for const type parameter with multiple type params"
+    );
+}
+
+#[test]
+fn mixin_inferred_const_literal_tag_substitutes_return_class_property() {
+    let source = r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+
+class User {
+  name = 'unknown';
+}
+
+function Tagged<TBase extends Constructor, TTag>(Base: TBase, tag: TTag) {
+  return class Tagged extends Base {
+    tag: TTag = tag;
+  };
+}
+
+const TaggedUser = Tagged(User, 'user' as const);
+const tagu = new TaggedUser();
+const tag: 'user' = tagu.tag;
+"#;
+
+    assert!(
+        !has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 when an inferred const literal tag flows into a mixin return class property"
     );
 }
 

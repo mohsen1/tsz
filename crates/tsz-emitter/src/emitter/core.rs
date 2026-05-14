@@ -415,6 +415,13 @@ pub struct Printer<'a> {
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
 
+    /// Per-file counters for lowered async-generator inner function names.
+    pub(crate) async_generator_inner_name_counts: FxHashMap<String, u32>,
+
+    /// Environment names reserved for top-level using sub-blocks before hoisted
+    /// function declarations are emitted.
+    pub(crate) reserved_disposable_env_names: FxHashMap<NodeIndex, (String, String, String)>,
+
     /// When set, a block-level using-lowering try/catch is active. `using` variable
     /// statements should emit `const x = __addDisposableResource(env, expr, async)`
     /// instead of their own try/catch wrapper. The tuple is (`env_name`, `is_async`).
@@ -589,6 +596,13 @@ pub struct Printer<'a> {
     /// When a function parameter has `{ a, ...rest }`, the parameter is replaced with a temp
     /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
     pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
+
+    /// Pending `super` capture declarations for lowered async arrows in a method body.
+    pub(crate) pending_lowered_async_arrow_super_capture: Option<(
+        crate::transforms::emit_utils::AsyncMethodSuperCapture,
+        Option<String>,
+        Option<String>,
+    )>,
 
     /// Current nesting depth of function/method/constructor scopes.
     /// Used to determine if we're inside a function scope (depth > 0) or at top level (0).
@@ -936,6 +950,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
+            pending_lowered_async_arrow_super_capture: None,
             function_scope_depth: 0,
             arrow_function_scope_depth: 0,
             first_for_of_emitted: false,
@@ -952,6 +967,8 @@ impl<'a> Printer<'a> {
             anonymous_default_export_name: None,
             next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
+            async_generator_inner_name_counts: FxHashMap::default(),
+            reserved_disposable_env_names: FxHashMap::default(),
             block_using_env: None,
             in_top_level_using_scope: false,
             metadata_class_type_params: None,

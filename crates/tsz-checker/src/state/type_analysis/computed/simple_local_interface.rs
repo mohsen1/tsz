@@ -27,6 +27,11 @@ impl<'a> CheckerState<'a> {
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectOutOfArenaDecl,
             );
+            self.record_simple_local_interface_declaration_provenance_residue(
+                Outcome::RejectOutOfArenaDecl,
+                sym_id,
+                declarations,
+            );
             return None;
         }
         if has_cross_file_same_index {
@@ -38,6 +43,11 @@ impl<'a> CheckerState<'a> {
         if !has_local_interface_decl {
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectMissingInterfaceDecl,
+            );
+            self.record_simple_local_interface_declaration_provenance_residue(
+                Outcome::RejectMissingInterfaceDecl,
+                sym_id,
+                declarations,
             );
             return None;
         }
@@ -65,11 +75,21 @@ impl<'a> CheckerState<'a> {
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectMissingInterfaceDecl,
             );
+            self.record_simple_local_interface_declaration_provenance_residue(
+                Outcome::RejectMissingInterfaceDecl,
+                sym_id,
+                declarations,
+            );
             return None;
         };
         let Some(interface) = self.ctx.arena.get_interface(node) else {
             tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                 Outcome::RejectMissingInterfaceDecl,
+            );
+            self.record_simple_local_interface_declaration_provenance_residue(
+                Outcome::RejectMissingInterfaceDecl,
+                sym_id,
+                declarations,
             );
             return None;
         };
@@ -420,5 +440,26 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn record_simple_local_interface_declaration_provenance_residue(
+        &self,
+        outcome: Outcome,
+        sym_id: SymbolId,
+        declarations: &[NodeIndex],
+    ) {
+        if !tsz_common::perf_counters::enabled_fast() {
+            return;
+        }
+        let symbol_name = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .map(|symbol| symbol.escaped_name.as_str());
+        tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_declaration_provenance_residue(
+            outcome,
+            symbol_name,
+            declarations.len(),
+        );
     }
 }

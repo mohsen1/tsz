@@ -545,7 +545,7 @@ fn type_implies_literals_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> 
 /// Check if a type structurally contains a reference to a specific placeholder TypeId.
 /// Used to detect when a type parameter (e.g., `TContext`) is referenced inside another
 /// type parameter's constraint (e.g., `TMethods` extends Record<string, (ctx: `TContext`) => unknown>).
-fn type_references_placeholder(
+pub(super) fn type_references_placeholder(
     db: &dyn crate::TypeDatabase,
     type_id: TypeId,
     placeholder: TypeId,

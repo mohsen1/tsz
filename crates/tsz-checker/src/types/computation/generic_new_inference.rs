@@ -1,5 +1,5 @@
 use crate::query_boundaries::common::{self, LiteralTypeKind};
-use crate::query_boundaries::type_computation::complex as query;
+use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 

@@ -2433,6 +2433,36 @@ var local = 123;
 }
 
 #[test]
+fn test_js_commonjs_define_property_function_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function fn() {}
+
+Object.defineProperty(module.exports, "fn", { value: fn });
+Object.defineProperty(module.exports, "alias", { value: module.exports.fn });
+Object.defineProperty(module.exports.fn, "self", { value: module.exports.fn });
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn(): void;"),
+        "Expected local function defineProperty export: {output}"
+    );
+    assert!(
+        output.contains("export function alias(): void;"),
+        "Expected defineProperty export alias to reuse the function signature: {output}"
+    );
+    assert!(
+        output.contains("export namespace fn {\n    function self(): void;\n}"),
+        "Expected defineProperty namespace member function declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare function fn"),
+        "Did not expect the consumed local function to be emitted separately: {output}"
+    );
+}
+
+#[test]
 fn test_js_esm_syntax_ignores_commonjs_named_exports() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -3089,8 +3119,8 @@ declare namespace foo {
 }
 declare function bar(): void;
 declare namespace bar {
-    let async: boolean;
-    let normal: boolean;
+    export let async: boolean;
+    export let normal: boolean;
 }
 declare function baz(): void;
 declare namespace baz {
@@ -6098,6 +6128,63 @@ function f2() {
     assert!(
         output.contains("declare function f2(): (a: string, b: string) => string;"),
         "Expected returned function expression signature to use attached @type JSDoc: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_equals_function_static_assignments_stay_top_level() {
+    let output = emit_js_dts(
+        r#"
+module.exports = MyClass;
+
+function MyClass() {}
+MyClass.staticMethod = function() {}
+MyClass.prototype.method = function() {}
+MyClass.staticProperty = 123;
+"#,
+    );
+
+    assert!(
+        output.contains("export = MyClass;"),
+        "Expected CommonJS export assignment: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare namespace MyClass {\n    export { staticMethod, staticProperty };\n}"
+        ),
+        "Expected namespace to re-export top-level expando declarations: {output}"
+    );
+    assert!(
+        output.contains("declare function staticMethod(): void;"),
+        "Expected static function expando to remain a top-level declaration: {output}"
+    );
+    assert!(
+        output.contains("declare var staticProperty: number;"),
+        "Expected static value expando to remain a top-level declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare namespace MyClass {\n    function staticMethod(): void;"),
+        "Did not expect static expandos to be folded into the namespace body: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_properties_export_from_merged_namespace() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.x = 1;
+foo.default = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace foo {\n    export let x: number;"),
+        "Expected ordinary expando property to be exported from merged namespace: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved expando property to use local alias plus export specifier: {output}"
     );
 }
 
