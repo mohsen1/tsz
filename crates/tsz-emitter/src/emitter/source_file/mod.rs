@@ -272,6 +272,34 @@ mod tests {
     }
 
     #[test]
+    fn es5_async_method_with_multiply_default_stays_async_function() {
+        let source = "declare var a: number, b: number;\ndeclare function g(): Promise<void>;\nvar o = { async m(x = a * b) { await g(); } };\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("__awaiter"),
+            "Normal async methods should keep async-function lowering.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("__asyncGenerator"),
+            "A multiply operator in a parameter default is not an async-generator marker.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_static_class_expression_uses_comma_initializer_alias() {
         let source = "var v = class C {\n    static a = 1;\n    static c = { x: \"hi\" };\n    static d = C.c.x + \" world\";\n};\n";
 

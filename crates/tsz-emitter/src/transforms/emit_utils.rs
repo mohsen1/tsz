@@ -3,6 +3,156 @@ use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Returns true when a function/method header contains the async-generator
+/// asterisk, without treating `*` in parameter defaults or computed names as a
+/// generator marker.
+pub(crate) fn source_header_has_async_generator_asterisk(
+    source_text: Option<&str>,
+    start: u32,
+    end: u32,
+) -> bool {
+    let Some(text) = source_text else {
+        return false;
+    };
+    let start = (start as usize).min(text.len());
+    let end = (end as usize).min(text.len());
+    if start >= end {
+        return false;
+    }
+
+    let bytes = &text.as_bytes()[start..end];
+    let search_end = find_header_parameter_start(bytes).unwrap_or(bytes.len());
+    let header = &bytes[..search_end];
+
+    let mut pos = 0;
+    while let Some(async_pos) = find_identifier_token(header, b"async", pos) {
+        let next = skip_js_trivia(header, async_pos + b"async".len());
+        if next < header.len() && header[next] == b'*' {
+            return true;
+        }
+        pos = async_pos + b"async".len();
+    }
+
+    let mut pos = 0;
+    while let Some(function_pos) = find_identifier_token(header, b"function", pos) {
+        let next = skip_js_trivia(header, function_pos + b"function".len());
+        if next < header.len() && header[next] == b'*' {
+            return true;
+        }
+        pos = function_pos + b"function".len();
+    }
+
+    false
+}
+
+fn find_header_parameter_start(bytes: &[u8]) -> Option<usize> {
+    let mut pos = 0;
+    let mut square_depth = 0u32;
+    while pos < bytes.len() {
+        if let Some(next) = skip_comment_or_string(bytes, pos) {
+            pos = next;
+            continue;
+        }
+        match bytes[pos] {
+            b'[' => {
+                square_depth = square_depth.saturating_add(1);
+                pos += 1;
+            }
+            b']' => {
+                square_depth = square_depth.saturating_sub(1);
+                pos += 1;
+            }
+            b'(' if square_depth == 0 => return Some(pos),
+            _ => pos += 1,
+        }
+    }
+    None
+}
+
+fn find_identifier_token(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if needle.is_empty() || from >= haystack.len() {
+        return None;
+    }
+    let mut pos = from;
+    while pos + needle.len() <= haystack.len() {
+        let is_match = &haystack[pos..pos + needle.len()] == needle;
+        if is_match {
+            let before = pos
+                .checked_sub(1)
+                .and_then(|idx| haystack.get(idx).copied());
+            let after = haystack.get(pos + needle.len()).copied();
+            if !before.is_some_and(is_identifier_part) && !after.is_some_and(is_identifier_part) {
+                return Some(pos);
+            }
+        }
+        pos += 1;
+    }
+    None
+}
+
+fn skip_js_trivia(bytes: &[u8], mut pos: usize) -> usize {
+    loop {
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos + 1 >= bytes.len() || bytes[pos] != b'/' {
+            return pos;
+        }
+        match bytes[pos + 1] {
+            b'/' | b'*' => pos = skip_js_comment(bytes, pos),
+            _ => return pos,
+        }
+    }
+}
+
+fn skip_comment_or_string(bytes: &[u8], pos: usize) -> Option<usize> {
+    if pos + 1 < bytes.len() && bytes[pos] == b'/' && matches!(bytes[pos + 1], b'/' | b'*') {
+        return Some(skip_js_comment(bytes, pos));
+    }
+    if matches!(bytes[pos], b'\'' | b'"' | b'`') {
+        return Some(skip_js_string(bytes, pos));
+    }
+    None
+}
+
+fn skip_js_comment(bytes: &[u8], mut pos: usize) -> usize {
+    if pos + 1 >= bytes.len() || bytes[pos] != b'/' {
+        return pos;
+    }
+    match bytes[pos + 1] {
+        b'/' => {
+            pos += 2;
+            while pos < bytes.len() && !matches!(bytes[pos], b'\n' | b'\r') {
+                pos += 1;
+            }
+            pos
+        }
+        b'*' => {
+            pos += 2;
+            while pos + 1 < bytes.len() && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                pos += 1;
+            }
+            (pos + 2).min(bytes.len())
+        }
+        _ => pos,
+    }
+}
+
+fn skip_js_string(bytes: &[u8], mut pos: usize) -> usize {
+    let quote = bytes[pos];
+    pos += 1;
+    while pos < bytes.len() {
+        if bytes[pos] == b'\\' {
+            pos = (pos + 2).min(bytes.len());
+        } else if bytes[pos] == quote {
+            return pos + 1;
+        } else {
+            pos += 1;
+        }
+    }
+    pos
+}
+
 /// Get identifier text from a node index, returning `None` if the node is not an identifier.
 pub(crate) fn identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     arena.identifier_text_owned(idx)
