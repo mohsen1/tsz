@@ -1,5 +1,6 @@
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::SymbolId;
 use tsz_common::perf_counters::{
     ComputeTypeOfSymbolInterfaceSimpleObjectNonPrimitiveAnnotationKind as AnnotationKind,
@@ -115,7 +116,9 @@ impl<'a> CheckerState<'a> {
                 return None;
             };
             let type_id = if sig.type_annotation.is_some() {
-                if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
+                let Some(type_id) =
+                    self.simple_local_interface_fastpath_type_id(sig.type_annotation)
+                else {
                     tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                         Outcome::RejectNonPrimitiveAnnotation,
                     );
@@ -146,8 +149,8 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     return None;
-                }
-                self.get_type_from_type_node_in_type_literal(sig.type_annotation)
+                };
+                type_id
             } else {
                 TypeId::ANY
             };
@@ -180,23 +183,71 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_simple_local_interface_fastpath_type(&self, type_idx: NodeIndex) -> bool {
-        self.ctx.arena.get(type_idx).is_some_and(|node| {
-            matches!(
-                node.kind,
-                kind if kind == SyntaxKind::AnyKeyword as u16
-                    || kind == SyntaxKind::BigIntKeyword as u16
-                    || kind == SyntaxKind::BooleanKeyword as u16
-                    || kind == SyntaxKind::NeverKeyword as u16
-                    || kind == SyntaxKind::NumberKeyword as u16
-                    || kind == SyntaxKind::ObjectKeyword as u16
-                    || kind == SyntaxKind::StringKeyword as u16
-                    || kind == SyntaxKind::SymbolKeyword as u16
-                    || kind == SyntaxKind::UndefinedKeyword as u16
-                    || kind == SyntaxKind::UnknownKeyword as u16
-                    || kind == SyntaxKind::VoidKeyword as u16
-            )
-        })
+    fn simple_local_interface_fastpath_type_id(&mut self, type_idx: NodeIndex) -> Option<TypeId> {
+        let kind = self.ctx.arena.get(type_idx)?.kind;
+        if let Some(type_id) = keyword_syntax_to_type_id(kind) {
+            return Self::simple_local_interface_primitive_keyword_type_id(type_id);
+        }
+
+        if kind == syntax_kind_ext::LITERAL_TYPE {
+            return Some(self.get_type_from_type_node_in_type_literal(type_idx));
+        }
+
+        if kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(type_idx)?;
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+
+        let type_name_node = self.ctx.arena.get(type_ref.type_name)?;
+        if type_name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let ident = self.ctx.arena.get_identifier(type_name_node)?;
+        Self::simple_local_interface_primitive_keyword_name_type_id(ident.escaped_text.as_str())
+    }
+
+    const fn simple_local_interface_primitive_keyword_type_id(type_id: TypeId) -> Option<TypeId> {
+        match type_id {
+            TypeId::ANY
+            | TypeId::BIGINT
+            | TypeId::BOOLEAN
+            | TypeId::NEVER
+            | TypeId::NUMBER
+            | TypeId::OBJECT
+            | TypeId::STRING
+            | TypeId::SYMBOL
+            | TypeId::UNDEFINED
+            | TypeId::UNKNOWN
+            | TypeId::VOID => Some(type_id),
+            _ => None,
+        }
+    }
+
+    fn simple_local_interface_primitive_keyword_name_type_id(name: &str) -> Option<TypeId> {
+        match name {
+            "any" => Some(TypeId::ANY),
+            "bigint" => Some(TypeId::BIGINT),
+            "boolean" => Some(TypeId::BOOLEAN),
+            "never" => Some(TypeId::NEVER),
+            "number" => Some(TypeId::NUMBER),
+            "object" => Some(TypeId::OBJECT),
+            "string" => Some(TypeId::STRING),
+            "symbol" => Some(TypeId::SYMBOL),
+            "undefined" => Some(TypeId::UNDEFINED),
+            "unknown" => Some(TypeId::UNKNOWN),
+            "void" => Some(TypeId::VOID),
+            _ => None,
+        }
     }
 
     fn classify_simple_local_interface_non_primitive_annotation_kind(
@@ -332,5 +383,42 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_local_interface_keyword_name_admits_parser_type_reference_number() {
+        assert_eq!(
+            CheckerState::simple_local_interface_primitive_keyword_name_type_id("number"),
+            Some(TypeId::NUMBER)
+        );
+    }
+
+    #[test]
+    fn simple_local_interface_keyword_name_rejects_non_primitive_type_references() {
+        assert_eq!(
+            CheckerState::simple_local_interface_primitive_keyword_name_type_id("Array"),
+            None
+        );
+        assert_eq!(
+            CheckerState::simple_local_interface_primitive_keyword_name_type_id("Locale"),
+            None
+        );
+    }
+
+    #[test]
+    fn simple_local_interface_keyword_type_filter_matches_existing_guard_scope() {
+        assert_eq!(
+            CheckerState::simple_local_interface_primitive_keyword_type_id(TypeId::NUMBER),
+            Some(TypeId::NUMBER)
+        );
+        assert_eq!(
+            CheckerState::simple_local_interface_primitive_keyword_type_id(TypeId::NULL),
+            None
+        );
     }
 }

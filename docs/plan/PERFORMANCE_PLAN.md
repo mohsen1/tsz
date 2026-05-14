@@ -1358,6 +1358,22 @@ or fix the parser/classification boundary if it should be a `NumberKeyword`.
 Decision record:
 [`perf-runs/2026-05-14-simple-object-type-reference-residues.md`](perf-runs/2026-05-14-simple-object-type-reference-residues.md).
 
+**2026-05-14 simple-object number/literal admission:** the behavior slice
+proved the `number` row was parser shape, not missing symbol resolution: bare
+primitive keyword type names commonly arrive as `TYPE_REFERENCE` nodes, and the
+normal type-literal lowering already maps them to primitive `TypeId`s. The
+guard now mirrors that resolver-free primitive mapping and admits plain
+`LITERAL_TYPE` member annotations such as generated leaf tags
+(`tag: "leaf-1"`). On regenerated monorepo-006 this changes
+`checker.compute_type_of_symbol_interface_simple_object_fastpath_hits` from
+`0` to `24,760`, moves `success` from `0` to `24,760`, drops
+`reject_non_primitive_annotation` from `24,762` to `2`, and clears the
+type-reference residue table while preserving diagnostics (`10,198`). The
+remaining non-primitive residue is now one union/intersection annotation and
+one array/tuple annotation. No timing claim is made from this attribution-mode
+run. Decision record:
+[`perf-runs/2026-05-14-simple-object-number-literal-admission.md`](perf-runs/2026-05-14-simple-object-number-literal-admission.md).
+
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
 any more aliases, add `direct_actual_lib_alias_body_outcomes` to the perf
 counter JSON/text dump and wire it at every return point in the actual-lib
