@@ -729,6 +729,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.evaluate(cond.false_type);
             }
 
+            // tsc takes the false branch when the extends type is unresolvable
+            // (e.g. `Function` without lib types); this preserves structural
+            // modifiers (readonly) instead of collapsing the conditional to T.
+            if crate::visitor::is_error_type(self.interner(), extends_type) {
+                return self.evaluate(cond.false_type);
+            }
+
             // Subtype check path — use strict checking (no bivariant rest)
             // to match tsc's `isTypeAssignableTo` which respects strictFunctionTypes.
             //
