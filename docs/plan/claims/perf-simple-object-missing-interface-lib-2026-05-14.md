@@ -9,19 +9,17 @@ Status: ready
 
 The simple local-interface object shortcut still records seven
 `reject_missing_interface_decl` rows on regenerated monorepo-006 after the
-declaration/provenance residue naming slice. This work proves whether those
-exact rows can reuse existing lib metadata before the shortcut records a
-missing-interface reject.
+declaration/provenance residue naming slice. This work admits the
+conformance-safe non-iterator subset through existing lib metadata before the
+shortcut records a missing-interface reject, leaving iterator-family rows for a
+separate proof.
 
 ## Scope
 
-- Admit only the named missing-interface residue family:
-  `Iterable`, `IteratorReturnResult`, `IteratorYieldResult`,
-  `PropertyDescriptor`, `PropertyDescriptorMap`, `RegExpIndicesArray`, and
-  `RegExpStringIterator`.
-- Reuse existing lib metadata resolvers (`resolve_lib_type_by_name`, with the
-  existing parameter-aware resolver as a fallback); do not lower declaration
-  arenas manually.
+- Admit only the conformance-safe non-iterator residue family:
+  `PropertyDescriptor`, `PropertyDescriptorMap`, and `RegExpIndicesArray`.
+- Reuse existing lib metadata resolvers (`resolve_lib_type_by_name`); do not
+  lower declaration arenas manually.
 - Leave `reject_out_of_arena_decl` rows and all non-allowlisted symbols on the
   current fallback path.
 - Record regenerated monorepo-006 attribution counters before making a timing

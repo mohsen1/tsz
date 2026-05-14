@@ -7,19 +7,16 @@ Follow-up to
 
 The simple local-interface object shortcut now routes the named
 `reject_missing_interface_decl` residue family through existing lib metadata
-before recording the reject. The admission is limited to:
+before recording the reject. After conformance probing on current main, this
+admission is limited to the non-iterator rows:
 
-- `Iterable`
-- `IteratorReturnResult`
-- `IteratorYieldResult`
 - `PropertyDescriptor`
 - `PropertyDescriptorMap`
 - `RegExpIndicesArray`
-- `RegExpStringIterator`
 
-The path uses `resolve_lib_type_by_name`, with the existing parameter-aware lib
-resolver as a fallback for generic lib interfaces. It does not manually lower
-declaration arenas and leaves `reject_out_of_arena_decl` rows unchanged.
+The path uses `resolve_lib_type_by_name` and does not manually lower
+declaration arenas. Iterator-family missing-interface rows stay on the existing
+fallback path for a separate conformance-proven slice.
 
 ## Reproducer
 
@@ -53,12 +50,12 @@ diagnostics. Both JSON artifacts were written and parsed successfully.
 | --- | ---: |
 | diagnostics | 10,198 |
 | files / lib files | 5337 / 87 |
-| total / check | 69.15s / 67.07s |
-| peak RSS | 3.48 GiB |
+| total / check | 60.45s / 58.78s |
+| peak RSS | 3.49 GiB |
 | `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits` | 24,762 |
 | `compute_type_of_symbol_interface_simple_object_outcomes.success` | 24,762 |
 | `reject_out_of_arena_decl` | 6 |
-| `reject_missing_interface_decl` | 0 |
+| `reject_missing_interface_decl` | 4 |
 | `reject_non_primitive_annotation` | 0 |
 | `delegate.misses` | 2 |
 | `checker.with_parent_cache_constructed` | 2 |
@@ -67,6 +64,10 @@ Remaining declaration/provenance rows:
 
 | Outcome | Symbol | Declarations | Count |
 | --- | --- | ---: | ---: |
+| `reject_missing_interface_decl` | `Iterable` | 1 | 1 |
+| `reject_missing_interface_decl` | `IteratorReturnResult` | 1 | 1 |
+| `reject_missing_interface_decl` | `IteratorYieldResult` | 1 | 1 |
+| `reject_missing_interface_decl` | `RegExpStringIterator` | 1 | 1 |
 | `reject_out_of_arena_decl` | `ArrayIterator` | 1 | 1 |
 | `reject_out_of_arena_decl` | `CollatorOptions` | 1 | 1 |
 | `reject_out_of_arena_decl` | `DateTimeFormatOptions` | 3 | 1 |
@@ -78,7 +79,9 @@ This run is attribution-mode for counters, so no timing claim is made.
 
 ## Decision
 
-The missing-interface declaration/provenance family is exhausted without a
-general guard relaxation. The remaining simple-object declaration/provenance
-work is now the out-of-arena family, which should stay separate because those
-rows require arena-provenance handling rather than name-only lib lookup.
+The non-iterator missing-interface declaration/provenance rows are exhausted
+without a general guard relaxation. The remaining simple-object
+declaration/provenance work is the iterator-family missing-interface tail plus
+the out-of-arena family; both should stay separate because they need
+conformance-specific iterator/generic and arena-provenance handling rather than
+a broad name-only lib lookup.

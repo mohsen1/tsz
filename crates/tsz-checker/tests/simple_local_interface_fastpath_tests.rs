@@ -106,12 +106,8 @@ fn missing_interface_lib_rows_keep_lib_shapes() {
         r#"
 const descriptor: PropertyDescriptor = { configurable: "yes" };
 const descriptorMap: PropertyDescriptorMap = { field: { enumerable: "yes" } };
-const iterable: Iterable<number> = {};
 declare const indices: RegExpIndicesArray;
 const firstIndex: [number, number] = indices[0];
-declare const iterator: RegExpStringIterator<RegExpMatchArray>;
-const nextResult: IteratorYieldResult<RegExpMatchArray> | IteratorReturnResult<void> =
-    iterator.next();
 "#,
         "test.ts",
         CheckerOptions::default(),
@@ -124,15 +120,15 @@ const nextResult: IteratorYieldResult<RegExpMatchArray> | IteratorReturnResult<v
         "expected PropertyDescriptor boolean property mismatch, got {diagnostics:?}",
     );
     assert!(
-        diagnostics.iter().any(|(code, message)| *code == 2741
-            || (*code == 2322 && message.contains("is not assignable to type 'Iterable<number>'"))),
-        "expected Iterable structural mismatch, got {diagnostics:?}",
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'unknown' is not assignable to type '[number, number]'")),
+        "expected RegExpIndicesArray indexed value mismatch, got {diagnostics:?}",
     );
 }
 
 #[test]
 fn missing_interface_lib_row_names_do_not_capture_imported_user_interfaces() {
-    let lib_files = load_compiled_lib_files(&["lib.es5.d.ts", "lib.es2015.iterable.d.ts"]);
+    let lib_files = load_compiled_lib_files(&["lib.es5.d.ts"]);
     assert!(
         !lib_files.is_empty(),
         "compiled lib fixtures should be available"
@@ -143,17 +139,17 @@ fn missing_interface_lib_row_names_do_not_capture_imported_user_interfaces() {
             (
                 "defs.ts",
                 r#"
-export interface Iterable<T> {
-    custom: T;
+export interface PropertyDescriptor {
+    custom: string;
 }
 "#,
             ),
             (
                 "main.ts",
                 r#"
-import type { Iterable } from "./defs";
+import type { PropertyDescriptor } from "./defs";
 
-const bad: Iterable<number> = {};
+const bad: PropertyDescriptor = {};
 "#,
             ),
         ],
@@ -173,6 +169,6 @@ const bad: Iterable<number> = {};
         messages
             .iter()
             .any(|(code, message)| *code == 2741 && message.contains("custom")),
-        "imported user interface named Iterable must keep its own shape, got {messages:?}",
+        "imported user interface named PropertyDescriptor must keep its own shape, got {messages:?}",
     );
 }

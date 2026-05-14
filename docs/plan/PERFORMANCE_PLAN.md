@@ -1464,14 +1464,15 @@ Claim:
 [`claims/perf-simple-object-provenance-residues-2026-05-14.md`](claims/perf-simple-object-provenance-residues-2026-05-14.md).
 
 **2026-05-14 simple-object missing-interface lib resolution:** the behavior
-follow-up admits only the seven named `reject_missing_interface_decl` rows via
-existing lib metadata resolvers. On regenerated monorepo-006, diagnostics
-remain `10,198`, simple-object hits and successes remain `24,762`,
-`reject_missing_interface_decl` drops from `7` to `0`, and the remaining
-declaration/provenance residue is the six-row `reject_out_of_arena_decl`
-family. `delegate.misses` and `checker.with_parent_cache_constructed` remain
-`2`, so this is a shortcut-residue cleanup rather than a child-checker
-reduction. The run is attribution-mode only. Decision record:
+follow-up admits the conformance-safe non-iterator
+`reject_missing_interface_decl` rows via existing lib metadata resolvers. On
+regenerated monorepo-006, diagnostics remain `10,198`, simple-object hits and
+successes remain `24,762`, `reject_missing_interface_decl` drops from `7` to
+`4`, and the remaining declaration/provenance residue is the iterator-family
+missing-interface tail plus the six-row `reject_out_of_arena_decl` family.
+`delegate.misses` and `checker.with_parent_cache_constructed` remain `2`, so
+this is a shortcut-residue cleanup rather than a child-checker reduction. The
+run is attribution-mode only. Decision record:
 [`perf-runs/2026-05-14-simple-object-missing-interface-lib.md`](perf-runs/2026-05-14-simple-object-missing-interface-lib.md).
 Claim:
 [`claims/perf-simple-object-missing-interface-lib-2026-05-14.md`](claims/perf-simple-object-missing-interface-lib-2026-05-14.md).

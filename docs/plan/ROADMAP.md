@@ -393,13 +393,14 @@ Current status:
 3. Some skeleton projections are unsafe when they depend on post-merge symbol identity; do not reopen failed file-local projections without correcting that design.
 4. Large-repo work has shown that OOM/timeout behavior is memory-residency driven, not simply CPU-bound.
 5. `instantiate_type` cache infrastructure has been designed and partially implemented through `QueryCache`/`QueryDatabase`; entry-point wiring and shared-cache decisions must preserve the design constraints below.
-6. The simple local-interface object shortcut now resolves the named
-   missing-interface declaration/provenance rows through existing lib metadata:
+6. The simple local-interface object shortcut now resolves the conformance-safe
+   non-iterator missing-interface declaration/provenance rows through existing
+   lib metadata:
    regenerated monorepo-006 shows `24,762` shortcut hits with diagnostics
-   unchanged at `10,198`, `reject_missing_interface_decl=0`, and six remaining
-   `reject_out_of_arena_decl` rows. Next behavior work should treat that
-   out-of-arena family separately because it is an arena-provenance problem, not
-   a name-only lib lookup.
+   unchanged at `10,198`, `reject_missing_interface_decl=4`, and the remaining
+   iterator-family plus out-of-arena rows. Next behavior work should treat those
+   families separately because they need iterator/generic and arena-provenance
+   handling, not a broad name-only lib lookup.
 
 Non-negotiable identity rules:
 

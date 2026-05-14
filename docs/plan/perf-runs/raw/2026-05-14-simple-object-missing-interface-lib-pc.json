@@ -27,7 +27,7 @@
     "with_parent_cache_constructed": 2,
     "file_session_resets": 5249,
     "compute_type_of_symbol_calls": 26258,
-    "compute_type_of_symbol_cache_hits": 252015,
+    "compute_type_of_symbol_cache_hits": 251999,
     "compute_type_of_symbol_interface_simple_object_fastpath_hits": 24762
   },
   "overlay": {
@@ -48,21 +48,21 @@
     "candidate_paths_total": 0
   },
   "interner": {
-    "intern_calls": 428378,
-    "intern_hits": 351638,
+    "intern_calls": 428521,
+    "intern_hits": 351781,
     "intern_misses": 76740,
-    "string_intern_calls": 4184982,
-    "type_list_intern_calls": 366,
-    "object_shape_intern_calls": 76001,
-    "function_shape_intern_calls": 171,
-    "callable_shape_intern_calls": 503,
-    "application_intern_calls": 581,
+    "string_intern_calls": 4185772,
+    "type_list_intern_calls": 372,
+    "object_shape_intern_calls": 76008,
+    "function_shape_intern_calls": 195,
+    "callable_shape_intern_calls": 528,
+    "application_intern_calls": 601,
     "conditional_intern_calls": 1968,
     "mapped_intern_calls": 2715,
     "lock_wait_histogram_ns": [
-      179025,
-      248,
-      21,
+      179089,
+      204,
+      1,
       0,
       0,
       0,
@@ -480,7 +480,7 @@
     },
     {
       "name": "skip_all_three",
-      "count": 0
+      "count": 4
     }
   ],
   "compute_type_of_symbol_interface_callsite_outcomes": [
@@ -528,7 +528,7 @@
     },
     {
       "name": "reject_missing_interface_decl",
-      "count": 0
+      "count": 4
     },
     {
       "name": "reject_type_parameters",
@@ -607,6 +607,30 @@
   ],
   "compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues": [],
   "compute_type_of_symbol_interface_simple_object_declaration_provenance_residues": [
+    {
+      "outcome": "reject_missing_interface_decl",
+      "symbol": "Iterable",
+      "declaration_count": 1,
+      "count": 1
+    },
+    {
+      "outcome": "reject_missing_interface_decl",
+      "symbol": "IteratorReturnResult",
+      "declaration_count": 1,
+      "count": 1
+    },
+    {
+      "outcome": "reject_missing_interface_decl",
+      "symbol": "IteratorYieldResult",
+      "declaration_count": 1,
+      "count": 1
+    },
+    {
+      "outcome": "reject_missing_interface_decl",
+      "symbol": "RegExpStringIterator",
+      "declaration_count": 1,
+      "count": 1
+    },
     {
       "outcome": "reject_out_of_arena_decl",
       "symbol": "ArrayIterator",

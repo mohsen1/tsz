@@ -19,13 +19,7 @@ use tsz_solver::{PropertyInfo, TypeId, Visibility};
 fn should_resolve_simple_object_missing_interface_decl_from_lib(name: &str) -> bool {
     matches!(
         name,
-        "Iterable"
-            | "IteratorReturnResult"
-            | "IteratorYieldResult"
-            | "PropertyDescriptor"
-            | "PropertyDescriptorMap"
-            | "RegExpIndicesArray"
-            | "RegExpStringIterator"
+        "PropertyDescriptor" | "PropertyDescriptorMap" | "RegExpIndicesArray"
     )
 }
 
