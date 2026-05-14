@@ -1022,12 +1022,23 @@ impl<'a> CheckerState<'a> {
         // Generic mapped tuple/object forms (`{ [K in keyof T]: ... }`) are used
         // as spread sources in variadic generic flows. tsc does not report TS2488
         // for these unresolved generic mapped types at this point.
-        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, spread_type) {
+        if common::is_generic_mapped_type(self.ctx.types, spread_type) {
             let anchor = self.spread_iterability_error_anchor(expr_idx);
             if anchor != expr_idx {
                 self.emit_ts2589_spread_instantiation_depth(anchor);
                 return false;
             }
+            return true;
+        }
+
+        // Conditional/IndexAccess/Application types containing free type parameters
+        // cannot have iterability proven at the generic instantiation boundary —
+        // tsc defers TS2488 to instantiation time for these deferred generic types.
+        if (common::is_conditional_type(self.ctx.types, spread_type)
+            || common::is_index_access_type(self.ctx.types, spread_type)
+            || common::is_generic_type(self.ctx.types, spread_type))
+            && common::contains_free_type_parameters(self.ctx.types, spread_type)
+        {
             return true;
         }
 

@@ -457,6 +457,9 @@ mod generic_inference_manual;
 #[path = "tests/generic_rest_satisfies_anchor_tests.rs"]
 mod generic_rest_satisfies_anchor_tests;
 #[cfg(test)]
+#[path = "tests/generic_spread_iterability_tests.rs"]
+mod generic_spread_iterability_tests;
+#[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
