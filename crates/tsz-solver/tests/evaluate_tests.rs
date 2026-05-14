@@ -11867,8 +11867,10 @@ fn test_keyof_both_index_signatures() {
 
 #[test]
 fn test_keyof_numeric_literal_keys() {
-    // tsc: keyof { 0: string, 1: number } = 0 | 1  (number literals, not strings)
-    // Properties declared without quotes use numeric literal key types.
+    // keyof { 0: string, 1: number } = 0 | 1 (numeric literals, matching tsc).
+    // `PropertyInfo::new` defaults to `is_string_named: false`, which models
+    // properties declared with a bare numeric name (`{ 0: ... }` rather than
+    // `{ "0": ... }`).
     let interner = TypeInterner::new();
 
     let obj = interner.object(vec![

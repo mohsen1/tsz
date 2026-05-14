@@ -16,13 +16,22 @@ use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 
+/// One iteration step of a mapped type: the property-name atom plus the
+/// `TypeId` that should be substituted for the iteration variable.
+///
+/// `LiteralValue::String("1")` and `LiteralValue::Number(1)` intern to the
+/// same atom `"1"`, so the atom alone cannot disambiguate the substitution.
+/// Storing the literal `TypeId` keeps that distinction and avoids re-parsing
+/// the atom back to `f64` on every iteration — `[K in 1]: K` evaluates with
+/// `K → Literal(Number(1))` instead of `K → Literal(String("1"))`.
+#[derive(Clone, Copy)]
+pub(crate) struct MappedKey {
+    pub name: Atom,
+    pub key_literal: TypeId,
+}
+
 pub(crate) struct MappedKeys {
-    pub string_literals: Vec<Atom>,
-    /// Maps atoms that represent unquoted numeric property names (e.g. `{ 0: T }`) to their
-    /// pre-parsed `f64` value. Atoms absent here are string-typed keys. This drives
-    /// `evaluate_mapped`'s choice between `Literal(Number(n))` and `Literal(String(s))`
-    /// for the type-parameter substitution, without re-parsing the atom string.
-    pub numeric_atoms: FxHashMap<Atom, f64>,
+    pub keys: Vec<MappedKey>,
     pub has_string: bool,
     pub has_number: bool,
     /// Template literal types used as mapped-type key constraints (e.g. `` `on${string}` ``).
@@ -46,12 +55,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .push(self.interner().unique_symbol(sym_ref));
                 }
             } else {
-                if !prop.is_string_named
-                    && let Some(n) = crate::utils::atom_as_numeric_key(self.interner(), prop.name)
-                {
-                    keys.numeric_atoms.insert(prop.name, n);
-                }
-                keys.string_literals.push(prop.name);
+                keys.keys.push(self.mapped_key_from_property(&prop));
             }
         }
     }
@@ -208,7 +212,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // and therefore the type printer's output for `T[keyof T]` —
                 // must follow that same order.
                 let mut seen: FxHashSet<Atom> = FxHashSet::default();
-                keys.string_literals.retain(|atom| seen.insert(*atom));
+                keys.keys.retain(|k| seen.insert(k.name));
                 keys
             }
             None => {
@@ -239,7 +243,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // WASM environments have limited memory, but 100 is too restrictive for
         // real-world code (large SDKs, generated API types often have 150-250 keys).
         // 250 covers ~99% of real-world use cases while remaining safe for WASM.
-        if key_set.string_literals.len() + key_set.symbol_keys.len() > self.max_mapped_keys() {
+        if key_set.keys.len() + key_set.symbol_keys.len() > self.max_mapped_keys() {
             self.mark_depth_exceeded();
             return TypeId::ERROR;
         }
@@ -411,7 +415,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Build the resulting object properties
-        let mut properties = Vec::with_capacity(key_set.string_literals.len());
+        let mut properties = Vec::with_capacity(key_set.keys.len());
         // PERF: Reuse a single TypeSubstitution across all keys to avoid
         // re-allocating the inner FxHashMap on every iteration.
         let mut subst = TypeSubstitution::new();
@@ -426,53 +430,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             )
         });
 
-        for &key_name in &key_set.string_literals {
+        for mapped_key in key_set.keys {
             // Check if depth was exceeded during previous iterations
             if self.is_depth_exceeded() {
                 return TypeId::ERROR;
             }
+            let key_name = mapped_key.name;
+            let key_literal = mapped_key.key_literal;
 
-            let key_literal = if let Some(&n) = key_set.numeric_atoms.get(&key_name) {
-                self.interner().literal_number(n)
-            } else {
-                self.interner().literal_string_atom(key_name)
-            };
             let remapped = match self.remap_key_type_for_mapped(mapped, key_literal) {
                 Ok(Some(remapped)) => remapped,
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(*mapped),
             };
-            // Extract property name atom(s) from remapped key.
-            // Handle unions: `as \`${K}1\` | \`${K}2\`` produces multiple properties per key.
-            // Also handle numeric literal keys: 0 → atom "0".
-            let remapped_names: smallvec::SmallVec<[Atom; 1]> =
-                if let Some(name) = crate::visitor::literal_string(self.interner(), remapped) {
-                    smallvec::smallvec![name]
-                } else if let Some(n) = crate::visitor::literal_number(self.interner(), remapped) {
-                    let s = self
-                        .interner()
-                        .intern_string(&crate::utils::js_number_to_string(n.0));
-                    smallvec::smallvec![s]
-                } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
-                    let members = self.interner().type_list(list_id);
-                    let names: smallvec::SmallVec<[Atom; 1]> = members
-                        .iter()
-                        .filter_map(|&m| {
-                            crate::visitor::literal_string(self.interner(), m).or_else(|| {
-                                crate::visitor::literal_number(self.interner(), m).map(|n| {
-                                    self.interner()
-                                        .intern_string(&crate::utils::js_number_to_string(n.0))
-                                })
-                            })
-                        })
-                        .collect();
-                    if names.is_empty() {
-                        return self.interner().mapped(*mapped);
-                    }
-                    names
-                } else {
+            // Extract property name(s) from the remapped key. The no-`as`-clause
+            // path is the common case (Partial / Readonly / Required / Pick
+            // expansions) and skips a lookup + numeric-atom intern.
+            // Unions arise from `as \`${K}1\` | \`${K}2\`` producing multiple
+            // properties per source key.
+            let remapped_names: smallvec::SmallVec<[Atom; 1]> = if remapped == key_literal {
+                smallvec::smallvec![key_name]
+            } else if let Some(entry) = self.mapped_key_from_literal(remapped) {
+                smallvec::smallvec![entry.name]
+            } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
+                let members = self.interner().type_list(list_id);
+                let names: smallvec::SmallVec<[Atom; 1]> = members
+                    .iter()
+                    .filter_map(|&m| self.mapped_key_from_literal(m).map(|k| k.name))
+                    .collect();
+                if names.is_empty() {
                     return self.interner().mapped(*mapped);
-                };
+                }
+                names
+            } else {
+                return self.interner().mapped(*mapped);
+            };
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
             // Use memoized source property info for O(1) lookup.
@@ -1099,13 +1091,55 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         constraint
     }
 
+    /// Build a `MappedKey` from a literal `TypeId`. Returns `None` if the
+    /// type is not a single string or numeric literal.
+    fn mapped_key_from_literal(&self, type_id: TypeId) -> Option<MappedKey> {
+        match self.interner().lookup(type_id)? {
+            TypeData::Literal(LiteralValue::String(atom)) => Some(MappedKey {
+                name: atom,
+                key_literal: type_id,
+            }),
+            TypeData::Literal(LiteralValue::Number(n)) => {
+                let name = self.interner().intern_string(
+                    &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
+                );
+                Some(MappedKey {
+                    name,
+                    key_literal: type_id,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Build a `MappedKey` from a collected property. Symbol-named keys
+    /// fall back to a string-literal substitution (mapped-type iteration
+    /// doesn't model symbol-keyed properties yet); other keys defer to
+    /// `literal_key_for_property_name`, which encodes the structural rule
+    /// "bare numeric name → number literal, quoted numeric name → string
+    /// literal".
+    fn mapped_key_from_property(&self, prop: &PropertyInfo) -> MappedKey {
+        let key_literal = if prop.is_symbol_named {
+            self.interner().literal_string_atom(prop.name)
+        } else {
+            crate::utils::literal_key_for_property_name(
+                self.interner(),
+                prop.name,
+                prop.is_string_named,
+            )
+        };
+        MappedKey {
+            name: prop.name,
+            key_literal,
+        }
+    }
+
     /// Extract mapped keys from a type (for mapped type iteration).
     fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
         let key = self.interner().lookup(type_id)?;
 
         let mut keys = MappedKeys {
-            string_literals: Vec::new(),
-            numeric_atoms: FxHashMap::default(),
+            keys: Vec::new(),
             has_string: false,
             has_number: false,
             template_literals: Vec::new(),
@@ -1139,7 +1173,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         keys.has_string = string_index.is_some();
                         keys.has_number = number_index.is_some();
                         tracing::trace!(
-                            string_literals = ?keys.string_literals,
+                            keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
                             has_string = keys.has_string,
                             has_number = keys.has_number,
                             symbol_keys_len = keys.symbol_keys.len(),
@@ -1171,7 +1205,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     keys.has_string = string_index.is_some();
                                     keys.has_number = number_index.is_some();
                                     tracing::trace!(
-                                        string_literals = ?keys.string_literals,
+                                        keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
                                         "extract_mapped_keys: extracted keys from evaluated KeyOf operand"
                                     );
                                     return Some(keys);
@@ -1190,7 +1224,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
             TypeData::Literal(LiteralValue::String(s)) => {
-                keys.string_literals.push(s);
+                keys.keys.push(MappedKey {
+                    name: s,
+                    key_literal: type_id,
+                });
                 Some(keys)
             }
             TypeData::TemplateLiteral(_) => {
@@ -1202,13 +1239,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 keys.template_literals.push(type_id);
                 Some(keys)
             }
-            // Numeric literal key: record both the canonical atom and its value.
-            TypeData::Literal(LiteralValue::Number(n)) => {
-                let s = self
-                    .interner()
-                    .intern_string(&crate::utils::js_number_to_string(n.0));
-                keys.numeric_atoms.insert(s, n.0);
-                keys.string_literals.push(s);
+            // Numeric literals become string property names (e.g., enum value 0 → "0").
+            // This handles the case where a single-member enum is used as a mapped type
+            // constraint: `Record<E, any>` where `enum E { A = 0 }` produces constraint
+            // Enum(_, Literal(Number(0))) → key "0".
+            TypeData::Literal(LiteralValue::Number(_)) => {
+                keys.keys.push(
+                    self.mapped_key_from_literal(type_id)
+                        .expect("matched LiteralValue::Number"),
+                );
                 Some(keys)
             }
             // `AB[K]` in mapped constraints: resolve to the union of property
@@ -1290,25 +1329,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         keys.symbol_keys.push(member);
                         continue;
                     }
-                    // Use visitor helper for data extraction (North Star Rule 3)
-                    if let Some(s) = crate::visitor::literal_string(self.interner(), member) {
-                        keys.string_literals.push(s);
-                    } else if let Some(n) = crate::visitor::literal_number(self.interner(), member)
-                    {
-                        // Numeric literal key: record both the canonical atom and its value.
-                        let s = self
-                            .interner()
-                            .intern_string(&crate::utils::js_number_to_string(n.0));
-                        keys.numeric_atoms.insert(s, n.0);
-                        keys.string_literals.push(s);
+                    if let Some(key) = self.mapped_key_from_literal(member) {
+                        keys.keys.push(key);
                     } else {
                         // Recursively extract keys from non-literal union members.
                         // Handles enum types (TypeData::Enum), lazy refs (TypeData::Lazy),
                         // and nested unions (e.g., `A | B` where A, B are enum types).
-                        // If extraction fails, we can't fully evaluate the union.
                         let inner_keys = self.extract_mapped_keys(member)?;
-                        keys.numeric_atoms.extend(inner_keys.numeric_atoms.iter());
-                        keys.string_literals.extend(inner_keys.string_literals);
+                        keys.keys.extend(inner_keys.keys);
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
                         keys.template_literals.extend(inner_keys.template_literals);
@@ -1317,7 +1345,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 if !keys.has_string
                     && !keys.has_number
-                    && keys.string_literals.is_empty()
+                    && keys.keys.is_empty()
                     && keys.template_literals.is_empty()
                     && keys.symbol_keys.is_empty()
                 {
@@ -1385,17 +1413,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Other side accepts all strings, so keep result's literals.
                     } else if result.has_string {
                         // Result side accepts all strings, take other's literals.
-                        result.string_literals = other.string_literals.clone();
-                        result.numeric_atoms = other.numeric_atoms.clone();
+                        result.keys = other.keys.clone();
                         result.has_string = false; // Narrowed to specific literals.
                     } else {
-                        // Both have specific literals: keep only the intersection.
-                        let other_set: rustc_hash::FxHashSet<_> =
-                            other.string_literals.iter().copied().collect();
-                        result.string_literals.retain(|lit| other_set.contains(lit));
-                        result
-                            .numeric_atoms
-                            .retain(|a, _| other.numeric_atoms.contains_key(a));
+                        // Both have specific literals: keep only the intersection (by atom).
+                        let other_set: rustc_hash::FxHashSet<Atom> =
+                            other.keys.iter().map(|k| k.name).collect();
+                        result.keys.retain(|k| other_set.contains(&k.name));
                     }
                     // Template literals: union (not intersection) — keep all constraints.
                     for tl in &other.template_literals {
@@ -1510,14 +1534,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Only do subset check for pure string literal keys (no string/number index)
                 if !constraint_keys.has_string
                     && !constraint_keys.has_number
-                    && !constraint_keys.string_literals.is_empty()
+                    && !constraint_keys.keys.is_empty()
                 {
                     let expected_set: rustc_hash::FxHashSet<Atom> =
-                        expected_key_set.string_literals.iter().copied().collect();
+                        expected_key_set.keys.iter().map(|k| k.name).collect();
                     let is_subset = constraint_keys
-                        .string_literals
+                        .keys
                         .iter()
-                        .all(|k| expected_set.contains(k));
+                        .all(|k| expected_set.contains(&k.name));
                     if is_subset {
                         return Some(obj);
                     }
@@ -1548,14 +1572,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.extract_mapped_keys(expected_keys),
         ) && !constraint_keys.has_string
             && !constraint_keys.has_number
-            && !constraint_keys.string_literals.is_empty()
+            && !constraint_keys.keys.is_empty()
         {
             let expected_set: rustc_hash::FxHashSet<Atom> =
-                expected_key_set.string_literals.iter().copied().collect();
+                expected_key_set.keys.iter().map(|k| k.name).collect();
             if constraint_keys
-                .string_literals
+                .keys
                 .iter()
-                .all(|key| expected_set.contains(key))
+                .all(|k| expected_set.contains(&k.name))
             {
                 return Some(source);
             }
