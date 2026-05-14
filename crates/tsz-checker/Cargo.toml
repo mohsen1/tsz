@@ -966,6 +966,10 @@ name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
 
 [[test]]
+name = "unique_symbol_discriminant_narrowing_tests"
+path = "tests/unique_symbol_discriminant_narrowing_tests.rs"
+
+[[test]]
 name = "mixin_base_no_member_no_ts2416_tests"
 path = "tests/mixin_base_no_member_no_ts2416_tests.rs"
 
@@ -1144,6 +1148,10 @@ path = "tests/mapped_type_numeric_literal_key_tests.rs"
 [[test]]
 name = "ts2344_infer_positional_constraint_tests"
 path = "tests/ts2344_infer_positional_constraint_tests.rs"
+
+[[test]]
+name = "nested_infer_extends_scope_tests"
+path = "tests/nested_infer_extends_scope_tests.rs"
 
 [lints]
 workspace = true

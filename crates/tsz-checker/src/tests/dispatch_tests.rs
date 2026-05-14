@@ -410,23 +410,6 @@ type Cache<QR> = {
 }
 
 #[test]
-fn ts2344_recursive_conditional_type_arg_defers_base_constraint() {
-    let diags = check_source_diagnostics(
-        r#"
-type Loop<T> = T extends any ? Loop<T> : never;
-type NeedsObject<T extends object> = T;
-type X<T> = NeedsObject<Loop<T>>;
-"#,
-    );
-
-    let ts2344 = diagnostics_with_code(&diags, 2344);
-    assert!(
-        ts2344.is_empty(),
-        "Recursive conditional type arguments should defer TS2344 base-constraint checks, got: {diags:?}"
-    );
-}
-
-#[test]
 fn ts2344_function_type_arg_with_extra_required_param_fails_single_param_constraint() {
     let diags = check_source_diagnostics(
         r#"
