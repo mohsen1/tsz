@@ -32,4 +32,4 @@ missing-interface reject.
 - `cargo test -p tsz-checker --test simple_local_interface_fastpath_tests -- --nocapture`
 - `cargo check -p tsz-checker --lib`
 - `CARGO_TARGET_DIR=/private/tmp/tsz-simple-missing-target CARGO_INCREMENTAL=0 cargo build -p tsz-cli --bin tsz --release --features perf-tools`
-- `TSZ_PERF_COUNTERS=1 /private/tmp/tsz-simple-missing-target/release/tsz --noEmit -p /private/tmp/tsz-bench-fixtures/monorepo-006/tsconfig.json --extendedDiagnostics --pretty false --diagnostics-json docs/plan/perf-runs/raw/2026-05-14-simple-object-missing-interface-lib-diag.json --perf-counters-json docs/plan/perf-runs/raw/2026-05-14-simple-object-missing-interface-lib-pc.json` (expected exit `2`)
+- `TSZ_PERF_COUNTERS=1 /private/tmp/tsz-simple-missing-target/release/tsz --noEmit -p scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json --extendedDiagnostics --pretty false --diagnostics-json docs/plan/perf-runs/raw/2026-05-14-simple-object-missing-interface-lib-diag.json --perf-counters-json docs/plan/perf-runs/raw/2026-05-14-simple-object-missing-interface-lib-pc.json` (expected exit `2`)

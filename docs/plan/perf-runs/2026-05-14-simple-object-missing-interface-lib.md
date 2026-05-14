@@ -26,7 +26,7 @@ declaration arenas and leaves `reject_out_of_arena_decl` rows unchanged.
 | Item | Value |
 | --- | --- |
 | Base | `origin/main` at `1187c59113` |
-| Fixture | `/private/tmp/tsz-bench-fixtures/monorepo-006` |
+| Fixture | `scripts/bench/scale-cliff/fixtures/monorepo-006` |
 | Build | `CARGO_TARGET_DIR=/private/tmp/tsz-simple-missing-target CARGO_INCREMENTAL=0 cargo build -p tsz-cli --bin tsz --release --features perf-tools` |
 | Counter mode | `TSZ_PERF_COUNTERS=1` |
 | Raw diagnostics | `docs/plan/perf-runs/raw/2026-05-14-simple-object-missing-interface-lib-diag.json` |
@@ -37,7 +37,7 @@ Command:
 ```sh
 TSZ_PERF_COUNTERS=1 /private/tmp/tsz-simple-missing-target/release/tsz \
   --noEmit \
-  -p /private/tmp/tsz-bench-fixtures/monorepo-006/tsconfig.json \
+  -p scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json \
   --extendedDiagnostics \
   --pretty false \
   --diagnostics-json docs/plan/perf-runs/raw/2026-05-14-simple-object-missing-interface-lib-diag.json \
@@ -53,8 +53,8 @@ diagnostics. Both JSON artifacts were written and parsed successfully.
 | --- | ---: |
 | diagnostics | 10,198 |
 | files / lib files | 5337 / 87 |
-| total / check | 73.54s / 71.38s |
-| peak RSS | 3.47 GiB |
+| total / check | 69.15s / 67.07s |
+| peak RSS | 3.48 GiB |
 | `checker.compute_type_of_symbol_interface_simple_object_fastpath_hits` | 24,762 |
 | `compute_type_of_symbol_interface_simple_object_outcomes.success` | 24,762 |
 | `reject_out_of_arena_decl` | 6 |

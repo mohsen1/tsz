@@ -18,7 +18,7 @@
     "/private/tmp/tsz-simple-missing-target/release/tsz",
     "--noEmit",
     "-p",
-    "/private/tmp/tsz-bench-fixtures/monorepo-006/tsconfig.json",
+    "scripts/bench/scale-cliff/fixtures/monorepo-006/tsconfig.json",
     "--extendedDiagnostics",
     "--pretty",
     "false",
@@ -31,12 +31,12 @@
     "config_discovery": 0.0,
     "source_discovery": 0.0,
     "module_resolution": 0.0,
-    "io_read": 307.329375,
-    "load_libs": 10.722917,
-    "parse_bind": 1766.8911249999999,
-    "check": 71382.7895,
-    "emit": 0.000042,
-    "total": 73541.07587500001
+    "io_read": 442.95154199999996,
+    "load_libs": 4.595041999999999,
+    "parse_bind": 1580.562875,
+    "check": 67070.23066700001,
+    "emit": 0.000209,
+    "total": 69153.094083
   },
   "counts": {
     "files": 5337,
@@ -45,5 +45,5 @@
     "source_bytes": 0,
     "diagnostics": 10198
   },
-  "rss_peak_bytes": 3723558912
+  "rss_peak_bytes": 3732029440
 }
