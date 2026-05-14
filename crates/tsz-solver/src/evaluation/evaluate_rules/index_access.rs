@@ -780,6 +780,18 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         )
     }
 
+    fn visit_enum(&mut self, def_id: u32, _member_type: TypeId) -> Self::Output {
+        let def_id = crate::def::DefId(def_id);
+        let ns_type = self.evaluator.resolver().get_enum_namespace_type(def_id)?;
+        let result = self
+            .evaluator
+            .recurse_index_access(ns_type, self.index_type);
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+        Some(result)
+    }
+
     fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
         let mapped = self
             .evaluator
