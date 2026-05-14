@@ -2522,8 +2522,11 @@ impl<'a> CheckerState<'a> {
                     .get_index_info(unwrapped_type)
                     .string_index
                     .as_ref()
-            && !matches!(string_index.key_type, TypeId::STRING | TypeId::SYMBOL)
-            && !tsz_solver::is_subtype_of(self.ctx.types, index_type, string_index.key_type)
+            && !crate::query_boundaries::index_signature::index_key_type_satisfies_index_signature(
+                self.ctx.types,
+                index_type,
+                string_index.key_type,
+            )
         {
             return true;
         }
