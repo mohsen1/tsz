@@ -404,14 +404,9 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        match self.evaluate_type_for_assignability(type_id) {
-            TypeId::ERROR | TypeId::ANY => type_id,
-            evaluated if evaluated != type_id => evaluated,
-            _ => self
-                .record_index_access_value_type(type_id)
-                .map(|value| self.maybe_evaluate_inferred_return_contribution(value, None))
-                .unwrap_or(type_id),
-        }
+        self.record_index_access_value_type(type_id)
+            .map(|value| self.maybe_evaluate_inferred_return_contribution(value, None))
+            .unwrap_or(type_id)
     }
 
     fn record_index_access_value_type(&self, type_id: TypeId) -> Option<TypeId> {
