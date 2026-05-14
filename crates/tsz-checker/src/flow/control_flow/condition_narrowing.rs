@@ -965,6 +965,22 @@ impl<'a> FlowAnalyzer<'a> {
                     );
                     return narrowed;
                 }
+
+                if let Some((base, prop_name)) = self.binding_element_property_alias(condition_ref)
+                    && self.is_matching_reference(base, target)
+                    && let Some(alias_sym_id) =
+                        self.binder.resolve_identifier(self.arena, condition_ref)
+                    && !self.is_alias_reference_mutated(alias_sym_id, target, antecedent_id)
+                {
+                    let narrowed = narrowing.narrow_by_property_truthiness(
+                        type_id,
+                        &[prop_name],
+                        is_true_branch,
+                    );
+                    if narrowed != TypeId::NEVER || is_union_type(self.interner, type_id) {
+                        return narrowed;
+                    }
+                }
             }
         }
 
