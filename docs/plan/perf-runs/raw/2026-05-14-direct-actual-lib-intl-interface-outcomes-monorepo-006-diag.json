@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "mode": "timing",
+  "tsz": {
+    "version": "0.1.9",
+    "commit": null,
+    "profile": "release"
+  },
+  "fixture": {
+    "name": null,
+    "repo": null,
+    "ref": null,
+    "actual_commit": null,
+    "path": null,
+    "local_override": false
+  },
+  "command_line": [
+    "/private/tmp/tsz-intl-outcomes-target.OeCnf1/release/tsz",
+    "--noEmit",
+    "-p",
+    "/private/tmp/tsz-bench-fixtures/monorepo-006/tsconfig.json",
+    "--extendedDiagnostics",
+    "--pretty",
+    "false",
+    "--diagnostics-json",
+    "docs/plan/perf-runs/raw/2026-05-14-direct-actual-lib-intl-interface-outcomes-monorepo-006-diag.json",
+    "--perf-counters-json",
+    "docs/plan/perf-runs/raw/2026-05-14-direct-actual-lib-intl-interface-outcomes-monorepo-006-pc.json"
+  ],
+  "phases_ms": {
+    "config_discovery": 0.0,
+    "source_discovery": 0.0,
+    "module_resolution": 0.0,
+    "io_read": 288.976584,
+    "load_libs": 3.011125,
+    "parse_bind": 1116.935125,
+    "check": 109659.94808300001,
+    "emit": 0.000125,
+    "total": 111109.24
+  },
+  "counts": {
+    "files": 5332,
+    "root_files": 5250,
+    "lib_files": 82,
+    "source_bytes": 0,
+    "diagnostics": 10198
+  },
+  "rss_peak_bytes": 3015032832
+}

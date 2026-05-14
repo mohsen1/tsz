@@ -1295,6 +1295,19 @@ Decision record:
 Claim:
 [`claims/perf-delegate-actual-lib-iterator-result-2026-05-14.md`](claims/perf-delegate-actual-lib-iterator-result-2026-05-14.md).
 
+**2026-05-14 direct actual-lib Intl interface outcomes instrumentation:** a
+counter-only follow-up adds
+`direct_actual_lib_intl_interface_outcomes` to the perf JSON/text surfaces and
+wires it in `direct_actual_lib_symbol_type` for Intl interface attempts. On
+the latest main-tip monorepo-006 attribution run (`a5834834c1`),
+`DelegateCrossArenaSymbol` is now `0` with no declaration-file miss residues,
+and the new Intl outcome split reports `success_namespace_export = 8` with all
+fallback buckets at `0`.
+Decision record:
+[`perf-runs/2026-05-14-direct-actual-lib-intl-interface-outcomes.md`](perf-runs/2026-05-14-direct-actual-lib-intl-interface-outcomes.md).
+Claim:
+[`claims/perf-direct-actual-lib-intl-interface-outcomes-2026-05-14.md`](claims/perf-direct-actual-lib-intl-interface-outcomes-2026-05-14.md).
+
 **2026-05-13 `compute_type_of_symbol` interface fast path:** for local
 single-declaration interfaces, we now skip three high-frequency costs when not
 needed: computed-name precompute maps, member type-parameter prewarm scans, and

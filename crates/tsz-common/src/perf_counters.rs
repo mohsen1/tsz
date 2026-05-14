@@ -552,6 +552,44 @@ impl DirectActualLibAliasBodyOutcome {
     }
 }
 
+/// Outcome buckets for direct actual-lib Intl interface attempts in
+/// `direct_actual_lib_symbol_type`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum DirectActualLibIntlInterfaceOutcome {
+    SuccessByName = 0,
+    SuccessNamespaceExport = 1,
+    ValueInterfaceNotAdmitted = 2,
+    DeclarationNotProven = 3,
+    IntlNameNotAdmitted = 4,
+    MissingNamespaceExport = 5,
+    NamespaceSymbolMismatch = 6,
+    MissingNamespaceInterfaceType = 7,
+    UnknownOrError = 8,
+}
+
+pub const DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT: usize = 9;
+
+pub const DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES: [&str;
+    DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT] = [
+    "success_by_name",
+    "success_namespace_export",
+    "value_interface_not_admitted",
+    "declaration_not_proven",
+    "intl_name_not_admitted",
+    "missing_namespace_export",
+    "namespace_symbol_mismatch",
+    "missing_namespace_interface_type",
+    "unknown_or_error",
+];
+
+impl DirectActualLibIntlInterfaceOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Outcome buckets for the simple local-interface object shortcut in
 /// `compute_type_of_symbol`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -892,6 +930,9 @@ pub struct PerfCounters {
     /// Outcome buckets for direct actual-lib alias-body attempts.
     pub direct_actual_lib_alias_body_outcome:
         [AtomicU64; DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
+    /// Outcome buckets for direct actual-lib Intl interface attempts.
+    pub direct_actual_lib_intl_interface_outcome:
+        [AtomicU64; DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
     /// Why each `cached_cross_file_*` reader returned `None`. See
     /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
     /// all buckets equals the flat miss count for the four reader
@@ -1019,6 +1060,8 @@ impl PerfCounters {
                 DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
             direct_actual_lib_alias_body_outcome: [const { AtomicU64::new(0) };
                 DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
+            direct_actual_lib_intl_interface_outcome: [const { AtomicU64::new(0) };
+                DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };
@@ -1996,6 +2039,17 @@ pub fn record_direct_actual_lib_alias_body_outcome(outcome: DirectActualLibAlias
     c.direct_actual_lib_alias_body_outcome[outcome.as_index()].fetch_add(1, Ordering::Relaxed);
 }
 
+#[inline]
+pub fn record_direct_actual_lib_intl_interface_outcome(
+    outcome: DirectActualLibIntlInterfaceOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.direct_actual_lib_intl_interface_outcome[outcome.as_index()].fetch_add(1, Ordering::Relaxed);
+}
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -2109,6 +2163,7 @@ impl PerfCounters {
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
             + &Self::dump_direct_actual_lib_alias_body_outcomes()
+            + &Self::dump_direct_actual_lib_intl_interface_outcomes()
             + &Self::dump_delegate_declaration_file_miss_residues(
                 &snap.delegate_declaration_file_miss_residues,
             )
@@ -2429,6 +2484,31 @@ impl PerfCounters {
         out
     }
 
+    fn dump_direct_actual_lib_intl_interface_outcomes() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .direct_actual_lib_intl_interface_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDirect actual-lib Intl interface outcomes:\n");
+        for (idx, name) in DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count = load(&c.direct_actual_lib_intl_interface_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<36} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
     fn dump_source_file_symbol_arena_cache_eligibility_outcomes() -> String {
         let c = counters();
         let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
@@ -2652,6 +2732,13 @@ pub struct PerfCounterSnapshot {
     /// helper, rejected by the current conservative name gate, or rejected
     /// because the resolver/definition-store proof was incomplete.
     pub direct_actual_lib_alias_body_outcomes: Vec<NamedCount>,
+    /// Outcome buckets for direct actual-lib Intl interface attempts.
+    ///
+    /// Always `DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT` long, in
+    /// `DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES` order. This splits
+    /// success/fallback reasons for the Intl value-interface lane so
+    /// declaration-file miss residues can be traced to a specific gate.
+    pub direct_actual_lib_intl_interface_outcomes: Vec<NamedCount>,
     /// Why each `cached_cross_file_*` reader returned `None`.
     ///
     /// Always `CROSS_FILE_CACHE_MISS_CAUSE_COUNT` long, in
@@ -3031,6 +3118,13 @@ impl PerfCounters {
                     count: load(&c.direct_actual_lib_alias_body_outcome[i]),
                 })
                 .collect(),
+            direct_actual_lib_intl_interface_outcomes: (0
+                ..DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES[i],
+                    count: load(&c.direct_actual_lib_intl_interface_outcome[i]),
+                })
+                .collect(),
             cross_file_cache_miss_causes: (0..CROSS_FILE_CACHE_MISS_CAUSE_COUNT)
                 .map(|i| NamedCount {
                     name: CROSS_FILE_CACHE_MISS_CAUSE_NAMES[i],
@@ -3151,6 +3245,7 @@ mod json_tests {
             "compute_type_of_symbol_interface_simple_object_type_reference_reject_residues",
             "direct_interface_lowering_outcomes",
             "direct_actual_lib_alias_body_outcomes",
+            "direct_actual_lib_intl_interface_outcomes",
             "cross_file_cache_miss_causes",
             "source_file_symbol_arena_cache_eligibility_outcomes",
         ] {
@@ -3881,6 +3976,31 @@ mod json_tests {
     }
 
     #[test]
+    fn direct_actual_lib_intl_interface_outcomes_locks_to_names_array() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["direct_actual_lib_intl_interface_outcomes"]
+            .as_array()
+            .expect("direct_actual_lib_intl_interface_outcomes is array");
+        assert_eq!(
+            rows.len(),
+            DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT,
+            "direct_actual_lib_intl_interface_outcomes length must match \
+             DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES",
+        );
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["name"], DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_NAMES[i],
+                "direct_actual_lib_intl_interface_outcomes[{i}] is out of declaration order",
+            );
+            assert!(
+                row["count"].is_u64(),
+                "direct_actual_lib_intl_interface_outcomes[{i}].count should be a number",
+            );
+        }
+    }
+
+    #[test]
     fn cross_file_cache_miss_causes_locks_to_names_array() {
         let snap = PerfCounters::snapshot();
         let json = serde_json::to_value(&snap).expect("serializes");
@@ -4083,6 +4203,7 @@ mod json_tests {
         let sfsa_idx = SourceFileSymbolArenaCacheEligibilityOutcome::Cacheable.as_index();
         let dilo_idx = DirectCrossFileInterfaceLoweringOutcome::Success.as_index();
         let dalabo_idx = DirectActualLibAliasBodyOutcome::Success.as_index();
+        let daliio_idx = DirectActualLibIntlInterfaceOutcome::SuccessByName.as_index();
         let ctos_source_idx = ComputeTypeOfSymbolSourceOutcome::GlobalSymbol.as_index();
         let ctos_kind_idx = ComputeTypeOfSymbolKindOutcome::Interface.as_index();
         let ctos_fastpath_idx =
@@ -4112,6 +4233,8 @@ mod json_tests {
             c.direct_cross_file_interface_lowering_outcome[dilo_idx].load(Ordering::Relaxed);
         let before_dalabo =
             c.direct_actual_lib_alias_body_outcome[dalabo_idx].load(Ordering::Relaxed);
+        let before_daliio =
+            c.direct_actual_lib_intl_interface_outcome[daliio_idx].load(Ordering::Relaxed);
         let before_ctos_source =
             c.compute_type_of_symbol_source_outcome[ctos_source_idx].load(Ordering::Relaxed);
         let before_ctos_kind =
@@ -4146,6 +4269,7 @@ mod json_tests {
             .fetch_add(1, Ordering::Relaxed);
         c.direct_cross_file_interface_lowering_outcome[dilo_idx].fetch_add(1, Ordering::Relaxed);
         c.direct_actual_lib_alias_body_outcome[dalabo_idx].fetch_add(1, Ordering::Relaxed);
+        c.direct_actual_lib_intl_interface_outcome[daliio_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_source_outcome[ctos_source_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_kind_outcome[ctos_kind_idx].fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_fastpath_outcome[ctos_fastpath_idx]
@@ -4232,6 +4356,16 @@ mod json_tests {
         assert!(
             dalabo_row["count"].as_u64().unwrap_or(0) > before_dalabo,
             "direct_actual_lib_alias_body_outcomes[success] did not reflect the bump",
+        );
+
+        let daliio = json["direct_actual_lib_intl_interface_outcomes"]
+            .as_array()
+            .expect("direct_actual_lib_intl_interface_outcomes is array");
+        let daliio_row = &daliio[daliio_idx];
+        assert_eq!(daliio_row["name"], "success_by_name");
+        assert!(
+            daliio_row["count"].as_u64().unwrap_or(0) > before_daliio,
+            "direct_actual_lib_intl_interface_outcomes[success_by_name] did not reflect the bump",
         );
 
         let ctos_source = json["compute_type_of_symbol_source_outcomes"]
