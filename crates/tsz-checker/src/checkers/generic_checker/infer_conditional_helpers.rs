@@ -197,6 +197,41 @@ impl<'a> CheckerState<'a> {
                 self.collect_infer_constraints_from_extends_type(member_idx, name, constraints);
             }
         }
+        // Recurse into function/constructor types: parameters and return type.
+        // Collect NodeIndexes first (before any &mut self calls) to avoid borrow
+        // conflicts between the arena reference and the recursive mutable calls.
+        if node.kind == syntax_kind_ext::FUNCTION_TYPE
+            || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+        {
+            let (param_annotations, return_annotation) = if let Some(func_type) =
+                self.ctx.arena.get_function_type(node)
+            {
+                let param_annots: Vec<NodeIndex> = func_type
+                    .parameters
+                    .nodes
+                    .iter()
+                    .filter_map(|&param_idx| {
+                        let param_node = self.ctx.arena.get(param_idx)?;
+                        let param = self.ctx.arena.get_parameter(param_node)?;
+                        (param.type_annotation != NodeIndex::NONE).then_some(param.type_annotation)
+                    })
+                    .collect();
+                let ret = func_type.type_annotation;
+                (param_annots, ret)
+            } else {
+                (Vec::new(), NodeIndex::NONE)
+            };
+            for annotation in param_annotations {
+                self.collect_infer_constraints_from_extends_type(annotation, name, constraints);
+            }
+            if return_annotation != NodeIndex::NONE {
+                self.collect_infer_constraints_from_extends_type(
+                    return_annotation,
+                    name,
+                    constraints,
+                );
+            }
+        }
     }
 
     pub(super) fn type_node_contains_infer_named(
