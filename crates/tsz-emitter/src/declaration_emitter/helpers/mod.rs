@@ -217,6 +217,7 @@ mod late_bound_function_analysis;
 mod literal_initializers;
 mod local_asserted_type_alias;
 mod portability_check;
+mod portability_export_paths;
 mod portability_resolve;
 mod returned_function_initializer;
 mod synthetic_dependencies;
