@@ -1174,7 +1174,11 @@ impl<'a> UsageAnalyzer<'a> {
         // dependencies.  `analyze_local_import_equals_dependency` is
         // safe to call unconditionally — it only marks symbols whose
         // declarations are ImportEqualsDeclaration nodes.
-        if decl.type_annotation.is_none() && decl.initializer.is_some() && has_inferred_type {
+        if decl.type_annotation.is_none()
+            && decl.initializer.is_some()
+            && has_inferred_type
+            && !initializer_is_call_expression
+        {
             let callee = self.unwrap_export_default_expression(decl.initializer);
             self.analyze_local_import_equals_dependency(callee);
             if callee != decl.initializer {

@@ -97,6 +97,32 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         let var_stmt_idx = match stmt_node.kind {
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                let Some(module) = self.arena.get_module(stmt_node) else {
+                    return;
+                };
+                let previous_namespace = self.enclosing_namespace_symbol;
+                if let Some(binder) = self.binder
+                    && let Some(ns_sym) = binder.get_node_symbol(stmt_idx)
+                {
+                    self.enclosing_namespace_symbol = Some(ns_sym);
+                }
+                if let Some(body_node) = self.arena.get(module.body) {
+                    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        self.retain_synthetic_variable_declaration_dependencies_for_statement(
+                            module.body,
+                        );
+                    } else if let Some(block) = self.arena.get_module_block(body_node)
+                        && let Some(statements) = block.statements.as_ref()
+                    {
+                        self.retain_synthetic_variable_declaration_dependencies_in_statements(
+                            statements,
+                        );
+                    }
+                }
+                self.enclosing_namespace_symbol = previous_namespace;
+                return;
+            }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if !self.statement_has_effective_export(stmt_idx) {
                     return;
@@ -146,6 +172,7 @@ impl<'a> DeclarationEmitter<'a> {
                 if !var_decl.initializer.is_some() {
                     continue;
                 }
+                self.retain_import_equals_aliases_from_public_initializer(var_decl.initializer);
                 // For call-expression initializers, retain identifiers
                 // referenced in the callee's declared return-type
                 // annotation text. The annotation source text preserves
@@ -288,6 +315,100 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
+            used_symbols
+                .entry(sym_id)
+                .and_modify(|kind| *kind |= UsageKind::TYPE)
+                .or_insert(UsageKind::TYPE);
+        }
+    }
+
+    fn retain_import_equals_aliases_from_public_initializer(&mut self, initializer: NodeIndex) {
+        let Some(expr_idx) = self.skip_parenthesized_expression(initializer) else {
+            return;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+
+        let entity_idx = if expr_node.kind == syntax_kind_ext::NEW_EXPRESSION {
+            let Some(call) = self.arena.get_call_expr(expr_node) else {
+                return;
+            };
+            call.expression
+        } else if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            return;
+        } else {
+            expr_idx
+        };
+
+        self.retain_import_equals_alias_entity_root(entity_idx);
+    }
+
+    fn retain_import_equals_alias_entity_root(&mut self, entity_idx: NodeIndex) {
+        let Some(entity_node) = self.arena.get(entity_idx) else {
+            return;
+        };
+
+        if entity_node.kind == SyntaxKind::Identifier as u16 {
+            self.retain_import_equals_alias_identifier(entity_idx);
+            return;
+        }
+
+        if let Some(access) = self.arena.get_access_expr(entity_node) {
+            self.retain_import_equals_alias_entity_root(access.expression);
+            return;
+        }
+
+        if let Some(qualified) = self.arena.get_qualified_name(entity_node) {
+            self.retain_import_equals_alias_entity_root(qualified.left);
+        }
+    }
+
+    fn retain_import_equals_alias_identifier(&mut self, name_idx: NodeIndex) {
+        let Some(binder) = self.binder else {
+            return;
+        };
+        let mut candidates = Vec::new();
+        if let Some(sym_id) = binder.node_symbols.get(&name_idx.0) {
+            candidates.push(*sym_id);
+        }
+        if let Some(name) = self.get_identifier_text(name_idx) {
+            if let Some(sym_id) = binder.file_locals.get(&name)
+                && !candidates.contains(&sym_id)
+            {
+                candidates.push(sym_id);
+            }
+            for scope in binder.scopes.iter() {
+                if let Some(sym_id) = scope.table.get(&name)
+                    && !candidates.contains(&sym_id)
+                {
+                    candidates.push(sym_id);
+                }
+            }
+        }
+
+        let retained: Vec<_> = candidates
+            .into_iter()
+            .filter(|sym_id| {
+                let Some(symbol) = binder.symbols.get(*sym_id) else {
+                    return false;
+                };
+                symbol.has_any_flags(symbol_flags::ALIAS)
+                    && symbol.declarations.iter().copied().any(|decl_idx| {
+                        self.arena
+                            .get(decl_idx)
+                            .and_then(|node| self.arena.get_import_decl(node))
+                            .is_some_and(|import| {
+                                self.import_alias_targets_type_entity(import.module_specifier)
+                            })
+                    })
+            })
+            .collect();
+
+        let Some(used_symbols) = self.used_symbols.as_mut() else {
+            return;
+        };
+        for sym_id in retained {
             used_symbols
                 .entry(sym_id)
                 .and_modify(|kind| *kind |= UsageKind::TYPE)
