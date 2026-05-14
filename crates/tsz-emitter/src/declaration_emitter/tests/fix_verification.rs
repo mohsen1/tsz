@@ -30,12 +30,12 @@ fn fix_numeric_separator_hex_with_sep() {
 
 #[test]
 fn fix_numeric_separator_preserved_no_sep() {
-    // Without separators, numeric literals should be preserved as-is
+    // Hex literals are normalized to decimal in declaration emit.
     let output = emit_dts("export declare const x: 0xFF;");
     println!("hex no sep:\n{output}");
     assert!(
-        output.contains("0xFF"),
-        "hex without separator preserved: {output}"
+        output.contains("255"),
+        "hex without separator should be decimal 255: {output}"
     );
 }
 

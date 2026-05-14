@@ -19,8 +19,11 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .get_parenthesized(expr_node)
                 .and_then(|paren| self.const_literal_initializer_text(paren.expression)),
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .arena
+                .get_literal(expr_node)
+                .map(|lit| Self::declaration_const_numeric_literal_text(&lit.text, lit.value)),
             k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
                 || k == SyntaxKind::BigIntLiteral as u16
                 || k == SyntaxKind::TrueKeyword as u16
                 || k == SyntaxKind::FalseKeyword as u16 =>
@@ -45,6 +48,16 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     Some(raw)
                 }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.arena.get_unary_expr(expr_node)?;
+                if unary.operator != SyntaxKind::PlusToken as u16 {
+                    return None;
+                }
+                let operand = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(unary.operand);
+                self.const_literal_initializer_text(operand)
             }
             _ => self
                 .enum_member_access_initializer_text(expr_idx)
@@ -524,6 +537,12 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn declaration_numeric_literal_text(text: &str, value: Option<f64>) -> String {
+        let lower = text.to_ascii_lowercase();
+        if (lower.starts_with("0x") || lower.starts_with("0o") || lower.starts_with("0b"))
+            && let Some(value) = value
+        {
+            return Self::format_js_number(value);
+        }
         if text.contains('_') {
             if let Some(value) = value {
                 Self::format_js_number(value)
@@ -533,5 +552,24 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             text.to_string()
         }
+    }
+
+    fn declaration_const_numeric_literal_text(text: &str, value: Option<f64>) -> String {
+        let normalized = Self::declaration_numeric_literal_text(text, value);
+        if normalized != text {
+            return normalized;
+        }
+
+        if !text.contains('_') {
+            let digits = text.chars().filter(|c| c.is_ascii_digit()).count();
+            if digits >= 21
+                && let Ok(value) = text.parse::<f64>()
+                && value.is_finite()
+            {
+                return Self::format_js_number(value);
+            }
+        }
+
+        text.to_string()
     }
 }

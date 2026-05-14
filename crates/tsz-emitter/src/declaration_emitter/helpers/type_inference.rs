@@ -8376,14 +8376,39 @@ impl<'a> DeclarationEmitter<'a> {
         initializer: NodeIndex,
         type_text: &str,
     ) -> String {
-        if self.remove_comments || !type_text.contains("{\n") {
-            return type_text.to_string();
-        }
         let Some(object_idx) =
             self.function_initializer_unique_returned_object_literal(initializer)
         else {
             return type_text.to_string();
         };
+        self.add_object_literal_member_comments_to_type_text(object_idx, type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn add_initializer_object_member_comments_to_type_text(
+        &self,
+        initializer: NodeIndex,
+        type_text: &str,
+    ) -> String {
+        if let Some(object_idx) = self.direct_initializer_object_literal(initializer) {
+            return self.add_object_literal_member_comments_to_type_text(object_idx, type_text);
+        }
+        self.add_returned_object_member_comments_to_type_text(initializer, type_text)
+    }
+
+    fn direct_initializer_object_literal(&self, initializer: NodeIndex) -> Option<NodeIndex> {
+        let expr_idx = self.arena.skip_parenthesized_and_assertions(initializer);
+        let expr_node = self.arena.get(expr_idx)?;
+        (expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION).then_some(expr_idx)
+    }
+
+    fn add_object_literal_member_comments_to_type_text(
+        &self,
+        object_idx: NodeIndex,
+        type_text: &str,
+    ) -> String {
+        if self.remove_comments || !type_text.contains("{\n") {
+            return type_text.to_string();
+        }
         let Some(object_node) = self.arena.get(object_idx) else {
             return type_text.to_string();
         };

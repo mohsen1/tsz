@@ -2137,6 +2137,19 @@ impl<'a> DeclarationEmitter<'a> {
                                 decl.initializer,
                             );
                         }
+
+                        let skip_end = if decl.initializer.is_some() {
+                            self.arena.get(decl.initializer).map_or(0, |n| n.end)
+                        } else if decl.type_annotation.is_some() {
+                            self.arena.get(decl.type_annotation).map_or(0, |n| n.end)
+                        } else {
+                            self.arena.get(decl.name).map_or(0, |n| n.end)
+                        };
+                        if skip_end > 0
+                            && let Some(decl_node) = self.arena.get(*decl_idx)
+                        {
+                            self.skip_comments_in_node(decl_node.pos, skip_end);
+                        }
                     }
 
                     self.write(";");
