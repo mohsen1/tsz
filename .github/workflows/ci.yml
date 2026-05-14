@@ -220,7 +220,7 @@ jobs:
 
   lint:
     name: lint
-    needs: gate
+    needs: [gate, unit]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -235,7 +235,7 @@ jobs:
 
   cargo-shear:
     name: cargo-shear
-    needs: gate
+    needs: [gate, unit]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 10
@@ -260,7 +260,7 @@ jobs:
 
   dist-binaries:
     name: dist-binaries
-    needs: gate
+    needs: [gate, unit]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
@@ -295,7 +295,7 @@ jobs:
 
   project-compile-guard:
     name: project-compile-guard
-    needs: [gate, dist-binaries]
+    needs: [gate, dist-binaries, unit]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -318,7 +318,7 @@ jobs:
 
   wasm:
     name: wasm
-    needs: gate
+    needs: [gate, unit]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -357,7 +357,7 @@ jobs:
 
   node-harness-prep:
     name: node-harness-prep
-    needs: gate
+    needs: [gate, unit]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
@@ -389,20 +389,19 @@ jobs:
           compression-level: 1
 
   unit:
-    # One nextest job avoids the 3m+ archive/upload critical path. Nextest
-    # already parallelizes heavily inside the runner, and the latest green
-    # #1657 sample showed the actual shard execution was much cheaper than
-    # preparing and shipping the archive.
+    # Keep unit as the first Rust compile gate. The tsz-checker lib-test target
+    # can exit silently when it is built through sccache from a restored warm
+    # target cache, so use a clean non-sccache compile path here.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-      # Nextest completed in ~2m on run 25057027232, then the job spent
-      # 383s packing cargo-target-unit. That target-dir tarball dominates
-      # main wall clock, while sccache remains active for compile reuse.
+      CARGO_INCREMENTAL: "0"
+      TSZ_CI_CACHE_RESTORE: "0"
+      TSZ_CI_DISABLE_SCCACHE: "1"
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
     steps:
       - uses: actions/checkout@v4
@@ -412,12 +411,11 @@ jobs:
         run: scripts/ci/github-suite.sh unit
 
   conformance:
-    # Conformance remains comfortably below the current wall-clock tail. In
-    # run 25058599510, 6 shards finished in <=2m21 while unit/fourslash were
-    # still running. Keep enough parallelism to stay off the critical path
-    # while returning runner capacity to the slower suites.
+    # Keep the heavy shards behind the unit compile gate. The checker lib-test
+    # target is large enough that concurrent conformance/fourslash/emit fanout
+    # can starve rustc on the 8-vCPU cloud runners.
     name: conformance-${{ matrix.shard }}
-    needs: [gate, dist-binaries]
+    needs: [gate, dist-binaries, unit]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
@@ -450,8 +448,8 @@ jobs:
 
   conformance-aggregate:
     name: conformance-aggregate
-    needs: [gate, conformance]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    needs: [gate, unit, conformance]
+    if: needs.gate.outputs.full_run == 'true' && needs.unit.result == 'success' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -489,7 +487,7 @@ jobs:
 
   emit:
     name: emit
-    needs: [gate, dist-binaries, node-harness-prep]
+    needs: [gate, dist-binaries, node-harness-prep, unit]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
@@ -533,7 +531,7 @@ jobs:
     # capacity. Shift those two runners here; weighted snapshot timings reduce
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
-    needs: [gate, dist-binaries, node-harness-prep]
+    needs: [gate, dist-binaries, node-harness-prep, unit]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
@@ -580,8 +578,8 @@ jobs:
 
   fourslash-aggregate:
     name: fourslash-aggregate
-    needs: [gate, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    needs: [gate, unit, fourslash]
+    if: needs.gate.outputs.full_run == 'true' && needs.unit.result == 'success' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
