@@ -1345,6 +1345,19 @@ type-reference name before choosing between a conformance-proven
 symbol-resolution strategy and dead-path simplification. Decision record:
 [`perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-type-reference-reject-outcomes.md`](perf-runs/2026-05-13-compute-type-of-symbol-interface-simple-object-type-reference-reject-outcomes.md).
 
+**2026-05-14 simple-object type-reference residue names:** after #6734, the
+new residue table was run on regenerated monorepo-006 at `95fafc52ff`. The
+guarded shortcut still has `success = 0`, and the live reject residue is
+`reject_non_primitive_annotation=24,762`. The type-reference split is now
+actionable: `identifier_not_found_symbol=24,761`, and the bounded name table
+contains a single row, `number=24,761`. One remaining non-primitive row is
+`union_or_intersection=1`. The next behavior slice should not be a broad
+resolver rewrite; first prove why primitive-looking `number` reaches the
+shortcut as a type reference, then either normalize/admit that primitive case
+or fix the parser/classification boundary if it should be a `NumberKeyword`.
+Decision record:
+[`perf-runs/2026-05-14-simple-object-type-reference-residues.md`](perf-runs/2026-05-14-simple-object-type-reference-residues.md).
+
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
 any more aliases, add `direct_actual_lib_alias_body_outcomes` to the perf
 counter JSON/text dump and wire it at every return point in the actual-lib
