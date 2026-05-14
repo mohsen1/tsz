@@ -1877,10 +1877,6 @@ impl<'a> CheckerContext<'a> {
         self.recursion_depth.borrow_mut().leave();
     }
 
-    // =========================================================================
-    // Flow Graph Queries
-    // =========================================================================
-
     /// Check flow usage at a specific AST node.
     ///
     /// This method queries the control flow graph to determine flow-sensitive

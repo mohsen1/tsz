@@ -69,6 +69,20 @@ changes the picture.
    `TypeData` matching, direct type evaluation during printing, usage walks over
    inferred `TypeId`s, and text-based import usage heuristics. The target is a
    precomputed declaration/public-API summary, not a shadow checker.
+7. Open non-tech-debt bugs are concentrated in semantic substrates, not random
+   leaf features. A 2026-05-14 audit found `125` open bugs excluding
+   `tech-debt`; the dominant families were relation/assignability/readonly
+   (`~56`), type inference/contextual instantiation (`~43`), deferred type
+   evaluation (`~48`), key-space/indexed access/property logic (`~28`),
+   class/`this`/accessor compatibility (`~23`), flow narrowing (`~9`), and
+   symbol/lib/module identity (`~13`). These are the tracks' root inputs.
+8. The design response is **not** an architecture-first pause. Purpose-specific
+   normalization, inference sessions, key-space algebra, diagnostic-capable
+   relation results, solver-owned flow predicates, identity/provenance queries,
+   and cache-key contracts should be introduced as just-in-time compatibility
+   enablers inside the tracks below. Broad checker thinning, display rewrites,
+   LSP/WASM expansion, and generalized query-engine refactors stay on the back
+   burner until a release gate or bug family requires them.
 
 ## Coordination Model
 
@@ -167,16 +181,25 @@ Near-term priority order:
 
 1. Merge or close current active PRs into coherent campaign ownership; remove
    stale `WIP` labels before any ready merge.
-2. Freeze new symptom patches and start burning down existing fingerprint/source
+2. Establish the project-corpus red/yellow/green dashboard and bug-family
+   intake loop before judging speed. Every red/yellow row should name the
+   semantic operation that owns the first blocker.
+3. Fold substrate refactors into bug closure. A semantic bug may add a
+   normalization query, inference-session boundary, key-space helper,
+   `RelationDecision` path, flow predicate, identity query, or cache-key
+   contract only when the reported family needs that substrate.
+4. Freeze new symptom patches and start burning down existing fingerprint/source
    text/rendered-type rewrites.
-3. Stop starting broad DTS cleanup unless it removes an emitter boundary
+5. Stop starting broad DTS cleanup unless it removes an emitter boundary
    violation, reduces ambient state, improves a release gate, or unblocks a
    named failure family.
-4. Convert noisy planning state into draft PRs, PR comments, and this roadmap
+6. Convert noisy planning state into draft PRs, PR comments, and this roadmap
    only when the update is durable enough to justify the shared-file conflict
    risk.
-5. Build a red/yellow/green real-project dashboard.
-6. Add reduced benchmark failures to targeted tests as they are understood.
+7. Add reduced benchmark failures to targeted tests as they are understood.
+8. Keep broad display-provenance polish, generalized query-engine refactors,
+   major incremental/perf rewrites, and LSP/WASM expansion on the back burner
+   unless they unblock a named release gate.
 
 ## Phase 1: Project Corpus Gate
 
@@ -193,13 +216,13 @@ Required project rows:
 
 | Project | Current Strategic Read | Primary Owner Track | Exit Target |
 | --- | --- | --- | --- |
-| Kysely | likely contextual generics, guards, indexed access | Tracks 1, 3, 5 | exit success |
-| Zod | recursive conditionals, object guards, class/generic identity | Tracks 1, 3, 6 | exit success |
-| ts-toolbelt | recursive type evaluation pressure | Tracks 1, 2 | exit success |
-| type-fest | broad mapped/conditional utility surface | Tracks 1, 2, 6 | exit success |
-| ts-essentials | utility types plus recursive JSON shapes | Tracks 1, 2 | exit success |
-| large-ts-repo | residency/runtime/project graph stress | Tracks 6, 7, 8 | exit success without OOM/timeout |
-| Next.js full project | module graph plus generated app dependencies | Tracks 6, 7, 9 | recorded green/yellow/red |
+| Kysely | contextual generics, guards, indexed/property access | Tracks 2, 3, 5, 6 | exit success |
+| Zod | recursive conditionals, object guards, class/generic identity | Tracks 2, 3, 4, 7 | exit success |
+| ts-toolbelt | recursive type evaluation pressure | Tracks 2, 3 | exit success |
+| type-fest | broad mapped/conditional/key-space utility surface | Tracks 2, 3, 5 | exit success |
+| ts-essentials | utility types plus recursive JSON shapes | Tracks 2, 3, 5 | exit success |
+| large-ts-repo | residency/runtime/project graph stress | Tracks 1, 7, 10 | exit success without OOM/timeout |
+| Next.js full project | module graph plus generated app dependencies | Tracks 1, 7, 9 | recorded green/yellow/red |
 
 For every project row, capture:
 
@@ -245,15 +268,36 @@ These tracks are designed for 10 concurrent agents. Each track can own multiple
 small PRs, but each PR should state one invariant and avoid duplicating another
 track's active draft PR.
 
-### Track 1: Type Evaluator Correctness
+### Track 1: Compatibility Corpus, Dashboard, And Triage Gates
+
+Scope: project benchmark harness, public benchmark reporting, fixture status,
+`tsc` oracle comparison, diagnostic-delta extraction, reduction queue, and
+bug-family intake.
+
+Core invariant: correctness status is reported separately from speed; no speed
+headline is meaningful for a project until correctness status is green or
+explicitly out of scope.
+
+Acceptance:
+
+1. Dashboard rows exist for Kysely, Zod, ts-toolbelt, type-fest, ts-essentials,
+   large-ts-repo, and Next.js full.
+2. Failed rows include exit class, first diagnostic deltas, semantic owner
+   family, and phase reached.
+3. Benchmark reductions become owning-crate tests when root cause is known.
+4. Every semantic PR that claims project-corpus impact names the row and bug
+   family it moves.
+
+### Track 2: Type Evaluator And Purpose-Specific Normalization
 
 Scope: conditional types, mapped types, template literal types, `infer`,
 distributivity, key remapping, indexed access, utility types, intrinsics, and
 recursive evaluation.
 
-Core invariant: semantic type evaluation has one solver-owned entrypoint with
-memoization keyed by expression identity, substitution environment, compatibility
-mode, and recursion/fuel state.
+Core invariant: deferred type operations are evaluated through solver-owned,
+purpose-specific queries with memoization keyed by expression identity,
+substitution environment, compatibility mode, normalization purpose, and
+recursion/fuel state. There is no universal eager normal form.
 
 Acceptance:
 
@@ -262,16 +306,20 @@ Acceptance:
 2. Deferred/unresolved conditionals are represented explicitly rather than
    erased to `any` or `error`.
 3. Checker-local evaluation shortcuts trend down.
+4. Callers name why they normalize: relation input, property lookup, inference
+   source/target, diagnostic display, or flow narrowing.
 
-### Track 2: Instantiation, Inference, And Cache Hygiene
+### Track 3: Inference Sessions, Instantiation, And Cache Contracts
 
 Scope: generic call inference, constructor inference, overload inference,
 contextual typing, class/mixin instantiation, `this` substitution, stale aliases,
 and relation/evaluation/inference cache keys.
 
-Core invariant: cache keys include every input that can change the answer:
+Core invariant: generic inference is a bounded solver-owned transaction:
+collect constraints, solve by priority, commit substitutions, then discard
+session state. Cache keys include every input that can change the answer:
 substitution environment, relation/variance mode, compatibility mode, lib/module
-context, and relevant flow/request context.
+context, fresh-literal state, `this` type, and relevant flow/request context.
 
 Acceptance:
 
@@ -279,32 +327,21 @@ Acceptance:
 2. Reordered declarations/files produce stable diagnostics.
 3. Self-contradictory errors such as `T` not assignable to `T` are treated as
    cache/keying bugs until proven otherwise.
+4. Same-checker-context repeated generic calls cannot leak inference state into
+   later calls.
+5. Instantiation cache comments, stats, and production behavior agree.
 
-### Track 3: Flow Graph And Narrowing
-
-Scope: discriminated unions, destructured discriminants, user-defined
-predicates, `in` narrowing, optional/truthiness narrowing, array/object guards,
-exhaustive switch behavior, and alias-aware flow facts.
-
-Core invariant: checker supplies flow facts and locations; solver-owned
-narrowing queries compute semantic narrowed types without leaking branch state.
-
-Acceptance:
-
-1. Kysely/Zod guard reductions pass.
-2. Destructured discriminant and mapped-union `in` narrowing cases pass.
-3. Nested narrowing cannot corrupt outer flow state.
-
-### Track 4: Relation, Variance, And Call Signatures
+### Track 4: Relations, Variance, Call Signatures, And Class Compatibility
 
 Scope: assignability, function parameter variance, callable interfaces, overload
 implementation compatibility, `call`/`apply`/`bind`, method bivariance
-exceptions, abstract construct signatures, freshness/excess-property policy, and
-weak type detection.
+exceptions, abstract construct signatures, class/`this`/accessor/super/mixin
+compatibility, freshness/excess-property policy, and weak type detection.
 
 Core invariant: `TS2322`, `TS2345`, `TS2394`, `TS2416`, and related relation
 paths flow through one assignability/relation gateway: relation -> structured
-reason -> diagnostic rendering.
+reason -> diagnostic rendering. Class-like compatibility is a typed
+compatibility surface, not accidental object-shape comparison.
 
 Acceptance:
 
@@ -314,35 +351,60 @@ Acceptance:
 3. Callable interface assignment does not fall back to property comparison when
    `tsc` would compare signatures.
 4. `TS2322`/`TS2345`/`TS2394`/`TS2416` paths that need relation plus failure
-   reason use `RelationRequest`/`RelationOutcome` or a narrower wrapper, not raw
-   boolean assignability followed by local semantic post-checks.
-5. Display-string relation exceptions, iterator protocol special cases, and
-   `keyof` post-checks move behind typed solver/query classifiers.
+   reason use `RelationRequest`/`RelationOutcome` or a narrower
+   diagnostic-capable wrapper, not raw boolean assignability followed by local
+   semantic post-checks.
+5. Boolean fast paths remain cheap; explanation mode may build structured
+   failures but must be explicitly requested.
+6. Accessor pairs, receiver `this`, constructor abstraction, and class
+   static/instance sides are handled by class-aware relation helpers.
 
-### Track 5: Query Boundaries And Checker Thinness
+### Track 5: Key-Space, Indexed Access, And Property Semantics
 
-Scope: `query_boundaries`, checker orchestration, diagnostic source selection,
-and any path where checker currently performs semantic shape analysis, source
-text fingerprint rewriting, or rendered-type decision-making.
+Scope: `keyof`, indexed access, property lookup, index signatures, mapped-key
+remapping, template literal pattern keys, numeric/string key compatibility,
+symbol and unique-symbol keys, well-known symbols, excess-property
+classification, and readonly/optional property metadata.
 
-Core invariant: checker owns `WHERE`; solver owns `WHAT`. If checker needs to
-branch on a type shape, add or use a solver/query-boundary classifier.
+Core invariant: property identity is modeled as a solver-owned key space, not as
+ad-hoc strings. `keyof`, `T[K]`, mapped projection, index signatures, relation
+property comparison, and diagnostics ask the same key-space/query helpers.
 
 Acceptance:
 
-1. New checker code does not match raw solver internals.
-2. Central helpers cover repeated assignability/property/narrowing questions.
-3. Diagnostic rendering stays downstream of semantic failure reasons.
-4. The existing fingerprint-rewrite ledger trends down, and removed rewrites are
-   replaced by structural solver/query behavior plus focused tests.
-5. `query_boundaries/common.rs` shrinks toward explicit domain modules instead of
-   exporting broad traversal internals for checker-side semantic recursion.
+1. TS7053/TS2536/TS2353-style paths share key-space queries instead of
+   duplicating string/number/symbol logic.
+2. Template literal pattern keys and numeric-string compatibility are structural
+   facts, not rendered-string checks.
+3. Query-boundary property classification avoids owned `String` maps on hot
+   semantic paths when atoms/symbols/key-space handles are available.
+4. Key-space query results are interned or otherwise identity-cheap enough for
+   relation/property hot paths.
 
-### Track 6: Symbol, Lib, Module, And Stable Identity
+### Track 6: Flow Graph And Solver-Owned Narrowing Predicates
+
+Scope: discriminated unions, destructured discriminants, user-defined
+predicates, `in` narrowing, optional/truthiness narrowing, array/object guards,
+exhaustive switch behavior, and alias-aware flow facts.
+
+Core invariant: checker supplies flow facts and locations; solver-owned
+narrowing predicates compute semantic narrowed types without leaking branch
+state or creating a second evaluator in checker flow code.
+
+Acceptance:
+
+1. Kysely/Zod guard reductions pass.
+2. Destructured discriminant and mapped-union `in` narrowing cases pass.
+3. Nested narrowing cannot corrupt outer flow state.
+4. Predicate application is cacheable by input type, predicate payload,
+   compiler flags, and resolver generation.
+
+### Track 7: Symbol, Lib, Module, And Stable Identity
 
 Scope: `import()` types, namespace/enum merging, module augmentations, DOM/lib
-globals, symbol keys, global declarations, alias owners, `DefId` mapping, and
-cross-file stable identity.
+globals, symbol keys, global declarations, alias owners, `DefId` mapping,
+class static/instance identity, enum value/namespace identity, display
+provenance handles, and cross-file stable identity.
 
 Core invariant: the same semantic entity has one identity across files/libs and
 is referenced through stable binder/solver IDs, not recovered from syntax or
@@ -356,46 +418,38 @@ Acceptance:
 3. Unresolved identifiers do not silently become `any` unless `tsc` would do so.
 4. Actual-lib alias admissions such as utility aliases and iterator/Intl rows
    are treated as transitional; stable lib identity queries replace allowlists.
+5. Display provenance is a structured side channel over stable identity, not a
+   semantic decision based on rendered type strings.
 
-### Track 7: Project Corpus And Benchmark Dashboard
+### Track 8: Diagnostics, Display, Parser Options, And Feature Gates
 
-Scope: project benchmark harness, public benchmark reporting, fixture status,
-diagnostic-delta extraction, and reduction queue.
+Scope: diagnostic code/position/priority, type display provenance, parser
+recovery facts, compiler-option and language-version gates, decorators,
+auto-accessors, top-level await, global declaration restrictions, and
+syntax-only validation that should not depend on relation machinery.
 
-Core invariant: correctness status is reported separately from speed; no speed
-headline is meaningful for a project until correctness status is green or
-explicitly out of scope.
-
-Acceptance:
-
-1. Dashboard rows exist for Kysely, Zod, ts-toolbelt, type-fest, ts-essentials,
-   large-ts-repo, and Next.js full.
-2. Failed rows include exit class, first diagnostic deltas, and phase reached.
-3. Benchmark reductions become owning-crate tests when root cause is known.
-
-### Track 8: Residency, Performance, And Incremental Substrate
-
-Scope: large-repo memory/runtime, stable skeleton indexes, bounded arena
-residency, project graph reuse, compiler-service orchestration, and incremental
-invalidations.
-
-Core invariant: performance work must preserve semantic identity and correctness;
-large-repo speed comes from stable semantic facts and bounded residency, not
-from checker-local semantic shortcuts.
+Core invariant: diagnostics render from structured semantic or syntax facts.
+Syntax/option gates are checker validation over AST/binder facts; semantic
+diagnostics are downstream of solver/query-boundary reasons; neither path uses
+source-text snippets or rendered type strings as semantic input.
 
 Acceptance:
 
-1. Large repo finishes without OOM/timeout, then gets faster.
-2. Cross-file lookups increasingly answer from skeleton/stable indexes.
-3. Cache/residency changes include before/after measurements when practical.
-4. Lib/interface reuse proves semantic identity and type-parameter preservation;
-   rejected missing-interface lib probes should not become name-only allowlists.
+1. Wrong-code/wrong-position diagnostics move behind structured reason or
+   syntax-gate helpers.
+2. Type display fixes consume display provenance and visibility facts rather
+   than changing semantic types for presentation.
+3. Option-gate diagnostics are tested under both allowed and disallowed
+   compiler options.
+4. Parser recovery facts are explicit inputs to diagnostics/emit when needed;
+   consumers do not infer malformed syntax behavior by scanning substrings.
 
-### Track 9: Emit Robustness, DTS Boundary, And Consumers
+### Track 9: Emit Robustness, DTS Boundary, LSP, And WASM Consumers
 
 Scope: JS emit, declaration emit, LSP, WASM, and compiler-service facade work.
 Emit/DTS has enough failures and architectural risk to be its own recovery
-campaign inside this track, not a bucket of baseline whack-a-mole.
+campaign inside this track, not a bucket of baseline whack-a-mole. LSP/WASM
+expansion beyond parity or release gates remains back burner.
 
 Core invariant: emit, LSP, and WASM consume compiler outputs and semantic views;
 they do not own type algorithms or rederive checker/solver facts.
@@ -429,24 +483,36 @@ Acceptance:
 5. Source-text recovery moves toward parser-provided facts; emitter code should
    not infer malformed syntax behavior by scanning substrings.
 
-### Track 10: Guardrails, Refactors, And Tooling
+### Track 10: Guardrails, Tooling, Residency, And Performance Substrate
 
-Scope: architecture guardrails, test fixtures, cache/order test harnesses, docs
-cleanup, CI ergonomics, and behavior-preserving refactors that unblock tracks
-1-9.
+Scope: large-repo memory/runtime, stable skeleton indexes, bounded arena
+residency, project graph reuse, compiler-service orchestration, incremental
+invalidations, architecture guardrails, test fixtures, cache/order test
+harnesses, docs cleanup, CI ergonomics, and behavior-preserving refactors that
+unblock tracks 1-9.
 
-Core invariant: refactors reduce the number of semantic paths or make invariants
-measurable. Cosmetic cleanup is filler work, not the main campaign.
+Core invariant: performance work must preserve semantic identity and
+correctness; large-repo speed comes from stable semantic facts, bounded
+residency, and measurable guardrails, not from checker-local semantic shortcuts.
+Refactors reduce the number of semantic paths or make invariants measurable.
 
 Acceptance:
 
-1. Guardrails catch forbidden checker/solver/emitter boundary drift.
-2. Test harnesses make cache-disabled and order-randomized checks easy to run.
-3. Docs stay concise and do not recreate claim-file bookkeeping.
-4. Guardrails cover source-text/rendered-type semantic decisions and emitter
+1. Large repo finishes without OOM/timeout, then gets faster.
+2. Cross-file lookups increasingly answer from skeleton/stable indexes.
+3. Cache/residency changes include before/after measurements when practical.
+4. Lib/interface reuse proves semantic identity and type-parameter preservation;
+   rejected missing-interface lib probes should not become name-only allowlists.
+5. Guardrails catch forbidden checker/solver/emitter boundary drift.
+6. Test harnesses make cache-disabled and order-randomized checks easy to run.
+7. Docs stay concise and do not recreate claim-file bookkeeping.
+8. Guardrails cover source-text/rendered-type semantic decisions and emitter
    direct solver-internal access once the current baselines have owners.
-5. Refactor PRs that only split files are accepted when they reduce measurable
+9. Refactor PRs that only split files are accepted when they reduce measurable
    state, remove a boundary exception, or unblock a named campaign.
+10. Broad performance rewrites wait until a correctness row is green, a red row
+    is blocked by runtime/residency, or the change has a clear semantic
+    identity contract.
 
 ## Local Verification Rules
 

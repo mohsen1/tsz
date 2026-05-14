@@ -1223,6 +1223,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            if let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
+                && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
+                && base_symbol.has_any_flags(symbol_flags::ALIAS)
+                && let Some(decl_node) = self.ctx.arena.get(base_symbol.value_declaration)
+                && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
+                && let Some(module_specifier) =
+                    self.get_require_module_specifier(import_decl.module_specifier)
+                && let Some(surface) = self.resolve_js_export_surface_for_module(
+                    &module_specifier,
+                    Some(self.ctx.current_file_idx),
+                )
+                && surface.has_commonjs_exports
+                && let Some(member_type) =
+                    surface.lookup_named_export(property_name, self.ctx.types)
+            {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
+            }
+
             let enum_instance_like_access = self
                 .is_enum_instance_property_access(object_type, access.expression)
                 || access_query::type_parameter_constraint(self.ctx.types, object_type)
