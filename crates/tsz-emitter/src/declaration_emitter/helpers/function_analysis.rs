@@ -1162,16 +1162,7 @@ impl<'a> DeclarationEmitter<'a> {
         let class_node = self.arena.get(class_idx)?;
         let class_decl = self.arena.get_class(class_node)?;
         for &member_idx in &class_decl.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            let member_name_idx = if let Some(method) = self.arena.get_method_decl(member_node) {
-                method.name
-            } else if let Some(prop) = self.arena.get_property_decl(member_node) {
-                prop.name
-            } else if let Some(accessor) = self.arena.get_accessor(member_node) {
-                accessor.name
-            } else {
+            let Some(member_name_idx) = self.get_member_name_idx(member_idx) else {
                 continue;
             };
             if self.get_identifier_text(member_name_idx).as_deref() != Some(member_name) {

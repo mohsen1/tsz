@@ -310,6 +310,10 @@ name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
 [[test]]
+name = "conditional_extends_readonly_identity_tests"
+path = "tests/conditional_extends_readonly_identity_tests.rs"
+
+[[test]]
 name = "ts2322_property_decl_annotation_tests"
 path = "tests/ts2322_property_decl_annotation_tests.rs"
 
@@ -1088,6 +1092,10 @@ path = "tests/template_literal_record_key_tests.rs"
 [[test]]
 name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
+
+[[test]]
+name = "self_module_augmentation_isolation_tests"
+path = "tests/self_module_augmentation_isolation_tests.rs"
 
 [lints]
 workspace = true

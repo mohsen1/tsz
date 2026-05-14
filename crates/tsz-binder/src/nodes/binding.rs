@@ -35,7 +35,10 @@ struct PreservedLibMeaning {
 }
 
 impl BinderState {
-    fn declaration_span(arena: &NodeArena, declaration: NodeIndex) -> Option<(u32, u32)> {
+    pub(crate) fn declaration_span(
+        arena: &NodeArena,
+        declaration: NodeIndex,
+    ) -> Option<(u32, u32)> {
         arena.get(declaration).map(|node| (node.pos, node.end))
     }
 

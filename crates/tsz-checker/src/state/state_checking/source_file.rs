@@ -354,7 +354,8 @@ impl<'a> CheckerState<'a> {
 
         let prev_unreachable = self.ctx.is_unreachable;
         let prev_reported = self.ctx.has_reported_unreachable;
-        let suppress_grammar = self.has_syntax_parse_errors();
+        let suppress_grammar = self.has_syntax_parse_errors()
+            || self.ctx.diagnostics.iter().any(|diag| diag.code == 1389);
 
         // TS1046: In .d.ts files, top-level value declarations must start
         // with 'declare' or 'export'. Report the first violation only.
@@ -365,6 +366,7 @@ impl<'a> CheckerState<'a> {
         let mut seen_dts_ambient_violation = false;
         for &stmt_idx in &sf.statements.nodes {
             if !is_dts
+                && !suppress_grammar
                 && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
                 && stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
             {
