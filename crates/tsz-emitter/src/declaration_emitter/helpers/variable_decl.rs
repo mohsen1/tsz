@@ -468,6 +468,9 @@ impl<'a> DeclarationEmitter<'a> {
                 let mut type_text = self
                     .expand_rest_tuple_parameters_in_function_type_text(initializer, &type_text)
                     .unwrap_or(type_text);
+                type_text = self
+                    .preserve_call_argument_single_rest_parameter_text(initializer, &type_text)
+                    .unwrap_or(type_text);
                 type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
                 if let Some(labelled_type_text) = self
