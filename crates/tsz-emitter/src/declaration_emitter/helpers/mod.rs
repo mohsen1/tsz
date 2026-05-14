@@ -249,6 +249,7 @@ mod type_inference_type_nodes;
 mod type_param_rewrite;
 mod type_printing;
 mod type_printing_paths;
+mod type_printing_undefined;
 mod unexported_alias_literal;
 mod variable_decl;
 mod variable_decl_function_initializers;
