@@ -351,10 +351,10 @@ pub struct QueryCache<'a> {
     intersection_merge_cache: RefCell<FxHashMap<TypeId, Option<TypeId>>>,
     /// Cross-call cache for `instantiate_type` results, keyed by
     /// `(TypeId, CanonicalSubst, mode_bits, Option<this_type>)`.
-    /// PR 2/4 of the `instantiate_type` cache plumbing
-    /// tracked in `docs/plan/ROADMAP.md`. PR 3/4 will
-    /// wire this into the five `instantiate_type*` entry points; for now
-    /// the cache exists but no production path probes it.
+    ///
+    /// Active when solver production paths call the cache-aware instantiation
+    /// entry points with `Some(&dyn QueryDatabase)`. Plain `TypeDatabase`
+    /// callers keep using trait defaults and do not populate this cache.
     instantiation_cache: InstantiationCache,
     /// Cross-call cache for `remove_subtypes_for_bct` results, keyed by
     /// `(SortedTypeIds, mode_bits)`. Mirrors `subtypeReductionCache` in tsc
@@ -1384,8 +1384,8 @@ impl QueryDatabase for QueryCache<'_> {
 
     /// Look up a cross-call `instantiate_type` result.
     ///
-    /// PR 3/4 of the `docs/plan/ROADMAP.md` instantiation-cache workstream. Hit/miss
-    /// counters mirror the subtype counters and feed `QueryCacheStatistics`.
+    /// Hit/miss counters mirror the subtype counters and feed
+    /// `QueryCacheStatistics`.
     fn lookup_instantiation_cache(&self, key: &InstantiationCacheKey) -> Option<TypeId> {
         match self.instantiation_cache.lookup(key) {
             Some(result) => {

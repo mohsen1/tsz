@@ -1,9 +1,8 @@
 //! Cross-call `instantiate_type` cache wiring tests.
 //!
-//! PR 3/4 of the `docs/plan/ROADMAP.md` instantiation-cache workstream. These tests
-//! exercise the wiring of `InstantiationCache` into the five `instantiate_type*`
-//! entry points (the `_cached` variants). PR 2 already shipped the storage
-//! and trait methods on `QueryDatabase`; here we verify that:
+//! These tests exercise the wiring of `InstantiationCache` into the
+//! cache-aware instantiation entry points (the `_cached` variants). They verify
+//! that:
 //!
 //! 1. Two back-to-back calls with the same `(type_id, subst, mode_bits, this_type)`
 //!    produce a cache hit (recorded via `instantiation_cache_hits`).

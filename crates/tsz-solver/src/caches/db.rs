@@ -847,12 +847,10 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
     /// Look up a cross-call `instantiate_type` cache entry.
     ///
-    /// PR 2/4 of the `instantiate_type` cache plumbing
-    /// tracked in `docs/plan/ROADMAP.md`. The default
-    /// returns `None` so non-`QueryCache` databases (raw `TypeInterner`,
-    /// tests) don't need to implement it. PR 3/4 will wire the five
-    /// `instantiate_type*` entry points to consult this cache after their
-    /// existing leaf fast paths.
+    /// The default returns `None` so non-`QueryCache` databases (raw
+    /// `TypeInterner`, tests) don't need to implement it. Cache-aware
+    /// instantiation entry points consult this after their existing leaf fast
+    /// paths when callers pass `Some(&dyn QueryDatabase)`.
     fn lookup_instantiation_cache(&self, _key: &InstantiationCacheKey) -> Option<TypeId> {
         None
     }
