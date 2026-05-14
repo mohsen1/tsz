@@ -157,6 +157,28 @@ fn homomorphic_over_numeric_named_properties_preserves_numeric_keys() {
 }
 
 #[test]
+fn keyof_over_numeric_named_properties_yields_numeric_literals() {
+    // Generalization: the same structural rule that drives mapped-type
+    // key substitution also applies to `keyof T` over a numeric-keyed
+    // object. Before the fix, `keyof { 1: ...; 2: ... }` produced the
+    // string-literal union `"1" | "2"`; tsc produces the number-literal
+    // union `1 | 2`.
+    assert_no_errors(
+        "keyof numeric-keyed object produces numeric literals",
+        r#"
+        type N = { 1: string; 2: number };
+        type K = keyof N;
+        const a: 1 | 2 = 1;
+        const b: 1 | 2 = 2;
+        const fromK: K = 1;
+        function pick<P extends K>(p: P) {
+            const known: 1 | 2 = p;
+        }
+        "#,
+    );
+}
+
+#[test]
 fn negative_case_still_errors() {
     // After the fix, mapped-type evaluation must still emit TS2345 for an
     // index that is not part of the numeric key union. This guards against an

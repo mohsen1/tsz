@@ -414,24 +414,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(*mapped),
             };
-            // Extract property name(s) from remapped key.
-            // Handle unions: `as \`${K}1\` | \`${K}2\`` produces multiple properties per key.
-            let remapped_names: smallvec::SmallVec<[Atom; 1]> =
-                if let Some(entry) = self.mapped_key_from_literal(remapped) {
-                    smallvec::smallvec![entry.name]
-                } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
-                    let members = self.interner().type_list(list_id);
-                    let names: smallvec::SmallVec<[Atom; 1]> = members
-                        .iter()
-                        .filter_map(|&m| self.mapped_key_from_literal(m).map(|k| k.name))
-                        .collect();
-                    if names.is_empty() {
-                        return self.interner().mapped(*mapped);
-                    }
-                    names
-                } else {
+            // Extract property name(s) from the remapped key. The no-`as`-clause
+            // path is the common case (Partial / Readonly / Required / Pick
+            // expansions) and skips a lookup + numeric-atom intern.
+            // Unions arise from `as \`${K}1\` | \`${K}2\`` producing multiple
+            // properties per source key.
+            let remapped_names: smallvec::SmallVec<[Atom; 1]> = if remapped == key_literal {
+                smallvec::smallvec![key_name]
+            } else if let Some(entry) = self.mapped_key_from_literal(remapped) {
+                smallvec::smallvec![entry.name]
+            } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
+                let members = self.interner().type_list(list_id);
+                let names: smallvec::SmallVec<[Atom; 1]> = members
+                    .iter()
+                    .filter_map(|&m| self.mapped_key_from_literal(m).map(|k| k.name))
+                    .collect();
+                if names.is_empty() {
                     return self.interner().mapped(*mapped);
-                };
+                }
+                names
+            } else {
+                return self.interner().mapped(*mapped);
+            };
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
             // Use memoized source property info for O(1) lookup.
@@ -993,24 +997,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Build a `MappedKey` from a collected property. A bare numeric name
-    /// (`{ 1: ... }`, not `{ "1": ... }`) substitutes as a numeric literal;
-    /// `is_string_named` distinguishes `"1"` from `1` since both intern to
-    /// the same atom.
+    /// Build a `MappedKey` from a collected property. Symbol-named keys
+    /// fall back to a string-literal substitution (mapped-type iteration
+    /// doesn't model symbol-keyed properties yet); other keys defer to
+    /// `literal_key_for_property_name`, which encodes the structural rule
+    /// "bare numeric name → number literal, quoted numeric name → string
+    /// literal".
     fn mapped_key_from_property(&self, prop: &PropertyInfo) -> MappedKey {
-        let is_numeric = !prop.is_string_named
-            && !prop.is_symbol_named
-            && crate::utils::is_numeric_property_name(self.interner(), prop.name);
-        let key_literal = if is_numeric {
-            let resolved = self.interner().resolve_atom_ref(prop.name);
-            // The atom is gated by `is_numeric_property_name`, which canonicalizes
-            // via `js_number_to_string` — so `parse::<f64>()` cannot fail here.
-            resolved.parse::<f64>().map_or_else(
-                |_| self.interner().literal_string_atom(prop.name),
-                |n| self.interner().literal_number(n),
-            )
-        } else {
+        let key_literal = if prop.is_symbol_named {
             self.interner().literal_string_atom(prop.name)
+        } else {
+            crate::utils::literal_key_for_property_name(
+                self.interner(),
+                prop.name,
+                prop.is_string_named,
+            )
         };
         MappedKey {
             name: prop.name,
@@ -1130,9 +1131,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // constraint: `Record<E, any>` where `enum E { A = 0 }` produces constraint
             // Enum(_, Literal(Number(0))) → key "0".
             TypeData::Literal(LiteralValue::Number(_)) => {
-                if let Some(key) = self.mapped_key_from_literal(type_id) {
-                    keys.keys.push(key);
-                }
+                keys.keys.push(
+                    self.mapped_key_from_literal(type_id)
+                        .expect("matched LiteralValue::Number"),
+                );
                 Some(keys)
             }
             // `AB[K]` in mapped constraints: resolve to the union of property
