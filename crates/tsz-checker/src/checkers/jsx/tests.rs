@@ -1109,12 +1109,12 @@ fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     );
 }
 
-/// React component alias types (ComponentType<P>, ComponentClass<P>, etc.) with
+/// React component alias types (`ComponentType<P>`, `ComponentClass<P>`, etc.) with
 /// multi-constructor overloads must not emit TS2786. The multi-construct path goes
 /// through `check_jsx_overloaded_sfc`; the same React-alias skip that guards the
 /// non-overload path must apply there too to avoid cycle-detection false positives.
 ///
-/// This test uses two different type-parameter names (T and K) to prove the rule
+/// This test uses two different type-parameter names (`T` and `K`) to prove the rule
 /// is structural, not tied to any specific identifier spelling.
 #[test]
 fn jsx_react_component_alias_with_multi_construct_no_ts2786() {
