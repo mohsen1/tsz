@@ -168,6 +168,7 @@ impl<'a> Printer<'a> {
             && self.is_single_line(node)
             && !needs_this_capture
             && is_function_body_block
+            && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
             && self.hoisted_for_of_temps.is_empty()
             && self.pending_object_rest_params.is_empty();
@@ -277,6 +278,70 @@ impl<'a> Printer<'a> {
         // e.g., `function f(_a, b) { var { a } = _a, rest = __rest(_a, ["a"]); ... }`
         if is_function_body_block && !self.pending_object_rest_params.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
+        }
+
+        let pending_super_capture = if is_function_body_block {
+            self.pending_lowered_async_arrow_super_capture.take()
+        } else {
+            None
+        };
+        let prev_super_alias = self.scoped_static_super_base_alias.take();
+        let prev_super_direct = self.scoped_static_super_direct_access;
+        let prev_super_index_alias = self.scoped_static_super_index_alias.take();
+        let prev_super_index_value = self.scoped_static_super_index_value_access;
+        if let Some((capture, super_alias_text, super_index_alias_text)) =
+            pending_super_capture.as_ref()
+        {
+            if let Some(index_alias) = super_index_alias_text.as_deref() {
+                self.write("const ");
+                self.write(index_alias);
+                if capture.needs_writable_element_index {
+                    self.write(" = (function (geti, seti) {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write("const cache = Object.create(null);");
+                    self.write_line();
+                    self.write("return name => cache[name] || (cache[name] = { get value() { return geti(name); }, set value(v) { seti(name, v); } });");
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("})(name => super[name], (name, value) => super[name] = value);");
+                } else {
+                    self.write(" = name => super[name];");
+                }
+                self.write_line();
+                self.scoped_static_super_index_alias =
+                    Some(std::sync::Arc::<str>::from(index_alias));
+                self.scoped_static_super_index_value_access = capture.needs_writable_element_index;
+            }
+
+            if let Some(super_alias) = super_alias_text.as_deref() {
+                self.write("const ");
+                self.write(super_alias);
+                self.write(" = Object.create(null, {");
+                self.write_line();
+                self.increase_indent();
+                for (i, name) in capture.property_names.iter().enumerate() {
+                    self.write(name);
+                    self.write(": { get: () => super.");
+                    self.write(name);
+                    if capture.writable_property_names.contains(name) {
+                        self.write(", set: v => super.");
+                        self.write(name);
+                        self.write(" = v");
+                    }
+                    self.write(" }");
+                    if i + 1 < capture.property_names.len() {
+                        self.write(",");
+                    }
+                    self.write_line();
+                }
+                self.decrease_indent();
+                self.write("});");
+                self.write_line();
+                self.scoped_static_super_base_alias =
+                    Some(std::sync::Arc::<str>::from(super_alias));
+                self.scoped_static_super_direct_access = true;
+            }
         }
 
         let block_scoped_private_byte_offset =
@@ -603,6 +668,10 @@ impl<'a> Printer<'a> {
         if !self.ctx.options.remove_comments {
             self.emit_comments_before_pos(block_close_pos);
         }
+        self.scoped_static_super_base_alias = prev_super_alias;
+        self.scoped_static_super_direct_access = prev_super_direct;
+        self.scoped_static_super_index_alias = prev_super_index_alias;
+        self.scoped_static_super_index_value_access = prev_super_index_value;
         self.decrease_indent();
         self.map_closing_brace(node);
         self.write_with_end_marker("}");

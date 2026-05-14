@@ -277,6 +277,39 @@ impl<'a> Printer<'a> {
             self.emit_method_async_lowered_body(method.body, &method.parameters.nodes);
         } else {
             self.write(" ");
+            let lowered_async_arrow_super_capture = if self.ctx.needs_async_lowering {
+                crate::transforms::emit_utils::collect_lowered_async_arrow_super_capture(
+                    self.arena,
+                    method.body,
+                )
+            } else {
+                crate::transforms::emit_utils::AsyncMethodSuperCapture::default()
+            };
+            let has_lowered_async_arrow_super_capture =
+                !lowered_async_arrow_super_capture.property_names.is_empty()
+                    || lowered_async_arrow_super_capture.needs_element_index;
+            let prev_pending_lowered_async_arrow_super_capture =
+                self.pending_lowered_async_arrow_super_capture.take();
+            if has_lowered_async_arrow_super_capture {
+                let source_text = self.source_text.unwrap_or_default();
+                let super_alias_text = (!lowered_async_arrow_super_capture
+                    .property_names
+                    .is_empty())
+                .then(|| crate::transforms::emit_utils::hygienic_temp_name("_super", source_text));
+                let super_index_alias_text = lowered_async_arrow_super_capture
+                    .needs_element_index
+                    .then(|| {
+                        crate::transforms::emit_utils::hygienic_temp_name(
+                            "_superIndex",
+                            source_text,
+                        )
+                    });
+                self.pending_lowered_async_arrow_super_capture = Some((
+                    lowered_async_arrow_super_capture,
+                    super_alias_text,
+                    super_index_alias_text,
+                ));
+            }
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
             self.function_scope_depth += 1;
@@ -293,6 +326,8 @@ impl<'a> Printer<'a> {
             self.ctx.flags.in_generator = prev_in_generator;
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
+            self.pending_lowered_async_arrow_super_capture =
+                prev_pending_lowered_async_arrow_super_capture;
         }
     }
 

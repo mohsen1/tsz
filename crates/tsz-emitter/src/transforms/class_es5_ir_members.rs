@@ -19,6 +19,91 @@ use super::{
 };
 
 impl<'a> ES5ClassTransformer<'a> {
+    fn method_has_async_generator_asterisk(
+        &self,
+        member_idx: NodeIndex,
+        method_body: NodeIndex,
+        asterisk_token: bool,
+    ) -> bool {
+        asterisk_token
+            || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                self.arena.get(member_idx).map_or(0, |node| node.pos),
+                self.arena.get(method_body).map_or_else(
+                    || self.arena.get(member_idx).map_or(0, |node| node.end),
+                    |body| body.pos,
+                ),
+            )
+    }
+
+    fn async_generator_params_need_forwarding(&self, params: &[NodeIndex]) -> bool {
+        params.iter().copied().any(|param_idx| {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                return false;
+            };
+            if param.initializer.is_some() {
+                return true;
+            }
+            self.arena
+                .get(param.name)
+                .is_some_and(|name_node| name_node.kind != SyntaxKind::Identifier as u16)
+        })
+    }
+
+    fn async_generator_outer_params(
+        &self,
+        ast_params: &[NodeIndex],
+        ir_params: &[IRParam],
+    ) -> Vec<IRParam> {
+        if !self.async_generator_params_need_forwarding(ast_params) {
+            return ir_params.to_vec();
+        }
+
+        ir_params
+            .iter()
+            .map(|param| {
+                if param.name.starts_with('_') {
+                    IRParam::new(param.name.to_string())
+                } else {
+                    IRParam::new(format!("{}_1", param.name))
+                }
+            })
+            .collect()
+    }
+
+    fn async_generator_method_body(
+        &self,
+        method_name_idx: NodeIndex,
+        params: &[NodeIndex],
+        body: NodeIndex,
+    ) -> Vec<IRNode> {
+        let move_params_to_generator = self.async_generator_params_need_forwarding(params);
+        let method_name =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, method_name_idx);
+        let inner_name = (!method_name.is_empty()).then(|| format!("{method_name}_1"));
+        let mut transformer = AsyncES5Transformer::new(self.arena);
+        if let Some(source_text) = self.source_text {
+            transformer.set_source_text(source_text);
+        }
+        let inner = transformer.transform_async_generator_inner_function(
+            inner_name,
+            params,
+            body,
+            move_params_to_generator,
+        );
+        vec![IRNode::ReturnStatement(Some(Box::new(IRNode::CallExpr {
+            callee: Box::new(IRNode::RuntimeHelper("__asyncGenerator".into())),
+            arguments: vec![
+                IRNode::This { captured: false },
+                IRNode::id("arguments"),
+                inner,
+            ],
+        })))]
+    }
+
     /// Build a getter function IR from an accessor node
     fn build_getter_function_ir(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
         self.build_getter_function_ir_impl(accessor_idx, false)
@@ -310,26 +395,50 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 if is_static {
                     // --- Static method ---
-                    let is_async = self
+                    let has_async_modifier = self
                         .arena
-                        .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword)
-                        && !method_data.asterisk_token;
+                        .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword);
+                    let has_generator_asterisk = self.method_has_async_generator_asterisk(
+                        member_idx,
+                        method_data.body,
+                        method_data.asterisk_token,
+                    );
+                    let is_async = has_async_modifier && !has_generator_asterisk;
+                    let is_async_generator = has_async_modifier && has_generator_asterisk;
 
                     let static_destructuring =
                         self.generate_destructuring_prologue(&method_data.parameters, &params);
 
                     let method_body = if is_async {
-                        let mut async_transformer = AsyncES5Transformer::new(self.arena);
+                        let mut async_transformer = AsyncES5Transformer::new(self.arena)
+                            .with_class_super_context(
+                                self.has_extends,
+                                self.super_name.clone(),
+                                true,
+                            );
+                        if let Some(source_text) = self.source_text {
+                            async_transformer.set_source_text(source_text);
+                        }
                         let has_await = async_transformer.body_contains_await(method_data.body);
-                        let generator_body =
+                        let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        let hoisted_var_groups =
+                            AsyncES5Transformer::extract_and_remove_var_decl_groups(
+                                &mut generator_body,
+                            );
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
                             generator_body: Box::new(generator_body),
-                            hoisted_var_groups: Vec::new(),
+                            hoisted_var_groups,
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
                         }]
+                    } else if is_async_generator {
+                        self.async_generator_method_body(
+                            method_data.name,
+                            &method_data.parameters.nodes,
+                            method_data.body,
+                        )
                     } else {
                         let local_class_alias =
                             self.get_class_alias_for_static_method(method_data.body);
@@ -345,14 +454,16 @@ impl<'a> ES5ClassTransformer<'a> {
                         mbody
                     };
 
-                    let body_source_range =
-                        if is_async || self.has_destructured_parameters(&method_data.parameters) {
-                            None
-                        } else {
-                            self.arena
-                                .get(method_data.body)
-                                .map(|body_node| (body_node.pos, body_node.end))
-                        };
+                    let body_source_range = if is_async
+                        || is_async_generator
+                        || self.has_destructured_parameters(&method_data.parameters)
+                    {
+                        None
+                    } else {
+                        self.arena
+                            .get(method_data.body)
+                            .map(|body_node| (body_node.pos, body_node.end))
+                    };
 
                     let leading_comment = self.extract_leading_comment(member_node);
                     let trailing_comment =
@@ -360,7 +471,14 @@ impl<'a> ES5ClassTransformer<'a> {
 
                     let function = IRNode::FunctionExpr {
                         name: None,
-                        parameters: params,
+                        parameters: if is_async_generator {
+                            self.async_generator_outer_params(
+                                &method_data.parameters.nodes,
+                                &params,
+                            )
+                        } else {
+                            params
+                        },
                         body: method_body,
                         is_expression_body: false,
                         body_source_range,
@@ -397,12 +515,18 @@ impl<'a> ES5ClassTransformer<'a> {
                     let destructuring_prologue =
                         self.generate_destructuring_prologue(&method_data.parameters, &params);
 
-                    let is_async = self
+                    let has_async_modifier = self
                         .arena
-                        .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword)
-                        && !method_data.asterisk_token;
+                        .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword);
+                    let has_generator_asterisk = self.method_has_async_generator_asterisk(
+                        member_idx,
+                        method_data.body,
+                        method_data.asterisk_token,
+                    );
+                    let is_async = has_async_modifier && !has_generator_asterisk;
+                    let is_async_generator = has_async_modifier && has_generator_asterisk;
 
-                    let body_source_range = if is_async {
+                    let body_source_range = if is_async || is_async_generator {
                         None
                     } else if destructuring_prologue.is_empty() {
                         self.arena
@@ -413,17 +537,35 @@ impl<'a> ES5ClassTransformer<'a> {
                     };
 
                     let method_body = if is_async {
-                        let mut async_transformer = AsyncES5Transformer::new(self.arena);
+                        let mut async_transformer = AsyncES5Transformer::new(self.arena)
+                            .with_class_super_context(
+                                self.has_extends,
+                                self.super_name.clone(),
+                                false,
+                            );
+                        if let Some(source_text) = self.source_text {
+                            async_transformer.set_source_text(source_text);
+                        }
                         let has_await = async_transformer.body_contains_await(method_data.body);
-                        let generator_body =
+                        let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        let hoisted_var_groups =
+                            AsyncES5Transformer::extract_and_remove_var_decl_groups(
+                                &mut generator_body,
+                            );
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
                             generator_body: Box::new(generator_body),
-                            hoisted_var_groups: Vec::new(),
+                            hoisted_var_groups,
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
                         }]
+                    } else if is_async_generator {
+                        self.async_generator_method_body(
+                            method_data.name,
+                            &method_data.parameters.nodes,
+                            method_data.body,
+                        )
                     } else {
                         let mut method_body = self.convert_block_body(method_data.body);
                         if !destructuring_prologue.is_empty() {
@@ -445,7 +587,14 @@ impl<'a> ES5ClassTransformer<'a> {
 
                     let function = IRNode::FunctionExpr {
                         name: None,
-                        parameters: params,
+                        parameters: if is_async_generator {
+                            self.async_generator_outer_params(
+                                &method_data.parameters.nodes,
+                                &params,
+                            )
+                        } else {
+                            params
+                        },
                         body: method_body,
                         is_expression_body: false,
                         body_source_range,
