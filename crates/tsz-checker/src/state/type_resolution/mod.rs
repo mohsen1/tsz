@@ -10,5 +10,6 @@ pub(crate) mod module;
 pub(crate) mod reference_helpers;
 pub(crate) mod shadowed_lib_heritage;
 pub(crate) mod symbol_types;
+pub(crate) mod symbol_types_dynamic_alias;
 #[cfg(test)]
 mod symbol_types_tests;
