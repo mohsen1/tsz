@@ -2251,6 +2251,50 @@ fn test_emitter_source_text_recovery_surface_does_not_grow() {
     );
 }
 
+/// Track 10 ratchet: rendered type strings must not become new semantic inputs.
+///
+/// Existing checker code still has a small number of one-line decisions that
+/// call `format_type`/`format_type_diagnostic` and immediately inspect the
+/// rendered string. New decisions should use structural solver/query-boundary
+/// facts instead.
+#[test]
+fn test_rendered_type_decision_patterns_do_not_grow() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut rendered_decisions = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+
+            let formats_type =
+                line.contains("format_type(") || line.contains("format_type_diagnostic(");
+            let inspects_rendered = line.contains(".contains(") || line.contains(".starts_with(");
+            if formats_type && inspects_rendered {
+                rendered_decisions.push(format!("{}:{}", path.display(), line_num + 1));
+            }
+        }
+    }
+
+    const RENDERED_TYPE_DECISION_LINE_CEILING: usize = 5;
+    assert!(
+        rendered_decisions.len() <= RENDERED_TYPE_DECISION_LINE_CEILING,
+        "Rendered-type semantic decision patterns grew to {} lines (ceiling: {}). \
+         Route new decisions through structural solver/query-boundary facts instead \
+         of inspecting formatted type strings. Rendered decision lines:\n  {}",
+        rendered_decisions.len(),
+        RENDERED_TYPE_DECISION_LINE_CEILING,
+        rendered_decisions.join("\n  ")
+    );
+}
+
 /// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]
