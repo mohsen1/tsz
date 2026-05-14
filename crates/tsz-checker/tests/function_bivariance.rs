@@ -3,13 +3,7 @@
 //! These tests verify that methods are bivariant while function properties
 //! are contravariant, per TypeScript's function variance rules.
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
-use crate::test_fixtures::TestContext;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::check_source_code_messages;
 
 /// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
 const GLOBAL_TYPE_MOCKS: &str = r#"
@@ -31,51 +25,15 @@ fn test_function_variance(source: &str, expected_error_code: u32) {
     let source_clean = source_clean.trim();
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
 
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let error_count = checker
-        .ctx
-        .diagnostics
+    let diagnostics = check_source_code_messages(&source);
+    let error_count = diagnostics
         .iter()
-        .filter(|d| d.code == expected_error_code)
+        .filter(|(code, _)| *code == expected_error_code)
         .count();
 
     assert!(
         error_count >= 1,
-        "Expected at least 1 TS{} error, got {}: {:?}",
-        expected_error_code,
-        error_count,
-        checker.ctx.diagnostics
+        "Expected at least 1 TS{expected_error_code} error, got {error_count}: {diagnostics:?}"
     );
 }
 
@@ -87,45 +45,9 @@ fn test_no_errors(source: &str) {
     let source_clean = source_clean.trim();
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
 
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let errors: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| {
-            d.category == crate::checker::diagnostics::DiagnosticCategory::Error && d.code != 2318
-        })
+    let errors: Vec<_> = check_source_code_messages(&source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
         .collect();
 
     assert!(
@@ -276,43 +198,10 @@ fn collect_error_codes(source: &str) -> Vec<u32> {
     let source_clean = source_clean.trim();
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
 
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let mut codes: Vec<u32> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code != 2318) // ignore "Cannot find global type"
-        .map(|d| d.code)
+    let mut codes: Vec<u32> = check_source_code_messages(&source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318) // ignore "Cannot find global type"
+        .map(|(code, _)| code)
         .collect();
     codes.sort();
     codes.dedup();
@@ -383,5 +272,118 @@ fn test_ts2328_not_emitted_for_generic_callback_params() {
     assert!(
         !codes.contains(&2328),
         "TS2328 should NOT appear for generic callback params, got {codes:?}"
+    );
+}
+
+/// Passing a callback with a NARROWER parameter type to a method call must be
+/// rejected under --strictFunctionTypes.
+///
+/// Structural rule: `(dog: Dog) => void` is not assignable to
+/// `(animal: Animal) => void` because the contravariant check
+/// `Animal <: Dog` fails (Animal is missing `bark`).
+#[test]
+fn test_method_call_callback_contravariance_narrower_param_errors() {
+    test_function_variance(
+        r#"
+        interface Animal { name: string }
+        interface Dog extends Animal { bark(): void }
+
+        interface Handler {
+            handle(callback: (animal: Animal) => void): void;
+        }
+
+        declare const handler: Handler;
+        handler.handle((dog: Dog) => { dog.bark(); });
+        "#,
+        2345,
+    );
+}
+
+/// Same rule with different type parameter names to prove it is not hardcoded.
+#[test]
+fn test_method_call_callback_contravariance_different_names() {
+    test_function_variance(
+        r#"
+        interface Base { x: number }
+        interface Derived extends Base { y: number }
+
+        interface Processor {
+            process(fn: (input: Base) => void): void;
+        }
+
+        declare const p: Processor;
+        p.process((d: Derived) => { d.y; });
+        "#,
+        2345,
+    );
+}
+
+/// Passing a callback with a WIDER parameter type must succeed (covariant arg is ok).
+#[test]
+fn test_method_call_callback_wider_param_ok() {
+    test_no_errors(
+        r#"
+        interface Animal { name: string }
+        interface Dog extends Animal { bark(): void }
+
+        interface Handler {
+            handle(callback: (dog: Dog) => void): void;
+        }
+
+        declare const handler: Handler;
+        handler.handle((animal: Animal) => {});
+        "#,
+    );
+}
+
+/// Passing an exactly matching callback type must succeed.
+#[test]
+fn test_method_call_callback_same_param_ok() {
+    test_no_errors(
+        r#"
+        interface Animal { name: string }
+
+        interface Handler {
+            handle(callback: (animal: Animal) => void): void;
+        }
+
+        declare const handler: Handler;
+        handler.handle((a: Animal) => {});
+        "#,
+    );
+}
+
+/// Callback contravariance also applies when calling through element access.
+#[test]
+fn test_element_access_call_callback_contravariance_errors() {
+    test_function_variance(
+        r#"
+        interface Animal { name: string }
+        interface Dog extends Animal { bark(): void }
+
+        interface Handler {
+            handle(callback: (animal: Animal) => void): void;
+        }
+
+        declare const handler: Handler;
+        handler["handle"]((dog: Dog) => { dog.bark(); });
+        "#,
+        2345,
+    );
+}
+
+/// A plain function (not called through property access) must also enforce
+/// callback contravariance — existing behaviour, not a regression.
+#[test]
+fn test_plain_function_call_callback_contravariance_errors() {
+    test_function_variance(
+        r#"
+        interface Animal { name: string }
+        interface Dog extends Animal { bark(): void }
+
+        declare function handle(callback: (animal: Animal) => void): void;
+        handle((dog: Dog) => { dog.bark(); });
+        "#,
+        2345,
     );
 }
