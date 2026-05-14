@@ -10,6 +10,9 @@ Usage:
   # Top failure messages
   python3 scripts/emit/query-emit.py --top-errors
 
+  # Failure-family dashboard
+  python3 scripts/emit/query-emit.py --families
+
   # Filter by substring in test name
   python3 scripts/emit/query-emit.py --filter class
 
@@ -38,6 +41,76 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.query_snapshot import load_snapshot, print_top_counter, print_truncated_more
 
 DETAIL_FILE = Path(__file__).parent / "emit-detail.json"
+
+
+JS_FAMILY_RULES = [
+    ("resource-management lowering", ("using", "dispose", "resource")),
+    (
+        "async/await/generator lowering",
+        ("async", "await", "generator", "yield", "forawait"),
+    ),
+    (
+        "class/private/accessor/decorator lowering",
+        ("class", "private", "accessor", "decorator", "super", "staticblock"),
+    ),
+    (
+        "module/import/export emit",
+        ("module", "import", "export", "commonjs", "amd", "umd", "esmodule"),
+    ),
+    (
+        "block-scoping/hoisting emit",
+        ("blockscoped", "capturedlet", "let", "const", "tdz", "usebeforedef"),
+    ),
+    ("destructuring/spread/rest emit", ("destruct", "spread", "rest", "bindingpattern")),
+    ("enum/namespace emit", ("enum", "namespace", "internalmodule", "declarationmerging")),
+    ("jsx/react emit", ("jsx", "react")),
+    (
+        "loop/control-flow emit",
+        ("forof", "forin", "switch", "try", "catch", "break", "continue", "label"),
+    ),
+    ("literal/template emit", ("template", "literal", "regexp", "numericseparator")),
+    ("comments/source-map emit", ("comment", "sourcemap", "source map", "source-map")),
+]
+
+
+DTS_FAMILY_RULES = [
+    (
+        "module/declaration merging",
+        ("moduleaugmentation", "augmentation", "declarationmerging", "ambientmodule"),
+    ),
+    (
+        "import/export/nameability",
+        ("import", "export", "alias", "qualified", "externalmodules", "specifier"),
+    ),
+    ("jsdoc/javascript declarations", ("jsdoc", "javascript", "salsa", "typedef", "checkjs")),
+    (
+        "class/private/accessor declarations",
+        ("class", "private", "accessor", "constructor", "extends", "implements"),
+    ),
+    (
+        "generic/type-display declarations",
+        (
+            "generic",
+            "conditional",
+            "mapped",
+            "infer",
+            "typeparameter",
+            "recursive",
+            "typeof",
+            "keyof",
+            "indexed",
+            "indexsignature",
+            "signature",
+        ),
+    ),
+    (
+        "isolated-declaration constraints",
+        ("isolateddeclaration", "isolated declaration"),
+    ),
+    ("enum/namespace declarations", ("enum", "namespace", "internalmodule", "declarationmerging")),
+    ("jsx/react declarations", ("jsx", "react")),
+    ("ambient/lib declarations", ("ambient", "global", "lib", "defaultlib")),
+]
 
 
 def load_detail():
@@ -141,6 +214,58 @@ def show_top_errors(data, top=20):
     print_top_counter(dts_counter, top)
 
 
+def failure_haystack(result, surface):
+    fields = [
+        result.get("name", ""),
+        result.get("testPath", ""),
+        result.get("baselineFile", ""),
+    ]
+    if surface == "js":
+        fields.append(result.get("jsError", ""))
+    else:
+        fields.append(result.get("dtsError", ""))
+    return " ".join(fields).lower()
+
+
+def classify_failure(result, surface):
+    rules = JS_FAMILY_RULES if surface == "js" else DTS_FAMILY_RULES
+    haystack = failure_haystack(result, surface)
+    for family, needles in rules:
+        if any(needle in haystack for needle in needles):
+            return family
+    return "other"
+
+
+def collect_failures_by_family(data, surface):
+    status_key = "jsStatus" if surface == "js" else "dtsStatus"
+    failures = [r for r in data["results"] if r.get(status_key) in ("fail", "timeout")]
+    families = {}
+    for result in failures:
+        family = classify_failure(result, surface)
+        families.setdefault(family, []).append(result)
+    return families
+
+
+def show_failure_families(data, top=20):
+    print("Emit failure families")
+    print()
+    for surface, title in (("js", "JavaScript"), ("dts", "Declaration")):
+        families = collect_failures_by_family(data, surface)
+        rows = sorted(
+            families.items(),
+            key=lambda item: (-len(item[1]), item[0]),
+        )
+        total = sum(len(results) for _, results in rows)
+        print(f"{title}: {total} failures/timeouts")
+        for family, results in rows[:top]:
+            examples = ", ".join(
+                r["name"] for r in sorted(results, key=lambda r: r["name"])[:3]
+            )
+            print(f"  {len(results):>4d}  {family}  ({examples})")
+        print_truncated_more(rows, top)
+        print()
+
+
 def show_close(data, top=40):
     """Tests where JS passes but DTS fails, or vice versa."""
     results = data["results"]
@@ -194,6 +319,7 @@ def main():
     parser.add_argument("--js-failures", action="store_true", help="Show JS failures")
     parser.add_argument("--dts-failures", action="store_true", help="Show DTS failures")
     parser.add_argument("--top-errors", action="store_true", help="Show top error messages")
+    parser.add_argument("--families", action="store_true", help="Show JS/DTS failure family counts")
     parser.add_argument("--close", action="store_true", help="Show close-to-passing tests")
     parser.add_argument("--filter", type=str, help="Filter by substring in test name")
     parser.add_argument("--status", type=str, help="Filter by status (pass/fail/skip/timeout)")
@@ -209,6 +335,8 @@ def main():
         show_dts_failures(data, args.top, args.paths_only)
     elif args.top_errors:
         show_top_errors(data, args.top)
+    elif args.families:
+        show_failure_families(data, args.top)
     elif args.close:
         show_close(data, args.top)
     elif args.filter:
