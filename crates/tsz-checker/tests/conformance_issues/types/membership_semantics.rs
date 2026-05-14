@@ -1059,3 +1059,30 @@ const bad: number = new Derived().value;
         "Did not expect circular-base TS2506 in linear inheritance.\nActual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_never_property_access_any_still_reports_assignment_to_never() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type H = { x: "a" } & { x: "b" };
+declare const h: H;
+
+const checkNever: never = h.x;
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2339),
+        "Expected TS2339 for property access on a reduced-never intersection. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for assigning the failed property access any fallback to never. Actual diagnostics: {diagnostics:#?}"
+    );
+}
