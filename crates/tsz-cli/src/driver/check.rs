@@ -438,6 +438,9 @@ pub(super) fn collect_diagnostics(
 ) -> CollectDiagnosticsResult {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
+    // Production CLI semantic diagnostics are scheduled here. Lower-level
+    // helpers in `tsz::parallel` stay reusable infrastructure unless this
+    // driver opts into changed CLI behavior.
     #[cfg(not(target_arch = "wasm32"))]
     tsz::parallel::ensure_rayon_global_pool();
 
@@ -1371,7 +1374,11 @@ pub(super) fn collect_diagnostics(
 
     // --- FILE CHECKING ---
     //
-    // Two paths:
+    // CLI semantic diagnostics are scheduled here rather than through the core
+    // `check_files_parallel` helper. That keeps command-mode policy, diagnostic
+    // filtering, cache invalidation, and checker reuse in the driver.
+    //
+    // Two driver paths:
     // 1. Non-cached (first build, CI): Check ALL files in parallel using rayon.
     //    No dependency cascade needed since we're checking everything.
     // 2. Cached (watch mode): Sequential work queue with export-hash-based
@@ -1463,18 +1470,38 @@ pub(super) fn collect_diagnostics(
             None
         };
 
+        let check_file_with_fresh_checker = |file_idx: usize| {
+            let binder = build_checker_binder(file_idx);
+            let context = CheckFileForParallelContext {
+                file_idx,
+                binder,
+                program,
+                compiler_options: &compiler_options,
+                program_context: &program_context,
+                resolved_modules_per_file: &resolved_modules_per_file,
+                shared_lib_cache: Arc::clone(&shared_lib_cache),
+                shared_query_cache: shared_query_cache.as_ref(),
+                no_check,
+                check_js,
+                explicit_check_js_false,
+                skip_lib_check,
+                program_has_real_syntax_errors,
+                program_has_unsupported_js_root,
+                extract_type_cache,
+            };
+            check_file_for_parallel(context)
+        };
+
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<CheckFileResult> = {
             use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-            // Use sequential checking for small projects to avoid
-            // non-deterministic false positives from concurrent type interning.
-            // The TypeInterner uses DashMap for thread-safe access, but concurrent
-            // type evaluation can produce different results depending on thread
-            // scheduling when multiple files resolve the same lib or package
-            // declaration types. Sequential checking is also faster for small
-            // projects due to avoiding rayon thread pool overhead.
+            // Use sequential checking for small projects to avoid Rayon overhead
+            // and non-deterministic false positives from concurrent type
+            // interning. The `TypeInterner` uses `DashMap` for thread-safe
+            // access, but concurrent type evaluation can still observe
+            // dependency and lib/package declaration shapes in scheduler order.
             //
             // A slightly wider small-project lane also covers cross-file JSX
             // namespace/global declaration discovery and checked-JS
@@ -1547,27 +1574,7 @@ pub(super) fn collect_diagnostics(
             } else if use_sequential_checking {
                 work_items
                     .iter()
-                    .map(|&file_idx| {
-                        let binder = build_checker_binder(file_idx);
-                        let context = CheckFileForParallelContext {
-                            file_idx,
-                            binder,
-                            program,
-                            compiler_options: &compiler_options,
-                            program_context: &program_context,
-                            resolved_modules_per_file: &resolved_modules_per_file,
-                            shared_lib_cache: Arc::clone(&shared_lib_cache),
-                            shared_query_cache: shared_query_cache.as_ref(),
-                            no_check,
-                            check_js,
-                            explicit_check_js_false,
-                            skip_lib_check,
-                            program_has_real_syntax_errors,
-                            program_has_unsupported_js_root,
-                            extract_type_cache,
-                        };
-                        check_file_for_parallel(context)
-                    })
+                    .map(|&file_idx| check_file_with_fresh_checker(file_idx))
                     .collect()
             } else {
                 tsz::parallel::ensure_rayon_global_pool();
@@ -1586,27 +1593,7 @@ pub(super) fn collect_diagnostics(
                 work_items
                     .par_iter()
                     .with_min_len(1)
-                    .map(|&file_idx| {
-                        let binder = build_checker_binder(file_idx);
-                        let context = CheckFileForParallelContext {
-                            file_idx,
-                            binder,
-                            program,
-                            compiler_options: &compiler_options,
-                            program_context: &program_context,
-                            resolved_modules_per_file: &resolved_modules_per_file,
-                            shared_lib_cache: Arc::clone(&shared_lib_cache),
-                            shared_query_cache: shared_query_cache.as_ref(),
-                            no_check,
-                            check_js,
-                            explicit_check_js_false,
-                            skip_lib_check,
-                            program_has_real_syntax_errors,
-                            program_has_unsupported_js_root,
-                            extract_type_cache,
-                        };
-                        check_file_for_parallel(context)
-                    })
+                    .map(|&file_idx| check_file_with_fresh_checker(file_idx))
                     .collect()
             }
         };
@@ -1614,27 +1601,7 @@ pub(super) fn collect_diagnostics(
         #[cfg(target_arch = "wasm32")]
         let file_results: Vec<CheckFileResult> = work_items
             .iter()
-            .map(|&file_idx| {
-                let binder = build_checker_binder(file_idx);
-                let context = CheckFileForParallelContext {
-                    file_idx,
-                    binder,
-                    program,
-                    compiler_options: &compiler_options,
-                    program_context: &program_context,
-                    resolved_modules_per_file: &resolved_modules_per_file,
-                    shared_lib_cache: Arc::clone(&shared_lib_cache),
-                    shared_query_cache: shared_query_cache.as_ref(),
-                    no_check,
-                    check_js,
-                    explicit_check_js_false,
-                    skip_lib_check,
-                    program_has_real_syntax_errors,
-                    program_has_unsupported_js_root,
-                    extract_type_cache,
-                };
-                check_file_for_parallel(context)
-            })
+            .map(|&file_idx| check_file_with_fresh_checker(file_idx))
             .collect();
 
         // Aggregate per-file query cache statistics. DefinitionStore stats
