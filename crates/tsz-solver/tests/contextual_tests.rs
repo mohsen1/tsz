@@ -544,7 +544,6 @@ fn test_contextual_generic_call_union_preserves_literal() {
     let literal = interner.literal_string("ready");
     let inferred = infer_generic_function(&interner, &mut checker, &func, &[literal]);
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-
     let result = apply_contextual_type(&interner, inferred, Some(union));
     assert_eq!(result, literal);
 }

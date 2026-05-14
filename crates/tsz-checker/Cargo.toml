@@ -1089,5 +1089,9 @@ path = "tests/tuple_union_contextual_typing_tests.rs"
 name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
 
+[[test]]
+name = "self_module_augmentation_isolation_tests"
+path = "tests/self_module_augmentation_isolation_tests.rs"
+
 [lints]
 workspace = true
