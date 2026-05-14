@@ -1100,7 +1100,7 @@ fn collect_super_capture_rec(
     }
 }
 
-fn is_assignment_operator(token: u16) -> bool {
+const fn is_assignment_operator(token: u16) -> bool {
     matches!(
         token,
         t if t == SyntaxKind::EqualsToken as u16
