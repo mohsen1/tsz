@@ -18,7 +18,7 @@ use tsz_common::interner::Atom;
 /// references with their bound values from the bindings map.
 pub(crate) struct InferSubstitutor<'a> {
     interner: &'a dyn TypeDatabase,
-    bindings: &'a FxHashMap<Atom, TypeId>,
+    bindings: FxHashMap<Atom, TypeId>,
     visiting: FxHashMap<TypeId, TypeId>,
 }
 
@@ -27,7 +27,7 @@ impl<'a> InferSubstitutor<'a> {
     pub fn new(interner: &'a dyn TypeDatabase, bindings: &'a FxHashMap<Atom, TypeId>) -> Self {
         InferSubstitutor {
             interner,
-            bindings,
+            bindings: bindings.clone(),
             visiting: FxHashMap::default(),
         }
     }
@@ -259,14 +259,22 @@ impl<'a> InferSubstitutor<'a> {
                 // match succeeds, which makes `evaluate_mapped` defer and collapse
                 // the outer object level.
                 let mapped = self.interner.get_mapped(mapped_id);
-                let tp_constraint = mapped.type_param.constraint.map(|c| self.substitute(c));
-                let tp_default = mapped.type_param.default.map(|d| self.substitute(d));
                 let constraint = self.substitute(mapped.constraint);
-                let name_type = mapped.name_type.map(|n| self.substitute(n));
-                let template = self.substitute(mapped.template);
-                let unchanged = tp_constraint == mapped.type_param.constraint
-                    && tp_default == mapped.type_param.default
-                    && constraint == mapped.constraint
+                let (name_type, template) =
+                    if let Some(masked) = self.bindings.remove(&mapped.type_param.name) {
+                        let result = (
+                            mapped.name_type.map(|n| self.substitute(n)),
+                            self.substitute(mapped.template),
+                        );
+                        self.bindings.insert(mapped.type_param.name, masked);
+                        result
+                    } else {
+                        (
+                            mapped.name_type.map(|n| self.substitute(n)),
+                            self.substitute(mapped.template),
+                        )
+                    };
+                let unchanged = constraint == mapped.constraint
                     && name_type == mapped.name_type
                     && template == mapped.template;
                 if unchanged {
@@ -275,8 +283,8 @@ impl<'a> InferSubstitutor<'a> {
                     self.interner.mapped(MappedType {
                         type_param: TypeParamInfo {
                             name: mapped.type_param.name,
-                            constraint: tp_constraint,
-                            default: tp_default,
+                            constraint: mapped.type_param.constraint,
+                            default: mapped.type_param.default,
                             is_const: mapped.type_param.is_const,
                         },
                         constraint,
