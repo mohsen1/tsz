@@ -16,7 +16,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tracing::debug;
-use tsz_binder::{BinderState, SymbolId};
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -283,9 +283,17 @@ impl<'a> UsageAnalyzer<'a> {
                         // declaration emitter retains the inferred return type's
                         // symbols before pruning.
                         k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                            self.walk_inferred_type_or_related(&[export.export_clause]);
                             let callee =
                                 self.unwrap_export_default_expression(export.export_clause);
-                            self.analyze_entity_name(callee);
+                            if !self
+                                .type_cache
+                                .node_types
+                                .contains_key(&export.export_clause.0)
+                                || !self.expression_is_call_result_constructor_alias(callee)
+                            {
+                                self.analyze_entity_name(callee);
+                            }
                         }
                         k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                             self.analyze_export_default_object_literal_value_references(
@@ -727,6 +735,36 @@ impl<'a> UsageAnalyzer<'a> {
         self.analyze_entity_name(expr_idx);
         self.analyze_local_import_equals_dependency(expr_idx);
         self.in_value_pos = old;
+    }
+
+    fn expression_is_call_result_constructor_alias(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident) = self.arena.get_identifier(expr_node) else {
+            return false;
+        };
+        let Some(sym_id) = self
+            .binder
+            .get_node_symbol(expr_idx)
+            .or_else(|| self.binder.file_locals.get(&ident.escaped_text))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+        symbol.has_any_flags(symbol_flags::VARIABLE)
+            && symbol.declarations.iter().copied().any(|decl_idx| {
+                self.arena
+                    .get(decl_idx)
+                    .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+                    .and_then(|decl| self.arena.get(decl.initializer))
+                    .is_some_and(|init_node| init_node.kind == syntax_kind_ext::CALL_EXPRESSION)
+            })
     }
 
     /// Unwrap `new X()` and `X()` expressions to find the constructor/callee
