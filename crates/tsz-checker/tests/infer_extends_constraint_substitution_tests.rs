@@ -44,6 +44,25 @@ fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool 
 }
 
 #[test]
+fn anyof_empty_object_matches_never_index_falsy_pattern() {
+    let source = r#"
+type Falsy = 0 | '' | false | [] | { [K in any]: never } | undefined | null;
+type AnyOf<T extends readonly unknown[]> = T extends readonly [infer F, ...infer R]
+  ? F extends Falsy ? AnyOf<R> : true
+  : false;
+
+type AO1 = AnyOf<[0, '', false, [], {}, null, undefined]>;
+const ao1: AO1 = false;
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected AnyOf tuple of falsy members to evaluate to false, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
 fn template_literal_middle_infer_matches_known_substring() {
     let source = r#"
 type DropString<S extends string, T extends string> =
