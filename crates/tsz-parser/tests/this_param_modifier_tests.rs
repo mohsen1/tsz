@@ -8,8 +8,6 @@
 //! `parse_parameter` ("Neither decorators nor modifiers may be applied to
 //! 'this' parameters"). tsc emits ONLY TS1433 for `async this:` /
 //! `static this:` etc., so we suppress the TS1090 in that path.
-//!
-//! See `docs/plan/claims/fix-parser-this-param-modifier-ts1090-suppress.md`.
 
 use crate::parser::ParserState;
 use crate::parser::test_fixture::parse_source;
