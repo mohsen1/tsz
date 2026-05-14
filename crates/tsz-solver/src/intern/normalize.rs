@@ -718,16 +718,15 @@ impl TypeInterner {
                 continue;
             };
 
-            // Intersections cannot contain the same property as both public and
-            // private/protected. TypeScript reduces these to never because the
-            // restricted member's identity cannot be satisfied by a public
-            // property with the same name.
+            // Intersections cannot contain the same property as both private
+            // and non-private. TypeScript reduces these to never because a
+            // private member's declaring-class identity cannot be satisfied by
+            // a public or protected property with the same name. Protected
+            // members are intentionally left to the normal merge path because
+            // protected/public intersections can expose a public property.
             if prop.visibility != other.visibility
-                && (matches!(prop.visibility, Visibility::Private | Visibility::Protected)
-                    || matches!(
-                        other.visibility,
-                        Visibility::Private | Visibility::Protected
-                    ))
+                && (prop.visibility == Visibility::Private
+                    || other.visibility == Visibility::Private)
             {
                 return true;
             }
