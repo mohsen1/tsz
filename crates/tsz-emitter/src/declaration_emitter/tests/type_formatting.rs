@@ -35,6 +35,61 @@ fn test_type_printer_preserves_union_display_origin() {
 }
 
 #[test]
+fn test_type_printer_expands_object_union_missing_properties() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+    let y = interner.intern_string("y");
+    let err = interner.intern_string("err");
+    let first = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::new(x, TypeId::NUMBER)],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let second = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![
+            PropertyInfo::new(x, TypeId::NUMBER),
+            PropertyInfo::new(y, TypeId::NUMBER),
+        ],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let third = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![
+            PropertyInfo::new(x, TypeId::NUMBER),
+            PropertyInfo::new(err, TypeId::BOOLEAN),
+        ],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let union = interner.union_preserve_members(vec![first, second, third]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner)
+        .with_indent_level(0)
+        .print_type(union);
+
+    let expected = r#"{
+    x: number;
+    y?: undefined;
+    err?: undefined;
+} | {
+    x: number;
+    y: number;
+    err?: undefined;
+} | {
+    x: number;
+    err: boolean;
+    y?: undefined;
+}"#;
+    assert_eq!(printed, expected);
+}
+
+#[test]
 fn test_type_printer_prints_named_unique_symbol_as_typeof() {
     let source = "export const x = Symbol();\nexport const y = Symbol();\n";
     let (parser, root) = parse_test_source(source);

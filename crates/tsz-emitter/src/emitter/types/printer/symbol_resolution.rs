@@ -953,7 +953,7 @@ impl<'a> TypePrinter<'a> {
             }
 
             // Sort properties by declaration order when any have non-zero order,
-            // otherwise fall back to the interning order (sorted by name).
+            // otherwise fall back to printed property-name order.
             let has_decl_order = shape.properties.iter().any(|p| p.declaration_order > 0);
             let mut sorted_props;
             let props: &[tsz_solver::types::PropertyInfo] = if has_decl_order {
@@ -961,7 +961,9 @@ impl<'a> TypePrinter<'a> {
                 sorted_props.sort_by_key(|p| p.declaration_order);
                 &sorted_props
             } else {
-                &shape.properties
+                sorted_props = shape.properties.clone();
+                sorted_props.sort_by_key(|p| self.declaration_property_name_text(p));
+                &sorted_props
             };
             let emitted_method_names: Vec<Atom> = props
                 .iter()
@@ -1097,7 +1099,9 @@ impl<'a> TypePrinter<'a> {
                 sorted_props_flat.sort_by_key(|p| p.declaration_order);
                 &sorted_props_flat
             } else {
-                &shape.properties
+                sorted_props_flat = shape.properties.clone();
+                sorted_props_flat.sort_by_key(|p| self.declaration_property_name_text(p));
+                &sorted_props_flat
             };
             let emitted_method_names_flat: Vec<Atom> = props_flat
                 .iter()

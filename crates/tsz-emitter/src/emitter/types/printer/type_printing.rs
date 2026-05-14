@@ -771,6 +771,8 @@ impl<'a> TypePrinter<'a> {
             }
         }
 
+        Self::expand_printed_object_union_arms_from_sibling_properties(&mut parts);
+
         // If all members were filtered out, the result is `any` (widened)
         if parts.is_empty() {
             return "any".to_string();
@@ -778,6 +780,228 @@ impl<'a> TypePrinter<'a> {
 
         // Join with " | "
         parts.join(" | ")
+    }
+
+    fn expand_printed_object_union_arms_from_sibling_properties(parts: &mut [String]) {
+        if parts.len() <= 1 {
+            return;
+        }
+
+        let object_arm_names = parts
+            .iter()
+            .map(|part| Self::printed_object_type_top_level_member_names(part))
+            .collect::<Vec<_>>();
+        if !object_arm_names.iter().all(Option::is_some) {
+            return;
+        }
+
+        let mut all_names = Vec::<String>::new();
+        for names in object_arm_names.iter().flatten() {
+            for name in names {
+                if !all_names.iter().any(|existing| existing == name) {
+                    all_names.push(name.clone());
+                }
+            }
+        }
+        if all_names.is_empty() {
+            return;
+        }
+
+        for (part, present_names) in parts.iter_mut().zip(object_arm_names) {
+            let Some(present_names) = present_names else {
+                continue;
+            };
+            Self::reorder_printed_object_members_by_names(part, &all_names);
+            let missing_names = all_names
+                .iter()
+                .filter(|name| !present_names.iter().any(|present| present == *name))
+                .cloned()
+                .collect::<Vec<_>>();
+            if missing_names.is_empty() {
+                continue;
+            }
+            Self::append_optional_undefined_members_to_printed_object(part, &missing_names);
+        }
+    }
+
+    fn reorder_printed_object_members_by_names(part: &mut String, ordered_names: &[String]) {
+        let lines = part.lines().map(str::to_string).collect::<Vec<_>>();
+        if lines.len() <= 2
+            || lines.first().is_none_or(|line| line.trim() != "{")
+            || lines.last().is_none_or(|line| line.trim() != "}")
+        {
+            return;
+        }
+
+        let mut segments: Vec<(Option<String>, Vec<String>)> = Vec::new();
+        let mut current_name: Option<String> = None;
+        let mut current_lines: Vec<String> = Vec::new();
+        let mut depth = 1usize;
+
+        for line in lines[1..lines.len() - 1].iter() {
+            if depth == 1
+                && let Some(name) = Self::printed_object_member_name_from_line(line)
+                && !current_lines.is_empty()
+            {
+                segments.push((current_name.take(), std::mem::take(&mut current_lines)));
+                current_name = Some(name);
+            } else if depth == 1 && current_lines.is_empty() {
+                current_name = Self::printed_object_member_name_from_line(line);
+            }
+
+            current_lines.push(line.clone());
+            depth = Self::printed_object_line_brace_depth(depth, line);
+        }
+
+        if !current_lines.is_empty() {
+            segments.push((current_name, current_lines));
+        }
+        if segments.len() <= 1 {
+            return;
+        }
+
+        let mut reordered = Vec::new();
+        let mut used = vec![false; segments.len()];
+        for wanted in ordered_names {
+            if let Some((idx, _)) = segments
+                .iter()
+                .enumerate()
+                .find(|(idx, (name, _))| !used[*idx] && name.as_ref() == Some(wanted))
+            {
+                used[idx] = true;
+                reordered.extend(segments[idx].1.clone());
+            }
+        }
+        for (idx, (_, lines)) in segments.into_iter().enumerate() {
+            if !used[idx] {
+                reordered.extend(lines);
+            }
+        }
+
+        let mut next = Vec::with_capacity(reordered.len() + 2);
+        next.push(lines[0].clone());
+        next.extend(reordered);
+        next.push(lines[lines.len() - 1].clone());
+        *part = next.join("\n");
+    }
+
+    fn printed_object_type_top_level_member_names(part: &str) -> Option<Vec<String>> {
+        let trimmed = part.trim();
+        if !trimmed.starts_with('{') || !trimmed.ends_with('}') || trimmed == "{}" {
+            return None;
+        }
+        if !trimmed.contains('\n') {
+            return None;
+        }
+
+        let mut depth = 0usize;
+        let mut names = Vec::new();
+        for line in trimmed.lines() {
+            if depth == 1
+                && let Some(name) = Self::printed_object_member_name_from_line(line)
+            {
+                names.push(name);
+            }
+            depth = Self::printed_object_line_brace_depth(depth, line);
+        }
+        Some(names)
+    }
+
+    fn printed_object_member_name_from_line(line: &str) -> Option<String> {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed == "{"
+            || trimmed == "}"
+            || trimmed.starts_with('[')
+            || trimmed.starts_with("get ")
+            || trimmed.starts_with("set ")
+        {
+            return None;
+        }
+
+        let trimmed = trimmed
+            .strip_prefix("readonly ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        let mut quote = None;
+        let mut escaped = false;
+        for (idx, ch) in trimmed.char_indices() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                ':' => {
+                    let name = trimmed[..idx].trim().trim_end_matches('?').trim();
+                    return (!name.is_empty()).then(|| name.to_string());
+                }
+                '(' => return None,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn printed_object_line_brace_depth(depth: usize, line: &str) -> usize {
+        let mut depth = depth;
+        let mut quote = None;
+        let mut escaped = false;
+        for ch in line.chars() {
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                '{' => depth += 1,
+                '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        depth
+    }
+
+    fn append_optional_undefined_members_to_printed_object(part: &mut String, names: &[String]) {
+        let Some(indent) = part
+            .lines()
+            .find_map(|line| line.strip_suffix('}').map(str::to_string))
+        else {
+            return;
+        };
+        let member_indent = format!("{indent}    ");
+        let members = names
+            .iter()
+            .map(|name| format!("{member_indent}{name}?: undefined;"))
+            .collect::<Vec<_>>();
+
+        let mut lines = part.lines().map(str::to_string).collect::<Vec<_>>();
+        let insert_at = lines
+            .iter()
+            .rposition(|line| line.trim() == "}")
+            .unwrap_or(lines.len());
+        lines.splice(insert_at..insert_at, members);
+        *part = lines.join("\n");
     }
 
     pub(crate) fn try_print_enum_member_union_as_parent(&self, types: &[TypeId]) -> Option<String> {

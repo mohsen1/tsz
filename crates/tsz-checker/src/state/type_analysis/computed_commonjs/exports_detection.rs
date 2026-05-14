@@ -361,7 +361,7 @@ impl<'a> CheckerState<'a> {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: declaration_order as u32,
+                        declaration_order: declaration_order as u32 + 1,
                         is_string_named: false,
                         is_symbol_named: false,
                         single_quoted_name: false,
