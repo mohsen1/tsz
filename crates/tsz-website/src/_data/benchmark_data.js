@@ -94,6 +94,13 @@ function statusLabel(row) {
   return String(row?.status || "timing unavailable");
 }
 
+function firstPresent(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return null;
+}
+
 const TINY_BENCHMARK_MAX_LINES = 200;
 
 const EXPECTED_PROJECT_BENCHMARKS = [
@@ -108,6 +115,51 @@ const EXPECTED_PROJECT_BENCHMARKS = [
   "type-fest-project",
   "zod-project",
   "kysely-project",
+];
+
+const COMPATIBILITY_CORPUS_ROWS = [
+  {
+    name: "kysely-project",
+    label: "Kysely",
+    owner: "Tracks 2, 3, 5, 6",
+    family: "contextual generics, guards, indexed/property access",
+  },
+  {
+    name: "zod-project",
+    label: "Zod",
+    owner: "Tracks 2, 3, 4, 7",
+    family: "recursive conditionals, object guards, class/generic identity",
+  },
+  {
+    name: "ts-toolbelt-project",
+    label: "ts-toolbelt",
+    owner: "Tracks 2, 3",
+    family: "recursive type evaluation pressure",
+  },
+  {
+    name: "type-fest-project",
+    label: "type-fest",
+    owner: "Tracks 2, 3, 5",
+    family: "mapped/conditional/key-space utility surface",
+  },
+  {
+    name: "ts-essentials-project",
+    label: "ts-essentials",
+    owner: "Tracks 2, 3, 5",
+    family: "utility types plus recursive JSON shapes",
+  },
+  {
+    name: "large-ts-repo",
+    label: "large-ts-repo",
+    owner: "Tracks 1, 7, 10",
+    family: "residency/runtime/project graph stress",
+  },
+  {
+    name: "nextjs",
+    label: "Next.js full project",
+    owner: "Tracks 1, 7, 9",
+    family: "module graph plus generated app dependencies",
+  },
 ];
 
 function withExpectedProjectRows(results) {
@@ -131,6 +183,59 @@ function withExpectedProjectRows(results) {
   }
 
   return rows;
+}
+
+function compatibilityState(row) {
+  if (hasSuccessfulTiming(row)) {
+    return {
+      className: "green",
+      stateLabel: "Green",
+      exitClass: "exit success",
+      phase: "check",
+      diagnosticDeltas: "none recorded",
+    };
+  }
+
+  const status = String(row?.status || "").toLowerCase();
+  if (!row || status.includes("not recorded") || status.includes("fixture") || status.includes("tsc fixture")) {
+    return {
+      className: "gray",
+      stateLabel: "Gray",
+      exitClass: status.includes("tsc fixture") ? "fixture invalid" : "missing or incomplete artifact",
+      phase: status.includes("fixture") ? "fixture setup" : "artifact",
+      diagnosticDeltas: "not available",
+    };
+  }
+
+  if (status.includes("diagnostic mismatch")) {
+    return {
+      className: "yellow",
+      stateLabel: "Yellow",
+      exitClass: "diagnostic mismatch",
+      phase: firstPresent(row?.compatibility?.phase, "check"),
+      diagnosticDeltas: firstPresent(row?.compatibility?.diagnostic_deltas, "not captured by latest artifact"),
+    };
+  }
+
+  return {
+    className: "red",
+    stateLabel: "Red",
+    exitClass: status.includes("timeout") ? "timeout" : "nonzero exit",
+    phase: firstPresent(row?.compatibility?.phase, "check"),
+    diagnosticDeltas: firstPresent(row?.compatibility?.diagnostic_deltas, "not captured by latest artifact"),
+  };
+}
+
+function compatibilityRowFor(definition, allResults) {
+  const row = allResults.find((candidate) => candidate?.name === definition.name);
+  return {
+    ...definition,
+    ...compatibilityState(row),
+    row,
+    lines: row?.lines || 0,
+    status: row?.status || "not recorded in latest benchmark artifact",
+    url: benchmarkUrl({ name: definition.name }),
+  };
 }
 
 const PROJECT_README_PATHS = {
@@ -1412,4 +1517,51 @@ export function getBenchmarkCharts() {
 
 export function getBenchmarkMicroCharts() {
   return generateCharts(loadBenchmarks(), "micro");
+}
+
+export function getProjectCompatibilityDashboard() {
+  const data = loadBenchmarks();
+  const allResults = withExpectedProjectRows(data?.results);
+  const rows = COMPATIBILITY_CORPUS_ROWS.map((definition) => compatibilityRowFor(definition, allResults));
+
+  const counts = rows.reduce((acc, row) => {
+    acc[row.className] = (acc[row.className] || 0) + 1;
+    return acc;
+  }, {});
+  const summary = [
+    `${counts.green || 0} green`,
+    `${counts.yellow || 0} yellow`,
+    `${counts.red || 0} red`,
+    `${counts.gray || 0} gray`,
+  ].join(" · ");
+
+  return `<section class="compat-dashboard">
+  <h2>Compatibility Corpus</h2>
+  <p class="bench-category-desc">Project status is tracked separately from speed. A project only counts as green when tsz exits successfully on the same no-emit project check used for timing.</p>
+  <div class="compat-summary">${escapeHtml(summary)}</div>
+  <div class="compat-table-wrap">
+    <table class="compat-table">
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Status</th>
+          <th>Exit Class</th>
+          <th>Owner Family</th>
+          <th>Phase</th>
+          <th>First Diagnostic Deltas</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `<tr>
+          <td><a href="${row.url}">${escapeHtml(row.label)}</a><div class="compat-meta">${fmt(row.lines || 0)} lines</div></td>
+          <td><span class="compat-pill ${row.className}">${escapeHtml(row.stateLabel)}</span></td>
+          <td>${escapeHtml(row.exitClass)}</td>
+          <td>${escapeHtml(row.family)}<div class="compat-meta">${escapeHtml(row.owner)}</div></td>
+          <td>${escapeHtml(row.phase)}</td>
+          <td>${escapeHtml(Array.isArray(row.diagnosticDeltas) ? row.diagnosticDeltas.slice(0, 20).join("; ") : row.diagnosticDeltas)}</td>
+        </tr>`).join("\n")}
+      </tbody>
+    </table>
+  </div>
+</section>`;
 }
