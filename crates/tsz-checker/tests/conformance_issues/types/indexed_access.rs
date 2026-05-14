@@ -92,6 +92,37 @@ type ChildrenOf<T extends Node> = T['children'][number];
 }
 
 #[test]
+fn test_direct_typeof_tuple_index_annotation_reports_mismatch() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function concat<T extends readonly any[], U extends readonly any[]>(
+  a: T,
+  b: U
+): [...T, ...U] {
+  return [...a, ...b] as [...T, ...U];
+}
+
+const result = concat([1, 2] as const, ["a", "b"] as const);
+
+type R0 = typeof result[0];
+const viaAlias: R0 = "wrong";
+const direct: typeof result[0] = "wrong";
+
+const renamed = concat([true] as const, [99] as const);
+type First = typeof renamed[0];
+const viaRenamedAlias: First = 0;
+const renamedDirect: typeof renamed[0] = 0;
+"#,
+    );
+
+    let ts2322_count = diagnostics.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(
+        ts2322_count, 4,
+        "Alias and direct typeof tuple indexed access annotations should both report TS2322.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_scalar_property_then_number_index_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics_with_lib(
         r"

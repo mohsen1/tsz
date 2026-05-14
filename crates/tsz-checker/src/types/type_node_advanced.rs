@@ -150,25 +150,30 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
+            let object_is_type_query_node = self
+                .ctx
+                .arena
+                .get(indexed_access.object_type)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_QUERY);
             let indexed_type = factory.index_access(object_type, index_type);
-            let evaluated_indexed_type =
-                if !crate::query_boundaries::common::contains_type_parameters(
+            let evaluated_indexed_type = if object_is_type_query_node
+                || !crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     indexed_type,
                 ) {
-                    Some(
-                        crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
-                            self.ctx.types,
-                            &*self.ctx,
-                            indexed_type,
-                            std::iter::empty(),
-                            false,
-                            self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-                        ),
-                    )
-                } else {
-                    None
-                };
+                Some(
+                    crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+                        self.ctx.types,
+                        &*self.ctx,
+                        indexed_type,
+                        std::iter::empty(),
+                        false,
+                        self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                    ),
+                )
+            } else {
+                None
+            };
             if evaluated_indexed_type
                 .as_ref()
                 .is_some_and(|result| result.depth_exceeded)
@@ -537,6 +542,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             if let Some(evaluated_result) = evaluated_indexed_type {
                 let evaluated = evaluated_result.result;
+                if evaluated != TypeId::ERROR
+                    && evaluated != indexed_type
+                    && object_is_type_query_node
+                {
+                    return evaluated;
+                }
                 if evaluated != TypeId::ERROR
                     && evaluated != indexed_type
                     && let Some(parent_enum_type) =
