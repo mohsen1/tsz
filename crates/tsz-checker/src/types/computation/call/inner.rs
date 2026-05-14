@@ -2962,6 +2962,18 @@ impl<'a> CheckerState<'a> {
             &base_contextual_param_types,
             original_callee_shape.as_ref(),
         );
+        if is_generic_call
+            && contextual_type.is_none()
+            && let Some(shape) = original_callee_shape.as_ref()
+        {
+            self.emit_uninferred_callback_unknown_body_diagnostics(
+                shape,
+                args,
+                &arg_types,
+                check_excess_properties,
+                callable_ctx,
+            );
+        }
         let forced_block_body_callback_mismatch = self
             .current_block_body_callback_return_mismatch_arg(args, |checker, index| {
                 finalized_contextual_param_types
