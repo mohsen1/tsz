@@ -2,7 +2,8 @@
 
 use crate::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
-    are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
+    are_types_mutually_subtype_with_env, is_assignable, tuple_elements_for_type,
+    union_members_for_type,
 };
 use crate::query_boundaries::state::checking::find_property_in_object_by_str;
 use crate::state::CheckerState;
@@ -264,6 +265,18 @@ impl<'a> CheckerState<'a> {
             declared_type
         };
         let narrowed = analyzer.get_flow_type(idx, initial_type, flow_node);
+
+        // Access-node flow can narrow within the declared read surface, but a
+        // write-compatible assignment must not replace a getter read with a
+        // value that only belongs to the setter surface.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && narrowed != declared_type
+            && !is_assignable(self.ctx.types, narrowed, declared_type)
+        {
+            return declared_type;
+        }
 
         // Correlated narrowing for destructured bindings.
         // When `const { data, isSuccess } = useQuery()` and we check `isSuccess`,

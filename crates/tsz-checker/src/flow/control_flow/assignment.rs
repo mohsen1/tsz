@@ -75,7 +75,9 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(assigned_type);
         }
 
-        let Some(read_target_type) = self.node_types.and_then(|nt| nt.get(&target.0).copied())
+        let Some(read_target_type) = self
+            .access_reference_read_surface_type(target)
+            .or_else(|| self.node_types.and_then(|nt| nt.get(&target.0).copied()))
         else {
             return Some(assigned_type);
         };
@@ -85,6 +87,38 @@ impl<'a> FlowAnalyzer<'a> {
 
         self.is_assignable_to(assigned_type, read_target_type)
             .then_some(assigned_type)
+    }
+
+    fn access_reference_read_surface_type(&self, target: NodeIndex) -> Option<TypeId> {
+        let target_node = self.arena.get(target)?;
+        let access = self.arena.get_access_expr(target_node)?;
+
+        let name_atom = if let Some(ident) = self.arena.get_identifier_at(access.name_or_argument) {
+            self.interner.intern_string(&ident.escaped_text)
+        } else {
+            self.literal_atom_from_node_or_type(access.name_or_argument)?
+        };
+
+        let node_types = self.node_types?;
+        let base_type = if let Some(&base_type) = node_types.get(&access.expression.0) {
+            base_type
+        } else if let Some(this_type) = self.concrete_this_type
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::ThisKeyword as u16
+        {
+            this_type
+        } else {
+            return None;
+        };
+
+        let prop_name = self.interner.resolve_atom_ref(name_atom);
+        crate::query_boundaries::property_access::resolve_property_access_with_options(
+            self.interner,
+            base_type,
+            prop_name.as_ref(),
+            self.interner.no_unchecked_indexed_access(),
+        )
+        .success_type()
     }
 
     fn node_contains_descendant(&self, ancestor: NodeIndex, mut descendant: NodeIndex) -> bool {
