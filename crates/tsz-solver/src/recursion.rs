@@ -468,6 +468,18 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
         self.exceeded = true;
     }
 
+    /// Clear the `exceeded` flag while preserving `visiting` / `depth` /
+    /// `iterations`. Inverse of [`mark_exceeded`](Self::mark_exceeded).
+    ///
+    /// Punches a deliberate hole in the sticky-`exceeded` contract: callers
+    /// that treat a particular bailout as non-fatal use this so sibling
+    /// evaluations at shallower depth can proceed. Reserve for that narrow
+    /// purpose — a misuse will silently mask a real exceedance.
+    #[inline]
+    pub(crate) const fn clear_exceeded(&mut self) {
+        self.exceeded = false;
+    }
+
     // -----------------------------------------------------------------------
     // Reset
     // -----------------------------------------------------------------------
