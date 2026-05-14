@@ -512,6 +512,31 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
+                if name == "Readonly"
+                    && sym_id
+                        .is_some_and(|sym_id| self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
+                    && let Some(args) = &type_ref.type_arguments
+                    && args.nodes.len() == 1
+                {
+                    let inner = self.get_type_from_type_node(args.nodes[0]);
+                    let factory = self.ctx.types.factory();
+                    let key_param = tsz_solver::TypeParamInfo {
+                        name: self.ctx.types.intern_string("__readonly_key"),
+                        constraint: None,
+                        default: None,
+                        is_const: false,
+                    };
+                    let key_type = self.ctx.types.type_param(key_param);
+                    let mapped = factory.mapped(tsz_solver::MappedType {
+                        type_param: key_param,
+                        constraint: factory.keyof(inner),
+                        name_type: None,
+                        template: factory.index_access(inner, key_type),
+                        readonly_modifier: Some(tsz_solver::MappedModifier::Add),
+                        optional_modifier: None,
+                    });
+                    return self.evaluate_type_with_resolution(mapped);
+                }
                 let is_builtin_array = is_array_like_name
                     && type_param.is_none()
                     && sym_id.is_none_or(|sym_id| self.ctx.symbol_is_from_actual_lib(sym_id));
