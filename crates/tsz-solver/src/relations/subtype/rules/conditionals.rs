@@ -16,16 +16,36 @@ use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Conditional extends-types use a stricter equivalence than ordinary
-    /// assignability. In particular, tsc does not collapse `{ a?: T }` and
-    /// `{ a?: T | undefined }` to the same type here, even when
-    /// `exactOptionalPropertyTypes` is otherwise disabled.
+    /// assignability. Two extends-types are equivalent only when their full
+    /// per-property modifier shape matches, even when individual differences
+    /// are invisible to ordinary subtype rules:
+    ///
+    /// - `{ a?: T }` is NOT collapsed with `{ a?: T | undefined }`, even
+    ///   when `exactOptionalPropertyTypes` is otherwise disabled.
+    /// - `{ readonly x: T }` is NOT collapsed with `{ x: T }`, even though
+    ///   ordinary assignability is permissive about readonly. This is what
+    ///   makes the higher-order `IfEquals` pattern (and `ReadonlyKeys` /
+    ///   `MutableKeys` built on top of it) able to distinguish properties
+    ///   by mutability.
     fn conditional_extends_types_equivalent(&mut self, left: TypeId, right: TypeId) -> bool {
-        let prev = self.exact_optional_property_types;
+        self.with_extends_clause_identity_mode(|sub| {
+            sub.check_subtype(left, right).is_true() && sub.check_subtype(right, left).is_true()
+        })
+    }
+
+    /// Run `f` with the stricter property-modifier identity rules used by
+    /// conditional `extends` equivalence (`exact_optional_property_types`
+    /// and `strict_readonly_identity`). Both flags are restored on normal
+    /// return.
+    fn with_extends_clause_identity_mode<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let saved_exact_optional = self.exact_optional_property_types;
+        let saved_strict_readonly = self.strict_readonly_identity;
         self.exact_optional_property_types = true;
-        let equivalent =
-            self.check_subtype(left, right).is_true() && self.check_subtype(right, left).is_true();
-        self.exact_optional_property_types = prev;
-        equivalent
+        self.strict_readonly_identity = true;
+        let result = f(self);
+        self.exact_optional_property_types = saved_exact_optional;
+        self.strict_readonly_identity = saved_strict_readonly;
+        result
     }
 
     /// Check conditional type to conditional type subtyping.

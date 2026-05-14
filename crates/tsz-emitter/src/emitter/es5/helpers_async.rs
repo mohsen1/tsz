@@ -275,6 +275,28 @@ impl<'a> Printer<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         func_name: &str,
     ) {
+        self.push_temp_scope();
+        let move_params_to_generator =
+            self.async_generator_params_need_forwarding(&func.parameters.nodes);
+        let body_is_empty_single_line = func.body.is_some()
+            && self
+                .arena
+                .get(func.body)
+                .and_then(|n| {
+                    let block = self.arena.get_block(n)?;
+                    if block.statements.nodes.is_empty() {
+                        Some(self.is_single_line(n))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
+        let body_is_single_line = func.body.is_some()
+            && self
+                .arena
+                .get(func.body)
+                .is_some_and(|n| self.is_single_line(n));
+
         // function name(params) {
         if func_name.is_empty() {
             self.write("function (");
@@ -283,8 +305,51 @@ impl<'a> Printer<'a> {
             self.write(func_name);
             self.write("(");
         }
-        self.emit_function_parameters_js(&func.parameters.nodes);
+        if move_params_to_generator {
+            self.emit_async_outer_parameter_placeholders(&func.parameters.nodes);
+        } else {
+            self.emit_function_parameters_js(&func.parameters.nodes);
+        }
         self.write(") {");
+        if body_is_empty_single_line || body_is_single_line {
+            self.write(" return ");
+            self.write_helper("__asyncGenerator");
+            self.write("(this, arguments, function* ");
+            if !func_name.is_empty() {
+                self.write(func_name);
+                self.write("_1");
+            }
+            self.write("(");
+            let saved_await = self.ctx.emit_await_as_yield_await;
+            self.ctx.emit_await_as_yield_await = true;
+            if move_params_to_generator {
+                self.emit_function_parameters_js(&func.parameters.nodes);
+            }
+            self.ctx.emit_await_as_yield_await = saved_await;
+            self.write(") {");
+            if !body_is_empty_single_line {
+                let saved_await = self.ctx.emit_await_as_yield_await;
+                self.ctx.emit_await_as_yield_await = true;
+                self.function_scope_depth += 1;
+                if !self.pending_object_rest_params.is_empty() {
+                    self.write(" ");
+                    self.emit_pending_object_rest_param_preamble(true);
+                }
+                if let Some(body_node) = self.arena.get(func.body)
+                    && let Some(block) = self.arena.get_block(body_node)
+                {
+                    for &stmt in &block.statements.nodes {
+                        self.write(" ");
+                        self.emit(stmt);
+                    }
+                }
+                self.function_scope_depth -= 1;
+                self.ctx.emit_await_as_yield_await = saved_await;
+            }
+            self.write(" }); }");
+            self.pop_temp_scope();
+            return;
+        }
         self.write_line();
         self.increase_indent();
 
@@ -296,7 +361,14 @@ impl<'a> Printer<'a> {
             self.write(func_name);
             self.write("_1");
         }
-        self.write("() {");
+        self.write("(");
+        let saved_await = self.ctx.emit_await_as_yield_await;
+        self.ctx.emit_await_as_yield_await = true;
+        if move_params_to_generator {
+            self.emit_function_parameters_js(&func.parameters.nodes);
+        }
+        self.ctx.emit_await_as_yield_await = saved_await;
+        self.write(") {");
         self.write_line();
         self.increase_indent();
         let generator_hoist_byte_offset = self.writer.len();
@@ -308,6 +380,11 @@ impl<'a> Printer<'a> {
         // Set flag so `await expr` emits as `yield __await(expr)`
         let saved = self.ctx.emit_await_as_yield_await;
         self.ctx.emit_await_as_yield_await = true;
+        self.function_scope_depth += 1;
+
+        if !self.pending_object_rest_params.is_empty() {
+            self.emit_pending_object_rest_param_preamble(false);
+        }
 
         if let Some(body_node) = self.arena.get(func.body)
             && let Some(block) = self.arena.get_block(body_node)
@@ -318,6 +395,7 @@ impl<'a> Printer<'a> {
             }
         }
 
+        self.function_scope_depth -= 1;
         self.ctx.emit_await_as_yield_await = saved;
         let mut ref_vars = Vec::new();
         ref_vars.extend(
@@ -353,6 +431,27 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("}");
+        self.pop_temp_scope();
+    }
+
+    pub(in crate::emitter) fn async_generator_params_need_forwarding(
+        &self,
+        params: &[NodeIndex],
+    ) -> bool {
+        params.iter().copied().any(|p| {
+            let Some(node) = self.arena.get(p) else {
+                return false;
+            };
+            let Some(param) = self.arena.get_parameter(node) else {
+                return false;
+            };
+            if param.initializer.is_some() {
+                return true;
+            }
+            self.arena.get(param.name).is_some_and(|name_node| {
+                name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
+            })
+        })
     }
 
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
@@ -1056,7 +1155,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_async_outer_parameter_placeholders(&mut self, params: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_async_outer_parameter_placeholders(
+        &mut self,
+        params: &[NodeIndex],
+    ) {
         let mut first = true;
         for &param_idx in params {
             let Some(param_node) = self.arena.get(param_idx) else {

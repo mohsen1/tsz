@@ -367,7 +367,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = jsdoc_type_text.as_deref()
             {
                 self.write(": ");
-                self.write(type_text);
+                self.write(&Self::format_jsdoc_type_text_for_declaration(type_text));
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)
@@ -467,6 +467,9 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = Self::normalize_inferred_array_any_text(&type_text);
                 let mut type_text = self
                     .expand_rest_tuple_parameters_in_function_type_text(initializer, &type_text)
+                    .unwrap_or(type_text);
+                type_text = self
+                    .preserve_call_argument_single_rest_parameter_text(initializer, &type_text)
                     .unwrap_or(type_text);
                 type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);

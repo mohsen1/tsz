@@ -286,17 +286,19 @@ fn from_checker_flags_u16_preserves_every_known_bit_verbatim() {
 }
 
 #[test]
-#[cfg_attr(
-    not(debug_assertions),
-    ignore = "debug_assert only fires in debug builds"
-)]
-#[should_panic(expected = "RelationFlags layout")]
-fn from_checker_flags_u16_panics_in_debug_on_unknown_bit() {
-    // An unknown high bit is almost certainly a caller bug (they packed a
-    // bit the typed API doesn't know about). We'd rather crash loudly in
-    // debug than silently return a config that partitions the cache wrong.
-    let stray = 1u16 << 15;
-    let _ = RelationCacheConfig::from_checker_flags_u16(stray);
+fn from_checker_flags_u16_accepts_strict_readonly_identity_bit() {
+    // Bit 15 is reserved for `STRICT_READONLY_IDENTITY`, used by the
+    // conditional-extends identity check to make the readonly modifier
+    // observable in the `IfEquals` higher-order pattern. The round-trip
+    // through `from_checker_flags_u16` must preserve that bit.
+    let raw = 1u16 << 15;
+    let config = RelationCacheConfig::from_checker_flags_u16(raw);
+    assert!(
+        config
+            .flags
+            .contains(RelationFlags::STRICT_READONLY_IDENTITY),
+        "bit 15 should decode to STRICT_READONLY_IDENTITY"
+    );
 }
 
 #[test]

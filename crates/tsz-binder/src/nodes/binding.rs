@@ -61,6 +61,13 @@ impl BinderState {
         existing_id: SymbolId,
         local_flags: u32,
     ) -> Option<PreservedLibMeaning> {
+        // Imports create local bindings that shadow same-named globals in both
+        // value and type positions. If we preserve lib declarations on the alias
+        // symbol, `import { Boolean }` can still resolve as global `Boolean`.
+        if (local_flags & symbol_flags::ALIAS) != 0 {
+            return None;
+        }
+
         let local_has_value = (local_flags & symbol_flags::VALUE) != 0;
         let local_has_type = (local_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
 

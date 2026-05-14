@@ -53,6 +53,16 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if func.is_async && self.ctx.needs_es2018_lowering && func.asterisk_token {
+            let func_name = if func.name.is_some() {
+                self.get_identifier_text_idx(func.name)
+            } else {
+                String::new()
+            };
+            self.emit_async_generator_lowered(func, &func_name);
+            return;
+        }
+
         if func.is_async {
             self.write("async ");
         }

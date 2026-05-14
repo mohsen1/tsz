@@ -166,16 +166,15 @@ impl<'a> CheckerState<'a> {
 
     /// Find the enclosing NON-ARROW function for a given node.
     ///
-    /// Returns Some(NodeIndex) if inside a non-arrow function (function declaration/expression),
-    /// None if at module/global scope or only inside arrow functions.
+    /// Returns `Some` if inside a non-arrow function (declaration/expression, method,
+    /// constructor, or accessor). Returns `None` at module/global scope, when only
+    /// arrow functions enclose the node, or when a class body boundary is reached
+    /// first.
     ///
-    /// This is used for `this` type checking: arrow functions capture `this` from their
-    /// enclosing scope, so we need to skip past them to find the actual function that
-    /// defines the `this` context.
+    /// Class declarations and expressions create their own `this` binding scope, so
+    /// the search stops at them: `this` in a class property initializer belongs to
+    /// the class, not to any outer function that contains the class expression.
     pub(crate) fn find_enclosing_non_arrow_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        use tsz_parser::parser::syntax_kind_ext::{
-            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, METHOD_DECLARATION,
-        };
         let mut current = idx;
         let mut iterations = 0;
         while current.is_some() {
@@ -183,14 +182,15 @@ impl<'a> CheckerState<'a> {
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return None;
             }
-            if let Some(node) = self.ctx.arena.get(current)
-                && (node.kind == FUNCTION_DECLARATION
-                    || node.kind == FUNCTION_EXPRESSION
-                    || node.kind == METHOD_DECLARATION
-                    || node.kind == CONSTRUCTOR
-                    || node.is_accessor())
-            {
-                return Some(current);
+            if let Some(node) = self.ctx.arena.get(current) {
+                if node.is_non_arrow_function_like() {
+                    return Some(current);
+                }
+                // A class body owns `this` for its members; stop rather than crossing
+                // into the outer function that holds the class expression/declaration.
+                if node.is_class_like() {
+                    return None;
+                }
             }
             let ext = self.ctx.arena.get_extended(current)?;
             if ext.parent.is_none() {
@@ -938,10 +938,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Used for TS7041: "The containing arrow function captures the global value of 'this'."
     pub(crate) fn is_this_in_global_capturing_arrow(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{
-            ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, FUNCTION_DECLARATION,
-            FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION, SET_ACCESSOR,
-        };
+        use tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION;
         let mut found_arrow = false;
         let mut current = idx;
         let mut iterations = 0;
@@ -955,16 +952,8 @@ impl<'a> CheckerState<'a> {
                     k if k == ARROW_FUNCTION => {
                         found_arrow = true;
                     }
-                    k if k == FUNCTION_DECLARATION
-                        || k == FUNCTION_EXPRESSION
-                        || k == METHOD_DECLARATION
-                        || k == CONSTRUCTOR
-                        || k == GET_ACCESSOR
-                        || k == SET_ACCESSOR
-                        || k == CLASS_DECLARATION
-                        || k == CLASS_EXPRESSION =>
-                    {
-                        // Any of these provide a local `this` binding — not global capture
+                    // Any non-arrow function or class provides a local `this` — not global capture
+                    _ if node.is_non_arrow_function_like() || node.is_class_like() => {
                         return false;
                     }
                     _ => {}
@@ -985,10 +974,7 @@ impl<'a> CheckerState<'a> {
     /// Arrow functions don't have their own `arguments` binding, so this returns false for them.
     /// Returns false if at module/global scope (no enclosing function).
     pub(crate) fn is_in_regular_function_body(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{
-            ARROW_FUNCTION, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, SET_ACCESSOR,
-        };
+        use tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION;
         let mut current = idx;
         let mut iterations = 0;
         while current.is_some() {
@@ -999,15 +985,7 @@ impl<'a> CheckerState<'a> {
             if let Some(node) = self.ctx.arena.get(current) {
                 match node.kind {
                     k if k == ARROW_FUNCTION => return false,
-                    k if k == FUNCTION_DECLARATION
-                        || k == FUNCTION_EXPRESSION
-                        || k == METHOD_DECLARATION
-                        || k == CONSTRUCTOR
-                        || k == GET_ACCESSOR
-                        || k == SET_ACCESSOR =>
-                    {
-                        return true;
-                    }
+                    _ if node.is_non_arrow_function_like() => return true,
                     _ => {}
                 }
             }
@@ -1027,10 +1005,6 @@ impl<'a> CheckerState<'a> {
     /// since they are transparent for `arguments` capture. Returns false only if
     /// we reach the source file root without finding any regular function.
     pub(crate) fn has_enclosing_regular_function(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{
-            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, SET_ACCESSOR,
-        };
         let mut current = idx;
         let mut iterations = 0;
         while current.is_some() {
@@ -1038,20 +1012,13 @@ impl<'a> CheckerState<'a> {
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return false;
             }
-            if let Some(node) = self.ctx.arena.get(current) {
-                match node.kind {
-                    // Arrow functions are transparent — keep walking up
-                    k if k == FUNCTION_DECLARATION
-                        || k == FUNCTION_EXPRESSION
-                        || k == METHOD_DECLARATION
-                        || k == CONSTRUCTOR
-                        || k == GET_ACCESSOR
-                        || k == SET_ACCESSOR =>
-                    {
-                        return true;
-                    }
-                    _ => {}
-                }
+            if self
+                .ctx
+                .arena
+                .get(current)
+                .is_some_and(|n| n.is_non_arrow_function_like())
+            {
+                return true;
             }
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 return false;

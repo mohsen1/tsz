@@ -5065,6 +5065,33 @@ const r1: number = x;
 }
 
 #[test]
+fn iterator_intersection_return_method_name_is_not_unresolved_identifier() {
+    let source = r#"
+type WithReturn = Iterator<number> & { return(): IteratorReturnResult<void> };
+
+const iter: WithReturn = {
+  next() { return { value: 1, done: false as const }; },
+  return() { return { value: undefined, done: true as const }; }
+};
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|diagnostic| diagnostic.0).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME)
+            && !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "object literal method name `return` should satisfy Iterator intersection without TS2304/TS2322, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_module_local_builtin_iterator_return_alias_shadows_intrinsic() {
     let source = r#"
 export {};
@@ -6807,5 +6834,74 @@ fn test_ts2322_async_return_via_return_type_negative_sync_function() {
     assert!(
         has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected TS2322 when assigning to AsyncReturn of a sync function: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_return_no_false_positive() {
+    // `T extends never` → T can only be `never`, so returning T as `never` is valid.
+    let source = r#"
+        function handleT<T extends never>(x: T): never { return x; }
+        function handleN<N extends never>(x: N): never { return x; }
+        function handleK<K extends never>(x: K): never { return x; }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 for `T extends never` return: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_variable_no_false_positive() {
+    // Assigning a value of type T (extends never) to a variable of type never is valid.
+    let source = r#"
+        function f<T extends never>(x: T): T {
+            const y: never = x;
+            return y;
+        }
+        function g<U extends never>(x: U): U {
+            const z: never = x;
+            return z;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 when assigning `T extends never` to `never`: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_type_param_extends_never_transitive_constraint() {
+    // T extends U where U extends never → T should also be assignable to never.
+    let source = r#"
+        function passDown<U extends never, T extends U>(x: T): never { return x; }
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322 for transitive `T extends U extends never`: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_concrete_value_to_never_param_errors() {
+    // Negative: concrete types remain non-assignable to never (the fix must not loosen this).
+    let source = r#"
+        declare function needsNever(x: never): void;
+        needsNever(42);
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2345 = diagnostic_count(
+        &diags,
+        diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+    );
+    assert!(
+        ts2345 >= 1,
+        "Expected TS2345 when passing number to `never` param: {diags:?}"
     );
 }
