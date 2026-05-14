@@ -1395,18 +1395,11 @@ impl<'a> Printer<'a> {
         }
 
         let has_generator_asterisk = func.asterisk_token
-            || self
-                .source_text
-                .and_then(|text| {
-                    let start = (node.pos as usize).min(text.len());
-                    let end = self
-                        .arena
-                        .get(func.body)
-                        .map_or(node.end as usize, |body| body.pos as usize)
-                        .min(text.len());
-                    (start < end).then(|| &text[start..end])
-                })
-                .is_some_and(|prefix| prefix.contains('*'));
+            || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                node.pos,
+                self.arena.get(func.body).map_or(node.end, |body| body.pos),
+            );
 
         if func.is_async && self.ctx.needs_async_lowering && !has_generator_asterisk {
             let func_name = if func.name.is_some() {

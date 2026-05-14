@@ -143,29 +143,6 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    pub(in crate::emitter) fn source_header_before_body_has_generator_asterisk(
-        &self,
-        body: NodeIndex,
-    ) -> bool {
-        let Some(text) = self.source_text else {
-            return false;
-        };
-        let Some(body_node) = self.arena.get(body) else {
-            return false;
-        };
-        let end = (body_node.end as usize).min(text.len());
-        let start = end.saturating_sub(256);
-        let window = &text[start..end];
-        let Some(async_pos) = window.rfind("async") else {
-            return false;
-        };
-        let after_async = &window[async_pos..];
-        let header = after_async
-            .find('{')
-            .map_or(after_async, |brace| &after_async[..brace]);
-        header.contains('*')
-    }
-
     /// Emit an async generator function lowered to `__asyncGenerator` wrapper.
     /// `async function* f() { ... }` becomes:
     /// `function f() { return __asyncGenerator(this, arguments, function* f_1() { ... }); }`

@@ -1049,18 +1049,13 @@ impl<'a> Printer<'a> {
                 .has_modifier(&method.modifiers, tsz_scanner::SyntaxKind::AsyncKeyword)
         {
             let has_generator_asterisk = method.asterisk_token
-                || self
-                    .source_text
-                    .and_then(|text| {
-                        let start = (node.pos as usize).min(text.len());
-                        let end = self
-                            .arena
-                            .get(method.body)
-                            .map_or(node.end as usize, |body| body.pos as usize)
-                            .min(text.len());
-                        (start < end).then(|| &text[start..end])
-                    })
-                    .is_some_and(|prefix| prefix.contains('*'));
+                || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                    self.source_text,
+                    node.pos,
+                    self.arena
+                        .get(method.body)
+                        .map_or(node.end, |body| body.pos),
+                );
             if has_generator_asterisk {
                 let property_name = crate::transforms::emit_utils::identifier_text_or_empty(
                     self.arena,
