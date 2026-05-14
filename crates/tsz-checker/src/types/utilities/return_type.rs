@@ -396,7 +396,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         return_context: Option<TypeId>,
     ) -> TypeId {
-        if return_context.is_some() {
+        if return_context.is_some() || self.ctx.emit_declarations() {
             return type_id;
         }
 
