@@ -5,10 +5,11 @@
 //! Structural rule: after a conditional `T extends Pattern ? Body : ...`
 //! succeeds with infer bindings `{ X -> ... }`, every `infer X` reachable from
 //! `Body` must be replaced — including the `constraint`, `name_type`, and
-//! `template` of any mapped type inside `Body`, plus the binder's
-//! `constraint`/`default`. `InferSubstitutor` was missing the `Mapped` arm,
-//! so DeepPick-style recursion produced a deferred mapped type with free
-//! infer variables instead of the substituted nested object.
+//! `template` of any mapped type inside `Body`, while references scoped by the
+//! mapped binder itself stay bound to that mapped type. `InferSubstitutor` was
+//! missing the `Mapped` arm, so DeepPick-style recursion produced a deferred
+//! mapped type with free infer variables instead of the substituted nested
+//! object.
 
 use tsz_checker::diagnostics::Diagnostic;
 
