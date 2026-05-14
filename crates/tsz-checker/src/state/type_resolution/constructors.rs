@@ -1085,6 +1085,31 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
+            if self
+                .ctx
+                .binder
+                .get_symbol(base_sym_id)
+                .is_some_and(|symbol| symbol.escaped_name == "Array")
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(base_sym_id)
+                && let Some(array_base) =
+                    tsz_solver::TypeResolver::get_array_base_type(self.ctx.types)
+            {
+                let array_params =
+                    tsz_solver::TypeResolver::get_array_base_type_params(self.ctx.types).to_vec();
+                let resolved = Some(self.instantiate_base_instance_type_with_args(
+                    array_base,
+                    &array_params,
+                    type_arguments,
+                ));
+                if should_cache {
+                    self.ctx
+                        .base_instance_expr_cache
+                        .borrow_mut()
+                        .insert(expr_idx, resolved);
+                }
+                return resolved;
+            }
+
             if let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
                 && let Some(base_node) = self.ctx.arena.get(base_class_idx)
                 && let Some(base_class) = self.ctx.arena.get_class(base_node)
@@ -1227,13 +1252,16 @@ impl<'a> CheckerState<'a> {
         number_index: &mut Option<tsz_solver::IndexSignature>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        // Resolve Lazy types so the classifier can see the actual structure.
+        // Evaluate generic base applications (for example `Array<T>`) and
+        // resolve Lazy types so the classifier can see the actual instance
+        // structure before merging inherited members.
         let base_instance_type = {
-            let resolved = self.resolve_lazy_type(base_instance_type);
+            let evaluated = self.evaluate_application_type(base_instance_type);
+            let resolved = self.resolve_lazy_type(evaluated);
             if resolved != base_instance_type {
                 resolved
             } else {
-                base_instance_type
+                evaluated
             }
         };
         if !visited.insert(base_instance_type) {
