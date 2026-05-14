@@ -995,55 +995,13 @@ impl<'a> CheckerState<'a> {
                             &shape.type_params,
                         );
                     }
-                    for (i, param) in shape.params.iter().enumerate() {
-                        let Some(tp_info) = crate::query_boundaries::common::type_param_info(
-                            self.ctx.types,
-                            param.type_id,
-                        ) else {
-                            continue;
-                        };
-                        let Some(tp) = shape.type_params.iter().find(|tp| tp.name == tp_info.name)
-                        else {
-                            continue;
-                        };
-                        let Some(constraint) = tp.constraint else {
-                            continue;
-                        };
-                        let Some(&arg_idx) = args.get(i) else {
-                            continue;
-                        };
-                        let Some(literal_arg_type) = self.literal_type_from_initializer(arg_idx)
-                        else {
-                            continue;
-                        };
-                        let widened_literal = crate::query_boundaries::common::widen_literal_type(
-                            self.ctx.types,
-                            literal_arg_type,
-                        );
-                        if widened_literal == literal_arg_type {
-                            continue;
-                        }
-                        let instantiated_constraint =
-                            crate::query_boundaries::common::instantiate_type(
-                                self.ctx.types,
-                                constraint,
-                                &substitution,
-                            );
-                        let evaluated_constraint =
-                            self.evaluate_type_with_env(instantiated_constraint);
-                        if widened_literal == evaluated_constraint {
-                            substitution.insert(tp.name, literal_arg_type);
-                        }
-                    }
+                    self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
                     let type_args: Vec<TypeId> = shape
                         .type_params
                         .iter()
                         .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
                         .collect();
-                    if type_args
-                        .iter()
-                        .any(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ANY)
-                    {
+                    if self.new_type_args_are_applyable(shape, &type_args, &substitution) {
                         inferred_new_type_args = Some(type_args);
                     }
                     if let Some(contextual) = contextual_type {
@@ -1360,50 +1318,13 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                 )
             };
-            for (i, param) in shape.params.iter().enumerate() {
-                let Some(tp_info) =
-                    crate::query_boundaries::common::type_param_info(self.ctx.types, param.type_id)
-                else {
-                    continue;
-                };
-                let Some(tp) = shape.type_params.iter().find(|tp| tp.name == tp_info.name) else {
-                    continue;
-                };
-                let Some(constraint) = tp.constraint else {
-                    continue;
-                };
-                let Some(&arg_idx) = args.get(i) else {
-                    continue;
-                };
-                let Some(literal_arg_type) = self.literal_type_from_initializer(arg_idx) else {
-                    continue;
-                };
-                let widened_literal = crate::query_boundaries::common::widen_literal_type(
-                    self.ctx.types,
-                    literal_arg_type,
-                );
-                if widened_literal == literal_arg_type {
-                    continue;
-                }
-                let instantiated_constraint = crate::query_boundaries::common::instantiate_type(
-                    self.ctx.types,
-                    constraint,
-                    &substitution,
-                );
-                let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
-                if widened_literal == evaluated_constraint {
-                    substitution.insert(tp.name, literal_arg_type);
-                }
-            }
+            self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
             let type_args: Vec<TypeId> = shape
                 .type_params
                 .iter()
                 .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
                 .collect();
-            if type_args
-                .iter()
-                .any(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ANY)
-            {
+            if self.new_type_args_are_applyable(shape, &type_args, &substitution) {
                 inferred_new_type_args = Some(type_args);
             }
         }
