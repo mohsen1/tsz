@@ -622,7 +622,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // (generic lib interfaces like PromiseLike<T>, Map<K,V>, Set<T>, etc.)
         if !is_atomics
             && let Ok(env) = self.type_env.try_borrow()
-            && let Some(body) = env.get_def(def_id)
+            && let Some(body) = tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.types)
             && body != tsz_solver::TypeId::UNKNOWN
             && body != tsz_solver::TypeId::ERROR
         {
