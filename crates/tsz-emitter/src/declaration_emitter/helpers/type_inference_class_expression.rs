@@ -215,11 +215,12 @@ impl<'a> DeclarationEmitter<'a> {
             params_text = "...args: any[]".to_string();
         }
 
-        let force_object_form = class.members.nodes.iter().copied().any(|member_idx| {
-            self.arena
-                .get(member_idx)
-                .is_some_and(|node| self.class_member_is_static(node))
-        });
+        let force_object_form = class
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .any(|member_idx| self.class_member_is_static(member_idx));
         let instance_indent = if arrow_form && !force_object_form {
             self.indent_level + 1
         } else {
@@ -236,7 +237,7 @@ impl<'a> DeclarationEmitter<'a> {
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
                 continue;
             }
-            if self.class_member_is_static(member_node) {
+            if self.class_member_is_static(member_idx) {
                 static_scratch.emit_class_member(member_idx);
             } else {
                 instance_scratch.emit_class_member(member_idx);
@@ -364,7 +365,7 @@ impl<'a> DeclarationEmitter<'a> {
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
                 continue;
             }
-            if self.class_member_is_static(member_node) {
+            if self.class_member_is_static(member_idx) {
                 static_scratch.emit_class_member(member_idx);
             } else {
                 instance_scratch.emit_class_member(member_idx);
@@ -413,22 +414,14 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn class_member_is_static(&self, member_node: &tsz_parser::parser::node::Node) -> bool {
+    fn class_member_is_static(&self, member_idx: NodeIndex) -> bool {
+        if let Some(info) = self.class_member_info(member_idx) {
+            return info.is_static;
+        }
         self.arena
-            .get_method_decl(member_node)
-            .is_some_and(|method| self.arena.is_static(&method.modifiers))
-            || self
-                .arena
-                .get_property_decl(member_node)
-                .is_some_and(|prop| self.arena.is_static(&prop.modifiers))
-            || self
-                .arena
-                .get_accessor(member_node)
-                .is_some_and(|accessor| self.arena.is_static(&accessor.modifiers))
-            || self
-                .arena
-                .get_index_signature(member_node)
-                .is_some_and(|index| self.arena.is_static(&index.modifiers))
+            .get(member_idx)
+            .and_then(|member_node| self.arena.get_index_signature(member_node))
+            .is_some_and(|index| self.arena.is_static(&index.modifiers))
     }
 
     fn strip_static_prefix_from_class_expression_static_members(members: &str) -> String {
@@ -544,7 +537,7 @@ impl<'a> DeclarationEmitter<'a> {
                             continue;
                         };
                         if member_node.kind == syntax_kind_ext::CONSTRUCTOR
-                            || self.class_member_is_static(member_node)
+                            || self.class_member_is_static(member_idx)
                         {
                             continue;
                         }

@@ -1408,7 +1408,7 @@ impl<'a> Printer<'a> {
         }
 
         // Async generator: async function* f() → function f() { return __asyncGenerator(...) }
-        if func.is_async && self.ctx.needs_async_lowering && func.asterisk_token {
+        if func.is_async && self.ctx.needs_es2018_lowering && func.asterisk_token {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
             } else {

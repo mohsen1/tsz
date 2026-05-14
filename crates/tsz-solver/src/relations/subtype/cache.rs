@@ -16,7 +16,7 @@ use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_
 use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
 use crate::visitor::{
     application_id, array_element_type, conditional_type_id, contains_this_type, enum_components,
-    lazy_def_id, literal_value, union_list_id,
+    lazy_def_id, literal_value, type_param_info, union_list_id,
 };
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
@@ -679,31 +679,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Without this, the source Application gets evaluated to an Object before
         // the union is unwrapped, losing the generic identity.
         // =========================================================================
-        // =========================================================================
-        // Pre-evaluation variance fast path for Application types.
-        //
-        // When both types are Application types (e.g., FunctionComponent<X> vs
-        // FunctionComponent<Y>), check type argument compatibility using variance
-        // BEFORE evaluation. This is critical because evaluation converts
-        // Application -> Object, losing the generic identity needed for variance-
-        // based rejection. Without this, recursive generic interfaces like
-        // FunctionComponent<P> get structurally compared with coinductive cycle
-        // detection, which incorrectly assumes compatibility when type arguments
-        // differ (e.g., SomePropsCloneX vs SomeProps).
-        //
-        // Also handles the common case where the target is a Union containing an
-        // Application (e.g., from optional properties: FC<SomeProps> | undefined).
-        // Without this, the source Application gets evaluated to an Object before
-        // the union is unwrapped, losing the generic identity.
-        //
-        // Variance analysis runs even inside recursive type expansions
-        // (when def_guard has entries). For same-base Application types like
-        // Constraint<Num> vs Constraint<Runtype<any>>, variance correctly
-        // detects invariance and rejects, whereas structural comparison with
-        // coinductive cycle detection would incorrectly accept because the
-        // cycle assumption (True) masks the invariance created by
-        // contravariant positions (e.g., function parameter types).
-        // =========================================================================
         if !self.bypass_evaluation {
             // When source is the evaluated (non-Application) form of a generic type but
             // target is still an Application, recover the source's original Application
@@ -837,7 +812,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Meta-type evaluation (after cycle detection is set up)
         // =========================================================================
         let result = if self.bypass_evaluation {
-            if target == TypeId::NEVER {
+            if target == TypeId::NEVER && type_param_info(self.interner, source).is_none() {
                 SubtypeResult::False
             } else {
                 // Even with bypass_evaluation (used by the evaluator to prevent
@@ -890,7 +865,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.check_subtype(source_eval, target_eval)
-            } else if target == TypeId::NEVER {
+            } else if target == TypeId::NEVER && type_param_info(self.interner, source).is_none() {
                 SubtypeResult::False
             } else {
                 self.check_subtype_inner(source, target)

@@ -636,7 +636,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
+    pub(in crate::emitter) fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
         let rest_params: Vec<(String, NodeIndex)> =
             std::mem::take(&mut self.pending_object_rest_params);
         for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {

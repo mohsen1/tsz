@@ -26955,3 +26955,86 @@ fn test_callback_with_readonly_tuple_union_rest_param() {
         "Even with bivariant callbacks, should NOT be assignable due to readonly tuple constraint"
     );
 }
+
+#[test]
+fn test_type_param_extends_never_assignable_to_never() {
+    // tsc accepts `T extends never` as assignable to `never` because the constraint
+    // is vacuously inhabited only by `never` itself, so the type parameter carries
+    // the same bottom-type semantics as `never` in all subtype positions.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::NEVER),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+
+    assert!(
+        checker.is_subtype_of(t_type, TypeId::NEVER),
+        "T extends never should be assignable to never"
+    );
+    assert!(
+        checker.is_subtype_of(t_type, TypeId::UNKNOWN),
+        "T extends never should be assignable to unknown"
+    );
+    assert!(
+        checker.is_subtype_of(t_type, TypeId::STRING),
+        "T extends never should be assignable to any type (never extends everything)"
+    );
+
+    // Name-independence: same constraint, different type parameter name.
+    let n_param = TypeParamInfo {
+        name: interner.intern_string("N"),
+        constraint: Some(TypeId::NEVER),
+        default: None,
+        is_const: false,
+    };
+    let n_type = interner.type_param(n_param);
+    assert!(
+        checker.is_subtype_of(n_type, TypeId::NEVER),
+        "N extends never should also be assignable to never (name-independent)"
+    );
+}
+
+#[test]
+fn test_type_param_extends_string_not_assignable_to_never() {
+    // Negative: T extends string → T is NOT assignable to never.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+
+    assert!(
+        !checker.is_subtype_of(t_type, TypeId::NEVER),
+        "T extends string should NOT be assignable to never"
+    );
+}
+
+#[test]
+fn test_unconstrained_type_param_not_assignable_to_never() {
+    // Negative: unconstrained T is NOT assignable to never.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+
+    assert!(
+        !checker.is_subtype_of(t_type, TypeId::NEVER),
+        "Unconstrained T should NOT be assignable to never"
+    );
+}

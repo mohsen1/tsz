@@ -1242,11 +1242,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // applications still need their evaluated structural form for displays
         // such as TS2339 on conditional helper aliases.
         let is_type_alias = matches!(app_def, Some((_, crate::def::DefKind::TypeAlias)));
-        let is_merge_alias = app_def
-            .as_ref()
-            .and_then(|(def_id, _)| self.resolver.get_def_name(*def_id))
-            .is_some_and(|name| self.interner.resolve_atom_ref(name).as_ref() == "merge");
-        if is_type_alias && !is_merge_alias {
+        if is_type_alias {
             return;
         }
         // Fast path: all-intrinsic args trivially have no free type
@@ -2376,10 +2372,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let elements = self.interner.tuple_list(tuple_list_id);
 
-        // Quick check: does any element need evaluation?
-        let needs_eval = elements
-            .iter()
-            .any(|elem| Self::is_evaluable_meta_type(self.interner, elem.type_id));
+        // Quick check: does any element need evaluation or structural normalization?
+        // Also triggers when a rest element holds a concrete Tuple that must be
+        // flattened — e.g. `[L, ...R]` after infer-binding R to `[1, 2]`.
+        // ReadonlyType(Tuple) rest elements are already caught by is_evaluable_meta_type.
+        let needs_eval = elements.iter().any(|elem| {
+            Self::is_evaluable_meta_type(self.interner, elem.type_id)
+                || (elem.rest
+                    && matches!(self.interner.lookup(elem.type_id), Some(TypeData::Tuple(_))))
+        });
         if !needs_eval {
             return original_type_id;
         }
@@ -2412,7 +2413,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
 
-                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
+                let evaluated_inner =
+                    crate::type_queries::data::unwrap_readonly(self.interner, evaluated);
+                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated_inner)
+                {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
                     for alternative in &mut alternatives {
                         alternative.extend(inner_elements.iter().copied());
