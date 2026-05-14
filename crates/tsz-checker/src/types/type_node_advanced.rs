@@ -17,7 +17,7 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ObjectShape, PropertyInfo, TupleElement, TypeId};
+use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // =========================================================================
@@ -1565,81 +1565,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .collect();
 
         Some(self.ctx.types.factory().object(props))
-    }
-
-    pub(crate) fn const_asserted_array_tuple_type_query(
-        &self,
-        expr_name: NodeIndex,
-    ) -> Option<TypeId> {
-        let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
-        let node = self.ctx.arena.get(expr_name)?;
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-
-        let sym_id = self
-            .ctx
-            .binder
-            .resolve_identifier(self.ctx.arena, expr_name)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if !symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE) {
-            return None;
-        }
-
-        let mut decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol.primary_declaration()?
-        };
-        let mut decl_node = self.ctx.arena.get(decl_idx)?;
-        if decl_node.kind == SyntaxKind::Identifier as u16 {
-            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
-            decl_node = self.ctx.arena.get(decl_idx)?;
-        }
-        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
-            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
-        {
-            return None;
-        }
-
-        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-        let assertion_expr = self.ctx.arena.skip_parenthesized(decl.initializer);
-        let initializer_is_const_assertion = self
-            .ctx
-            .arena
-            .get(assertion_expr)
-            .and_then(|node| self.ctx.arena.get_type_assertion(node))
-            .and_then(|assertion| self.ctx.arena.get(assertion.type_node))
-            .is_some_and(|type_node| type_node.kind == SyntaxKind::ConstKeyword as u16);
-        if !initializer_is_const_assertion {
-            return None;
-        }
-
-        let initializer = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(decl.initializer);
-        let init_node = self.ctx.arena.get(initializer)?;
-        if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return None;
-        }
-
-        let array = self.ctx.arena.get_literal_expr(init_node)?;
-        let mut elements = Vec::with_capacity(array.elements.nodes.len());
-        for &element in &array.elements.nodes {
-            if element.is_none() {
-                return None;
-            }
-            let element_type = self.literal_type_from_const_member_initializer(element)?;
-            elements.push(TupleElement {
-                type_id: element_type,
-                name: None,
-                optional: false,
-                rest: false,
-            });
-        }
-
-        Some(self.ctx.types.factory().tuple(elements))
     }
 
     fn array_to_enum_member_literal_type(

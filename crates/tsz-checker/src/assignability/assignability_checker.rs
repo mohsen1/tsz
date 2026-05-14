@@ -1733,7 +1733,11 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    fn evaluate_type_for_assignability_inner(&mut self, type_id: TypeId) -> TypeId {
+    pub(super) fn evaluate_type_for_assignability_inner(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(evaluated) = self.evaluate_lazy_alias_for_assignability(type_id) {
+            return evaluated;
+        }
+
         let kind = classify_for_assignability_eval(self.ctx.types, type_id);
         let mut evaluated = match kind {
             AssignabilityEvalKind::Application => {
