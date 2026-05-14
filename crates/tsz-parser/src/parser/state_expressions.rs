@@ -1885,6 +1885,7 @@ impl ParserState {
                 } else if !self.in_async_context()
                     && has_following_expression
                     && !self.in_parameter_default_context()
+                    && next_token != SyntaxKind::OpenParenToken
                 {
                     // Parse as await expression - the checker will emit TS1308
                     // (not TS1359 from the parser) to match TSC behavior
