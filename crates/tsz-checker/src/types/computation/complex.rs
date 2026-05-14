@@ -1043,6 +1043,10 @@ impl<'a> CheckerState<'a> {
                     if type_args
                         .iter()
                         .any(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ANY)
+                        && self.constructor_inferred_type_args_satisfy_constraints(
+                            &shape.type_params,
+                            &type_args,
+                        )
                     {
                         inferred_new_type_args = Some(type_args);
                     }
@@ -1403,6 +1407,10 @@ impl<'a> CheckerState<'a> {
             if type_args
                 .iter()
                 .any(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ANY)
+                && self.constructor_inferred_type_args_satisfy_constraints(
+                    &shape.type_params,
+                    &type_args,
+                )
             {
                 inferred_new_type_args = Some(type_args);
             }

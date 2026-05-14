@@ -143,6 +143,51 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
+    pub(super) fn constructor_inferred_type_args_satisfy_constraints(
+        &mut self,
+        type_params: &[tsz_solver::TypeParamInfo],
+        type_args: &[TypeId],
+    ) -> bool {
+        if type_params.len() != type_args.len() {
+            return false;
+        }
+
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        for (tp, &type_arg) in type_params.iter().zip(type_args.iter()) {
+            substitution.insert(tp.name, type_arg);
+        }
+
+        for (tp, &type_arg) in type_params.iter().zip(type_args.iter()) {
+            if crate::query_boundaries::common::contains_infer_types(self.ctx.types, type_arg)
+                || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    type_arg,
+                )
+            {
+                return false;
+            }
+
+            if type_arg == TypeId::ANY || type_arg == TypeId::UNKNOWN || type_arg == TypeId::ERROR {
+                continue;
+            }
+
+            let Some(constraint) = tp.constraint else {
+                continue;
+            };
+            let instantiated_constraint = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                constraint,
+                &substitution,
+            );
+            let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
+            if !self.is_assignable_to_with_env(type_arg, evaluated_constraint) {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub(super) fn seed_substitution_from_partial_function_returns(
         &mut self,
         substitution: &mut tsz_solver::TypeSubstitution,
