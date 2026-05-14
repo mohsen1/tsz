@@ -11,7 +11,7 @@
 //! The fix adds:
 //! 1. Function/constructor type traversal in `collect_infer_constraints_from_extends_type`
 //!    so the infer variable is discovered inside function return/param types.
-//! 2. A positional-constraint check in constraint_validation.rs for bare Infer
+//! 2. A positional-constraint check in `constraint_validation.rs` for bare Infer
 //!    type arguments with no explicit constraint.
 
 use tsz_binder::BinderState;
@@ -258,7 +258,7 @@ type Extract<F> =
 // ---------------------------------------------------------------------------
 
 /// Direct extends clause (no function wrapper) — R is in `Result<any, infer R>`.
-/// This tests the base case of hidden_conditional_infer_constraint_type.
+/// This tests the base case of `hidden_conditional_infer_constraint_type`.
 #[test]
 fn infer_in_direct_constrained_position_no_fn_wrapper_no_ts2344() {
     let diags = compile(
