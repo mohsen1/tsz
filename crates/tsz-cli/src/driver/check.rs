@@ -4321,6 +4321,70 @@ export function freeze<T>(value: T): Readonly<T> {
     }
 
     #[test]
+    fn readonly_factory_methods_get_contextual_parameter_types() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5.d.ts must be available for this regression"
+        );
+        let files = [
+            (
+                "/p/b.ts",
+                r#"
+import { Node } from "./a.js";
+
+Node.cloneWith({ kind: "Node", name: "n" });
+"#,
+            ),
+            (
+                "/p/a.ts",
+                r#"
+import { freeze } from "./object-utils.js";
+
+export interface Node {
+  readonly kind: "Node";
+  readonly name: string;
+  readonly table?: string;
+}
+
+type NodeFactory = Readonly<{
+  create(name: string): Readonly<Node>;
+  cloneWith(node: Node): Readonly<Node>;
+}>;
+
+export const Node: NodeFactory = freeze<NodeFactory>({
+  create(name) {
+    return freeze({ kind: "Node", name });
+  },
+  cloneWith(node) {
+    return freeze({ ...node });
+  },
+});
+"#,
+            ),
+            (
+                "/p/object-utils.ts",
+                r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value;
+}
+"#,
+            ),
+        ];
+
+        let diagnostics = collect_test_diagnostics_with_lib_files(&files, &lib_files);
+        let implicit_any = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 7006)
+            .collect::<Vec<_>>();
+
+        assert!(
+            implicit_any.is_empty(),
+            "Readonly factory methods should get contextual parameter types, got: {implicit_any:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn file_session_reuse_preserves_multifile_diagnostics() {
         let files = [
             (

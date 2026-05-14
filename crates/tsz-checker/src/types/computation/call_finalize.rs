@@ -150,6 +150,10 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn normalize_contextual_call_param_type(&mut self, param_type: TypeId) -> TypeId {
+        if let Some(source) = self.homomorphic_readonly_contextual_source_type(param_type) {
+            return source;
+        }
+
         if common::is_callable_type(self.ctx.types, param_type)
             || should_preserve_contextual_application_shape(self.ctx.types, param_type)
         {
@@ -187,6 +191,42 @@ impl<'a> CheckerState<'a> {
         }
 
         self.evaluate_type_with_env(param_type)
+    }
+
+    fn homomorphic_readonly_contextual_source_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let mapped = common::mapped_type_info(self.ctx.types, type_id)?;
+        if mapped.name_type.is_some()
+            || mapped.optional_modifier.is_some()
+            || mapped.readonly_modifier != Some(tsz_solver::MappedModifier::Add)
+        {
+            return None;
+        }
+
+        let source = common::keyof_inner_type(self.ctx.types, mapped.constraint)?;
+        let (template_object, template_index) =
+            common::index_access_parts(self.ctx.types, mapped.template)?;
+        if template_object != source {
+            return None;
+        }
+        let template_param = common::type_param_info(self.ctx.types, template_index)?;
+        if template_param.name != mapped.type_param.name {
+            return None;
+        }
+
+        if common::object_shape_for_type(self.ctx.types, source).is_some() {
+            return Some(source);
+        }
+
+        if common::type_param_info(self.ctx.types, source).is_some()
+            && let Some(alias) = self.ctx.types.get_display_alias(type_id)
+            && let Some((_, args)) = common::application_info(self.ctx.types, alias)
+            && let Some(source_arg) = args.first().copied()
+            && common::object_shape_for_type(self.ctx.types, source_arg).is_some()
+        {
+            return Some(source_arg);
+        }
+
+        None
     }
 
     #[allow(clippy::too_many_arguments)]
