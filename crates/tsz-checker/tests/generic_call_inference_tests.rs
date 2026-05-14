@@ -2988,6 +2988,71 @@ const reject: Pending<string> = pool.acquire();
 }
 
 #[test]
+fn generic_constructor_options_infer_through_method_signature_and_omit_spread() {
+    let source = r#"
+declare class Connection {
+    ok(): void;
+}
+
+declare class Pending<R> {
+    promise: Promise<R>;
+}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+interface PoolOptions<R> {
+    create(cb: (err: Error | null, resource: R) => void): any | (() => Promise<R>);
+    destroy(resource: R): any;
+    validate?(resource: R): boolean;
+    min: number;
+    max: number;
+}
+
+declare class Pool<R> {
+    constructor(options: PoolOptions<R>);
+    acquire(): Pending<R>;
+}
+
+declare const tarn: {
+    options: Omit<PoolOptions<any>, "create" | "destroy" | "validate"> & {
+        validateConnections?: false;
+    };
+    Pool: typeof Pool;
+};
+
+const { validateConnections, ...poolOptions } = tarn.options;
+
+const pool: Pool<Connection> = new tarn.Pool({
+    ...poolOptions,
+    create: async () => new Connection(),
+    destroy: async (connection) => {
+        connection.ok();
+    },
+    validate:
+        validateConnections === false
+            ? undefined
+            : (connection) => {
+                connection.ok();
+                return true;
+            },
+});
+
+const keep: Pending<Connection> = pool.acquire();
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "generic constructor options should contextually type callback parameters through method signatures and spreads. Got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "Pool should infer R = Connection through method-style create and Omit spread. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn conflicting_contextual_instantiation_keeps_enclosing_return_type_param() {
     let source = r#"
 declare function accept<R>(fn: (a: string, b: number) => R): R;
