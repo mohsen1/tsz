@@ -1371,6 +1371,18 @@ target is now the two remaining concrete rows:
 `union_or_intersection=1` and `array_or_tuple=1`. Decision record:
 [`perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md`](perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md).
 
+**2026-05-14 simple-object nonprimitive residue names:** the follow-up adds a
+bounded
+`compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues`
+table and reruns regenerated monorepo-006. Diagnostics remain `10,198`,
+simple-object hits remain `24,760`, and the only live non-primitive reject
+rows are now named: `TextInfo.direction` is the single
+`union_or_intersection` row, and `WeekInfo.weekend` is the single
+`array_or_tuple` row. This is attribution-only; it does not admit any new
+annotation kind. The subsequent residual-annotation admission consumes both
+named rows. Decision record:
+[`perf-runs/2026-05-14-simple-object-nonprimitive-residues.md`](perf-runs/2026-05-14-simple-object-nonprimitive-residues.md).
+
 **2026-05-14 simple-object residual annotation admission:** the next slice
 admits recursively simple union/intersection, array, and tuple annotations when
 every child annotation is already accepted by the same local shortcut guard.
