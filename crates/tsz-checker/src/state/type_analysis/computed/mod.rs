@@ -554,15 +554,10 @@ impl<'a> CheckerState<'a> {
         exports_table: &tsz_binder::SymbolTable,
         props: &mut Vec<PropertyInfo>,
     ) -> Option<String> {
-        let Some(export_equals_sym_id) = exports_table.get("export=") else {
-            return None;
-        };
-        let Some(mut export_equals_symbol) = self
+        let export_equals_sym_id = exports_table.get("export=")?;
+        let mut export_equals_symbol = self
             .get_symbol_globally(export_equals_sym_id)
-            .or_else(|| self.get_cross_file_symbol(export_equals_sym_id))
-        else {
-            return None;
-        };
+            .or_else(|| self.get_cross_file_symbol(export_equals_sym_id))?;
 
         if export_equals_symbol.decl_file_idx == u32::MAX
             && let Some(target_idx) = self.ctx.resolve_symbol_file_index(export_equals_sym_id)

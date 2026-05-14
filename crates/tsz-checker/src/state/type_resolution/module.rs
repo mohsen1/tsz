@@ -1439,8 +1439,7 @@ impl<'a> CheckerState<'a> {
         combined: &mut tsz_binder::SymbolTable,
     ) -> Option<String> {
         let decl_file_idx = if export_equals_symbol.decl_file_idx == u32::MAX {
-            let fallback_idx = fallback_decl_file_idx?;
-            fallback_idx
+            fallback_decl_file_idx?
         } else {
             export_equals_symbol.decl_file_idx as usize
         };

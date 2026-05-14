@@ -2039,6 +2039,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return optional.then_some(TypeId::UNDEFINED);
         }
 
+        if let Some(type_id) = self.implicit_sequence_property_type(source, prop_name) {
+            return Some(type_id);
+        }
+
         if let Some(query_db) = self.query_db() {
             let prop_name_str = self.interner().resolve_atom_ref(prop_name);
             return match query_db.resolve_property_access(source, &prop_name_str) {

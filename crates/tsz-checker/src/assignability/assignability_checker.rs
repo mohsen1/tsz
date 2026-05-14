@@ -1911,6 +1911,13 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.namespace_module_names.contains_key(&source) {
             return false;
         }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target)
+        {
+            return members.iter().all(|&member| {
+                self.namespace_source_has_matching_property_mismatch(source, member)
+            });
+        }
         let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
         else {
