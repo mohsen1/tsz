@@ -1,6 +1,3 @@
-//! Inner implementation of call expression type resolution, including
-//! `get_type_of_call_expression_inner` and the core call computation logic.
-
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::assignability as assign_query;
@@ -174,7 +171,6 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Inner implementation of call expression type resolution.
     pub(crate) fn get_type_of_call_expression_inner(
         &mut self,
         idx: NodeIndex,
@@ -2955,6 +2951,15 @@ impl<'a> CheckerState<'a> {
         let finalized_contextual_param_types = generic_instantiated_params
             .as_ref()
             .map(|params| self.contextual_param_types_from_instantiated_params(params, args.len()));
+        self.repair_abstract_constructor_argument_mismatch(
+            &mut result,
+            &mut allow_contextual_mismatch_deferral,
+            callee_type_for_call,
+            args,
+            &arg_types,
+            &base_contextual_param_types,
+            finalized_contextual_param_types.as_deref(),
+        );
         self.emit_nominal_lib_object_callback_return_errors(
             args,
             &arg_types,
