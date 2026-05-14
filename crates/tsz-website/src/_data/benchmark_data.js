@@ -243,12 +243,15 @@ function compatibilityState(row) {
 function compatibilityRowFor(definition, allResults) {
   const row = allResults.find((candidate) => candidate?.name === definition.name);
   const artifactFamily = firstPresent(row?.compatibility?.semantic_owner_family, row?.compatibility?.owner_family);
+  const compatibility = row?.compatibility || {};
   return {
     ...definition,
     family: artifactFamily || definition.family,
     ...compatibilityState(row),
     row,
     lines: row?.lines || 0,
+    filesReached: compatibility.files_reached ?? null,
+    peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
     status: row?.status || "not recorded in latest benchmark artifact",
     url: benchmarkUrl({ name: definition.name }),
   };
@@ -1557,14 +1560,53 @@ export function getProjectCompatibilityDashboard() {
     return row.exitClass;
   };
 
+  const diagnosticDeltas = (row) => {
+    const deltas = Array.isArray(row.diagnosticDeltas)
+      ? row.diagnosticDeltas
+      : row.diagnosticDeltas
+        ? [row.diagnosticDeltas]
+        : [];
+    return deltas.filter(Boolean).slice(0, 20);
+  };
+
+  const measurementParts = (row) => {
+    const parts = [];
+    if (row.filesReached !== null && row.filesReached !== undefined && Number.isFinite(Number(row.filesReached))) {
+      parts.push(`${fmt(row.filesReached)} files`);
+    }
+    if (Number.isFinite(Number(row.peakMemoryBytes)) && Number(row.peakMemoryBytes) > 0) {
+      parts.push(`${(Number(row.peakMemoryBytes) / (1024 * 1024)).toLocaleString("en-US", { maximumFractionDigits: 0 })} MiB peak`);
+    }
+    return parts;
+  };
+
+  const renderRowDetails = (row) => {
+    const deltas = diagnosticDeltas(row);
+    const parts = [
+      `phase: ${row.phase || "unknown"}`,
+      `owner: ${row.family || "not classified"}`,
+      ...measurementParts(row),
+    ];
+    const deltaHtml = row.className === "green"
+      ? ""
+      : `<div class="compat-deltas">${deltas.length
+          ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
+          : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
+        </div>`;
+    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${deltaHtml}`;
+  };
+
   return `<section class="compat-dashboard">
   <h2>Compatibility</h2>
   <div class="compat-summary">${escapeHtml(summary)}</div>
   <ul class="compat-list">
     ${rows.map((row) => `<li class="compat-item">
-      <a href="${row.url}">${escapeHtml(row.label)}</a>
-      <span class="compat-state ${row.className}">${escapeHtml(row.className)}</span>
-      <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
+      <div class="compat-row-main">
+        <a href="${row.url}">${escapeHtml(row.label)}</a>
+        <span class="compat-state ${row.className}">${escapeHtml(row.className)}</span>
+        <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
+      </div>
+      ${renderRowDetails(row)}
     </li>`).join("\n")}
   </ul>
 </section>`;
