@@ -2754,13 +2754,18 @@ impl<'a> DeclarationEmitter<'a> {
             && self.js_export_equals_names.is_empty();
 
         let mut decls = Vec::new();
+        let mut variable_decls = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
             for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
                 if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                    decls.push(decl);
+                    if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        variable_decls.push(decl);
+                    } else {
+                        decls.push(decl);
+                    }
                 }
             }
         }
@@ -2773,6 +2778,7 @@ impl<'a> DeclarationEmitter<'a> {
                 decls.push(decl);
             }
         }
+        decls.extend(variable_decls);
 
         for decl in decls {
             self.emit_rendered_jsdoc_type_alias(decl, exported);

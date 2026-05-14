@@ -346,6 +346,9 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
                         !Self::jsdoc_overload_signatures_from_chain(&jsdoc_chain).is_empty()
+                            || jsdoc_chain
+                                .iter()
+                                .any(|jsdoc| !Self::parse_jsdoc_template_params(jsdoc).is_empty())
                     }
                 } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                     self.arena
