@@ -2,7 +2,7 @@
 
 - **Date**: 2026-05-14
 - **Branch**: `codex/perf-simple-object-type-ref-residue-run-20260514`
-- **PR**: TBD
+- **PR**: #6747
 - **Status**: ready
 - **Workstream**: Performance plan simple local-interface shortcut attribution
 
