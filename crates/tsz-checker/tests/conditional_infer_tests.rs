@@ -68,6 +68,28 @@ const rejected: CC1 = "anything";
 }
 
 #[test]
+fn chained_infer_extends_preserves_numeric_literal() {
+    let source = r#"
+type GetPromiseValue<T> = T extends Promise<infer V extends string>
+  ? V
+  : T extends Promise<infer V extends number>
+    ? V
+    : never;
+
+type P2 = GetPromiseValue<Promise<42>>;
+
+const p2: P2 = 42;
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "GetPromiseValue<Promise<42>> should preserve literal 42 in the second constrained infer branch; got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn keyof_mapped_application_uses_instantiated_constraint() {
     let source = r#"
 type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
