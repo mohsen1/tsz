@@ -1,6 +1,24 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
 
+fn check_with_libs(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)> {
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+    tsz_checker::test_utils::check_multi_file_with_libs(
+        files,
+        entry_file,
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|diagnostic| diagnostic.code != 2318)
+    .map(|diagnostic| (diagnostic.code, diagnostic.message_text))
+    .collect()
+}
+
 fn check(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_multi_file(
         files,
@@ -15,6 +33,56 @@ fn check(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)> {
     .filter(|diagnostic| diagnostic.code != 2318)
     .map(|diagnostic| (diagnostic.code, diagnostic.message_text))
     .collect()
+}
+
+#[test]
+fn imported_same_name_const_uses_readonly_alias_annotation_consumer_first() {
+    let diagnostics = check_with_libs(
+        &[
+            (
+                "./b.ts",
+                r#"
+import { Factory } from "./a.js"
+
+Factory.cloneWith("x")
+"#,
+            ),
+            (
+                "./a.ts",
+                r#"
+import { freeze } from "./object-utils.js"
+
+type Factory = Readonly<{
+  create(name: string): string
+  cloneWith(value: string): string
+}>
+
+export const Factory: Factory = freeze<Factory>({
+  create(name) {
+    return name
+  },
+  cloneWith(value) {
+    return value
+  },
+})
+"#,
+            ),
+            (
+                "./object-utils.ts",
+                r#"
+export function freeze<T>(value: T): Readonly<T> {
+  return value
+}
+"#,
+            ),
+        ],
+        "./b.ts",
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "imported same-name const should preserve the Readonly alias annotation with consumer-first ordering, got: {diagnostics:?}"
+    );
 }
 
 #[test]
