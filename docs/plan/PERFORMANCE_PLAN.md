@@ -1385,6 +1385,15 @@ declaration/provenance guards (`reject_out_of_arena_decl=6`,
 attribution-mode run. Decision record:
 [`perf-runs/2026-05-14-simple-object-residual-annotations.md`](perf-runs/2026-05-14-simple-object-residual-annotations.md).
 
+**2026-05-14 composite/array attribution companion:** a follow-up attribution
+record for the same guarded union/intersection, array, and tuple admission
+shows the remaining annotation-kind buckets (`union_or_intersection`,
+`array_or_tuple`) at `0`. In that run, `checker.with_parent_cache_constructed`
+and `delegate.misses` drop from `11` to `5`; the remaining declaration-file
+residue is `FlatArray` (2), `IteratorResult` (2), and `Partial` (1). This
+attribution run is not a timing claim. Decision record:
+[`perf-runs/2026-05-14-simple-object-composite-array-tuple.md`](perf-runs/2026-05-14-simple-object-composite-array-tuple.md).
+
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
 any more aliases, add `direct_actual_lib_alias_body_outcomes` to the perf
 counter JSON/text dump and wire it at every return point in the actual-lib
