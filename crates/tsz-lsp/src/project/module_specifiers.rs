@@ -1457,6 +1457,10 @@ impl Project {
         }
 
         let package_root = normalize_node_modules_package_specifier(&package_root);
+        if package_root == ".store" {
+            return None;
+        }
+
         let manifest_package_name = normalize_node_modules_package_specifier(manifest_package_name);
         if manifest_package_name == package_root
             || manifest_package_name

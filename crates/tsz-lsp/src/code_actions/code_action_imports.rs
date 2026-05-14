@@ -563,8 +563,6 @@ impl<'a> CodeActionProvider<'a> {
             override_nl
         } else if self.source.contains("\r\n") {
             "\r\n"
-        } else if self.source.contains('\n') {
-            "\n"
         } else {
             "\n"
         };
