@@ -17,6 +17,66 @@ use tsz_scanner::SyntaxKind;
 use crate::state::BinderState;
 
 impl BinderState {
+    /// Append a `(name, declaration)` entry to the `module_augmentations`
+    /// table for the given target module specifier.
+    pub(crate) fn record_module_augmentation_entry(
+        &mut self,
+        module_spec: &str,
+        name: &str,
+        declaration: NodeIndex,
+    ) {
+        Arc::make_mut(&mut self.module_augmentations)
+            .entry(module_spec.to_string())
+            .or_default()
+            .push(crate::state::ModuleAugmentation::new(
+                name.to_string(),
+                declaration,
+            ));
+    }
+
+    /// Allocate or extend the augmentation-local symbol for a declaration inside
+    /// `declare module "<module_spec>" { ... }`.
+    ///
+    /// Augmentation declarations must never merge into a non-augmentation symbol
+    /// of the same name at file scope (issue #6164). Within one file, repeated
+    /// declarations of the same name across one or more `declare module
+    /// "<same-target>"` blocks merge with each other.
+    pub(crate) fn declare_module_augmentation_symbol(
+        &mut self,
+        arena: &NodeArena,
+        module_spec: &str,
+        name: &str,
+        flags: u32,
+        declaration: NodeIndex,
+        is_exported: bool,
+    ) -> SymbolId {
+        self.record_module_augmentation_entry(module_spec, name, declaration);
+
+        let span = Self::declaration_span(arena, declaration);
+        let key = (module_spec.to_string(), name.to_string());
+        let sym_id = if let Some(&existing) = self.module_augmentation_symbols.get(&key) {
+            if let Some(sym) = self.symbols.get_mut(existing) {
+                sym.flags |= flags;
+                sym.add_declaration(declaration, span);
+                if is_exported {
+                    sym.is_exported = true;
+                }
+            }
+            existing
+        } else {
+            let new_sym_id = self.symbols.alloc(flags, key.1.clone());
+            if let Some(sym) = self.symbols.get_mut(new_sym_id) {
+                sym.add_declaration(declaration, span);
+                sym.is_exported = is_exported;
+            }
+            Arc::make_mut(&mut self.augmentation_target_modules).insert(new_sym_id, key.0.clone());
+            self.module_augmentation_symbols.insert(key, new_sym_id);
+            new_sym_id
+        };
+        Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
+        sym_id
+    }
+
     // Declaration binding methods
 
     pub(crate) fn bind_variable_declaration(
@@ -820,43 +880,6 @@ impl BinderState {
         }
     }
 
-    fn declare_augmentation_symbol(
-        &mut self,
-        arena: &NodeArena,
-        module_spec: &str,
-        name: &str,
-        flags: u32,
-        declaration: NodeIndex,
-        is_exported: bool,
-    ) -> SymbolId {
-        let key = (module_spec.to_string(), name.to_string());
-
-        if let Some(&existing_id) = self.module_augmentation_symbols.get(&key) {
-            let span = Self::declaration_span(arena, declaration);
-            if let Some(sym) = self.symbols.get_mut(existing_id) {
-                sym.flags |= flags;
-                sym.add_declaration(declaration, span);
-            }
-            Arc::make_mut(&mut self.node_symbols).insert(declaration.0, existing_id);
-            self.current_scope.set(name.to_string(), existing_id);
-            existing_id
-        } else {
-            let sym_id = self.symbols.alloc(flags, name.to_string());
-            let span = Self::declaration_span(arena, declaration);
-            if let Some(sym) = self.symbols.get_mut(sym_id) {
-                sym.add_declaration(declaration, span);
-                if (flags & symbol_flags::VALUE) != 0 {
-                    sym.set_value_declaration(declaration, span);
-                }
-                sym.is_exported = is_exported;
-            }
-            Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
-            self.module_augmentation_symbols.insert(key, sym_id);
-            self.current_scope.set(name.to_string(), sym_id);
-            sym_id
-        }
-    }
-
     pub(crate) fn bind_interface_declaration(
         &mut self,
         arena: &NodeArena,
@@ -901,31 +924,31 @@ impl BinderState {
                     ));
             }
 
-            // Rule #44: When inside a module augmentation block, interface declarations
-            // must never merge into any same-named file-scope symbol. Use the augmentation
-            // symbol registry to create or reuse an isolated augmentation-only symbol.
+            // Rule #44: augmentation interfaces always bind to a separate `SymbolId`
+            // that is independent of any non-augmentation file-scope symbol of the
+            // same name (issue #6164). Within one file, repeated declarations of the
+            // same name across one or more `declare module "<same-target>" { ... }`
+            // blocks merge with each other through
+            // `declare_module_augmentation_symbol`.
             if self.in_module_augmentation
                 && let Some(module_spec) = self.current_augmented_module.clone()
             {
-                Arc::make_mut(&mut self.module_augmentations)
-                    .entry(module_spec.clone())
-                    .or_default()
-                    .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
-
                 // If the name already exists as an import alias in the current scope,
-                // skip symbol creation entirely. The import alias is the canonical binding;
-                // the augmentation members are tracked in module_augmentations and merged
-                // at type resolution time.
+                // only record the augmentation entry — declaring our own symbol would
+                // contaminate the import alias's type. The augmentation is still
+                // applied to the import alias at type-resolution time through the
+                // alias's apply-augmentations path.
                 let name_conflicts_with_import = self
                     .current_scope
                     .get(name)
                     .and_then(|sym_id| self.symbols.get(sym_id))
                     .is_some_and(|sym| sym.import_module.is_some());
                 if name_conflicts_with_import {
+                    self.record_module_augmentation_entry(&module_spec, name, idx);
                     return;
                 }
 
-                let sym_id = self.declare_augmentation_symbol(
+                let aug_sym_id = self.declare_module_augmentation_symbol(
                     arena,
                     &module_spec,
                     name,
@@ -945,7 +968,7 @@ impl BinderState {
                 );
                 let is_declare = Self::has_declare_modifier(arena, iface.modifiers.as_ref());
                 self.record_semantic_def_ext(
-                    sym_id,
+                    aug_sym_id,
                     crate::state::SemanticDefKind::Interface,
                     name,
                     idx,
@@ -959,7 +982,6 @@ impl BinderState {
                     extends_names,
                     implements_names,
                 );
-                Arc::make_mut(&mut self.augmentation_target_modules).insert(sym_id, module_spec);
                 return;
             }
 
@@ -1031,17 +1053,14 @@ impl BinderState {
                     ));
             }
 
-            // Rule #44: When inside a module augmentation block, type alias declarations
-            // must never merge into any same-named file-scope symbol.
+            // Rule #44: augmentation type aliases bind to a separate `SymbolId`
+            // independent of any non-augmentation file-scope symbol of the same name
+            // (issue #6164). Same-target augmentations within a file merge with each
+            // other through `declare_module_augmentation_symbol`.
             if self.in_module_augmentation
                 && let Some(module_spec) = self.current_augmented_module.clone()
             {
-                Arc::make_mut(&mut self.module_augmentations)
-                    .entry(module_spec.clone())
-                    .or_default()
-                    .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
-
-                let sym_id = self.declare_augmentation_symbol(
+                let aug_sym_id = self.declare_module_augmentation_symbol(
                     arena,
                     &module_spec,
                     name,
@@ -1057,7 +1076,7 @@ impl BinderState {
                     Self::collect_type_param_names(arena, alias.type_parameters.as_ref());
                 let is_declare = Self::has_declare_modifier(arena, alias.modifiers.as_ref());
                 self.record_semantic_def_with_declare(
-                    sym_id,
+                    aug_sym_id,
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
                     idx,
@@ -1066,7 +1085,7 @@ impl BinderState {
                     is_exported,
                     is_declare,
                 );
-                Arc::make_mut(&mut self.augmentation_target_modules).insert(sym_id, module_spec);
+
                 self.enter_scope(ContainerKind::Block, idx);
                 self.bind_type_parameters(arena, alias.type_parameters.as_ref());
                 self.exit_scope(arena);

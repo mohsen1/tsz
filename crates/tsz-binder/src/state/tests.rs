@@ -3170,6 +3170,145 @@ declare module "mylib" {
     );
 }
 
+// Regression for #6164: a `declare module "<self>"` augmentation must bind its
+// interface declaration to a separate `SymbolId` from the file-scope interface
+// of the same name. Merging the augmentation's declaration node into the
+// file-scope symbol would inject the augmentation members into the local type
+// computed by `compute_interface_type_from_declarations`.
+#[test]
+fn self_module_augmentation_interface_does_not_pollute_file_scope_interface() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+interface Merged {
+    a: number;
+}
+
+interface Merged {
+    b: string;
+}
+
+declare module "./test" {
+    interface Merged {
+        augmented: boolean;
+    }
+}
+
+export {};
+"#,
+    );
+
+    let file_sym = binder
+        .file_locals
+        .get("Merged")
+        .expect("local `interface Merged` should be visible at file scope");
+    let symbol = binder
+        .get_symbol(file_sym)
+        .expect("file-scope `Merged` symbol exists");
+    assert_eq!(
+        symbol.declarations.len(),
+        2,
+        "file-scope `Merged` should only see its two non-augmentation declarations, got {:?}",
+        symbol.declarations
+    );
+
+    let augmentations = binder
+        .module_augmentations
+        .get("./test")
+        .expect("augmentation entry for ./test should exist");
+    assert!(
+        augmentations.iter().any(|aug| aug.name == "Merged"),
+        "the augmentation table should record the augmentation declaration for ./test"
+    );
+}
+
+// Same-target augmentation interface declarations in separate `declare module
+// "X" { ... }` blocks must merge with each other into one augmentation-local
+// symbol, mirroring tsc's behaviour where two augmentations of `interface
+// Both` accumulate into one merged shape.
+#[test]
+fn module_augmentation_interface_declarations_merge_across_blocks() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+declare module "./mod" {
+    interface Both { foo: number; }
+}
+
+declare module "./mod" {
+    interface Both { bar: string; }
+}
+
+export {};
+"#,
+    );
+
+    let entries = binder
+        .module_augmentations
+        .get("./mod")
+        .expect("augmentation table should record both blocks");
+    let both_entries: Vec<_> = entries.iter().filter(|aug| aug.name == "Both").collect();
+    assert_eq!(both_entries.len(), 2, "expected two declarations of Both");
+
+    let sym_a = binder
+        .get_node_symbol(both_entries[0].node)
+        .expect("augmentation decl should map to a symbol");
+    let sym_b = binder
+        .get_node_symbol(both_entries[1].node)
+        .expect("augmentation decl should map to a symbol");
+    assert_eq!(
+        sym_a, sym_b,
+        "two augmentation declarations of the same name should share a symbol"
+    );
+
+    let merged = binder
+        .get_symbol(sym_a)
+        .expect("augmentation symbol exists");
+    assert_eq!(
+        merged.declarations.len(),
+        2,
+        "merged augmentation symbol should record both declarations"
+    );
+}
+
+// A `declare module "<self>"` type-alias augmentation must not merge into a
+// pre-existing file-scope type alias of the same name. This is the type-alias
+// mirror of #6164: same architectural rule, different declaration kind.
+#[test]
+fn self_module_augmentation_type_alias_does_not_pollute_file_scope_alias() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+type MyType = string;
+
+declare module "./test" {
+    type MyType = number;
+}
+
+export {};
+"#,
+    );
+
+    let file_sym = binder
+        .file_locals
+        .get("MyType")
+        .expect("local `type MyType = string` should be visible at file scope");
+    let symbol = binder
+        .get_symbol(file_sym)
+        .expect("file-scope `MyType` symbol exists");
+    assert_eq!(
+        symbol.declarations.len(),
+        1,
+        "file-scope `MyType` should only see its single non-augmentation declaration"
+    );
+
+    let augmentations = binder
+        .module_augmentations
+        .get("./test")
+        .expect("augmentation entry for ./test should exist");
+    assert!(
+        augmentations.iter().any(|aug| aug.name == "MyType"),
+        "the augmentation table should record the augmentation type-alias declaration"
+    );
+}
+
 // =============================================================================
 // MODULE AUGMENTATION SYMBOL ISOLATION TESTS
 // =============================================================================

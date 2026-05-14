@@ -437,10 +437,20 @@ pub struct BinderState {
     /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
 
-    /// Per-file registry mapping `(module_spec, decl_name)` to augmentation-only `SymbolId`s.
-    /// Keeps augmentation declarations isolated from same-named file-scope symbols.
-    #[serde(skip, default)]
-    pub(crate) module_augmentation_symbols: FxHashMap<(String, String), SymbolId>,
+    /// Per-file registry of symbols created for declarations inside `declare module "X"
+    /// { ... }` augmentation blocks, keyed by `(module_specifier, name)`.
+    ///
+    /// Two augmentation declarations of the same name targeting the same module — even
+    /// across separate `declare module` blocks in the same file — must merge with each
+    /// other. They must never merge with a *non*-augmentation declaration of the same
+    /// name at file scope (see issue #6164: tsc treats the augmentation symbol table as
+    /// independent from the augmenting file's locals).
+    ///
+    /// This registry preserves both invariants: within a single file's binding, each
+    /// `(module_spec, name)` key maps to one augmentation-local `SymbolId` that
+    /// successive augmentation declarations append to.  The registry is consulted only
+    /// during binding and is not propagated to checker-side state.
+    pub(crate) module_augmentation_symbols: rustc_hash::FxHashMap<(String, String), SymbolId>,
 
     /// Lib binders for automatic lib symbol resolution.
     /// When `get_symbol()` doesn't find a symbol locally, it checks these lib binders.
