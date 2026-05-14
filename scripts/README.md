@@ -34,6 +34,7 @@ scripts/
 | `scripts/emit/run.sh` | Run emit tests (JS + declaration output) |
 | `scripts/emit/run.sh --json-out` | Run emit tests and write `emit-detail.json` |
 | `scripts/emit/query-emit.py` | Offline emit results analysis and querying |
+| `scripts/emit/query-emit.py --families` | JS/DTS failure-family dashboard |
 | `scripts/emit/emit-detail.json` | Per-test emit results (offline analysis) |
 
 ### Fourslash Testing & Analysis
