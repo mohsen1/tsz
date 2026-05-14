@@ -822,8 +822,13 @@ impl<'a> CheckerState<'a> {
     /// 1. Check if return types are compatible in EITHER direction (or target is void)
     /// 2. If so, check parameter-only assignability (with return types ignored)
     ///
-    /// Uses bivariant assignability because tsc uses non-strict function types
-    /// for overload compatibility (implementation params can be wider or narrower).
+    /// Return types use bivariant assignability (tsc allows either direction).
+    /// Parameters use strict assignability: the implementation type must be strictly
+    /// assignable to the overload type, which enforces contravariance for
+    /// function-typed parameters (e.g. `(e: MouseEvent) => void` is not assignable
+    /// to `(e: Event) => void`, so an overload requiring the former is incompatible
+    /// with an implementation accepting the latter). This matches tsc's use of
+    /// `isSignatureAssignableTo` with `assignableRelation` in the same function.
     pub(crate) fn is_implementation_compatible_with_overload(
         &mut self,
         impl_type: tsz_solver::TypeId,
@@ -870,9 +875,10 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
 
-                // Parameter-only check via bivariant comparison (tsc's non-strict overload
-                // rule). Strip predicates first: return compatibility was already checked
-                // above, so predicates must not re-participate in the param comparison.
+                // Parameter-only check via strict assignability, matching tsc's
+                // `isSignatureAssignableTo(..., assignableRelation)`. Strip predicates
+                // first: return compatibility was already checked above, so predicates
+                // must not re-participate in the param comparison.
                 let impl_stripped = strip_function_type_predicate(self.ctx.types, impl_type);
                 let overload_stripped =
                     strip_function_type_predicate(self.ctx.types, overload_type);
@@ -880,7 +886,7 @@ impl<'a> CheckerState<'a> {
                     self.replace_return_type(impl_stripped, tsz_solver::TypeId::ANY);
                 let overload_with_any_ret =
                     self.replace_return_type(overload_stripped, tsz_solver::TypeId::ANY);
-                self.is_assignable_to_bivariant(impl_with_any_ret, overload_with_any_ret)
+                self.is_assignable_to(impl_with_any_ret, overload_with_any_ret)
             }
             _ => {
                 // If we can't get return types, fall back to bivariant assignability
