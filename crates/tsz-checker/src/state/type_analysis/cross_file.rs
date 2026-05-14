@@ -132,6 +132,19 @@ impl<'a> CheckerState<'a> {
     /// Get a symbol from the current binder, lib binders, or other file binders.
     /// This ensures we can resolve symbols from lib.d.ts and other files.
     pub(crate) fn get_symbol_globally(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
+        // If the import/export resolver has already tied this raw SymbolId to a
+        // specific source file, use that binder before the current file. Raw
+        // SymbolIds are only file-local; checking the current binder first can
+        // accidentally pick an unrelated same-id symbol while resolving
+        // cross-file aliases.
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && file_idx != self.ctx.current_file_idx
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(sym) = binder.get_symbol(sym_id)
+        {
+            return Some(sym);
+        }
+
         // 1. Check current file
         if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
             return Some(sym);

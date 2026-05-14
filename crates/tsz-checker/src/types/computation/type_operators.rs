@@ -24,7 +24,6 @@ impl<'a> CheckerState<'a> {
     /// - Objects: Combines properties from all members
     /// - Functions: Union of function signatures
     pub(crate) fn get_type_from_union_type(&mut self, idx: NodeIndex) -> TypeId {
-        let factory = self.ctx.types.factory();
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -44,8 +43,10 @@ impl<'a> CheckerState<'a> {
                 return member_types[0];
             }
 
-            let result = factory.union(member_types.clone());
-
+            let result = tsz_solver::utils::union_or_single_literal_reduce(
+                self.ctx.types,
+                member_types.clone(),
+            );
             // Mirror tsc's `UnionType.origin`: record the as-written input
             // member list so the diagnostic printer can preserve top-level
             // alias names that union flattening would otherwise dissolve

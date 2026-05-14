@@ -99,11 +99,13 @@ impl TypeCache {
 impl<'a> CheckerContext<'a> {
     /// Resolve a `SymbolId` to its owning file index.
     ///
-    /// Checks the shared `global_symbol_file_index` first (pre-built, read-only,
-    /// no `RefCell` overhead), then falls back to the layered
-    /// `cross_file_symbol_targets` overlay for dynamically-discovered mappings.
+    /// Checks the layered `cross_file_symbol_targets` overlay first, then falls
+    /// back to the shared `global_symbol_file_index` base map.
     /// Returns `None` if the symbol has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
+        if let Some(idx) = self.resolve_dynamic_symbol_file_index(sym_id) {
+            return Some(idx);
+        }
         if let Some(&idx) = self
             .global_symbol_file_index
             .as_ref()
@@ -111,7 +113,7 @@ impl<'a> CheckerContext<'a> {
         {
             return Some(idx);
         }
-        self.resolve_dynamic_symbol_file_index(sym_id)
+        None
     }
 
     /// Resolve only dynamically-discovered `SymbolId` ownership.
@@ -1328,7 +1330,15 @@ impl<'a> CheckerContext<'a> {
         let module_specifier = symbol.import_module.as_ref()?;
         let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
 
-        let source_file_idx = symbol.decl_file_idx as usize;
+        let source_file_idx = if self
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|local| local.flags & tsz_binder::symbol_flags::ALIAS != 0)
+        {
+            self.current_file_idx
+        } else {
+            symbol.decl_file_idx as usize
+        };
         if let Some(target_idx) =
             self.resolve_import_target_from_file(source_file_idx, module_specifier)
         {
@@ -1360,12 +1370,26 @@ impl<'a> CheckerContext<'a> {
         let module_specifier = symbol.import_module.as_ref()?;
         let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
 
-        let source_file_idx = symbol.decl_file_idx as usize;
+        let source_file_idx = if self
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|local| local.flags & tsz_binder::symbol_flags::ALIAS != 0)
+        {
+            self.current_file_idx
+        } else {
+            symbol.decl_file_idx as usize
+        };
         if let Some(target_idx) =
             self.resolve_import_target_from_file(source_file_idx, module_specifier)
         {
             let target_binder = self.get_binder_for_file(target_idx)?;
-            let result = target_binder.file_locals.get(import_name)?;
+            let target_arena = self.get_arena_for_file(target_idx as u32);
+            let file_name = &target_arena.source_files.first()?.file_name;
+            let result = target_binder
+                .module_exports
+                .get(file_name)
+                .and_then(|exports| exports.get(import_name))
+                .or_else(|| target_binder.file_locals.get(import_name))?;
             self.register_symbol_file_target(result, target_idx);
             return Some(result);
         }
