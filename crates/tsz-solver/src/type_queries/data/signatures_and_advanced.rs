@@ -381,6 +381,20 @@ pub fn get_function_shape(
     }
 }
 
+/// Returns `true` if `type_id` is callable and its first call signature was declared with
+/// method-shorthand syntax (`is_method = true`).
+pub fn callable_first_sig_is_method(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(shape) = get_function_shape(db, type_id) {
+        return shape.is_method;
+    }
+    if let Some(shape) = get_callable_shape(db, type_id) {
+        if let Some(sig) = shape.call_signatures.first() {
+            return sig.is_method;
+        }
+    }
+    false
+}
+
 /// Return a function type with all `ERROR` parameter and return positions rewritten to `ANY`.
 ///
 /// Returns the original `type_id` when:

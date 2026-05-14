@@ -385,3 +385,116 @@ fn test_ts2328_not_emitted_for_generic_callback_params() {
         "TS2328 should NOT appear for generic callback params, got {codes:?}"
     );
 }
+
+/// Passing a callback with a NARROWER parameter type to a method call must be
+/// rejected under --strictFunctionTypes.
+///
+/// Structural rule: `(dog: Dog) => void` is not assignable to
+/// `(animal: Animal) => void` because the contravariant check
+/// `Animal <: Dog` fails (Animal is missing `bark`).
+#[test]
+fn test_method_call_callback_contravariance_narrower_param_errors() {
+    test_function_variance(
+        r#"
+        interface Animal { name: string }
+        interface Dog extends Animal { bark(): void }
+
+        interface Handler {
+            handle(callback: (animal: Animal) => void): void;
+        }
+
+        declare const handler: Handler;
+        handler.handle((dog: Dog) => { dog.bark(); });
+        "#,
+        2345,
+    );
+}
+
+/// Same rule with different type parameter names to prove it is not hardcoded.
+#[test]
+fn test_method_call_callback_contravariance_different_names() {
+    test_function_variance(
+        r#"
+        interface Base { x: number }
+        interface Derived extends Base { y: number }
+
+        interface Processor {
+            process(fn: (input: Base) => void): void;
+        }
+
+        declare const p: Processor;
+        p.process((d: Derived) => { d.y; });
+        "#,
+        2345,
+    );
+}
+
+/// Passing a callback with a WIDER parameter type must succeed (covariant arg is ok).
+#[test]
+fn test_method_call_callback_wider_param_ok() {
+    test_no_errors(
+        r#"
+        interface Animal { name: string }
+        interface Dog extends Animal { bark(): void }
+
+        interface Handler {
+            handle(callback: (dog: Dog) => void): void;
+        }
+
+        declare const handler: Handler;
+        handler.handle((animal: Animal) => {});
+        "#,
+    );
+}
+
+/// Passing an exactly matching callback type must succeed.
+#[test]
+fn test_method_call_callback_same_param_ok() {
+    test_no_errors(
+        r#"
+        interface Animal { name: string }
+
+        interface Handler {
+            handle(callback: (animal: Animal) => void): void;
+        }
+
+        declare const handler: Handler;
+        handler.handle((a: Animal) => {});
+        "#,
+    );
+}
+
+/// Callback contravariance also applies when calling through element access.
+#[test]
+fn test_element_access_call_callback_contravariance_errors() {
+    test_function_variance(
+        r#"
+        interface Animal { name: string }
+        interface Dog extends Animal { bark(): void }
+
+        interface Handler {
+            handle(callback: (animal: Animal) => void): void;
+        }
+
+        declare const handler: Handler;
+        handler["handle"]((dog: Dog) => { dog.bark(); });
+        "#,
+        2345,
+    );
+}
+
+/// A plain function (not called through property access) must also enforce
+/// callback contravariance — existing behaviour, not a regression.
+#[test]
+fn test_plain_function_call_callback_contravariance_errors() {
+    test_function_variance(
+        r#"
+        interface Animal { name: string }
+        interface Dog extends Animal { bark(): void }
+
+        declare function handle(callback: (animal: Animal) => void): void;
+        handle((dog: Dog) => { dog.bark(); });
+        "#,
+        2345,
+    );
+}

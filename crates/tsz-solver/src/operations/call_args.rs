@@ -593,8 +593,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
+            // Bivariance only applies when the parameter was declared as a method shorthand;
+            // function-type literals are contravariant under --strictFunctionTypes.
             let use_bivariant_callbacks = (allow_bivariant_callbacks
                 || self.force_bivariant_callbacks)
+                && crate::type_queries::callable_first_sig_is_method(
+                    self.interner,
+                    effective_param_type,
+                )
                 && crate::type_queries::is_callable_type(self.interner, expanded_arg_type)
                 && crate::type_queries::is_callable_type(self.interner, effective_param_type);
             if self.callback_requires_more_fixed_params_than_generic_rest_allows(
