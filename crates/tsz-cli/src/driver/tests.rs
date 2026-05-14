@@ -2063,7 +2063,7 @@ module.exports.memberName = "thing";
 }
 
 #[test]
-fn cross_file_commonjs_default_export_merge_emits_declarations() {
+fn cross_file_commonjs_default_export_merge_blocks_all_declaration_outputs() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
         dir.path().join("index.js"),
@@ -2103,19 +2103,19 @@ export default validate;
     let result = compile(&args, dir.path()).expect("compile");
 
     assert!(
-        !result.diagnostics.iter().any(|diag| {
+        result.diagnostics.iter().any(|diag| {
             diag.code
                 == diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED
         }),
-        "did not expect TS6232, got: {:?}",
+        "expected TS6232, got: {:?}",
         result.diagnostics
     );
     assert!(
-        dir.path().join("out/index.d.ts").exists(),
-        "index.d.ts should be emitted for default export merges"
+        !dir.path().join("out/index.d.ts").exists(),
+        "index.d.ts should not be emitted after TS6232"
     );
     assert!(
-        dir.path().join("out/exporter.d.ts").exists(),
-        "exporter.d.ts should be emitted for default export merges"
+        !dir.path().join("out/exporter.d.ts").exists(),
+        "exporter.d.ts should not be emitted after TS6232"
     );
 }
