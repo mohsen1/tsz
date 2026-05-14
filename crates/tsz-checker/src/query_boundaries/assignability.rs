@@ -1032,39 +1032,6 @@ fn collect_target_property_index(db: &dyn TypeDatabase, target: TypeId) -> Targe
     props
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tsz_solver::TypeInterner;
-
-    #[test]
-    fn target_property_index_uses_first_atom_match() {
-        let db = TypeInterner::new();
-        let name = db.intern_string("renamed");
-        let mut index = TargetPropertyIndex::default();
-
-        index.insert(&PropertyInfo::new(name, TypeId::STRING));
-        index.insert(&PropertyInfo::new(name, TypeId::NUMBER));
-
-        let source = PropertyInfo::new(name, TypeId::BOOLEAN);
-        assert_eq!(index.matching_type_for(&db, &source), Some(TypeId::STRING));
-    }
-
-    #[test]
-    fn target_property_index_keeps_string_fallback() {
-        let db = TypeInterner::new();
-        let name = db.intern_string("fallbackName");
-        let mut index = TargetPropertyIndex::default();
-
-        index.fallback_order.push((name, TypeId::NUMBER));
-
-        assert_eq!(
-            index.matching_type_by_resolved_name(&db, name),
-            Some(TypeId::NUMBER)
-        );
-    }
-}
-
 /// Check if an object shape represents the global Object or Function interface.
 ///
 /// These types have only inherited method properties and should suppress
@@ -1175,4 +1142,37 @@ pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolv
         policy,
         context,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn target_property_index_uses_first_atom_match() {
+        let db = TypeInterner::new();
+        let name = db.intern_string("renamed");
+        let mut index = TargetPropertyIndex::default();
+
+        index.insert(&PropertyInfo::new(name, TypeId::STRING));
+        index.insert(&PropertyInfo::new(name, TypeId::NUMBER));
+
+        let source = PropertyInfo::new(name, TypeId::BOOLEAN);
+        assert_eq!(index.matching_type_for(&db, &source), Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn target_property_index_keeps_string_fallback() {
+        let db = TypeInterner::new();
+        let name = db.intern_string("fallbackName");
+        let mut index = TargetPropertyIndex::default();
+
+        index.fallback_order.push((name, TypeId::NUMBER));
+
+        assert_eq!(
+            index.matching_type_by_resolved_name(&db, name),
+            Some(TypeId::NUMBER)
+        );
+    }
 }
