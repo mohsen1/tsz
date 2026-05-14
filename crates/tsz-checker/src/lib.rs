@@ -138,6 +138,9 @@ mod environment_capabilities_tests;
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]
+#[path = "tests/generic_default_application_arg_preservation_tests.rs"]
+mod generic_default_application_arg_preservation_tests;
+#[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
