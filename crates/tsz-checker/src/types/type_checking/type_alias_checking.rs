@@ -1292,10 +1292,10 @@ impl<'a> CheckerState<'a> {
                 // invalid mapped type keys inside conditional types.
                 //
                 // Infer-binding scope: `infer X` declarations in ExtendsType bind `X` in
-                // TrueType only. Push them as provisional type parameters before recursing
-                // into branches so references to `X` inside TrueType resolve without TS2304.
+                // TrueType only. Push them as provisional type parameters only while
+                // recursing into TrueType so references to `X` inside FalseType still
+                // report TS2304 like `tsc`.
                 if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
-                    let infer_pushes = self.push_infer_bindings_from_extends(cond.extends_type);
                     let true_is_mapped = self
                         .ctx
                         .arena
@@ -1314,7 +1314,10 @@ impl<'a> CheckerState<'a> {
                                 check_type,
                             );
                         if !check_is_type_param {
+                            let infer_pushes =
+                                self.push_infer_bindings_from_extends(cond.extends_type);
                             self.check_type_node(cond.true_type);
+                            self.pop_infer_bindings(infer_pushes);
                         }
                     }
                     let false_is_mapped = self
@@ -1325,7 +1328,6 @@ impl<'a> CheckerState<'a> {
                     if false_is_mapped {
                         self.check_type_node(cond.false_type);
                     }
-                    self.pop_infer_bindings(infer_pushes);
                     if self.ctx.compiler_options.no_unused_parameters {
                         self.check_unused_infer_type_params_in_conditional(cond);
                     }

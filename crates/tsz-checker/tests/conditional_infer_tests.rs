@@ -1861,6 +1861,10 @@ fn no_ts2304(diags: &[tsz_checker::diagnostics::Diagnostic], ctx: &str) {
     );
 }
 
+fn ts2304_count(diags: &[tsz_checker::diagnostics::Diagnostic]) -> usize {
+    diags.iter().filter(|d| d.code == 2304).count()
+}
+
 /// Utility type in check position: `Pick<T, K> extends infer R`
 /// — `R` must be visible inside the true branch mapped type.
 #[test]
@@ -1941,4 +1945,26 @@ type T5 = Identity<{ a: string }>;
 "#;
     let diags = check_source_strict_with_default_libs(source);
     no_ts2304(&diags, "T extends infer R (simple case regression)");
+}
+
+/// Infer bindings are scoped to the true branch only.
+/// The false branch must still report unknown-name errors for `R`.
+#[test]
+fn infer_binding_not_visible_in_false_branch() {
+    let source = r#"
+type Bad<T> =
+    T extends { a: infer R }
+        ? string
+        : { [K in keyof R]: R[K] };
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert_eq!(
+        ts2304_count(&diags),
+        2,
+        "false branch infer references should remain unbound. Actual diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
 }
