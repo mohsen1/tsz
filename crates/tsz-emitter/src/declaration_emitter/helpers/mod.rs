@@ -101,6 +101,12 @@ pub(crate) struct JsClassLikePrototypeMembers {
     pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
 }
 
+#[derive(Default)]
+pub(crate) struct JsClassStaticMembers {
+    pub(crate) members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
+}
+
 #[derive(Clone)]
 pub(crate) struct JsClassDefinePropertyAccessor {
     pub(crate) property_name: String,
