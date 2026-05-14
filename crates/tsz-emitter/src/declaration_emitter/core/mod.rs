@@ -4,6 +4,8 @@
 mod emit_declaration_class_helpers;
 mod emit_declarations;
 mod emit_members;
+mod import_rewrites;
+mod inferred_predicate_returns;
 mod js_class_static;
 mod js_commonjs_constructor;
 mod js_emit;
@@ -174,6 +176,9 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_cjs_export_alias_statements: FxHashSet<NodeIndex>,
     /// Statements consumed by `module.exports = { Name1, Name2 }` object pattern.
     pub(super) js_module_exports_object_stmts: FxHashSet<NodeIndex>,
+    /// Top-level local JS function declarations consumed by
+    /// `Object.defineProperty(module.exports, "name", { value: local })` exports.
+    pub(super) js_define_property_export_local_names: FxHashSet<String>,
     /// Top-level JS `const Local = require("mod").Export` aliases used by
     /// exported inferred types and emitted as trailing import-equals aliases.
     pub(super) js_require_property_import_aliases: Vec<(String, String, String)>,

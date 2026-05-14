@@ -859,61 +859,71 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(&func_idx.0)
                 .copied()
                 .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
-            if let Some(func_type_id) = func_type_id
-                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
-            {
-                // If solver returned `any` but the function body clearly returns void,
-                // prefer void (the solver's `any` is a fallback, not an actual inference)
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && func_body.is_some()
-                    && self.body_returns_void(func_body)
-                {
-                    self.write(": void");
-                } else if let Some(type_text) = func_body
-                    .is_some()
-                    .then(|| {
-                        self.async_returned_function_initializer_promise_type_text(func, func_body)
-                    })
-                    .flatten()
+            if let Some(func_type_id) = func_type_id {
+                if let Some(predicate_text) =
+                    self.function_type_predicate_text(func_type_id, func.type_parameters.as_ref())
                 {
                     self.write(": ");
-                    self.write(&type_text);
-                } else if let Some(type_text) = preferred_return.as_ref()
-                    && (direct_function_return
-                        || self.should_prefer_source_return_type_text(type_text, return_type_id)
-                        || self.source_return_type_is_function_type_param(func, type_text)
-                        || self.source_return_type_preserves_function_type_param(
-                            func,
-                            type_text,
-                            return_type_id,
-                        ))
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, func_type_id)
                 {
-                    let (type_text, _) =
-                        self.function_return_type_text_for_declaration_scope(func, type_text);
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if self.emit_single_nameable_new_return_type_if_solver_any(
-                    func,
-                    func_body,
-                    func_name,
-                    return_type_id,
-                ) {
-                } else {
-                    let printed_type_text =
-                        self.inferred_function_return_type_text(func, return_type_id);
-                    self.write(": ");
-                    self.write(&printed_type_text);
-                    if let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func.name)
-                        && let Some(file_path) = self.current_file_path.clone()
+                    // If solver returned `any` but the function body clearly returns void,
+                    // prefer void (the solver's `any` is a fallback, not an actual inference)
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && func_body.is_some()
+                        && self.body_returns_void(func_body)
                     {
-                        let _ = self.emit_non_portable_import_type_text_diagnostics(
-                            &printed_type_text,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
+                        self.write(": void");
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
+                            self.async_returned_function_initializer_promise_type_text(
+                                func, func_body,
+                            )
+                        })
+                        .flatten()
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some(type_text) = preferred_return.as_ref()
+                        && (direct_function_return
+                            || self
+                                .should_prefer_source_return_type_text(type_text, return_type_id)
+                            || self.source_return_type_is_function_type_param(func, type_text)
+                            || self.source_return_type_preserves_function_type_param(
+                                func,
+                                type_text,
+                                return_type_id,
+                            ))
+                    {
+                        let (type_text, _) =
+                            self.function_return_type_text_for_declaration_scope(func, type_text);
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                        func,
+                        func_body,
+                        func_name,
+                        return_type_id,
+                    ) {
+                    } else {
+                        let printed_type_text =
+                            self.inferred_function_return_type_text(func, return_type_id);
+                        self.write(": ");
+                        self.write(&printed_type_text);
+                        if let Some(name_text) = self.get_identifier_text(func_name)
+                            && let Some(name_node) = self.arena.get(func.name)
+                            && let Some(file_path) = self.current_file_path.clone()
+                        {
+                            let _ = self.emit_non_portable_import_type_text_diagnostics(
+                                &printed_type_text,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
                     }
                 }
             } else if func_body.is_some() {
@@ -1710,73 +1720,83 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(&func_idx.0)
                 .copied()
                 .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
-            if let Some(func_type_id) = func_type_id
-                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
-            {
-                // If solver returned `any` but the function body clearly returns void,
-                // prefer void (the solver's `any` is a fallback, not an actual inference)
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && func_body.is_some()
-                    && self.body_returns_void(func_body)
-                {
-                    self.write(": void");
-                } else if let Some(type_text) = func_body
-                    .is_some()
-                    .then(|| {
-                        self.async_returned_function_initializer_promise_type_text(func, func_body)
-                    })
-                    .flatten()
+            if let Some(func_type_id) = func_type_id {
+                if let Some(predicate_text) =
+                    self.function_type_predicate_text(func_type_id, func.type_parameters.as_ref())
                 {
                     self.write(": ");
-                    self.write(&type_text);
-                } else if let Some(type_text) = preferred_return.as_ref()
-                    && (direct_function_return
-                        || self.should_prefer_source_return_type_text(type_text, return_type_id)
-                        || self.source_return_type_is_function_type_param(func, type_text)
-                        || self.source_return_type_preserves_function_type_param(
-                            func,
-                            type_text,
-                            return_type_id,
-                        ))
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, func_type_id)
                 {
-                    let (type_text, _) =
-                        self.function_return_type_text_for_declaration_scope(func, type_text);
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if self.emit_single_nameable_new_return_type_if_solver_any(
-                    func,
-                    func_body,
-                    func_name,
-                    return_type_id,
-                ) {
-                } else {
-                    if let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
+                    // If solver returned `any` but the function body clearly returns void,
+                    // prefer void (the solver's `any` is a fallback, not an actual inference)
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && func_body.is_some()
+                        && self.body_returns_void(func_body)
                     {
-                        self.check_non_portable_type_references(
-                            return_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    self.write(": ");
-                    let printed_type_text =
-                        self.inferred_function_return_type_text(func, return_type_id);
-                    self.write(&printed_type_text);
-                    if let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
+                        self.write(": void");
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
+                            self.async_returned_function_initializer_promise_type_text(
+                                func, func_body,
+                            )
+                        })
+                        .flatten()
                     {
-                        let _ = self.emit_non_portable_import_type_text_diagnostics(
-                            &printed_type_text,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some(type_text) = preferred_return.as_ref()
+                        && (direct_function_return
+                            || self
+                                .should_prefer_source_return_type_text(type_text, return_type_id)
+                            || self.source_return_type_is_function_type_param(func, type_text)
+                            || self.source_return_type_preserves_function_type_param(
+                                func,
+                                type_text,
+                                return_type_id,
+                            ))
+                    {
+                        let (type_text, _) =
+                            self.function_return_type_text_for_declaration_scope(func, type_text);
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                        func,
+                        func_body,
+                        func_name,
+                        return_type_id,
+                    ) {
+                    } else {
+                        if let Some(name_text) = self.get_identifier_text(func_name)
+                            && let Some(name_node) = self.arena.get(func_name)
+                            && let Some(file_path) = self.current_file_path.clone()
+                        {
+                            self.check_non_portable_type_references(
+                                return_type_id,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
+                        self.write(": ");
+                        let printed_type_text =
+                            self.inferred_function_return_type_text(func, return_type_id);
+                        self.write(&printed_type_text);
+                        if let Some(name_text) = self.get_identifier_text(func_name)
+                            && let Some(name_node) = self.arena.get(func_name)
+                            && let Some(file_path) = self.current_file_path.clone()
+                        {
+                            let _ = self.emit_non_portable_import_type_text_diagnostics(
+                                &printed_type_text,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
                     }
                 }
             } else if func_body.is_some() && self.body_returns_void(func_body) {

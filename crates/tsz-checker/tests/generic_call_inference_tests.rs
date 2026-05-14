@@ -167,6 +167,25 @@ opt1.zip(opt2, opt3);
 }
 
 #[test]
+fn generic_rest_parameter_infers_literal_tuple_under_primitive_array_constraint() {
+    let diagnostics = relevant_default_lib_diagnostics(
+        r#"
+function typed<T extends string[]>(...args: T): T {
+    return args;
+}
+
+const t1 = typed("a", "b", "c");
+const check1: ["a", "b", "c"] = t1;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "generic rest parameter should infer a tuple of string literal types; got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn conditional_parameter_infers_through_branches_before_assignability() {
     let source = r#"
 interface Iterable<T> {}
