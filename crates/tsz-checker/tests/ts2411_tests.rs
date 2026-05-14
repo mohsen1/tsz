@@ -373,8 +373,8 @@ export {};
         },
     ));
     assert!(
-        !diagnostics.iter().any(|d| d.0 == 2411),
-        "Exact optional property types should check the present value type without adding undefined, got: {diagnostics:?}"
+        diagnostics.iter().any(|d| d.0 == 2411),
+        "Exact optional property types still read optional properties as possibly undefined for index compatibility, got: {diagnostics:?}"
     );
 }
 
