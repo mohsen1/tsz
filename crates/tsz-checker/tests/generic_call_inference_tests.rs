@@ -1928,6 +1928,57 @@ function f<T>(): Box<T> { return make({}) }
     );
 }
 
+#[test]
+fn result_union_false_branch_infers_never_and_error_type() {
+    let source = r#"
+type Result<T, E = unknown> =
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+
+function failure<E = unknown>(error: E): Result<never, E> {
+  return { ok: false, error };
+}
+
+function handle<T, E>(result: Result<T, E>): T | E {
+  return result.ok ? result.value : result.error;
+}
+
+const viaInline: never | string = handle(failure("error"));
+const result = failure("error");
+const viaAlias: never | string = handle(result);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Result-like false branch should infer T=never and E=string. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn renamed_result_union_false_branch_inference_is_structural() {
+    let source = r#"
+type Outcome<A, B> =
+  | { tag: "some"; data: A }
+  | { tag: "none"; problem: B };
+
+function miss<B>(problem: B): Outcome<never, B> {
+  return { tag: "none", problem };
+}
+
+function unwrap<A, B>(outcome: Outcome<A, B>): A | B {
+  return outcome.tag === "some" ? outcome.data : outcome.problem;
+}
+
+const outcome = miss("missing");
+const value: never | string = unwrap(outcome);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Branch inference must not depend on Result/ok/error spellings. Diagnostics: {diags:#?}"
+    );
+}
+
 // ─── Callable shape sanitization with overloads ───────────────────────
 
 #[test]
