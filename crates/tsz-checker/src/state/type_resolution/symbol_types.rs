@@ -468,9 +468,24 @@ impl<'a> CheckerState<'a> {
                 } else {
                     structural_type
                 };
-                // Register for alias-name formatting in diagnostics
+                // Register for alias-name formatting in diagnostics while
+                // preserving generic alias parameters. `Application(Lazy(def), args)`
+                // evaluation depends on the DefId retaining its declared type
+                // parameters; re-registering a generic alias with an empty list
+                // makes the solver instantiate nothing and leaves conditionals
+                // deferred.
+                let def_id = self
+                    .ctx
+                    .get_or_create_def_id_for_symbol_name(sym_id, escaped_name);
+                let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_else(|| {
+                    let params = self.get_reference_type_params_for_symbol(sym_id, escaped_name);
+                    if !params.is_empty() {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                    }
+                    params
+                });
                 self.ctx
-                    .register_resolved_type(sym_id, structural_type, Vec::new());
+                    .register_resolved_type(sym_id, structural_type, type_params);
                 self.ctx.leave_recursion();
                 return structural_type;
             }
