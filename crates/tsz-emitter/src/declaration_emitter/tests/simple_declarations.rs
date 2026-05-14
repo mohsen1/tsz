@@ -3320,10 +3320,12 @@ declare class MyClass {
     method(): void;
 }
 declare namespace MyClass {
+    function staticMethod(): void;
+    let staticProperty: number;
+}
+declare namespace MyClass {
     export { staticMethod, staticProperty, DoneCB };
 }
-declare function staticMethod(): void;
-declare var staticProperty: number;
 /**
  * Callback to be invoked when test execution is complete.
  */
@@ -4285,9 +4287,11 @@ declare class Handler {
     process(): void;
 }
 declare namespace Handler {
+    function statische(): void;
+}
+declare namespace Handler {
     export { statische, Strings, HandlerOptions };
 }
-declare function statische(): void;
 declare namespace Strings {
     let a: string;
     let b: string;

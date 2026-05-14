@@ -2755,6 +2755,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         let jsdoc = self.function_like_jsdoc_for_node(initializer);
 
+        if let Some(jsdoc) = jsdoc.as_deref() {
+            self.emit_multiline_jsdoc_comment(jsdoc);
+        }
         self.write_indent();
         self.emit_node(name_idx);
 
@@ -2844,6 +2847,9 @@ impl<'a> DeclarationEmitter<'a> {
         if type_annotation.is_some() {
             self.write(": ");
             self.emit_type(type_annotation);
+        } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(body_idx) {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if body_idx.is_some() && self.body_returns_void(body_idx) {
             self.write(": void");
         } else if !self.source_is_declaration_file {
@@ -3828,6 +3834,12 @@ impl<'a> DeclarationEmitter<'a> {
             if !declared_names.insert(prop_name) {
                 continue;
             }
+            if self.emit_js_function_typed_property(prop_name_idx, rhs_idx) {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
+                continue;
+            }
             if let Some(jsdoc_type) = self.jsdoc_type_text_for_node(stmt_idx) {
                 if let Some(jsdoc) = self.function_like_jsdoc_for_node(stmt_idx) {
                     self.emit_multiline_jsdoc_comment(&jsdoc);
@@ -3860,6 +3872,20 @@ impl<'a> DeclarationEmitter<'a> {
             }
             self.write(";");
             self.write_line();
+        }
+
+        if let Some(name) = self.get_identifier_text(name_idx)
+            && let Some(methods) = self.js_class_like_prototype_members.get(&name).cloned()
+        {
+            for (method_name, initializer) in methods {
+                let Some(method_name_text) = self.get_identifier_text(method_name) else {
+                    continue;
+                };
+                if !declared_names.insert(method_name_text) {
+                    continue;
+                }
+                self.emit_js_synthetic_class_method(method_name, initializer);
+            }
         }
 
         let mut proto_type = None;

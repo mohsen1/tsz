@@ -230,6 +230,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_js_class_like_prototype_members(source_file, &self.js_export_equals_names);
         self.js_class_like_prototype_members = js_class_like.members;
         self.js_class_like_prototype_stmts = js_class_like.consumed_stmts;
+        let js_class_static = self.collect_js_class_static_members(source_file);
+        self.js_class_static_members = js_class_static.members;
+        self.js_class_static_member_stmts = js_class_static.consumed_stmts;
+        for stmt_idx in &self.js_class_static_member_stmts {
+            self.js_deferred_function_export_statements.remove(stmt_idx);
+            self.js_deferred_value_export_statements.remove(stmt_idx);
+        }
         let (js_class_define_property_accessors, js_class_define_property_accessor_stmts) =
             self.collect_js_class_define_property_accessors(source_file);
         self.js_class_define_property_accessors = js_class_define_property_accessors;
@@ -671,6 +678,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
+        if self.js_class_static_member_stmts.contains(&stmt_idx) {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
         if self
             .js_class_define_property_accessor_stmts
             .contains(&stmt_idx)
@@ -1065,6 +1076,7 @@ impl<'a> DeclarationEmitter<'a> {
             ) {
                 self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
             }
+            self.emit_js_class_static_members_namespace(func.name, is_exported);
             self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
             return;
         }
@@ -1426,6 +1438,7 @@ impl<'a> DeclarationEmitter<'a> {
         ) {
             self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
         }
+        self.emit_js_class_static_members_namespace(func.name, is_exported);
         self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
 
         // Skip comments within the function body to prevent them from
@@ -1569,12 +1582,16 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);
+            self.emit_js_class_like_prototype_members_for_declared_class(
+                class.name,
+                &class.members,
+            );
         }
-
         self.decrease_indent();
         self.write_indent();
         self.write("}");
         self.write_line();
+        self.emit_js_class_static_members_namespace(class.name, is_exported);
         if shadow_alias.is_none() {
             self.emit_js_namespace_export_aliases_for_name(class.name, is_exported);
         }
