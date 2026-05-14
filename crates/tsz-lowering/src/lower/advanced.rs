@@ -624,11 +624,6 @@ impl<'a> TypeLowering<'a> {
         if let Some(def_id) = resolved_def_id {
             return self.interner.lazy(def_id);
         }
-        if let Some(name) = self.type_name_text(node_idx) {
-            return self
-                .interner
-                .unresolved_type_name(self.interner.intern_string(&name));
-        }
         // Last-chance: `import("./m").Type` chains, where the QUALIFIED_NAME root
         // is an `import(...)` CALL_EXPRESSION. The name-text and def-id paths
         // can't cross file boundaries during lowering, so a checker callback does.
@@ -637,6 +632,11 @@ impl<'a> TypeLowering<'a> {
             && let Some(resolved) = resolver(call_node, &segments)
         {
             return resolved;
+        }
+        if let Some(name) = self.type_name_text(node_idx) {
+            return self
+                .interner
+                .unresolved_type_name(self.interner.intern_string(&name));
         }
         TypeId::ERROR
     }

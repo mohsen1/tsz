@@ -1161,10 +1161,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
+        let type_alias_partner_for = |sym_id: tsz_binder::SymbolId| {
+            target_binder
+                .alias_partners
+                .iter()
+                .find_map(|(&type_alias_id, &alias_id)| {
+                    (alias_id == sym_id).then_some(type_alias_id)
+                })
+        };
+
         // Resolve the first segment as a named export of the target module, then
         // walk any nested namespace segments (`import("./m").Ns.Inner`).
+        // Direct exported type aliases may be represented by an exported ALIAS
+        // partner; normalize those to the declaration symbol so the lazy DefId
+        // resolves to the alias body instead of an opaque export wrapper.
         let (mut current_sym, _) = target_binder
             .resolve_import_with_reexports_type_only(&target_file_name, first_segment)?;
+        if let Some(type_alias_id) = type_alias_partner_for(current_sym) {
+            current_sym = type_alias_id;
+        }
         for seg in &segments[1..] {
             let symbol = target_binder
                 .get_symbol(current_sym)
@@ -1174,6 +1189,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .as_deref()
                 .and_then(|e| e.get(seg.as_str()))
                 .or_else(|| symbol.members.as_deref().and_then(|m| m.get(seg.as_str())))?;
+            if let Some(type_alias_id) = type_alias_partner_for(current_sym) {
+                current_sym = type_alias_id;
+            }
         }
 
         // Use the collision-safe variant: it keys on `(sym_id, target_file_idx)`

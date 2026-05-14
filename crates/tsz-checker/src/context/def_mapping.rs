@@ -130,8 +130,10 @@ impl<'a> CheckerContext<'a> {
             })
         {
             // Populate local caches for future fast-path hits.
-            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
-            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            if !has_cross_file_collision {
+                self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+                self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            }
             return def_id;
         }
 
@@ -174,8 +176,10 @@ impl<'a> CheckerContext<'a> {
         // across all binders, so no name-validation is needed.
         if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx) {
             // Populate local caches for future fast-path hits.
-            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
-            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            if !has_cross_file_collision {
+                self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+                self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            }
             return def_id;
         }
 
@@ -225,8 +229,10 @@ impl<'a> CheckerContext<'a> {
             .register_symbol_mapping(sym_id.0, file_idx, def_id);
 
         // Populate local caches.
-        self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
-        self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+        if !has_cross_file_collision {
+            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+        }
 
         // Propagate DefKind to both TypeEnvironments so both the evaluator
         // and flow-analyzer can query it.
