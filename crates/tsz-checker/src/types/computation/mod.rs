@@ -34,6 +34,7 @@ pub(crate) mod call_finalize;
 pub(crate) mod call_helpers;
 pub(crate) mod call_inference;
 pub(crate) mod call_result;
+mod call_result_signatures;
 pub(crate) mod complex;
 mod complex_constructor_inference;
 pub(crate) mod complex_constructors;
