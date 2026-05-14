@@ -4,7 +4,7 @@
 //! Structural rule: when a conditional type matches `T extends [infer F, ...infer R]`
 //! and the true branch is a mapped type `{ [K in F]: Body<R> }`, infer bindings
 //! (F and R) must be substituted into every structural position of the mapped type
-//! (constraint, name_type, template) before evaluation. Without this, the mapped
+//! (constraint, `name_type`, template) before evaluation. Without this, the mapped
 //! type retains unresolved `Infer` nodes and evaluates to an opaque type, causing
 //! false TS2353 "property does not exist" errors on valid object literals.
 
