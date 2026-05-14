@@ -1777,9 +1777,19 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| symbol.primary_declaration().unwrap_or(NodeIndex::NONE));
 
                 if decl_idx.is_some() {
-                    // Try user arena first (fast path for user-defined type aliases)
+                    // Try user arena first (fast path for user-defined type aliases).
+                    // The name check is required: a lib symbol's primary_declaration()
+                    // NodeIndex may coincide with a user-arena node at the same slot
+                    // (the arenas are independent Vec-backed structures). Without the
+                    // check, a user-defined type alias at that slot would be used as the
+                    // body/params for the lib type, corrupting generic instantiation.
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+                        && self
+                            .ctx
+                            .arena
+                            .get_identifier_text(type_alias.name)
+                            .is_some_and(|n| n == symbol.escaped_name.as_str())
                     {
                         let (params, updates) =
                             self.push_type_parameters(&type_alias.type_parameters);
