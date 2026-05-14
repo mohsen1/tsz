@@ -13,10 +13,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
-    /// Continuation of `compute_type_of_symbol` for type alias, class property,
-    /// variable, and alias symbol kinds.
-    ///
-    /// This is a pure code-motion split -- no logic changes.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn compute_type_of_symbol_type_alias_variable_alias(
         &mut self,
@@ -29,20 +25,12 @@ impl<'a> CheckerState<'a> {
         escaped_name: &str,
         factory: &tsz_solver::TypeFactory<'_>,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        // Type alias - resolve using checker's get_type_from_type_node to properly resolve symbols
         if flags & symbol_flags::TYPE_ALIAS != 0 {
-            // Compiler-provided intrinsic type aliases (e.g., `type BuiltinIteratorReturn = intrinsic`)
-            // cannot be resolved from their body—the `intrinsic` keyword has no type semantics
-            // on its own. Intercept known intrinsic names and resolve them directly.
             if escaped_name == "BuiltinIteratorReturn"
                 && self.is_compiler_builtin_iterator_return_alias(sym_id, declarations)
             {
                 return (self.builtin_iterator_return_intrinsic_type(), Vec::new());
             }
-            // When a type alias name collides with a global value declaration
-            // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
-            // the merged symbol's value_declaration points to the var decl, not the
-            // type alias. We must search declarations[] to find the actual type alias.
             let decl_idx = declarations
                 .iter()
                 .copied()
@@ -787,9 +775,6 @@ impl<'a> CheckerState<'a> {
                 && node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 && let Some(import) = self.ctx.arena.get_import_decl(node)
             {
-                // Check for require() call FIRST — `import A = require('M')` must
-                // resolve through module_exports, not qualified symbol resolution.
-                // The qualified symbol path is for `import x = ns.member` patterns.
                 if let Some(module_specifier) =
                     self.get_require_module_specifier(import.module_specifier)
                 {
@@ -800,19 +785,14 @@ impl<'a> CheckerState<'a> {
                         return (module_type, Vec::new());
                     }
 
-                    // Resolve the canonical export surface (module-specifier variants,
-                    // cross-file tables, and export= member merging).
                     let exports_table = self.resolve_effective_module_exports(&module_specifier);
 
                     if let Some(exports_table) = exports_table {
-                        // Create an object type with all the module's exports
                         use tsz_solver::PropertyInfo;
                         let module_is_non_module_entity = self
                             .ctx
                             .module_resolves_to_non_module_entity(&module_specifier);
                         let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
-                        // Record cross-file symbol targets so delegate_cross_arena_symbol_resolution
-                        // can find the correct arena for symbols from ambient modules.
                         for &(name, sym_id) in &ordered_exports {
                             self.record_cross_file_symbol_if_needed(
                                 sym_id,
@@ -844,6 +824,20 @@ impl<'a> CheckerState<'a> {
                                     Some(self.ctx.current_file_idx),
                                 )
                             });
+                        if let Some(surface) = surface.as_ref()
+                            && surface.has_commonjs_exports
+                            && surface.has_augmented_named_exports
+                            && surface.direct_export_type.is_some()
+                            && !surface.named_exports.is_empty()
+                        {
+                            let display_name =
+                                self.imported_namespace_display_module_name(&module_specifier);
+                            if let Some(type_id) =
+                                surface.to_type_id_with_display_name(self, Some(display_name))
+                            {
+                                return (type_id, Vec::new());
+                            }
+                        }
                         let mut props: Vec<PropertyInfo> = if surface
                             .as_ref()
                             .is_some_and(|s| s.has_commonjs_exports)
@@ -1272,12 +1266,13 @@ impl<'a> CheckerState<'a> {
                             props
                         };
 
-                        self.append_export_equals_import_type_namespace_props(
-                            module_name,
-                            declaring_file_idx,
-                            &exports_table,
-                            &mut props,
-                        );
+                        let export_equals_import_type_module = self
+                            .append_export_equals_import_type_namespace_props(
+                                module_name,
+                                declaring_file_idx,
+                                &exports_table,
+                                &mut props,
+                            );
 
                         // Add augmentation declarations that introduce entirely new names.
                         // If the target resolves to a non-module export= value, these names
@@ -1421,13 +1416,22 @@ impl<'a> CheckerState<'a> {
                         let preserve_namespace_display =
                             !(module_is_non_module_entity && allow_namespace_default);
                         if preserve_namespace_display {
+                            let display_module_name = export_equals_import_type_module
+                                .as_deref()
+                                .unwrap_or(module_name);
                             self.ctx.namespace_module_names.insert(
                                 namespace_type,
-                                self.imported_namespace_display_module_name(module_name),
+                                self.imported_namespace_display_module_name(display_module_name),
                             );
                         }
                         self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
+                            if export_equals_import_type_module.is_some()
+                                && !module_is_non_module_entity
+                                && !namespace_has_no_runtime_props
+                            {
+                                return (namespace_type, Vec::new());
+                            }
                             if module_is_non_module_entity || namespace_has_no_runtime_props {
                                 // For namespace imports of `export =` non-module values:
                                 // - Callable/constructable types (functions, classes): wrap

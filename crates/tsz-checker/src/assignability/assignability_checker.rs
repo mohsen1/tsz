@@ -85,12 +85,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Check if it's an arrow function or function expression
         let is_callback = node.kind == syntax_kind_ext::ARROW_FUNCTION
             || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION;
 
         if !is_callback {
-            // Check for parenthesized expressions wrapping a callback
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 && let Some(paren) = self.ctx.arena.get_parenthesized(node)
             {
@@ -103,13 +101,6 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Check if any parameter lacks a type annotation AND is a simple identifier
-        // (relies on contextual typing). Binding-pattern parameters (destructuring)
-        // derive their type from the pattern structure, not from contextual typing,
-        // so they should NOT suppress the TS2345 error. For example:
-        //   trans<T>(f: (x: T) => string): T defaults to unknown
-        //   trans(({a}) => a) → param type is {a: any} from pattern, NOT from context
-        //   TS2345 is correct because {a: any} is not assignable from unknown.
         func.parameters.nodes.iter().any(|&param_idx| {
             self.ctx
                 .arena
@@ -354,14 +345,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         shape: &tsz_solver::FunctionShape,
     ) -> Option<tsz_solver::FunctionShape> {
-        // When a generic function has type params, check if a type references any of them.
-        // If so, skip normalization to preserve Application types that use the function's
-        // own type params. Eagerly evaluating these to Objects destroys type param identity
-        // needed for alpha-renaming during generic function subtype comparison.
-        // Example: `<B>(f: (t: A) => B): IList<B>` — the return type `IList<B>` must stay
-        // as Application(IList, [B]), not be expanded to an Object containing methods with
-        // their own type param B that would shadow the outer B.
-        // Collect names of the function's own type params to detect references.
         let own_tp_names: Vec<_> = shape.type_params.iter().map(|tp| tp.name).collect();
 
         let mut changed = false;
@@ -369,9 +352,6 @@ impl<'a> CheckerState<'a> {
             .params
             .iter()
             .map(|param| {
-                // Skip normalization for params that reference the function's own type
-                // params — eagerly evaluating them destroys Application types needed
-                // for alpha-renaming during generic function subtype comparison.
                 let skip = !own_tp_names.is_empty()
                     && own_tp_names.iter().any(|&name| {
                         crate::query_boundaries::common::contains_type_parameter_named(
@@ -404,12 +384,6 @@ impl<'a> CheckerState<'a> {
             evaluated
         });
         let return_type = {
-            // Skip normalization for return types that reference the function's own
-            // type params. This preserves Application types (e.g., IList<B>) so that
-            // alpha-renaming substitution in check_function_subtype works correctly.
-            // Without this, the Application gets expanded to an Object whose inner
-            // methods may have type params with the same name, causing shadowing
-            // that blocks the alpha-renaming substitution.
             let skip_for_type_params = !own_tp_names.is_empty()
                 && own_tp_names.iter().any(|&name| {
                     crate::query_boundaries::common::contains_type_parameter_named(
@@ -418,10 +392,6 @@ impl<'a> CheckerState<'a> {
                         name,
                     )
                 });
-            // Skip normalization for TypeQuery and conditional return types to
-            // preserve their source-level surface. Normalizing conditional return
-            // types here eagerly evaluates nested branches and widens literals
-            // like `1` to `number`, which then leaks into assignability display.
             let skip_for_type_query = crate::query_boundaries::common::is_type_query_type(
                 self.ctx.types,
                 shape.return_type,
@@ -705,16 +675,9 @@ impl<'a> CheckerState<'a> {
 
     /// Ensure relation preconditions (lazy refs + application symbols) for one type.
     pub(crate) fn ensure_relation_input_ready(&mut self, type_id: TypeId) {
-        // Fast path: intrinsic types have no Lazy refs to resolve and no
-        // Application symbols to walk; both downstream calls are no-ops on
-        // intrinsics. Skip the global-fuel probe and both function calls.
-        // is_intrinsic() is a free TypeId-range check (no TypeData lookup).
         if type_id.is_intrinsic() {
             return;
         }
-        // Global fuel guard: bail when total resolution work across all top-level
-        // calls has exceeded the budget. Prevents OOM on DOM-heavy React code
-        // where many top-level calls each reset per-call fuel.
         if crate::state_domain::type_environment::lazy::global_resolution_fuel_exhausted() {
             return;
         }
@@ -727,244 +690,6 @@ impl<'a> CheckerState<'a> {
         for &type_id in type_ids {
             self.ensure_relation_input_ready(type_id);
         }
-    }
-
-    pub(crate) fn application_info_or_display_alias(
-        &self,
-        type_id: TypeId,
-    ) -> Option<(TypeId, Vec<TypeId>)> {
-        crate::query_boundaries::common::application_info(self.ctx.types, type_id).or_else(|| {
-            self.ctx.types.get_display_alias(type_id).and_then(|alias| {
-                crate::query_boundaries::common::application_info(self.ctx.types, alias)
-            })
-        })
-    }
-
-    fn is_promise_like_application_pair(&mut self, source: TypeId, target: TypeId) -> bool {
-        let Some((source_base, _)) = self.application_info_or_display_alias(source) else {
-            return false;
-        };
-        let Some((target_base, _)) = self.application_info_or_display_alias(target) else {
-            return false;
-        };
-        source_base == target_base
-            && (source_base == TypeId::PROMISE_BASE
-                || crate::query_boundaries::flow_analysis::is_promise_like_type(
-                    self.ctx.types,
-                    source,
-                )
-                || crate::query_boundaries::flow_analysis::is_promise_like_type(
-                    self.ctx.types,
-                    target,
-                )
-                || self.application_has_callable_then_member(source)
-                || self.application_has_callable_then_member(target)
-                || self.application_base_declares_then_method(source_base))
-    }
-
-    fn application_has_callable_then_member(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::property_access::resolve_property_access(
-            self.ctx.types,
-            type_id,
-            "then",
-        )
-        .success_type()
-        .and_then(|then_type| {
-            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, then_type)
-        })
-        .is_some_and(|signatures| !signatures.is_empty())
-    }
-
-    fn application_base_declares_then_method(&self, base: TypeId) -> bool {
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
-            return false;
-        };
-        let Some(symbol) = self.get_symbol_globally(sym_id) else {
-            return false;
-        };
-        let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
-
-        symbol.declarations.iter().any(|&decl_idx| {
-            let Some(class) = arena.get_class_at(decl_idx) else {
-                return false;
-            };
-            class.members.nodes.iter().any(|&member_idx| {
-                let Some(method) = arena.get_method_decl_at(member_idx) else {
-                    return false;
-                };
-                crate::types_domain::queries::core::get_literal_property_name(arena, method.name)
-                    .as_deref()
-                    == Some("then")
-            })
-        })
-    }
-
-    fn is_unknown_source_application_fallback(&mut self, source: TypeId, target: TypeId) -> bool {
-        let Some(((source_base, source_args), (target_base, target_args))) =
-            self.application_info_or_display_alias(source).zip(
-                crate::query_boundaries::common::application_info(self.ctx.types, target),
-            )
-        else {
-            return false;
-        };
-
-        source_base == target_base
-            && source_args.len() == target_args.len()
-            && !source_args.is_empty()
-            && source_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
-            && target_args.contains(&TypeId::NEVER)
-            && target_args.iter().any(|&arg| arg != TypeId::NEVER)
-            && target_args.iter().all(|&arg| {
-                matches!(arg, TypeId::UNKNOWN | TypeId::NEVER)
-                    || crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, arg)
-            })
-            && self.is_promise_like_application_pair(source, target)
-    }
-
-    pub(crate) fn is_nested_same_wrapper_application_assignment(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        // This heuristic accepts `PromiseLike<PromiseLike<T>>` as assignable to `PromiseLike<U>`
-        // when the TARGET's argument is NOT also the same wrapper (e.g., `Wrapper<V>`
-        // where V is a plain type, not `Wrapper<something>`).
-        //
-        // This correctly handles `PromiseLike<PromiseLike<T>>` vs `PromiseLike<T>`
-        // (coinductively compatible via the then-method cycle) without making
-        // ordinary generic classes like `A<A<number>>` assignable to `A<number>`.
-        if !self.is_promise_like_application_pair(source, target) {
-            return false;
-        }
-
-        if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
-            self.application_info_or_display_alias(source),
-            self.application_info_or_display_alias(target),
-        ) && source_base == target_base
-            && source_args.len() == 1
-            && target_args.len() == 1
-            && self
-                .application_info_or_display_alias(source_args[0])
-                .is_some_and(|(nested_base, _)| nested_base == source_base)
-            && !self
-                .application_info_or_display_alias(target_args[0])
-                .is_some_and(|(nested_base, _)| nested_base == target_base)
-        {
-            return true;
-        }
-
-        let source_display = self.format_type(source);
-        let target_display = self.format_type(target);
-
-        fn generic_head(display: &str) -> Option<&str> {
-            display.split_once('<').map(|(head, _)| head.trim())
-        }
-
-        let Some(source_head) = generic_head(&source_display) else {
-            return false;
-        };
-        if source_head != "Promise" && source_head != "PromiseLike" {
-            return false;
-        }
-        if generic_head(&target_display) != Some(source_head) {
-            return false;
-        }
-        let Some((_, source_arg_str)) = source_display.split_once('<') else {
-            return false;
-        };
-        let Some((_, target_arg_str)) = target_display.split_once('<') else {
-            return false;
-        };
-        // Source arg starts with same wrapper head, but target arg does NOT.
-        // If target's arg also starts with the same wrapper, require actual type checking.
-        let prefix = format!("{source_head}<");
-        source_arg_str.trim_start().starts_with(&prefix)
-            && !target_arg_str.trim_start().starts_with(&prefix)
-    }
-
-    pub(crate) fn same_base_application_to_constrained_type_param_target(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        let Some(((source_base, source_args), (target_base, target_args))) =
-            self.application_info_or_display_alias(source).zip(
-                crate::query_boundaries::common::application_info(self.ctx.types, target),
-            )
-        else {
-            return false;
-        };
-        if source_base != target_base || source_args.len() != target_args.len() {
-            return false;
-        }
-
-        // The rejection below is sound for covariant and invariant positions —
-        // narrowing the type parameter via a constraint cannot be erased by
-        // structural compare. It is NOT sound for contravariant positions:
-        // `Contra<X> <: Contra<U>` is valid when U extends X (the parameterized
-        // relationship is reversed), and the variance-aware fast path that runs
-        // immediately after this is responsible for accepting it. Skip the
-        // contravariant slots here so we don't pre-empt that decision.
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base);
-        let variances = def_id.and_then(|d| {
-            if let Some(cached) =
-                tsz_solver::QueryDatabase::get_type_param_variance(self.ctx.types, d)
-            {
-                return Some(cached);
-            }
-            if let Some(declared) = tsz_solver::TypeResolver::get_type_param_variance(&self.ctx, d)
-            {
-                self.ctx
-                    .types
-                    .insert_type_param_variance(d, declared.clone());
-                return Some(declared);
-            }
-            let computed =
-                tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
-                    self.ctx.types.as_type_database(),
-                    &self.ctx,
-                    d,
-                );
-            if let Some(ref variances) = computed {
-                self.ctx
-                    .types
-                    .insert_type_param_variance(d, variances.clone());
-            }
-            computed
-        });
-
-        source_args
-            .iter()
-            .copied()
-            .zip(target_args.iter().copied())
-            .enumerate()
-            .any(|(i, (source_arg, target_arg))| {
-                if let Some(ref variances) = variances
-                    && variances.get(i).is_some_and(|v| v.is_contravariant())
-                {
-                    return false;
-                }
-                crate::query_boundaries::common::type_param_info(self.ctx.types, target_arg)
-                    .and_then(|param| param.constraint)
-                    .is_some_and(|constraint| {
-                        constraint == source_arg
-                            || (self.is_assignable_to(source_arg, constraint)
-                                && self.is_assignable_to(constraint, source_arg))
-                            || crate::query_boundaries::common::type_param_info(
-                                self.ctx.types,
-                                constraint,
-                            )
-                            .zip(crate::query_boundaries::common::type_param_info(
-                                self.ctx.types,
-                                source_arg,
-                            ))
-                            .is_some_and(
-                                |(constraint_param, source_param)| {
-                                    constraint_param.name == source_param.name
-                                },
-                            )
-                    })
-            })
     }
 
     /// Centralized suppression for TS2322-style assignability diagnostics.
@@ -993,6 +718,21 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if crate::query_boundaries::common::keyof_inner_type(self.ctx.types, target).is_some() {
+            let resolved_keyof =
+                crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                    self.ctx.types,
+                    &self.ctx,
+                    target,
+                );
+            if resolved_keyof != target && self.ctx.types.is_assignable_to(source, resolved_keyof) {
+                return true;
+            }
+            if self.keyof_interface_augmentation_literals_cover_source(source, target) {
+                return true;
+            }
+        }
+
         let evaluated_target_for_invalid_mapped = self.ctx.types.evaluate_type(target);
         if self.type_contains_invalid_mapped_key_type(target)
             || self.type_contains_invalid_mapped_key_type(evaluated_target_for_invalid_mapped)
@@ -1000,14 +740,6 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Special case: Do not suppress for union types containing indexed access types.
-        // For example, `(S & State<T>)["a"] | undefined` is a union where one member
-        // is an indexed access type. We should emit TS2322 for these cases because
-        // the indexed access may resolve to a type that is not assignable from the source.
-        //
-        // However, if the union or its indexed access types contain error applications
-        // (e.g., `keyof error` when React type resolution fails), we should still
-        // suppress the diagnostic to avoid false positives on unresolved types.
         if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, target)
         {
@@ -1015,22 +747,18 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
             });
             if has_indexed_access {
-                // Check if any indexed access type or its components contain errors
                 let indexed_access_has_errors = members.iter().any(|&member| {
                     if crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
                     {
-                        // Check if the indexed access type itself or any nested types contain errors
                         Self::type_contains_error_application(self.ctx.types, member)
                     } else {
                         false
                     }
                 });
-                // Also check if the target union itself contains error applications
                 let union_has_errors =
                     Self::type_contains_error_application(self.ctx.types, target);
-                // Only prevent suppression if there are indexed access types AND no errors
                 if !indexed_access_has_errors && !union_has_errors {
-                    return false; // Must not suppress for unions containing indexed access types without errors
+                    return false;
                 }
             }
         }
@@ -2185,6 +1913,71 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    fn namespace_source_has_matching_property_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if !self.ctx.namespace_module_names.contains_key(&source) {
+            return false;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target)
+        {
+            return members.iter().all(|&member| {
+                self.namespace_source_has_matching_property_mismatch(source, member)
+            });
+        }
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source)
+        else {
+            return false;
+        };
+        let source_props = shape.properties.clone();
+        let target_eval = self.evaluate_type_for_assignability(target);
+        let target_resolved = self.resolve_lazy_type(target_eval);
+        let target_with_resolution = self.evaluate_type_with_resolution(target);
+        let target_resolver_resolved =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, target)
+                .and_then(|def_id| {
+                    <crate::context::CheckerContext<'_> as tsz_solver::TypeResolver>::resolve_lazy(
+                        &self.ctx,
+                        def_id,
+                        self.ctx.types,
+                    )
+                })
+                .unwrap_or(target_resolved);
+        let target_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            target_resolver_resolved,
+        )
+        .or_else(|| {
+            crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                target_with_resolution,
+            )
+        })
+        .or_else(|| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_resolved)
+        })
+        .or_else(|| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval)
+        })
+        .or_else(|| crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target));
+        let Some(target_shape) = target_shape else {
+            return true;
+        };
+
+        target_shape.properties.iter().any(|target_prop| {
+            source_props
+                .iter()
+                .find(|source_prop| source_prop.name == target_prop.name)
+                .is_some_and(|source_prop| {
+                    !self.is_assignable_to(source_prop.type_id, target_prop.type_id)
+                })
+        })
+    }
+
     /// Prepare inputs common to all non-bivariant assignability checks:
     /// resolve lazy refs, substitute `ThisType`, and evaluate both sides.
     pub(crate) fn prepare_assignability_inputs(
@@ -2491,6 +2284,10 @@ impl<'a> CheckerState<'a> {
                 .checker_only_assignability_failure_reason(source, target)
                 .is_some()
         {
+            return false;
+        }
+
+        if result && self.namespace_source_has_matching_property_mismatch(source, target) {
             return false;
         }
 

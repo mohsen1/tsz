@@ -474,6 +474,57 @@ const ev1: EV1 = "test";
 }
 
 #[test]
+fn test_constrained_infer_extracts_tuple_length_literal() {
+    let source = r#"
+type LengthOf<T> = T extends { length: infer L extends number } ? L : never;
+type R = LengthOf<[1, 2, 3]>;
+
+const ok: R = 3;
+const bad: R = 4;
+"#;
+    let diags = check_strict(source);
+    let ts2322 = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322, 1,
+        "Expected constrained tuple length infer to preserve literal 3 and reject 4. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_extracts_readonly_tuple_length_literal_with_renamed_binder() {
+    let source = r#"
+type SizeOf<T> = T extends { length: infer Size extends number } ? Size : never;
+type R = SizeOf<readonly ["a", "b"]>;
+
+const ok: R = 2;
+const bad: R = 3;
+"#;
+    let diags = check_strict(source);
+    let ts2322 = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322, 1,
+        "Expected constrained readonly tuple length infer to preserve literal 2 and reject 3. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_extracts_array_length_as_number() {
+    let source = r#"
+type LengthOf<T> = T extends { length: infer L extends number } ? L : never;
+type R = LengthOf<string[]>;
+
+const ok: R = 123;
+const bad: R = "nope";
+"#;
+    let diags = check_strict(source);
+    let ts2322 = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322, 1,
+        "Expected constrained array length infer to produce number and reject string. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn named_method_parameter_infer_extracts_arg() {
     let source = r#"
 type MethodArg<T> = T extends { method(arg: infer A): any } ? A : never;

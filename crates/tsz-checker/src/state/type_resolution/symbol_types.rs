@@ -15,11 +15,22 @@ use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
-        let local_alias_symbol = self
+        let local_alias_for_augmentation = self
             .ctx
             .binder
             .get_symbol(sym_id)
             .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
+        let local_alias_symbol = self
+            .ctx
+            .resolve_dynamic_symbol_file_index(sym_id)
+            .is_none()
+            .then(|| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
+            })
+            .flatten();
         let symbol_meta = local_alias_symbol
             .or_else(|| self.get_cross_file_symbol(sym_id))
             .map(|symbol| {
@@ -30,7 +41,6 @@ impl<'a> CheckerState<'a> {
                     symbol.value_declaration,
                 )
             });
-
         if let Some((name, flags, _, _)) = symbol_meta.as_ref() {
             tracing::debug!(
                 sym_id = sym_id.0,
@@ -39,8 +49,6 @@ impl<'a> CheckerState<'a> {
                 "type_reference_symbol_type: ENTRY"
             );
         }
-        // Recursion depth check: prevents stack overflow from circular
-        // interface/class type references (e.g. I<T extends I<T>>)
         if !self.ctx.enter_recursion() {
             return TypeId::ERROR;
         }
@@ -54,9 +62,6 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        // Compiler-provided intrinsic type aliases whose body is `intrinsic` cannot
-        // be resolved from the AST. Intercept BuiltinIteratorReturn early, before
-        // any fallback/delegation logic that might treat ANY as "unresolved".
         if let Some((ref name, flags, ref declarations, _)) = symbol_meta
             && name == "BuiltinIteratorReturn"
             && (flags & symbol_flags::TYPE_ALIAS) != 0
@@ -67,16 +72,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some((ref escaped_name, flags, ref declarations, value_declaration)) = symbol_meta {
-            // For classes, return Lazy(DefId) to preserve class names in error messages
-            // (e.g., "type MyClass" instead of expanded object shape)
-            //
-            // Special case: For merged class+namespace symbols, we still need the constructor type
-            // to access namespace members via Foo.Bar. But we should still return Lazy for consistency.
             let prefer_interface_type_position =
                 (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
             if flags & symbol_flags::CLASS != 0 && !prefer_interface_type_position {
-                // For classes in TYPE position, return the INSTANCE TYPE directly
-                // This is critical for nominal type checking to work correctly
                 let instance_type_opt = self.class_instance_type_with_params_from_symbol(sym_id);
 
                 if let Some((instance_type, params)) = instance_type_opt {
@@ -432,11 +430,7 @@ impl<'a> CheckerState<'a> {
                 let structural_type = if structural_type != TypeId::ERROR
                     && structural_type != TypeId::UNKNOWN
                     && !preserve_deferred_keyof
-                    && !tsz_solver::type_queries::is_union_type(self.ctx.types, structural_type)
-                    && !tsz_solver::type_queries::is_intersection_type(
-                        self.ctx.types,
-                        structural_type,
-                    )
+                    && !query::is_union_or_intersection(self.ctx.types, structural_type)
                     && !crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,
                         structural_type,
@@ -497,8 +491,27 @@ impl<'a> CheckerState<'a> {
                         self.ctx.leave_recursion();
                         return result;
                     }
+                    let alias_augmentation_target =
+                        local_alias_for_augmentation.and_then(|alias_symbol| {
+                            alias_symbol.import_module.as_ref().map(|module_specifier| {
+                                let aug_name = alias_symbol
+                                    .import_name
+                                    .as_deref()
+                                    .unwrap_or(&alias_symbol.escaped_name)
+                                    .to_string();
+                                (module_specifier.clone(), aug_name)
+                            })
+                        });
                     self.ctx.leave_recursion();
-                    return self.type_reference_symbol_type(target_sym_id);
+                    let mut result = self.type_reference_symbol_type(target_sym_id);
+                    if result != TypeId::ERROR
+                        && result != TypeId::UNKNOWN
+                        && let Some((module_specifier, aug_name)) = alias_augmentation_target
+                    {
+                        result =
+                            self.apply_module_augmentations(&module_specifier, &aug_name, result);
+                    }
+                    return result;
                 }
 
                 // For synthetic default exports whose value_declaration is a property
@@ -1788,7 +1801,6 @@ impl<'a> CheckerState<'a> {
                 return (merged, params);
             }
 
-            // For type aliases, get body type and params together
             if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                 if self
                     .ctx
@@ -1833,12 +1845,6 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| symbol.primary_declaration().unwrap_or(NodeIndex::NONE));
 
                 if decl_idx.is_some() {
-                    // Try user arena first (fast path for user-defined type aliases).
-                    // The name check is required: a lib symbol's primary_declaration()
-                    // NodeIndex may coincide with a user-arena node at the same slot
-                    // (the arenas are independent Vec-backed structures). Without the
-                    // check, a user-defined type alias at that slot would be used as the
-                    // body/params for the lib type, corrupting generic instantiation.
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
                         && self
@@ -1865,9 +1871,6 @@ impl<'a> CheckerState<'a> {
                         return (alias_type, params);
                     }
 
-                    // For lib type aliases (e.g. Awaited<T>), use TypeLowering with the
-                    // correct lib arena. get_type_from_type_node uses self.ctx.arena which
-                    // doesn't have lib nodes, so we must use TypeLowering directly.
                     let lib_arena = self
                         .ctx
                         .binder
