@@ -548,6 +548,10 @@ pub(crate) fn emit_outputs(
                         Some(file.file_name.clone()),
                         &import_name_map,
                         is_js_input,
+                        file.arena
+                            .get(file.source_file)
+                            .and_then(|node| file.arena.get_source_file(node))
+                            .is_some_and(|source_file| source_file.is_declaration_file),
                     );
 
                     // Clone used_symbols before calling another method on analyzer

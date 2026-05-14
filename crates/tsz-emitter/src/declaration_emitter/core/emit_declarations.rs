@@ -77,6 +77,10 @@ impl<'a> DeclarationEmitter<'a> {
                         .get(root_idx)
                         .and_then(|node| self.arena.get_source_file(node))
                         .is_some_and(|source_file| self.source_file_is_js(source_file)),
+                    self.arena
+                        .get(root_idx)
+                        .and_then(|node| self.arena.get_source_file(node))
+                        .is_some_and(|source_file| source_file.is_declaration_file),
                 );
                 let used = analyzer.analyze(root_idx).clone();
                 let foreign = analyzer.get_foreign_symbols();
