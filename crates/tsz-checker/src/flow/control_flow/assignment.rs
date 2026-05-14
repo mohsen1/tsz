@@ -75,16 +75,86 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(assigned_type);
         }
 
-        let Some(read_target_type) = self.node_types.and_then(|nt| nt.get(&target.0).copied())
-        else {
+        if let Some((read_type, write_type)) = self.access_reference_split_read_write_type(target) {
+            if read_type.is_any_unknown_or_error()
+                || self.is_assignable_to_strict_null(assigned_type, read_type)
+            {
+                return Some(assigned_type);
+            }
+
+            if write_type.is_any_unknown_or_error()
+                || self.is_assignable_to_strict_null(assigned_type, write_type)
+            {
+                return None;
+            }
+        }
+
+        let Some(target_type) = self.node_types.and_then(|nt| nt.get(&target.0).copied()) else {
             return Some(assigned_type);
         };
-        if read_target_type.is_any_unknown_or_error() {
+        if target_type.is_any_unknown_or_error() {
             return Some(assigned_type);
         }
 
-        self.is_assignable_to(assigned_type, read_target_type)
+        self.is_assignable_to(assigned_type, target_type)
             .then_some(assigned_type)
+    }
+
+    fn access_reference_split_read_write_type(
+        &self,
+        target: NodeIndex,
+    ) -> Option<(TypeId, TypeId)> {
+        let target_node = self.arena.get(target)?;
+        let access = self.arena.get_access_expr(target_node)?;
+
+        let name_atom = if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let ident = self.arena.get_identifier_at(access.name_or_argument)?;
+            self.interner.intern_string(&ident.escaped_text)
+        } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            self.literal_atom_from_node_or_type(access.name_or_argument)?
+        } else {
+            return None;
+        };
+
+        let node_types = self.node_types?;
+        let base_type = if let Some(&base_type) = node_types.get(&access.expression.0) {
+            base_type
+        } else if let Some(this_type) = self.concrete_this_type
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::ThisKeyword as u16
+        {
+            this_type
+        } else {
+            return None;
+        };
+
+        let prop_name = self.interner.resolve_atom_ref(name_atom);
+        let access_result = if let Some(env_ref) = &self.type_environment {
+            let env = env_ref.borrow();
+            crate::query_boundaries::property_access::resolve_property_access_with_resolver(
+                self.interner,
+                &*env,
+                base_type,
+                prop_name.as_ref(),
+                self.interner.no_unchecked_indexed_access(),
+            )
+        } else {
+            crate::query_boundaries::property_access::resolve_property_access_with_options(
+                self.interner,
+                base_type,
+                prop_name.as_ref(),
+                self.interner.no_unchecked_indexed_access(),
+            )
+        };
+
+        match access_result {
+            crate::query_boundaries::common::PropertyAccessResult::Success {
+                type_id,
+                write_type: Some(write_type),
+                from_index_signature: false,
+            } if write_type != type_id => Some((type_id, write_type)),
+            _ => None,
+        }
     }
 
     fn node_contains_descendant(&self, ancestor: NodeIndex, mut descendant: NodeIndex) -> bool {

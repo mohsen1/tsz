@@ -1,8 +1,8 @@
 //! Parser state - statement and declaration parsing methods
 use super::state::{
-    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_FIELD_INITIALIZER, CONTEXT_FLAG_GENERATOR,
-    CONTEXT_FLAG_IN_BLOCK, CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK,
-    IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_FIELD_INITIALIZER, CONTEXT_FLAG_FUNCTION_BODY,
+    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_BLOCK, CONTEXT_FLAG_PARAMETER_DEFAULT,
+    CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -2984,6 +2984,7 @@ impl ParserState {
         // Clear STATIC_BLOCK before body — the body is a new scope where
         // 'await' is a valid identifier (unless the function is async).
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         // Push a new label scope for the function body
         self.push_label_scope();
@@ -3106,6 +3107,7 @@ impl ParserState {
         if asterisk_token {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         // Push a new label scope for the function body
         // Labels are function-scoped, so each function gets its own label namespace
@@ -3205,6 +3207,7 @@ impl ParserState {
         if asterisk_token {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         // Check for `await` used as function expression name inside static blocks.
         // tsc reports TS1359 for `(function await() {})` in static blocks because

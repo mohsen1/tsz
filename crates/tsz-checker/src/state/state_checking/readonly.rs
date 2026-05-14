@@ -417,18 +417,26 @@ impl<'a> CheckerState<'a> {
             // by resolving the symbol and checking if any declaration is a method
             let (symbols, _) = self.resolve_private_identifier_symbols(access.name_or_argument);
             if !symbols.is_empty() {
-                let is_method = symbols.iter().any(|&sym_id| {
+                let mut is_method = false;
+                let mut has_get_accessor = false;
+                let mut has_set_accessor = false;
+
+                for &sym_id in &symbols {
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        symbol.declarations.iter().any(|&decl_idx| {
+                        has_get_accessor |=
+                            symbol.flags & tsz_binder::symbol_flags::GET_ACCESSOR != 0;
+                        has_set_accessor |=
+                            symbol.flags & tsz_binder::symbol_flags::SET_ACCESSOR != 0;
+
+                        for &decl_idx in &symbol.declarations {
                             if let Some(node) = self.ctx.arena.get(decl_idx) {
-                                return node.kind == syntax_kind_ext::METHOD_DECLARATION;
+                                is_method |= node.kind == syntax_kind_ext::METHOD_DECLARATION;
+                                has_get_accessor |= node.kind == syntax_kind_ext::GET_ACCESSOR;
+                                has_set_accessor |= node.kind == syntax_kind_ext::SET_ACCESSOR;
                             }
-                            false
-                        })
-                    } else {
-                        false
+                        }
                     }
-                });
+                }
 
                 if is_method {
                     self.error_private_method_not_writable(&prop_name, access.name_or_argument);
@@ -437,6 +445,11 @@ impl<'a> CheckerState<'a> {
                     // writable) AND TS2322 (type mismatch) for private method assignments.
                     // Returning true would cause suppress_for_readonly to skip TS2322.
                     return false;
+                }
+
+                if has_get_accessor && !has_set_accessor {
+                    self.error_readonly_property_at(&prop_name, access.name_or_argument);
+                    return true;
                 }
             }
         }
