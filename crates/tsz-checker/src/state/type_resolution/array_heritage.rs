@@ -22,11 +22,11 @@ impl<'a> CheckerState<'a> {
         base_sym_id: SymbolId,
         type_arguments: Option<&NodeList>,
     ) -> Option<TypeId> {
-        if !self
+        if self
             .ctx
             .binder
             .get_symbol(base_sym_id)
-            .is_some_and(|symbol| symbol.escaped_name == "Array")
+            .is_none_or(|symbol| symbol.escaped_name != "Array")
             || !self.ctx.symbol_is_from_actual_or_cloned_lib(base_sym_id)
         {
             return None;
