@@ -517,6 +517,10 @@ impl<'a> DeclarationEmitter<'a> {
                             prop.initializer,
                         );
                         self.emit_js_namespace_value_member(prop.name, &type_text);
+                    } else if let Some(target_text) =
+                        self.nameable_property_access_expression_text(prop.initializer)
+                    {
+                        self.emit_js_namespace_import_alias_member(prop.name, &target_text);
                     }
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -2895,6 +2899,37 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(type_text);
         self.write(";");
         self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_namespace_import_alias_member(
+        &mut self,
+        name_idx: NodeIndex,
+        target_text: &str,
+    ) {
+        self.write_indent();
+        self.write("import ");
+        self.emit_node(name_idx);
+        self.write(" = ");
+        self.write(target_text);
+        self.write(";");
+        self.write_line();
+
+        self.write_indent();
+        self.write("export { ");
+        self.emit_node(name_idx);
+        self.write(" };");
+        self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn nameable_property_access_expression_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        self.nameable_constructor_expression_text(expr_idx)
     }
 
     pub(in crate::declaration_emitter) fn js_namespace_value_member_type_text(

@@ -2265,6 +2265,37 @@ const Strings = {
 }
 
 #[test]
+fn test_js_exported_object_literal_property_access_member_emits_namespace_alias() {
+    let source = r##"
+export const colors = {
+    royalBlue: "#6400e4",
+};
+
+export const brandColors = {
+    purple: colors.royalBlue,
+};
+"##;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let expected = r##"export namespace colors {
+    let royalBlue: string;
+}
+export namespace brandColors {
+    import purple = colors.royalBlue;
+    export { purple };
+}"##;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected exported JS object literal references to emit as namespace import aliases: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_zero_arg_constructor_is_omitted() {
     let source = r#"
 export class Preferences {

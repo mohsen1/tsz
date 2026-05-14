@@ -2492,6 +2492,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
             k if k == syntax_kind_ext::NEW_EXPRESSION => true,
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .nameable_property_access_expression_text(initializer)
+                .is_some(),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 self.is_negative_literal(init_node)
             }
