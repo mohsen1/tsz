@@ -1535,33 +1535,21 @@ export function getProjectCompatibilityDashboard() {
     `${counts.gray || 0} gray`,
   ].join(" · ");
 
+  const detailLabel = (row) => {
+    if (row.className === "green") return "passes";
+    if (row.exitClass === "missing or incomplete artifact") return "missing artifact";
+    return row.exitClass;
+  };
+
   return `<section class="compat-dashboard">
-  <h2>Compatibility Corpus</h2>
-  <p class="bench-category-desc">Project status is tracked separately from speed. A project only counts as green when tsz exits successfully on the same no-emit project check used for timing.</p>
+  <h2>Compatibility</h2>
   <div class="compat-summary">${escapeHtml(summary)}</div>
-  <div class="compat-table-wrap">
-    <table class="compat-table">
-      <thead>
-        <tr>
-          <th>Project</th>
-          <th>Status</th>
-          <th>Exit Class</th>
-          <th>Owner Family</th>
-          <th>Phase</th>
-          <th>First Diagnostic Deltas</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map((row) => `<tr>
-          <td><a href="${row.url}">${escapeHtml(row.label)}</a><div class="compat-meta">${fmt(row.lines || 0)} lines</div></td>
-          <td><span class="compat-pill ${row.className}">${escapeHtml(row.stateLabel)}</span></td>
-          <td>${escapeHtml(row.exitClass)}</td>
-          <td>${escapeHtml(row.family)}<div class="compat-meta">${escapeHtml(row.owner)}</div></td>
-          <td>${escapeHtml(row.phase)}</td>
-          <td>${escapeHtml(Array.isArray(row.diagnosticDeltas) ? row.diagnosticDeltas.slice(0, 20).join("; ") : row.diagnosticDeltas)}</td>
-        </tr>`).join("\n")}
-      </tbody>
-    </table>
-  </div>
+  <ul class="compat-list">
+    ${rows.map((row) => `<li class="compat-item">
+      <a href="${row.url}">${escapeHtml(row.label)}</a>
+      <span class="compat-state ${row.className}">${escapeHtml(row.className)}</span>
+      <span class="compat-detail">${escapeHtml(detailLabel(row))}</span>
+    </li>`).join("\n")}
+  </ul>
 </section>`;
 }
