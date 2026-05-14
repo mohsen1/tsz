@@ -171,6 +171,12 @@ impl<'a> HoverProvider<'a> {
             checker.get_type_of_symbol(symbol_id)
         };
         let mut type_string = checker.format_type(type_id);
+        if (type_string == "error" || type_string.is_empty())
+            && let Some(recomputed) =
+                self.recompute_hover_type_without_cache(symbol_id, symbol, decl_node_idx)
+        {
+            type_string = recomputed;
+        }
         if symbol.flags
             & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
                 | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
@@ -1345,6 +1351,35 @@ impl<'a> HoverProvider<'a> {
                     .is_some_and(|export_symbol| export_symbol.has_any_flags(symbol_flags::VALUE))
             })
         })
+    }
+
+    fn recompute_hover_type_without_cache(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        symbol: &tsz_binder::Symbol,
+        decl_node_idx: NodeIndex,
+    ) -> Option<String> {
+        let mut checker = CheckerState::new(
+            self.arena,
+            self.binder,
+            self.interner,
+            self.file_name.clone(),
+            self.checker_options(),
+        );
+        self.apply_lib_contexts(&mut checker);
+
+        let type_id = if decl_node_idx.is_some()
+            && symbol.flags
+                & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                != 0
+        {
+            checker.get_type_of_node(decl_node_idx)
+        } else {
+            checker.get_type_of_symbol(symbol_id)
+        };
+        let text = checker.format_type(type_id);
+        (!text.is_empty() && text != "error").then_some(text)
     }
 
     fn array_constructor_initializer_display_type(
