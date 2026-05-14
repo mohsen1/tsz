@@ -1071,9 +1071,7 @@ fn test_conditional_infer_object_property_with_constraint() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-
-    assert_eq!(result, expected);
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -4055,9 +4053,7 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-
-    assert_eq!(result, expected);
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
