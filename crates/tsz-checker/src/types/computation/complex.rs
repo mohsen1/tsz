@@ -812,7 +812,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut inferred_new_type_args: Option<Vec<TypeId>> = None;
-        let arg_types = if is_generic_new {
+        let mut arg_types = if is_generic_new {
             if let Some(ref shape) = constructor_shape {
                 // Pre-compute which parameter positions should skip excess property
                 // checking because the original parameter type contains a type parameter.
@@ -994,6 +994,46 @@ impl<'a> CheckerState<'a> {
                             *param_type,
                             &shape.type_params,
                         );
+                    }
+                    for (i, param) in shape.params.iter().enumerate() {
+                        let Some(tp_info) = crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            param.type_id,
+                        ) else {
+                            continue;
+                        };
+                        let Some(tp) = shape.type_params.iter().find(|tp| tp.name == tp_info.name)
+                        else {
+                            continue;
+                        };
+                        let Some(constraint) = tp.constraint else {
+                            continue;
+                        };
+                        let Some(&arg_idx) = args.get(i) else {
+                            continue;
+                        };
+                        let Some(literal_arg_type) = self.literal_type_from_initializer(arg_idx)
+                        else {
+                            continue;
+                        };
+                        let widened_literal = crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            literal_arg_type,
+                        );
+                        if widened_literal == literal_arg_type {
+                            continue;
+                        }
+                        let instantiated_constraint =
+                            crate::query_boundaries::common::instantiate_type(
+                                self.ctx.types,
+                                constraint,
+                                &substitution,
+                            );
+                        let evaluated_constraint =
+                            self.evaluate_type_with_env(instantiated_constraint);
+                        if widened_literal == evaluated_constraint {
+                            substitution.insert(tp.name, literal_arg_type);
+                        }
                     }
                     let type_args: Vec<TypeId> = shape
                         .type_params
@@ -1365,6 +1405,19 @@ impl<'a> CheckerState<'a> {
                 .any(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ANY)
             {
                 inferred_new_type_args = Some(type_args);
+            }
+        }
+
+        // For generic constructors (without const type params), widen scalar literal
+        // arg types for error display. During arg collection, preserve_literal_types
+        // was true so that generic inference gets precise literal types (e.g., `true`
+        // for `T = true`). But for TS2345 error messages, tsc displays the widened
+        // type (`boolean`, not `true`). The function call path achieves this via its
+        // multi-pass inference; here we widen explicitly post-collection.
+        if is_generic_new && !has_const_type_params {
+            for arg_type in arg_types.iter_mut() {
+                *arg_type =
+                    tsz_solver::operations::widening::widen_literal_type(self.ctx.types, *arg_type);
             }
         }
         if let Some(type_args) = &inferred_new_type_args {
