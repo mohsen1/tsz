@@ -590,6 +590,121 @@ fn recursive_mapped_tuple_spread_depth_shape_is_detected() {
     );
 }
 
+mod issue_6761 {
+    //! Tests for <https://github.com/mohsen1/tsz/issues/6761>.
+    //!
+    //! Structural rule: the `TypeEvaluator`'s per-`TypeId` recursion guard
+    //! is a stack-protection limit, not tsc's `instantiationDepth`. When it
+    //! trips, we surface TS2589 only when the per-DefId expansion counter
+    //! confirms a real instantiation runaway; otherwise we treat the bailout
+    //! as the cost of legitimate finite recursion and leave the type opaque.
+    use std::sync::{Arc, OnceLock};
+
+    use tsz_binder::lib_loader::LibFile;
+
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{
+        check_source_with_libs, diagnostics_with_code, has_diagnostic_code, load_default_lib_files,
+    };
+
+    fn check_with_libs(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+        let libs = LIBS.get_or_init(load_default_lib_files);
+        check_source_with_libs(source, "test.ts", CheckerOptions::default(), libs)
+    }
+
+    #[test]
+    fn permutation_no_ts2589() {
+        let diags = check_with_libs(
+            r#"
+type Permutation<T, K = T> = [T] extends [never]
+  ? []
+  : K extends K
+    ? [K, ...Permutation<Exclude<T, K>>]
+    : never;
+type Perm1 = Permutation<"A" | "B" | "C">;
+type Perm2 = Permutation<"A">;
+"#,
+        );
+        let ts2589 = diagnostics_with_code(&diags, 2589);
+        assert!(
+            ts2589.is_empty(),
+            "Permutation<U> should NOT emit TS2589 for small unions; got: {ts2589:?}"
+        );
+    }
+
+    #[test]
+    fn combination_no_ts2589() {
+        let diags = check_with_libs(
+            r#"
+type Combination<T extends string, U extends string = T> =
+  T extends unknown
+    ? T | `${T} ${Combination<Exclude<U, T>>}`
+    : never;
+type C2 = Combination<'a' | 'b'>;
+"#,
+        );
+        let ts2589 = diagnostics_with_code(&diags, 2589);
+        assert!(
+            ts2589.is_empty(),
+            "Combination<U> should NOT emit TS2589 for small unions; got: {ts2589:?}"
+        );
+    }
+
+    #[test]
+    fn permutation_renamed_params_no_ts2589() {
+        let diags = check_with_libs(
+            r#"
+type Permute<X, Y = X> = [X] extends [never]
+  ? []
+  : Y extends Y
+    ? [Y, ...Permute<Exclude<X, Y>>]
+    : never;
+type P = Permute<"A" | "B" | "C">;
+"#,
+        );
+        let ts2589 = diagnostics_with_code(&diags, 2589);
+        assert!(
+            ts2589.is_empty(),
+            "Permute<X, Y = X> must NOT emit TS2589 regardless of param names; got: {ts2589:?}"
+        );
+    }
+
+    #[test]
+    fn combination_renamed_alias_no_ts2589() {
+        let diags = check_with_libs(
+            r#"
+type Mix<A extends string, B extends string = A> =
+  A extends unknown
+    ? A | `${A} ${Mix<Exclude<B, A>>}`
+    : never;
+type R = Mix<'x' | 'y'>;
+"#,
+        );
+        let ts2589 = diagnostics_with_code(&diags, 2589);
+        assert!(
+            ts2589.is_empty(),
+            "Mix<A, B = A> must NOT emit TS2589 with renamed alias/params; got: {ts2589:?}"
+        );
+    }
+
+    /// Regression guard: the discriminator must keep surfacing TS2589 when
+    /// the per-DefId expansion counter clears `REAL_INSTANTIATION_BAILOUT_THRESHOLD`.
+    #[test]
+    fn unbounded_doubling_recursion_still_emits_ts2589() {
+        let diags = check_with_libs(
+            r#"
+type Doubler<T extends "yes", B> = { "yes": Doubler<T, Doubler<T, B>> }[T];
+let bad: Doubler<"yes", {}>;
+"#,
+        );
+        assert!(
+            has_diagnostic_code(&diags, 2589),
+            "Doubling recursion through alias must still emit TS2589; got: {diags:?}"
+        );
+    }
+}
+
 /// TS2799 false positive: Permutation type should NOT trigger "tuple too large"
 /// for a small union. For `Permutation<"a" | "b">`, there are only 2 permutations
 /// and the recursion terminates in a few steps. tsc accepts this without error.

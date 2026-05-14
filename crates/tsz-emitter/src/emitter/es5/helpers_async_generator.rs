@@ -5,6 +5,20 @@ use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn next_async_generator_inner_name(&mut self, base: &str) -> String {
+        loop {
+            let count = self
+                .async_generator_inner_name_counts
+                .entry(base.to_string())
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+            let candidate = format!("{base}_{count}");
+            if !self.file_identifiers.contains(&candidate) {
+                return candidate;
+            }
+        }
+    }
+
     pub(in crate::emitter) fn emit_async_generator_es5_inner_function(
         &mut self,
         inner_name: Option<String>,
@@ -154,8 +168,9 @@ impl<'a> Printer<'a> {
         self.push_temp_scope();
         let move_params_to_generator =
             self.async_generator_params_need_forwarding(&func.parameters.nodes);
+        let inner_name =
+            (!func_name.is_empty()).then(|| self.next_async_generator_inner_name(func_name));
         if self.ctx.target_es5 {
-            let inner_name = (!func_name.is_empty()).then(|| format!("{func_name}_1"));
             self.emit_async_generator_es5_function_wrapper(func, func_name, inner_name);
             self.pop_temp_scope();
             return;
@@ -197,9 +212,8 @@ impl<'a> Printer<'a> {
             self.write(" return ");
             self.write_helper("__asyncGenerator");
             self.write("(this, arguments, function* ");
-            if !func_name.is_empty() {
-                self.write(func_name);
-                self.write("_1");
+            if let Some(inner_name) = inner_name.as_deref() {
+                self.write(inner_name);
             }
             self.write("(");
             let saved_await = self.ctx.emit_await_as_yield_await;
@@ -220,9 +234,12 @@ impl<'a> Printer<'a> {
                 if let Some(body_node) = self.arena.get(func.body)
                     && let Some(block) = self.arena.get_block(body_node)
                 {
-                    for &stmt in &block.statements.nodes {
-                        self.write(" ");
-                        self.emit(stmt);
+                    let statements = block.statements.clone();
+                    if !self.emit_statement_list_with_using_scope(&statements) {
+                        for &stmt in &statements.nodes {
+                            self.write(" ");
+                            self.emit(stmt);
+                        }
                     }
                 }
                 self.function_scope_depth -= 1;
@@ -239,9 +256,8 @@ impl<'a> Printer<'a> {
         self.write("return ");
         self.write_helper("__asyncGenerator");
         self.write("(this, arguments, function* ");
-        if !func_name.is_empty() {
-            self.write(func_name);
-            self.write("_1");
+        if let Some(inner_name) = inner_name.as_deref() {
+            self.write(inner_name);
         }
         self.write("(");
         let saved_await = self.ctx.emit_await_as_yield_await;
@@ -271,9 +287,12 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(func.body)
             && let Some(block) = self.arena.get_block(body_node)
         {
-            for &stmt in &block.statements.nodes {
-                self.emit(stmt);
-                self.write_line();
+            let statements = block.statements.clone();
+            if !self.emit_statement_list_with_using_scope(&statements) {
+                for &stmt in &statements.nodes {
+                    self.emit(stmt);
+                    self.write_line();
+                }
             }
         }
 
