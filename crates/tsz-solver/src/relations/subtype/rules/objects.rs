@@ -496,6 +496,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // individual properties. `{ readonly x: number }` IS assignable to `{ x: number }`.
         // Readonly on properties is a usage constraint, not a structural typing constraint.
         // This is different from ReadonlyArray vs Array, where structural differences exist.
+        //
+        // Exception: when comparing types for IDENTITY (not just assignability),
+        // readonly difference IS observable. This is what makes the higher-order
+        // `IfEquals` pattern work — it relies on `{ readonly x: T }` and
+        // `{ x: T }` being distinct types when used as the extends-clause of a
+        // conditional inside `(<T>() => T extends X ? 1 : 2)`. The
+        // `strict_readonly_identity` flag is toggled on by the conditional
+        // extends-type equivalence helper for exactly that purpose.
+        if self.strict_readonly_identity && source.readonly != target.readonly {
+            return SubtypeResult::False;
+        }
 
         // Rule #26: Split Accessors (Getter/Setter Variance)
         //

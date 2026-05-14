@@ -638,6 +638,9 @@ impl<'a> CheckerState<'a> {
         if let TypePredicateTarget::Identifier(name) = &target {
             parameter_index = params.iter().position(|p| p.name == Some(*name));
             if parameter_index.is_none() {
+                if self.ctx.has_parse_errors {
+                    return (return_type, None);
+                }
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 let name_text = self.ctx.types.resolve_atom(*name);
                 self.ctx.error(
@@ -651,6 +654,9 @@ impl<'a> CheckerState<'a> {
             if let Some(index) = parameter_index
                 && params.get(index).is_some_and(|param| param.rest)
             {
+                if self.ctx.has_parse_errors {
+                    return (return_type, None);
+                }
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 let error_node = self.ctx.arena.get(data.parameter_name).unwrap_or(node);
                 self.ctx.error(
