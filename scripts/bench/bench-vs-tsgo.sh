@@ -638,6 +638,9 @@ record_project_compatibility() {
     local diagnostic_delta="${5:-}"
     local files_reached="${6:-0}"
     local peak_memory_bytes="${7:-}"
+    local tsc_exit_codes="${8:-}"
+    local tsz_exit_codes="${9:-}"
+    local tsgo_exit_codes="${10:-}"
 
     [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
 
@@ -649,6 +652,9 @@ record_project_compatibility() {
     COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
     COMPAT_FILES_REACHED="$files_reached" \
     COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
+    COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
+    COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
+    COMPAT_TSGO_EXIT_CODES="$tsgo_exit_codes" \
     node <<'NODE'
 const fs = require("node:fs");
 
@@ -656,6 +662,19 @@ const toNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toExitCodes = (value) => {
+  const matches = String(value || "").match(/\b\d+\b/g) || [];
+  const seen = new Set();
+  const codes = [];
+  for (const match of matches) {
+    const parsed = Number(match);
+    if (!Number.isInteger(parsed) || seen.has(parsed)) continue;
+    seen.add(parsed);
+    codes.push(parsed);
+  }
+  return codes;
 };
 
 const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
@@ -670,6 +689,11 @@ const row = {
   phase: process.env.COMPAT_PHASE || "unknown",
   diagnostic_status: process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown",
   diagnostic_deltas: diagnosticDeltas,
+  exit_codes: {
+    tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
+    tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
+    tsgo: toExitCodes(process.env.COMPAT_TSGO_EXIT_CODES),
+  },
   files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
   peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
 };
@@ -895,6 +919,7 @@ run_project_benchmark() {
     # a clean tsc pass before benchmarking. large-ts-repo is too expensive
     # to validate twice, so its hyperfine result is validated via exit_codes
     # before any timing is recorded as a valid compiler pass.
+    local tsc_exit_codes=""
     if [ "$name" != "nextjs" ] && [ "$name" != "large-ts-repo" ]; then
         local project_tsc_timeout
         project_tsc_timeout=$((BENCH_TIMEOUT * 2))
@@ -904,6 +929,7 @@ run_project_benchmark() {
         else
             run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
         fi
+        tsc_exit_codes="$tsc_check"
         if [ "$tsc_check" -ne 0 ]; then
             local status
             local tsc_error=""
@@ -921,7 +947,7 @@ run_project_benchmark() {
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $(printf '%s' "$tsc_error" | head -1)" >&2
             fi
-            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count"
+            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count" "" "$tsc_exit_codes"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             return
         fi
@@ -1006,9 +1032,9 @@ run_project_benchmark() {
         fi
 
         if [ "$tsz_check" -eq 124 ] || [ "$tsgo_check" -eq 124 ]; then
-            record_project_compatibility "$name" "timeout" "check" "compiler timed out" "$diagnostic_delta" "$file_count"
+            record_project_compatibility "$name" "timeout" "check" "compiler timed out" "$diagnostic_delta" "$file_count" "" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
         else
-            record_project_compatibility "$name" "nonzero exit" "check" "diagnostic mismatch or compiler error" "$diagnostic_delta" "$file_count"
+            record_project_compatibility "$name" "nonzero exit" "check" "diagnostic mismatch or compiler error" "$diagnostic_delta" "$file_count" "" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
         fi
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
         return
@@ -1087,7 +1113,7 @@ run_project_benchmark() {
                 -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
         fi
         if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
-            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count"
+            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "" "$tsc_exit_codes"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,tsgo,0,tsz unavailable; tsgo error\n"
             rm -f "$json_file"
             return
@@ -1096,7 +1122,7 @@ run_project_benchmark() {
             local tsgo_exit_status
             tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
             if [ "$tsgo_exit_status" != "ok" ]; then
-                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count"
+                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count" "" "$tsc_exit_codes" "" "$tsgo_exit_status"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,error,0,tsz unavailable; tsgo ${tsgo_exit_status}\n"
                 rm -f "$json_file"
                 return
@@ -1108,7 +1134,7 @@ run_project_benchmark() {
                 tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
                 local tsgo_ms
                 tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
-                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count"
+                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count" "" "$tsc_exit_codes" "" "0"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,${tsgo_ms},N/A,${tsgo_lps},tsgo,0,tsz unavailable\n"
             fi
         fi
@@ -1141,7 +1167,7 @@ run_project_benchmark() {
     fi
     if [ "$hyperfine_status" -ne 0 ]; then
         local status="hyperfine error"
-        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count"
+        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count" "" "$tsc_exit_codes"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
         return
@@ -1159,9 +1185,9 @@ run_project_benchmark() {
             [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
             echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
             if [[ "$status" == *"timeout"* ]]; then
-                record_project_compatibility "$name" "timeout" "timing" "compiler timed out" "$status" "$file_count"
+                record_project_compatibility "$name" "timeout" "timing" "compiler timed out" "$status" "$file_count" "" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
             else
-                record_project_compatibility "$name" "nonzero exit" "timing" "diagnostic mismatch or compiler error" "$status" "$file_count"
+                record_project_compatibility "$name" "nonzero exit" "timing" "diagnostic mismatch or compiler error" "$status" "$file_count" "" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
             fi
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             rm -f "$json_file"
@@ -1186,7 +1212,7 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count"
+            record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "" "$tsc_exit_codes" "0" "0"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     fi
@@ -1306,6 +1332,7 @@ function fallbackCompatibility(row) {
       phase: "check",
       diagnostic_status: "none",
       diagnostic_deltas: [],
+      exit_codes: { tsc: [], tsz: [], tsgo: [] },
       files_reached: row.lines ? null : null,
       peak_memory_bytes: null,
     };
@@ -1316,6 +1343,7 @@ function fallbackCompatibility(row) {
       phase: "fixture setup",
       diagnostic_status: "tsc fixture failed",
       diagnostic_deltas: [],
+      exit_codes: { tsc: [], tsz: [], tsgo: [] },
       files_reached: null,
       peak_memory_bytes: null,
     };
@@ -1325,6 +1353,7 @@ function fallbackCompatibility(row) {
     phase: "check",
     diagnostic_status: status.includes("tsz") ? "diagnostic mismatch or compiler error" : "compiler error",
     diagnostic_deltas: [],
+    exit_codes: { tsc: [], tsz: [], tsgo: [] },
     files_reached: null,
     peak_memory_bytes: null,
   };
@@ -1371,6 +1400,13 @@ function compatibilityFor(row, compatibilityRows) {
       diagnostic_deltas: diagnosticDeltas,
       diagnostic_codes: diagnosticCodesFrom(diagnosticDeltas),
       reduction_candidates: reductionCandidatesFrom(diagnosticDeltas),
+      exit_codes: recorded.exit_codes && typeof recorded.exit_codes === "object"
+        ? {
+            tsc: Array.isArray(recorded.exit_codes.tsc) ? recorded.exit_codes.tsc : [],
+            tsz: Array.isArray(recorded.exit_codes.tsz) ? recorded.exit_codes.tsz : [],
+            tsgo: Array.isArray(recorded.exit_codes.tsgo) ? recorded.exit_codes.tsgo : [],
+          }
+        : { tsc: [], tsz: [], tsgo: [] },
       semantic_owner_family: PROJECT_OWNER_FAMILIES[row.name] || "not classified",
       files_reached: recorded.files_reached ?? null,
       peak_memory_bytes: recorded.peak_memory_bytes ?? null,
