@@ -1006,61 +1006,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Resolver for `import("./m").Type` patterns that appear inside the
             // type alias body (e.g. in the extends clause of a conditional type).
-            // The lowering layer can't cross file boundaries on its own, so we
-            // supply a checker-side callback that does the cross-file lookup and
-            // returns a `Lazy(DefId)` for the target symbol.
-            let import_call_resolver = |call_node: tsz_parser::parser::NodeIndex,
-                                        segments: &[String]|
-             -> Option<tsz_solver::TypeId> {
-                if segments.is_empty() {
-                    return None;
-                }
-                // Extract the module specifier string from the call argument.
-                let call_nd = decl_arena.get(call_node)?;
-                let call = decl_arena.get_call_expr(call_nd)?;
-                let first_arg = *call.arguments.as_ref()?.nodes.first()?;
-                let arg_nd = decl_arena.get(first_arg)?;
-                let module_spec = decl_arena.get_literal(arg_nd)?.text.clone();
-
-                // Resolve the module specifier to a target file.
-                let target_file_idx = self
-                    .ctx
-                    .resolve_import_target_from_file_with_mode(decl_file_idx, &module_spec, None)
-                    .or_else(|| self.ctx.resolve_import_target(&module_spec))?;
-
-                let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
-                let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-                let target_file_name = target_arena.source_files.first()?.file_name.clone();
-
-                // Resolve the first segment as a named export of the target module.
-                let (mut current_sym, _) = target_binder
-                    .resolve_import_with_reexports_type_only(&target_file_name, &segments[0])?;
-
-                // Walk any additional segments for nested namespace paths like
-                // `import("./m").Ns.Inner`.  We look up symbols in the target
-                // binder (the authoritative source for that file's symbols).
-                for seg in segments.iter().skip(1) {
-                    let symbol = target_binder
-                        .get_symbol(current_sym)
-                        .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
-                    current_sym = symbol
-                        .exports
-                        .as_deref()
-                        .and_then(|e| e.get(seg.as_str()))
-                        .or_else(|| symbol.members.as_deref().and_then(|m| m.get(seg.as_str())))?;
-                }
-
-                // Use the collision-safe variant: looks up (sym_id, target_file_idx)
-                // in the composite-key index without touching cross_file_symbol_targets
-                // or symbol_to_def, so a local symbol sharing the same raw SymbolId
-                // is not inadvertently redirected to this cross-file definition.
-                let def_id = self.ctx.get_or_create_def_id_for_cross_file_symbol(
-                    current_sym,
-                    target_file_idx,
-                    target_binder,
-                );
-                self.ensure_type_alias_resolved(current_sym, def_id);
-                Some(self.ctx.types.lazy(def_id))
+            // Specifiers resolve relative to `decl_file_idx` (the file that
+            // *declares* the alias), which may differ from the file currently
+            // being checked for cross-file type aliases.
+            let import_call_resolver = |call_node: NodeIndex, segments: &[String]| {
+                self.resolve_import_call_segments(decl_arena, decl_file_idx, call_node, segments)
             };
 
             let make_lowering = |bindings| {
@@ -1173,6 +1123,70 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 env.register_def_symbol_mapping(def_id, sym_id);
             }
         }
+    }
+
+    /// Resolve an `import("./module").Segment.Path` chain to a `Lazy(DefId)` type.
+    ///
+    /// The lowering layer cannot cross file boundaries on its own, so it hands
+    /// the `import(...)` `CALL_EXPRESSION` node and the collected member-access
+    /// segments back to the checker. `arena` and `from_file_idx` describe the
+    /// file that contains the `import(...)` call (the file currently being
+    /// checked, or the file that declares a cross-file type alias), so relative
+    /// module specifiers resolve from the correct origin.
+    ///
+    /// Shared by the `import_call_resolver` closures in `lower_with_resolvers`
+    /// and `ensure_type_alias_resolved_inner`.
+    pub(super) fn resolve_import_call_segments(
+        &self,
+        arena: &NodeArena,
+        from_file_idx: usize,
+        call_node: NodeIndex,
+        segments: &[String],
+    ) -> Option<TypeId> {
+        let first_segment = segments.first()?;
+
+        // Extract the module specifier string from the `import(...)` argument.
+        let call_nd = arena.get(call_node)?;
+        let call = arena.get_call_expr(call_nd)?;
+        let first_arg = *call.arguments.as_ref()?.nodes.first()?;
+        let arg_nd = arena.get(first_arg)?;
+        let module_spec = arena.get_literal(arg_nd)?.text.clone();
+
+        // Resolve the module specifier to a target file.
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(from_file_idx, &module_spec, None)
+            .or_else(|| self.ctx.resolve_import_target(&module_spec))?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+
+        // Resolve the first segment as a named export of the target module, then
+        // walk any nested namespace segments (`import("./m").Ns.Inner`).
+        let (mut current_sym, _) = target_binder
+            .resolve_import_with_reexports_type_only(&target_file_name, first_segment)?;
+        for seg in &segments[1..] {
+            let symbol = target_binder
+                .get_symbol(current_sym)
+                .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
+            current_sym = symbol
+                .exports
+                .as_deref()
+                .and_then(|e| e.get(seg.as_str()))
+                .or_else(|| symbol.members.as_deref().and_then(|m| m.get(seg.as_str())))?;
+        }
+
+        // Use the collision-safe variant: it keys on `(sym_id, target_file_idx)`
+        // without touching `cross_file_symbol_targets` or `symbol_to_def`, so a
+        // local symbol sharing the same raw `SymbolId` is not redirected to this
+        // cross-file definition.
+        let def_id = self.ctx.get_or_create_def_id_for_cross_file_symbol(
+            current_sym,
+            target_file_idx,
+            target_binder,
+        );
+        self.ensure_type_alias_resolved(current_sym, def_id);
+        Some(self.ctx.types.lazy(def_id))
     }
 
     /// Resolve a DefId with support for qualified names (e.g., `AnimalType.cat`).
