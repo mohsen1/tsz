@@ -2,7 +2,10 @@
 //!
 //! Verifies that getter/setter accessors are checked against index signatures.
 
-use crate::test_utils::check_source_code_messages as get_diagnostics;
+use crate::test_utils::{
+    check_source, check_source_code_messages as get_diagnostics, diagnostic_code_messages,
+};
+use tsz_checker::context::CheckerOptions;
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
@@ -348,6 +351,30 @@ export {};
     assert!(
         !has_error_with_code(source, 2411),
         "Optional property should not trigger TS2411 when index type already includes undefined"
+    );
+}
+
+#[test]
+fn ts2411_interface_optional_property_exact_optional_no_undefined_widening() {
+    let source = r#"
+interface ExactOptional {
+    [key: string]: string;
+    optional?: string;
+}
+export {};
+"#;
+    let diagnostics = diagnostic_code_messages(check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            exact_optional_property_types: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    ));
+    assert!(
+        !diagnostics.iter().any(|d| d.0 == 2411),
+        "Exact optional property types should check the present value type without adding undefined, got: {diagnostics:?}"
     );
 }
 
