@@ -394,6 +394,9 @@ mod call_architecture_tests;
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
 #[cfg(test)]
+#[path = "tests/callable_interface_assignment_tests.rs"]
+mod callable_interface_assignment_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
@@ -606,6 +609,9 @@ mod symbol_index_signature_tests;
 #[cfg(test)]
 #[path = "tests/synthetic_unique_atom_union_display_tests.rs"]
 mod synthetic_unique_atom_union_display_tests;
+#[cfg(test)]
+#[path = "tests/this_context_self_type_tests.rs"]
+mod this_context_self_type_tests;
 #[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
