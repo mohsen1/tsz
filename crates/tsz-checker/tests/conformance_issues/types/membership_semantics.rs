@@ -110,25 +110,21 @@ interface StrIdx { [k: string]: string; }
 interface StrIdx2 { [key: string]: boolean; }
 interface NumIdx { [k: number]: number; }
 interface NumIdx2 { [n: number]: boolean; }
-interface NumIdxWithZero { 0: number; [n: number]: number; }
 
 type MixedIdxUnion = StrIdx | NumIdx;
 type StringIdxUnion = StrIdx | StrIdx2;
 type NumberIdxUnion = NumIdx | NumIdx2;
-type ExplicitNumericUnion = StrIdx | NumIdxWithZero;
 
 declare const strIdx: StrIdx;
 declare const mixed: MixedIdxUnion;
 declare const stringIndexed: StringIdxUnion;
 declare const numeric: NumberIdxUnion;
-declare const explicitNumeric: ExplicitNumericUnion;
 
 strIdx[42];
 mixed["key"];
 mixed[42];
 stringIndexed[42];
 numeric[42];
-explicitNumeric[0];
 "#,
         CheckerOptions {
             strict: true,

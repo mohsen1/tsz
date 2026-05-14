@@ -197,9 +197,9 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         literal_index: Option<usize>,
     ) -> bool {
-        let Some(index) = literal_index else {
+        if literal_index.is_none() {
             return false;
-        };
+        }
 
         let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, object_type)
@@ -218,27 +218,21 @@ impl<'a> CheckerState<'a> {
 
         let mut all_have_string_surface = true;
         let mut all_have_number_surface = true;
-        let mut all_have_string_or_explicit_surface = true;
-        let mut all_have_number_or_explicit_surface = true;
         let mut saw_indexed_member = false;
 
         for &member in &members {
+            if !self.is_index_signature_only_member(member) {
+                return false;
+            }
             let Some((has_string, has_number)) = self.numeric_index_surfaces(member) else {
                 return false;
             };
-            let has_explicit = self.has_explicit_numeric_property(member, index);
             saw_indexed_member = true;
             all_have_string_surface &= has_string;
             all_have_number_surface &= has_number;
-            all_have_string_or_explicit_surface &= has_string || has_explicit;
-            all_have_number_or_explicit_surface &= has_number || has_explicit;
         }
 
-        saw_indexed_member
-            && !all_have_string_surface
-            && !all_have_number_surface
-            && !all_have_string_or_explicit_surface
-            && !all_have_number_or_explicit_surface
+        saw_indexed_member && !all_have_string_surface && !all_have_number_surface
     }
 
     fn numeric_index_surfaces(&self, object_type: TypeId) -> Option<(bool, bool)> {
@@ -281,16 +275,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn has_explicit_numeric_property(&self, object_type: TypeId, index: usize) -> bool {
-        let property_name = index.to_string();
+    fn is_index_signature_only_member(&self, object_type: TypeId) -> bool {
         crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
             .is_some_and(|shape| {
-                shape.properties.iter().any(|property| {
-                    !property.is_string_named
-                        && !property.is_symbol_named
-                        && self.ctx.types.resolve_atom_ref(property.name).as_ref()
-                            == property_name.as_str()
-                })
+                shape.properties.is_empty()
+                    && (shape.string_index.is_some() || shape.number_index.is_some())
             })
     }
 
