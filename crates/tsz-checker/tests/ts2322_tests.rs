@@ -4910,6 +4910,40 @@ preferredRevision = PUPPETEER_REVISIONS.firefox;
     );
 }
 
+#[test]
+fn object_seal_widens_mutable_literal_property_values() {
+    let source = r#"
+const sealed = Object.seal({ x: 1 });
+sealed.x = 2;
+
+const frozen = Object.freeze({ x: 1 });
+frozen.x = 2;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let seal_assignment_start = source
+        .find("sealed.x = 2")
+        .expect("sealed assignment should exist") as u32;
+    let frozen_assignment_start = source
+        .find("frozen.x = 2")
+        .expect("frozen assignment should exist") as u32;
+    let seal_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.start == seal_assignment_start)
+        .collect();
+    assert_eq!(
+        seal_diagnostics.len(),
+        0,
+        "Expected Object.seal property assignment to remain mutable and widened. Got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic.code
+            == diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY
+            && diagnostic.start == frozen_assignment_start + "frozen.".len() as u32),
+        "Expected Object.freeze assignment to remain readonly. Got: {diagnostics:?}"
+    );
+}
+
 /// Regression: assignFromStringInterface2.ts
 /// When both source and target have number index signatures but the source is
 /// missing named properties from the target, TS2739/TS2740 should be emitted

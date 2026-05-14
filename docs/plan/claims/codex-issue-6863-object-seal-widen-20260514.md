@@ -2,18 +2,18 @@
 
 - **Date**: 2026-05-14
 - **Branch**: `codex/issue-6863-object-seal-widen-20260514`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #6868
+- **Status**: ready
 - **Workstream**: conformance / false-positive fixes
 
 ## Intent
 
-Fix #6863, where `Object.seal({ x: 1 })` preserves the literal property type and causes a false positive assignment error for `sealed.x = 2`. The fix should preserve `Object.freeze`/`as const` literal behavior while widening mutable object literal property values for `Object.seal` compatibility with TypeScript.
+Add regression coverage for #6863. Current `origin/main` already widens mutable `Object.seal` object literal property values correctly, and this PR locks that behavior while preserving `Object.freeze` readonly/literal behavior.
 
 ## Files Touched
 
-- TBD
+- `crates/tsz-checker/tests/ts2322_tests.rs` (regression for `Object.seal` mutability/widening and `Object.freeze` readonly behavior)
 
 ## Verification
 
-- TBD
+- `cargo nextest run -p tsz-checker -E 'test(object_seal_widens_mutable_literal_property_values)' --no-fail-fast` (2 tests pass)
