@@ -245,6 +245,14 @@ pub trait TypeDatabase {
         None
     }
 
+    /// Get the `ReadonlyArray<T>` base type registered from lib.d.ts.
+    ///
+    /// Used by property access to resolve only non-mutating members when the
+    /// receiver is `readonly T[]` or a readonly tuple.
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic kind.
     ///
     /// For example, `IntrinsicKind::Function` returns the `TypeId` of the `Function` interface
@@ -653,6 +661,10 @@ impl TypeDatabase for TypeInterner {
         Self::get_array_display_base_type(self)
     }
 
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        TypeInterner::get_readonly_array_base_type(self)
+    }
+
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         Self::get_boxed_type(self, kind)
     }
@@ -709,6 +721,10 @@ impl TypeResolver for TypeInterner {
     fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         self.get_array_base_type_params()
     }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        TypeInterner::get_readonly_array_base_type(self)
+    }
 }
 
 /// Query layer for higher-level solver operations.
@@ -739,6 +755,13 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
     /// Register the `Array<T>` base type used for display-order-sensitive queries.
     fn register_array_display_base_type(&self, _type_id: TypeId) {}
+
+    /// Register the `ReadonlyArray<T>` base type used by property access resolution.
+    ///
+    /// Enables property access on `readonly T[]` to resolve against the
+    /// `ReadonlyArray<T>` interface (which lacks mutating methods) rather than
+    /// the mutable `Array<T>` interface.
+    fn register_readonly_array_base_type(&self, _type_id: TypeId) {}
 
     /// Register a boxed interface type for a primitive intrinsic kind.
     ///
@@ -1133,6 +1156,10 @@ impl QueryDatabase for TypeInterner {
 
     fn register_array_display_base_type(&self, type_id: TypeId) {
         self.set_array_display_base_type(type_id);
+    }
+
+    fn register_readonly_array_base_type(&self, type_id: TypeId) {
+        self.set_readonly_array_base_type(type_id);
     }
 
     fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {

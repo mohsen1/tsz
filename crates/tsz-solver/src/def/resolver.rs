@@ -184,6 +184,14 @@ pub trait TypeResolver {
         &[]
     }
 
+    /// Get the `ReadonlyArray<T>` interface type from lib.d.ts.
+    ///
+    /// Used by property access resolution to find only the non-mutating methods
+    /// when resolving properties on `readonly T[]` or `readonly [...]` types.
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
     /// Check if a `DefId` corresponds to a numeric enum (not a string enum).
     ///
     /// Used for TypeScript's unsound Rule #7 (Open Numeric Enums) where
@@ -345,6 +353,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
         (**self).get_array_base_type_params()
     }
 
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        (**self).get_readonly_array_base_type()
+    }
+
     fn is_numeric_enum(&self, def_id: DefId) -> bool {
         (**self).is_numeric_enum(def_id)
     }
@@ -403,6 +415,8 @@ pub struct TypeEnvironment {
     array_base_type: Option<TypeId>,
     /// Type parameters for the Array<T> interface (usually just [T]).
     array_base_type_params: Vec<TypeParamInfo>,
+    /// The `ReadonlyArray<T>` interface type from lib.d.ts.
+    readonly_array_base_type: Option<TypeId>,
     /// Maps `DefIds` to their resolved structural types.
     def_types: FxHashMap<u32, TypeId>,
     /// Maps `DefIds` to their type parameters (for generic types with Lazy refs).
@@ -456,6 +470,7 @@ impl TypeEnvironment {
             boxed_types: FxHashMap::default(),
             array_base_type: None,
             array_base_type_params: Vec::new(),
+            readonly_array_base_type: None,
             def_types: FxHashMap::default(),
             def_type_params: FxHashMap::default(),
             declared_variances: FxHashMap::default(),
@@ -582,6 +597,16 @@ impl TypeEnvironment {
     /// Get the type parameters for the Array<T> interface.
     pub fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         &self.array_base_type_params
+    }
+
+    /// Register the `ReadonlyArray<T>` interface type from lib.d.ts.
+    pub const fn set_readonly_array_base_type(&mut self, type_id: TypeId) {
+        self.readonly_array_base_type = Some(type_id);
+    }
+
+    /// Get the `ReadonlyArray<T>` interface type.
+    pub const fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        self.readonly_array_base_type
     }
 
     /// Register a symbol's resolved type with type parameters.
@@ -936,6 +961,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         Self::get_array_base_type_params(self)
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        Self::get_readonly_array_base_type(self)
     }
 
     fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {

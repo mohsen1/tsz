@@ -690,9 +690,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            // ReadonlyType and NoInfer are transparent wrappers for property access
-            TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            // NoInfer is a transparent wrapper for property access.
+            // ReadonlyType is transparent for non-array types, but for Array/Tuple
+            // inner types it must resolve against ReadonlyArray<T> so that mutating
+            // methods (push, pop, splice, etc.) are absent — matching tsc behaviour.
+            TypeData::NoInfer(inner) => {
                 self.resolve_property_access_inner(inner, prop_name, prop_atom)
+            }
+
+            TypeData::ReadonlyType(inner) => {
+                self.resolve_readonly_type_property(obj_type, inner, prop_name, prop_atom)
             }
 
             TypeData::TypeParameter(info) | TypeData::Infer(info) => {
