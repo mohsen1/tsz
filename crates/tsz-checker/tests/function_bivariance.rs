@@ -3,13 +3,7 @@
 //! These tests verify that methods are bivariant while function properties
 //! are contravariant, per TypeScript's function variance rules.
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
-use crate::test_fixtures::TestContext;
-use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::check_source_code_messages;
 
 /// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
 const GLOBAL_TYPE_MOCKS: &str = r#"
@@ -31,43 +25,10 @@ fn test_function_variance(source: &str, expected_error_code: u32) {
     let source_clean = source_clean.trim();
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
 
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let error_count = checker
-        .ctx
-        .diagnostics
+    let diagnostics = check_source_code_messages(&source);
+    let error_count = diagnostics
         .iter()
-        .filter(|d| d.code == expected_error_code)
+        .filter(|(code, _)| *code == expected_error_code)
         .count();
 
     assert!(
@@ -75,7 +36,7 @@ fn test_function_variance(source: &str, expected_error_code: u32) {
         "Expected at least 1 TS{} error, got {}: {:?}",
         expected_error_code,
         error_count,
-        checker.ctx.diagnostics
+        diagnostics
     );
 }
 
@@ -87,45 +48,9 @@ fn test_no_errors(source: &str) {
     let source_clean = source_clean.trim();
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
 
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let errors: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| {
-            d.category == crate::checker::diagnostics::DiagnosticCategory::Error && d.code != 2318
-        })
+    let errors: Vec<_> = check_source_code_messages(&source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
         .collect();
 
     assert!(
@@ -276,43 +201,10 @@ fn collect_error_codes(source: &str) -> Vec<u32> {
     let source_clean = source_clean.trim();
     let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
 
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let mut codes: Vec<u32> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code != 2318) // ignore "Cannot find global type"
-        .map(|d| d.code)
+    let mut codes: Vec<u32> = check_source_code_messages(&source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318) // ignore "Cannot find global type"
+        .map(|(code, _)| code)
         .collect();
     codes.sort();
     codes.dedup();

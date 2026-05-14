@@ -186,6 +186,10 @@ name = "ts2636_method_bivariance_tests"
 path = "tests/ts2636_method_bivariance_tests.rs"
 
 [[test]]
+name = "function_bivariance"
+path = "tests/function_bivariance.rs"
+
+[[test]]
 name = "ts6133_unused_type_params_tests"
 path = "tests/ts6133_unused_type_params_tests.rs"
 
