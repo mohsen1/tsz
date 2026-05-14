@@ -1569,17 +1569,6 @@ impl<'a> CheckerState<'a> {
 
         match result {
             CallResult::Success(mut return_type) => {
-                if let Some(shape) = constructor_shape.as_ref()
-                    && let Some(fallback_return) =
-                        self.generic_constructor_nested_constraint_failure_return(shape, &arg_types)
-                {
-                    self.error_at_node(
-                        new_expr.expression,
-                        "No overload matches this call.",
-                        diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
-                    );
-                    return fallback_return;
-                }
                 if is_generic_new {
                     return_type = self.default_current_infer_placeholders_to_unknown(return_type);
                 }
