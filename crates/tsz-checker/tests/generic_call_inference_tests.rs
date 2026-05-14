@@ -3028,6 +3028,25 @@ const wrongString: number = madeString.props.stuff;
 }
 
 #[test]
+fn generic_static_factory_constructor_infers_method_type_parameter() {
+    let source = r#"
+class Container<T> {
+    private value: T;
+    constructor(value: T) { this.value = value; }
+
+    static of<U>(value: U): Container<U> {
+        return new Container(value);
+    }
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322),
+        "constructor inference inside a generic static method should preserve the method type parameter. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn generic_constructor_options_infer_from_context_sensitive_object_member_return() {
     let source = r#"
 declare class Connection {
