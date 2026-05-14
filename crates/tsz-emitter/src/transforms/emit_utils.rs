@@ -1,5 +1,5 @@
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -948,26 +948,6 @@ pub(crate) struct AsyncMethodSuperCapture {
     pub needs_writable_element_index: bool,
 }
 
-/// Walk a function body and collect the property names accessed off `super`
-/// via `super.<identifier>` (issue #3759). Used by the async-method downlevel
-/// transform to build the `_super = Object.create(null, { ... })` capture
-/// block before entering the generator.
-///
-/// Stops recursion at function-like boundaries that re-bind `super` (function
-/// expressions / declarations and class members). Arrow functions inherit
-/// `super` from the enclosing method, so they ARE traversed.
-pub(crate) fn collect_async_method_super_property_names(
-    arena: &NodeArena,
-    body: NodeIndex,
-) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    let mut visited: rustc_hash::FxHashSet<NodeIndex> = rustc_hash::FxHashSet::default();
-    collect_super_property_names_rec(arena, body, &mut names, &mut visited);
-    names.sort();
-    names.dedup();
-    names
-}
-
 pub(crate) fn collect_async_method_super_capture(
     arena: &NodeArena,
     body: NodeIndex,
@@ -980,52 +960,50 @@ pub(crate) fn collect_async_method_super_capture(
     capture
 }
 
-fn collect_super_property_names_rec(
+pub(crate) fn collect_lowered_async_arrow_super_capture(
+    arena: &NodeArena,
+    body: NodeIndex,
+) -> AsyncMethodSuperCapture {
+    let mut capture = AsyncMethodSuperCapture::default();
+    let mut visited: rustc_hash::FxHashSet<NodeIndex> = rustc_hash::FxHashSet::default();
+    collect_lowered_async_arrow_super_capture_rec(arena, body, &mut capture, &mut visited);
+    capture.property_names.sort();
+    capture.property_names.dedup();
+    capture
+}
+
+fn collect_lowered_async_arrow_super_capture_rec(
     arena: &NodeArena,
     idx: NodeIndex,
-    out: &mut Vec<String>,
+    out: &mut AsyncMethodSuperCapture,
     visited: &mut rustc_hash::FxHashSet<NodeIndex>,
 ) {
-    use tsz_parser::parser::node::NodeAccess;
-
     if idx.is_none() || !visited.insert(idx) {
         return;
     }
     let Some(node) = arena.get(idx) else { return };
-    let kind = node.kind;
 
-    // Stop at function-like boundaries that re-bind `super`. Arrow functions
-    // inherit `super` from their enclosing method, so we walk into them.
-    if kind == syntax_kind_ext::FUNCTION_EXPRESSION
-        || kind == syntax_kind_ext::FUNCTION_DECLARATION
-        || kind == syntax_kind_ext::METHOD_DECLARATION
-        || kind == syntax_kind_ext::CONSTRUCTOR
-        || kind == syntax_kind_ext::GET_ACCESSOR
-        || kind == syntax_kind_ext::SET_ACCESSOR
-        || kind == syntax_kind_ext::CLASS_DECLARATION
-        || kind == syntax_kind_ext::CLASS_EXPRESSION
-    {
-        return;
-    }
-
-    if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        && let Some(access) = arena.get_access_expr(node)
-        && let Some(base) = arena.get(access.expression)
-        && base.kind == SyntaxKind::SuperKeyword as u16
-    {
-        if let Some(name_node) = arena.get(access.name_or_argument)
-            && name_node.kind == SyntaxKind::Identifier as u16
-            && let Some(name) = identifier_text(arena, access.name_or_argument)
-        {
-            out.push(name);
+    if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+        if arena.get_function(node).is_some_and(|func| func.is_async) {
+            let mut arrow_visited: rustc_hash::FxHashSet<NodeIndex> =
+                rustc_hash::FxHashSet::default();
+            collect_super_capture_rec(arena, idx, false, out, &mut arrow_visited);
+            return;
         }
-        // Walk arguments only — the `super` expression itself has no further
-        // descendants worth visiting.
+    } else if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+        || node.kind == syntax_kind_ext::METHOD_DECLARATION
+        || node.kind == syntax_kind_ext::CONSTRUCTOR
+        || node.kind == syntax_kind_ext::GET_ACCESSOR
+        || node.kind == syntax_kind_ext::SET_ACCESSOR
+        || node.kind == syntax_kind_ext::CLASS_DECLARATION
+        || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+    {
         return;
     }
 
     for child in arena.get_children(idx) {
-        collect_super_property_names_rec(arena, child, out, visited);
+        collect_lowered_async_arrow_super_capture_rec(arena, child, out, visited);
     }
 }
 
