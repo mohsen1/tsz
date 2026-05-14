@@ -235,6 +235,7 @@ mod type_inference_portable_mapped_objects;
 mod type_inference_return_normalization;
 mod type_inference_return_unions;
 mod type_inference_source_call;
+mod type_inference_source_callables;
 mod type_inference_source_text;
 mod type_inference_truncation_expansion;
 mod type_inference_type_annotations;
