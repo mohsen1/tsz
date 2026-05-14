@@ -1339,56 +1339,47 @@ impl<'a> CheckerState<'a> {
             && let Some(index) = literal_index
             && !self.is_array_like_type(object_type_for_access)
         {
-            let union_numeric_key_missing = {
-                skip_flow_narrowing && {
-                    let union_object_type = self.resolve_lazy_type(pre_resolution_object_type);
-                    crate::query_boundaries::common::union_members(
-                        self.ctx.types,
-                        union_object_type,
-                    )
-                    .is_some_and(|members| {
-                        members.iter().any(|&member| {
-                            !self.union_member_supports_numeric_literal_key(member, index)
-                        })
-                    })
+            let property_name = index.to_string();
+            let keep_index_signature_check =
+                self.union_has_no_common_numeric_index_surface(object_type_for_access, Some(index));
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            result_type = match result {
+                PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } => {
+                    if !keep_index_signature_check {
+                        use_index_signature_check = false;
+                    }
+                    // In write context (assignment target), prefer the setter type.
+                    Some(effective_write_result(type_id, write_type))
                 }
-            };
-
-            if !union_numeric_key_missing {
-                let property_name = index.to_string();
-                let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-                let result = self.resolve_property_access_with_env(resolved_type, &property_name);
-                result_type = match result {
-                    PropertyAccessResult::Success {
-                        type_id,
-                        write_type,
-                        ..
-                    } => {
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    if !keep_index_signature_check {
                         use_index_signature_check = false;
-                        // In write context (assignment target), prefer the setter type.
-                        Some(effective_write_result(type_id, write_type))
                     }
-                    PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                        use_index_signature_check = false;
-                        Some(property_type.unwrap_or(TypeId::ERROR))
-                    }
-                    PropertyAccessResult::IsUnknown => {
-                        if self.ctx.compiler_options.strict_null_checks {
+                    Some(property_type.unwrap_or(TypeId::ERROR))
+                }
+                PropertyAccessResult::IsUnknown => {
+                    if self.ctx.compiler_options.strict_null_checks {
+                        if !keep_index_signature_check {
                             use_index_signature_check = false;
-                            // TS18046: 'x' is of type 'unknown'.
-                            // Without strictNullChecks, unknown is treated like any.
-                            if self.error_is_of_type_unknown(access.expression) {
-                                Some(TypeId::ERROR)
-                            } else {
-                                Some(TypeId::ANY)
-                            }
-                        } else {
-                            None
                         }
+                        // TS18046: 'x' is of type 'unknown'.
+                        // Without strictNullChecks, unknown is treated like any.
+                        if self.error_is_of_type_unknown(access.expression) {
+                            Some(TypeId::ERROR)
+                        } else {
+                            Some(TypeId::ANY)
+                        }
+                    } else {
+                        None
                     }
-                    PropertyAccessResult::PropertyNotFound { .. } => None,
-                };
-            }
+                }
+                PropertyAccessResult::PropertyNotFound { .. } => None,
+            };
         }
 
         // Handle non-integer numeric literals (e.g., c[1.1], c[-1]) as property name access.
@@ -1845,6 +1836,13 @@ impl<'a> CheckerState<'a> {
                 index_type_for_access,
                 literal_index,
             )
+        {
+            report_no_index = true;
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && self.union_has_no_common_numeric_index_surface(object_type_for_access, literal_index)
         {
             report_no_index = true;
         }

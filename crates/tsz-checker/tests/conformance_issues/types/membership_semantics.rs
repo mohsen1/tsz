@@ -107,19 +107,23 @@ fn test_union_numeric_index_requires_common_number_index_surface() {
         "test.ts",
         r#"
 interface StrIdx { [k: string]: string; }
+interface StrIdx2 { [key: string]: boolean; }
 interface NumIdx { [k: number]: number; }
 interface NumIdx2 { [n: number]: boolean; }
 
 type MixedIdxUnion = StrIdx | NumIdx;
+type StringIdxUnion = StrIdx | StrIdx2;
 type NumberIdxUnion = NumIdx | NumIdx2;
 
 declare const strIdx: StrIdx;
 declare const mixed: MixedIdxUnion;
+declare const stringIndexed: StringIdxUnion;
 declare const numeric: NumberIdxUnion;
 
 strIdx[42];
 mixed["key"];
 mixed[42];
+stringIndexed[42];
 numeric[42];
 "#,
         CheckerOptions {
@@ -132,8 +136,8 @@ numeric[42];
 
     let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
     assert_eq!(
-        ts7053_count, 1,
-        "Expected TS7053 for mixed union string access, while preserving numeric reads through string index signatures, single string-index numeric access, and all-number-index union access. Actual diagnostics: {diagnostics:#?}"
+        ts7053_count, 2,
+        "Expected TS7053 for mixed union string and numeric access, while preserving numeric reads through single string-index signatures, all-string-index unions, and all-number-index unions. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

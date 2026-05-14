@@ -2262,29 +2262,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(crate) fn union_member_supports_numeric_literal_key(
-        &self,
-        member: TypeId,
-        index: usize,
-    ) -> bool {
-        if self.is_union_member_number_indexable(member) {
-            return true;
-        }
-
-        let property_name = index.to_string();
-        let member = self.resolve_type_for_property_access_simple(member);
-        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member).is_some_and(
-            |shape| {
-                shape.properties.iter().any(|property| {
-                    !property.is_string_named
-                        && !property.is_symbol_named
-                        && self.ctx.types.resolve_atom_ref(property.name).as_ref()
-                            == property_name.as_str()
-                })
-            },
-        )
-    }
-
     /// Check if a type is array-like (supports numeric indexing).
     ///
     /// This function determines if a type supports numeric element access,
@@ -2664,22 +2641,6 @@ impl<'a> CheckerState<'a> {
             query::ElementIndexableKind::Intersection(members) => members
                 .iter()
                 .any(|&member| self.is_element_indexable(member, wants_string, wants_number)),
-            query::ElementIndexableKind::Other => false,
-        }
-    }
-
-    fn is_union_member_number_indexable(&self, object_type: TypeId) -> bool {
-        match query::classify_element_indexable(self.ctx.types, object_type) {
-            query::ElementIndexableKind::Array
-            | query::ElementIndexableKind::Tuple
-            | query::ElementIndexableKind::StringLike => true,
-            query::ElementIndexableKind::ObjectWithIndex { has_number, .. } => has_number,
-            query::ElementIndexableKind::Union(members) => members
-                .iter()
-                .all(|&member| self.is_union_member_number_indexable(member)),
-            query::ElementIndexableKind::Intersection(members) => members
-                .iter()
-                .any(|&member| self.is_union_member_number_indexable(member)),
             query::ElementIndexableKind::Other => false,
         }
     }
