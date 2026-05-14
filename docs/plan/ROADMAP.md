@@ -388,6 +388,8 @@ Acceptance:
 1. Large repo finishes without OOM/timeout, then gets faster.
 2. Cross-file lookups increasingly answer from skeleton/stable indexes.
 3. Cache/residency changes include before/after measurements when practical.
+4. Lib/interface reuse proves semantic identity and type-parameter preservation;
+   rejected missing-interface lib probes should not become name-only allowlists.
 
 ### Track 9: Emit Robustness, DTS Boundary, And Consumers
 

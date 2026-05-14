@@ -29,6 +29,17 @@ For performance-motivated PRs, record in the PR body:
 
 Use `scripts/safe-run.sh` for memory-intensive or long-running commands.
 
+Distinguish timing evidence from attribution evidence:
+
+| Mode | Purpose | Counter state | Comparable to `tsgo` timing? |
+| --- | --- | --- | --- |
+| `timing` | Wall time and RSS claims | Off | Yes |
+| `attribution` | Explain where time goes | On | No |
+
+Never compare attribution-mode `tsz` directly against timing-mode `tsgo`.
+Counter paths that can call timing APIs must be compiled out of timing builds
+or otherwise proven absent from timing profiles.
+
 ## Benchmark Families
 
 Use the narrowest command that answers the question:
