@@ -3,8 +3,8 @@
 //!
 //! The cache replaces a `with_parent_cache_attributed(...,
 //! TypeEnvironmentCore)` child-checker construction per call site (the
-//! dominant share of `with_parent_cache_constructed` per the 2026-05-10
-//! attribution run; see `docs/plan/perf-runs/2026-05-10-scale-cliff-summary.md`).
+//! dominant share of `with_parent_cache_constructed` in the original
+//! attribution run for this work).
 //!
 //! Per `PERFORMANCE_PLAN.md` §7, each Tier 2.2 PR ships:
 //! 1. a unit test that locks the new behavior, and

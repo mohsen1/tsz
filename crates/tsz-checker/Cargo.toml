@@ -1145,5 +1145,9 @@ path = "tests/mapped_type_numeric_literal_key_tests.rs"
 name = "ts2344_infer_positional_constraint_tests"
 path = "tests/ts2344_infer_positional_constraint_tests.rs"
 
+[[test]]
+name = "nested_infer_extends_scope_tests"
+path = "tests/nested_infer_extends_scope_tests.rs"
+
 [lints]
 workspace = true
