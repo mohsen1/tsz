@@ -290,3 +290,110 @@ interface Bag {
         "Expected no symbol-index TS2411 when local Symbol shadows the global, got: {ts2411_against_symbol}"
     );
 }
+
+// =========================================================================
+// Optional properties in interfaces must be checked as `T | undefined`
+// against the index signature (TS2411, issue #6746).
+//
+// tsc rule: an optional property `prop?: T` has effective type `T | undefined`
+// for index-signature compatibility because the property can be absent.
+// If `T | undefined` is not assignable to the index value type, TS2411 fires.
+// =========================================================================
+
+#[test]
+fn ts2411_interface_optional_property_vs_string_index() {
+    // `optional?: string` is effectively `string | undefined`.
+    // `string | undefined` is not assignable to `string` index value → TS2411.
+    let source = r#"
+interface WithSpecific {
+    [key: string]: string;
+    required: string;
+    optional?: string;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411: optional property `string | undefined` not assignable to string index"
+    );
+}
+
+#[test]
+fn ts2411_interface_required_property_no_false_positive() {
+    // Required `required: string` IS assignable to `string` index → no TS2411.
+    let source = r#"
+interface WithSpecific {
+    [key: string]: string;
+    required: string;
+}
+export {};
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "Required property should not trigger TS2411 vs matching string index"
+    );
+}
+
+#[test]
+fn ts2411_interface_optional_property_index_includes_undefined() {
+    // When the index value type already includes `undefined`, the optional
+    // property's `T | undefined` IS assignable → no TS2411.
+    let source = r#"
+interface WithUndefined {
+    [key: string]: string | undefined;
+    optional?: string;
+}
+export {};
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "Optional property should not trigger TS2411 when index type already includes undefined"
+    );
+}
+
+#[test]
+fn ts2411_interface_optional_number_index() {
+    // Optional numeric property vs number index signature.
+    let source = r#"
+interface NumericIndex {
+    [idx: number]: string;
+    0?: string;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411 for optional numeric property vs number index"
+    );
+}
+
+#[test]
+fn ts2411_class_optional_property_vs_string_index() {
+    // Class optional property must also include `undefined` for the check.
+    let source = r#"
+class MyClass {
+    [key: string]: string;
+    optional?: string;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411 for class optional property vs string index"
+    );
+}
+
+#[test]
+fn ts2411_interface_optional_property_renamed_key_var() {
+    // Rename the index-signature iteration variable to prove no hardcoding.
+    let source = r#"
+interface Renamed {
+    [x: string]: string;
+    prop?: string;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411 regardless of the index-signature parameter name"
+    );
+}
