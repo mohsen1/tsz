@@ -158,6 +158,10 @@ name = "ts1240_tests"
 path = "tests/ts1240_tests.rs"
 
 [[test]]
+name = "ts1240_accessor_decorator_tests"
+path = "tests/ts1240_accessor_decorator_tests.rs"
+
+[[test]]
 name = "ts2802_downlevel_iteration_tests"
 path = "tests/ts2802_downlevel_iteration_tests.rs"
 
@@ -248,6 +252,10 @@ path = "tests/lib_merge_indexed_access_no_cascade_tests.rs"
 [[test]]
 name = "readonly_tuple_source_display_tests"
 path = "tests/readonly_tuple_source_display_tests.rs"
+
+[[test]]
+name = "module_augmentation_isolation_tests"
+path = "tests/module_augmentation_isolation_tests.rs"
 
 [[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
@@ -1092,6 +1100,10 @@ path = "tests/tuple_union_contextual_typing_tests.rs"
 [[test]]
 name = "string_iterable_overload_matching_tests"
 path = "tests/string_iterable_overload_matching_tests.rs"
+
+[[test]]
+name = "abstract_method_overload_ts2416_tests"
+path = "tests/abstract_method_overload_ts2416_tests.rs"
 
 [[test]]
 name = "self_module_augmentation_isolation_tests"
