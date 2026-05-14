@@ -279,6 +279,13 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
                     let content = line[char_width..].trim_end();
+                    let content = if let Some(rest) = content.strip_prefix('*')
+                        && rest.starts_with("  ")
+                    {
+                        format!("* {}", rest.trim_start())
+                    } else {
+                        content.to_string()
+                    };
                     let output_indent = (self.indent_level as usize) * 4;
                     let out_width = if line_width >= source_indent {
                         output_indent + (line_width - source_indent)
@@ -288,7 +295,7 @@ impl<'a> DeclarationEmitter<'a> {
                     for _ in 0..out_width {
                         self.write_raw(" ");
                     }
-                    self.write(content);
+                    self.write(&content);
                 }
             }
         } else {
