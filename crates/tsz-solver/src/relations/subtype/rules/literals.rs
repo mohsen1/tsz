@@ -1123,6 +1123,7 @@ pub(crate) fn find_number_length(s: &str) -> usize {
             has_dot = true;
             i += 1;
         } else if (chars[i] == 'e' || chars[i] == 'E') && has_digits && !has_exponent {
+            let exponent_start = i;
             has_exponent = true;
             i += 1;
             // Optional sign after exponent
@@ -1131,11 +1132,10 @@ pub(crate) fn find_number_length(s: &str) -> usize {
             }
             // Must have at least one digit after exponent
             if i >= chars.len() || !chars[i].is_ascii_digit() {
-                // Invalid exponent, backtrack
-                i = if has_dot { i - 2 } else { i - 1 };
-                if i > 0 && (chars[i - 1] == '+' || chars[i - 1] == '-') {
-                    i -= 1;
-                }
+                // Invalid exponent: leave the `e`/`E` for the following
+                // template span. This lets `1.5em` match `${number}em`
+                // while still accepting complete exponents like `1.5e2em`.
+                i = exponent_start;
                 break;
             }
         } else {
@@ -1237,4 +1237,20 @@ pub(crate) fn find_integer_length(s: &str) -> usize {
     }
 
     i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{find_number_length, is_valid_number};
+
+    #[test]
+    fn number_prefix_backtracks_invalid_exponent_to_marker() {
+        assert_eq!(find_number_length("1.5em"), 3);
+        assert!(is_valid_number("1.5"));
+        assert_eq!(find_number_length("1.5Em"), 3);
+        assert_eq!(find_number_length("1.5e2em"), 5);
+        assert!(is_valid_number("1.5e2"));
+        assert_eq!(find_number_length("1e-em"), 1);
+        assert_eq!(find_number_length("1.5e-em"), 3);
+    }
 }
