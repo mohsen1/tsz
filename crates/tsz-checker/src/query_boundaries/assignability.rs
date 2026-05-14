@@ -753,6 +753,8 @@ pub(crate) fn classify_object_properties(
     use super::common::{intersection_members, is_type_parameter_like, union_members};
     use super::relation_types::PropertyClassification;
 
+    tsz_common::perf_counters::record_property_classification_call();
+
     // Cannot classify if target is a type parameter.
     if is_type_parameter_like(db, target) {
         return Some(PropertyClassification {
@@ -846,6 +848,7 @@ pub(crate) fn classify_object_properties(
     let mut matching_props = Vec::new();
 
     for source_prop in source_props {
+        tsz_common::perf_counters::record_property_classification_string_fallback_source_lookup();
         let name_str = db.resolve_atom_ref(source_prop.name);
         if target_property_names.contains(name_str.as_ref()) {
             // Property exists in target — check type compatibility.
@@ -968,6 +971,7 @@ fn collect_target_properties(
         crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
     {
         for prop in shape.properties.iter() {
+            tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
             let name = db.resolve_atom(prop.name);
             props.entry(name).or_insert(prop.type_id);
         }
@@ -979,6 +983,7 @@ fn collect_target_properties(
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
                 for prop in shape.properties.iter() {
+                    tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
                     let name = db.resolve_atom(prop.name);
                     props.entry(name).or_insert(prop.type_id);
                 }
@@ -992,6 +997,7 @@ fn collect_target_properties(
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
                 for prop in shape.properties.iter() {
+                    tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
                     let name = db.resolve_atom(prop.name);
                     props.entry(name).or_insert(prop.type_id);
                 }
@@ -1014,6 +1020,7 @@ fn collect_target_property_names(
         crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
     {
         for prop in shape.properties.iter() {
+            tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
             names.insert(db.resolve_atom(prop.name));
         }
     }
@@ -1024,6 +1031,7 @@ fn collect_target_property_names(
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
                 for prop in shape.properties.iter() {
+                    tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
                     names.insert(db.resolve_atom(prop.name));
                 }
             }
@@ -1036,6 +1044,7 @@ fn collect_target_property_names(
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
                 for prop in shape.properties.iter() {
+                    tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
                     names.insert(db.resolve_atom(prop.name));
                 }
             }
