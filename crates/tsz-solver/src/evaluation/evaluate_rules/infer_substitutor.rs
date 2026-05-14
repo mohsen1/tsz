@@ -260,6 +260,9 @@ impl<'a> InferSubstitutor<'a> {
                 // the outer object level.
                 let mapped = self.interner.get_mapped(mapped_id);
                 let constraint = self.substitute(mapped.constraint);
+                let type_param_constraint =
+                    mapped.type_param.constraint.map(|c| self.substitute(c));
+                let type_param_default = mapped.type_param.default.map(|d| self.substitute(d));
                 let (name_type, template) =
                     self.with_shadowed_binding(mapped.type_param.name, |substitutor| {
                         (
@@ -269,15 +272,17 @@ impl<'a> InferSubstitutor<'a> {
                     });
                 let unchanged = constraint == mapped.constraint
                     && name_type == mapped.name_type
-                    && template == mapped.template;
+                    && template == mapped.template
+                    && type_param_constraint == mapped.type_param.constraint
+                    && type_param_default == mapped.type_param.default;
                 if unchanged {
                     type_id
                 } else {
                     self.interner.mapped(MappedType {
                         type_param: TypeParamInfo {
                             name: mapped.type_param.name,
-                            constraint: mapped.type_param.constraint,
-                            default: mapped.type_param.default,
+                            constraint: type_param_constraint,
+                            default: type_param_default,
                             is_const: mapped.type_param.is_const,
                         },
                         constraint,
