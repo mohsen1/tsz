@@ -71,38 +71,35 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let name_def_id_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
             let expected_name = type_name.rsplit('.').next().unwrap_or(type_name);
 
-            if !type_name.contains('.')
-                && let Some(sym_id) = self.ctx.binder.file_locals.get(type_name)
-                && let Some(sym_id) = self.resolve_import_alias_type_target_symbol(sym_id)
-            {
+            // Mint the DefId for a resolved symbol and register its alias body.
+            let def_id_for = |sym_id: tsz_binder::SymbolId| {
                 let def_id = self
                     .ctx
                     .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
                 if !self.ctx.symbol_resolution_set.contains(&sym_id) {
                     self.ensure_type_alias_resolved(sym_id, def_id);
                 }
-                return Some(def_id);
-            }
-
-            if !type_name.contains('.')
-                && let Some(sym_id) = self.ctx.binder.file_locals.get(type_name)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && symbol.escaped_name == type_name
-                && symbol.decl_file_idx != u32::MAX
-            {
-                let sym_id = self
-                    .resolve_import_alias_type_target_symbol(sym_id)
-                    .unwrap_or(sym_id);
-                let def_id = self
-                    .ctx
-                    .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
-                if !self.ctx.symbol_resolution_set.contains(&sym_id) {
-                    self.ensure_type_alias_resolved(sym_id, def_id);
-                }
-                return Some(def_id);
-            }
+                def_id
+            };
 
             if !type_name.contains('.') {
+                if let Some(sym_id) = self.ctx.binder.file_locals.get(type_name)
+                    && let Some(target) = self.resolve_import_alias_type_target_symbol(sym_id)
+                {
+                    return Some(def_id_for(target));
+                }
+
+                if let Some(sym_id) = self.ctx.binder.file_locals.get(type_name)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && symbol.escaped_name == type_name
+                    && symbol.decl_file_idx != u32::MAX
+                {
+                    let sym_id = self
+                        .resolve_import_alias_type_target_symbol(sym_id)
+                        .unwrap_or(sym_id);
+                    return Some(def_id_for(sym_id));
+                }
+
                 for lib_ctx in self.ctx.lib_contexts.iter() {
                     if let Some(sym_id) = lib_ctx.binder.file_locals.get(type_name)
                         && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
@@ -114,13 +111,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
 
             let sym_id = self.resolve_entity_name_text_symbol(type_name)?;
-            let def_id = self
-                .ctx
-                .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
-            if !self.ctx.symbol_resolution_set.contains(&sym_id) {
-                self.ensure_type_alias_resolved(sym_id, def_id);
-            }
-            Some(def_id)
+            Some(def_id_for(sym_id))
         };
         let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
             if let Some(expr_node) = self.ctx.arena.get(expr_name_idx)

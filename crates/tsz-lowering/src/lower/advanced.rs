@@ -629,10 +629,9 @@ impl<'a> TypeLowering<'a> {
                 .interner
                 .unresolved_type_name(self.interner.intern_string(&name));
         }
-        // Last-chance resolution: detect `import("./m").Type` patterns where the
-        // left side of the QUALIFIED_NAME chain is an `import(...)` CALL_EXPRESSION.
-        // Normal name-text and def-id paths can't cross file boundaries at lowering
-        // time, so an optional checker-supplied callback handles this case.
+        // Last-chance: `import("./m").Type` chains, where the QUALIFIED_NAME root
+        // is an `import(...)` CALL_EXPRESSION. The name-text and def-id paths
+        // can't cross file boundaries during lowering, so a checker callback does.
         if let Some(resolver) = self.import_call_resolver
             && let Some((call_node, segments)) = self.find_import_call_root(node_idx)
             && let Some(resolved) = resolver(call_node, &segments)

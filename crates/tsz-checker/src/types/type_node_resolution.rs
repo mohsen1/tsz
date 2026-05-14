@@ -796,27 +796,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Only apply this shortcut for same-file symbols: cross-file DefIds share
         // the same raw SymbolId with local symbols, so symbol_types[sym_id] would
         // yield the local symbol's body instead of the cross-file symbol's body.
-        if is_same_file_symbol && self.ctx.symbol_types.contains_key(&sym_id) {
-            if let Ok(env) = self.ctx.type_env.try_borrow()
-                && env.get_def(def_id).is_none()
-            {
-                drop(env);
-                // Body not registered for this DefId — register it now
-                if let Some(&type_id) = self.ctx.symbol_types.get(&sym_id) {
-                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                    if type_params.is_empty() {
-                        self.ctx.register_def_in_envs(def_id, type_id);
-                    } else {
-                        self.ctx
-                            .register_def_with_params_in_envs(def_id, type_id, type_params);
-                    }
-                    // Register symbol mapping in both envs
-                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                        env.register_def_symbol_mapping(def_id, sym_id);
-                    }
-                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                        env.register_def_symbol_mapping(def_id, sym_id);
-                    }
+        // The early return above already established that no def is registered for
+        // `def_id`, so this always needs to register the body.
+        if is_same_file_symbol && let Some(&type_id) = self.ctx.symbol_types.get(&sym_id) {
+            let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+            self.ctx
+                .register_def_auto_params_in_envs(def_id, type_id, type_params);
+            for env in [&self.ctx.type_env, &self.ctx.type_environment] {
+                if let Ok(mut env) = env.try_borrow_mut() {
+                    env.register_def_symbol_mapping(def_id, sym_id);
                 }
             }
             return;

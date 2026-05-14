@@ -87,12 +87,7 @@ pub struct TypeLowering<'a> {
     /// (e.g., inside type alias bodies where flow narrowing has already been computed).
     pub(super) type_query_override: Option<&'a NodeIndexResolver<'a, TypeId>>,
     /// Optional resolver for `import("./module").Type` patterns in type positions.
-    ///
-    /// When lowering encounters a `TYPE_REFERENCE` whose name is rooted at an
-    /// `import(...)` `CALL_EXPRESSION` followed by member-access segments, this
-    /// callback is invoked with the call-expression node and the collected segments.
-    /// Returning `Some(type_id)` short-circuits the otherwise-failing qualified-name
-    /// resolution, fixing `T extends import("./m").Type ? A : B` in conditional bodies.
+    /// See `with_import_call_resolver`.
     #[allow(clippy::type_complexity)]
     pub(super) import_call_resolver: Option<&'a dyn Fn(NodeIndex, &[String]) -> Option<TypeId>>,
     /// Operation counter to prevent infinite loops
