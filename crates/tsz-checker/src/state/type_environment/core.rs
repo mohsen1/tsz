@@ -567,12 +567,16 @@ impl<'a> CheckerState<'a> {
         // - ConditionalApplicationInfer: preserve Application-form args specifically
         // - EvaluateAll: evaluate all args normally
         let arg_preservation = query::classify_body_for_arg_preservation(self.ctx.types, body_type);
-        let body_is_conditional =
-            crate::query_boundaries::common::is_conditional_type(self.ctx.types, body_type);
+        let body_conditional = query::get_conditional_type(self.ctx.types, body_type);
+        let body_is_conditional = body_conditional.is_some();
+        let body_is_distributive_conditional = body_conditional
+            .as_ref()
+            .is_some_and(|cond| cond.is_distributive);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
                 match arg_preservation {
+                    _ if body_is_distributive_conditional => arg,
                     _ if body_is_conditional && self.contains_type_parameters_cached(arg) => arg,
                     query::BodyArgPreservation::ConditionalInfer
                         if self.contains_type_parameters_cached(arg)
