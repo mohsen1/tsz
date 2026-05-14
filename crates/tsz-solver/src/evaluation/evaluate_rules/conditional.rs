@@ -276,11 +276,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(*cond);
             }
 
+            // Concrete-element fast paths run only when the extends shape contains no
+            // free infer variables or type parameters; otherwise full structural relation
+            // is required.
+            let extends_is_concrete = !extends_has_infer && !extends_has_type_params;
+
             // PERF: Single lookup for array/tuple extends patterns with infer
             match self.interner().lookup(extends_unwrapped) {
                 Some(TypeData::Array(ext_elem)) => {
                     if let Some(TypeData::Infer(info)) = self.interner().lookup(ext_elem) {
                         return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+                    }
+                    if extends_is_concrete
+                        && let Some(result) = self.eval_conditional_array_concrete(
+                            cond,
+                            check_unwrapped,
+                            ext_elem,
+                            false,
+                        )
+                    {
+                        return result;
                     }
                 }
                 Some(TypeData::Application(app_id)) => {
@@ -309,6 +324,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     {
                         return result;
                     }
+                    // Evaluated Array<X> becomes ObjectWithIndex. Use direct element comparison
+                    // to avoid the expensive structural check that can fail due to cycle detection
+                    // inside Array's method-signature conditional types.
+                    if extends_is_concrete {
+                        let allow_readonly =
+                            self.application_base_name_is_readonly_array(cond.extends_type);
+                        if let Some(target_elem) =
+                            self.expanded_array_object_element(shape_id, allow_readonly)
+                            && let Some(result) = self.eval_conditional_array_concrete(
+                                cond,
+                                check_unwrapped,
+                                target_elem,
+                                allow_readonly,
+                            )
+                        {
+                            return result;
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -320,9 +353,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if raw_extends_unwrapped != extends_unwrapped
                 && let Some(TypeData::Application(app_id)) =
                     self.interner().lookup(raw_extends_unwrapped)
-                && let Some(info) = self.application_array_infer_pattern(app_id)
             {
-                return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+                if let Some(info) = self.application_array_infer_pattern(app_id) {
+                    return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+                }
+                // Fires when the raw extends is Application(Array, [X]) but the evaluated
+                // form changed (e.g., to ObjectWithIndex). Use direct element comparison.
+                if extends_is_concrete {
+                    let allow_readonly =
+                        self.application_base_name_is_readonly_array(raw_extends_unwrapped);
+                    if let Some(target_elem) =
+                        self.application_array_concrete_element(app_id, allow_readonly)
+                        && let Some(result) = self.eval_conditional_array_concrete(
+                            cond,
+                            check_unwrapped,
+                            target_elem,
+                            allow_readonly,
+                        )
+                    {
+                        return result;
+                    }
+                }
             }
 
             // Step 2: Check for naked type parameter
@@ -1389,6 +1440,116 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return true_inst;
         }
         self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
+    }
+
+    /// Handle concrete array extends pattern: `T extends Array<X>` (no infer in X).
+    ///
+    /// Extracts the element type `S` from `check_unwrapped`, then checks `S <: target_elem`.
+    /// Returns `Some(true_branch)` or `Some(false_branch)` on success, `None` to fall
+    /// through to the full structural subtype check.
+    ///
+    /// This avoids expanding `Array<X>` into its structural `ObjectWithIndex` form which
+    /// triggers recursive method-signature comparisons that can hit cycle detection limits.
+    fn eval_conditional_array_concrete(
+        &mut self,
+        cond: &ConditionalType,
+        check_unwrapped: TypeId,
+        target_elem: TypeId,
+        allow_readonly_array: bool,
+    ) -> Option<TypeId> {
+        // Defer when the check type is still a naked type parameter or infer variable —
+        // the full conditional pipeline is required to handle those cases correctly.
+        if matches!(
+            self.interner().lookup(check_unwrapped),
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+        ) {
+            return None;
+        }
+
+        let check_elem = self.extract_array_element(check_unwrapped, allow_readonly_array)?;
+
+        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+        checker.allow_bivariant_rest = true;
+        let branch = if checker.is_subtype_of(check_elem, target_elem) {
+            cond.true_type
+        } else {
+            cond.false_type
+        };
+        Some(self.evaluate(branch))
+    }
+
+    /// Extract the element type from an array-like `check_type`.
+    ///
+    /// Handles `Array(elem)`, `ReadonlyType(Array(elem))`, `Tuple(...)`,
+    /// `Application(Array|ReadonlyArray, [elem])`, and `ObjectWithIndex` array shapes.
+    /// Returns `None` when the type is not an array-like shape.
+    fn extract_array_element(
+        &mut self,
+        check_unwrapped: TypeId,
+        allow_readonly_array: bool,
+    ) -> Option<TypeId> {
+        match self.interner().lookup(check_unwrapped) {
+            Some(TypeData::Array(elem)) => Some(elem),
+            Some(TypeData::ReadonlyType(inner)) if allow_readonly_array => {
+                let Some(TypeData::Array(elem)) = self.interner().lookup(inner) else {
+                    return None;
+                };
+                Some(elem)
+            }
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.interner().tuple_list(elements);
+                // Empty tuple — element type is `never`.
+                if elements.is_empty() {
+                    return Some(TypeId::NEVER);
+                }
+                let mut parts: SmallVec<[TypeId; 8]> = SmallVec::new();
+                for element in elements.iter() {
+                    if element.rest {
+                        parts.push(self.rest_element_type(element.type_id));
+                    } else if element.optional {
+                        parts.push(self.interner().union2(element.type_id, TypeId::UNDEFINED));
+                    } else {
+                        parts.push(element.type_id);
+                    }
+                }
+                Some(self.interner().union_from_slice(&parts))
+            }
+            Some(TypeData::Application(app_id)) => {
+                self.application_array_concrete_element(app_id, allow_readonly_array)
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                self.expanded_array_object_element(shape_id, allow_readonly_array)
+            }
+            _ => None,
+        }
+    }
+
+    /// Return the element type of `Application(Array|ReadonlyArray, [X])` when X is
+    /// not an `Infer` variable (those are handled by `eval_conditional_array_infer`).
+    fn application_array_concrete_element(
+        &self,
+        app_id: crate::types::TypeApplicationId,
+        allow_readonly: bool,
+    ) -> Option<TypeId> {
+        let elem = self.application_array_element(app_id, allow_readonly)?;
+        match self.interner().lookup(elem) {
+            Some(TypeData::Infer(_)) => None,
+            _ => Some(elem),
+        }
+    }
+
+    /// Return `true` when `type_id` is `ReadonlyType(_)`, an `Application` of
+    /// `ReadonlyArray`, or a user-defined alias that resolves to a readonly-array shape.
+    fn application_base_name_is_readonly_array(&self, type_id: TypeId) -> bool {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::ReadonlyType(_)) => true,
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner().type_application(app_id);
+                self.application_base_name_is(app.base, "ReadonlyArray")
+                    || self.application_base_has_array_shape(app.base, true)
+            }
+            _ => false,
+        }
     }
 
     fn expanded_array_object_element(
