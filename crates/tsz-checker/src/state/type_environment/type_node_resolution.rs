@@ -321,6 +321,24 @@ impl<'a> CheckerState<'a> {
                 return result;
             }
             if node.kind == syntax_kind_ext::TYPE_OPERATOR {
+                if let Some(op) = self.ctx.arena.get_type_operator(node)
+                    && op.operator == tsz_scanner::SyntaxKind::KeyOfKeyword as u16
+                    && let Some(inner_node) = self.ctx.arena.get(op.type_node)
+                    && inner_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(inner_node)
+                    && self.find_leftmost_import_call(type_ref.type_name).is_some()
+                {
+                    let imported_operand = {
+                        let mut checker = crate::TypeNodeChecker::new(&mut self.ctx);
+                        checker.import_call_type_reference(type_ref.type_name)
+                    };
+                    if let Some(imported_operand) = imported_operand {
+                        let result = self.get_keyof_type(imported_operand);
+                        self.ctx.node_types.insert(idx.0, result);
+                        return result;
+                    }
+                }
+
                 // Ensure inner type references of keyof/unique/readonly go through
                 // the checker's constraint validation path (TS2344). The lowering
                 // handles TYPE_OPERATOR via lower_type_operator which calls lower_type

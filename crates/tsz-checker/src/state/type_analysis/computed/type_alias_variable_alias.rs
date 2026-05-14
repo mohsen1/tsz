@@ -189,11 +189,20 @@ impl<'a> CheckerState<'a> {
                 if params.is_empty() {
                     let db = self.ctx.types;
                     if (crate::query_boundaries::common::is_conditional_type(db, alias_type)
-                        || crate::query_boundaries::common::is_index_access_type(db, alias_type))
+                        || crate::query_boundaries::common::is_index_access_type(db, alias_type)
+                        || crate::query_boundaries::common::is_generic_application(db, alias_type))
                         && !crate::query_boundaries::common::contains_type_parameters(
                             db, alias_type,
                         )
                     {
+                        if let Some(base_def_id) =
+                            crate::query_boundaries::common::get_application_lazy_def_id(
+                                self.ctx.types,
+                                alias_type,
+                            )
+                        {
+                            let _ = self.resolve_and_insert_def_type(base_def_id);
+                        }
                         let evaluated = self.evaluate_type_with_env(alias_type);
                         if evaluated != alias_type {
                             let mark_computed = !self.type_node_contains_kind(
