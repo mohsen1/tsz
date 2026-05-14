@@ -249,7 +249,23 @@ impl<'a> CheckerState<'a> {
             return prop_type;
         }
 
-        let mut prop_type = self.get_type_of_symbol(export_sym_id);
+        let should_delegate = self
+            .ctx
+            .resolve_symbol_file_index(export_sym_id)
+            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+            || self
+                .get_cross_file_symbol(export_sym_id)
+                .is_some_and(|symbol| {
+                    symbol.decl_file_idx != u32::MAX
+                        && symbol.decl_file_idx as usize != self.ctx.current_file_idx
+                });
+        let mut prop_type = if should_delegate {
+            self.delegate_cross_arena_symbol_resolution(export_sym_id)
+                .map(|(type_id, _)| type_id)
+                .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id))
+        } else {
+            self.get_type_of_symbol(export_sym_id)
+        };
         if symbol_flags_opt.is_some_and(|flags| {
             (flags & symbol_flags::ENUM) != 0 && (flags & symbol_flags::ENUM_MEMBER) == 0
         }) {
@@ -537,16 +553,11 @@ impl<'a> CheckerState<'a> {
         declaring_file_idx: Option<usize>,
         exports_table: &tsz_binder::SymbolTable,
         props: &mut Vec<PropertyInfo>,
-    ) {
-        let Some(export_equals_sym_id) = exports_table.get("export=") else {
-            return;
-        };
-        let Some(mut export_equals_symbol) = self
+    ) -> Option<String> {
+        let export_equals_sym_id = exports_table.get("export=")?;
+        let mut export_equals_symbol = self
             .get_symbol_globally(export_equals_sym_id)
-            .or_else(|| self.get_cross_file_symbol(export_equals_sym_id))
-        else {
-            return;
-        };
+            .or_else(|| self.get_cross_file_symbol(export_equals_sym_id))?;
 
         if export_equals_symbol.decl_file_idx == u32::MAX
             && let Some(target_idx) = self.ctx.resolve_symbol_file_index(export_equals_sym_id)
@@ -586,7 +597,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut nested_exports = tsz_binder::SymbolTable::new();
-        self.merge_export_equals_import_type_members(
+        let nested_module_specifier = self.merge_export_equals_import_type_members(
             export_equals_symbol,
             declaring_file_idx,
             &mut nested_exports,
@@ -645,6 +656,7 @@ impl<'a> CheckerState<'a> {
                 single_quoted_name: false,
             });
         }
+        nested_module_specifier
     }
 
     /// Merge value-side property exports from a CommonJS module's JS export

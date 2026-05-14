@@ -423,8 +423,17 @@ impl<'a> CheckerState<'a> {
                                     ) == Some(source_idx)
                             })
                     });
-                let reexports_from_source =
-                    wildcard_reexports_from_source || named_reexports_from_source;
+                let reexports_from_source = wildcard_reexports_from_source
+                    || named_reexports_from_source
+                    || self
+                        .resolve_cross_file_export_from_file(
+                            aug_key,
+                            interface_name,
+                            Some(binder_idx),
+                        )
+                        .is_some_and(|sym_id| {
+                            self.ctx.resolve_symbol_file_index(sym_id) == Some(source_idx)
+                        });
                 if reexports_from_source {
                     for (file_idx, aug) in indexed_augs.iter() {
                         if aug.name != interface_name {
@@ -1307,8 +1316,11 @@ impl<'a> CheckerState<'a> {
         // Check cross-file augmentations using global index for O(1) lookup
         if let Some(aug_targets) = self.ctx.global_augmentation_targets_index.as_ref() {
             if let Some(entries) = aug_targets.get(module_spec) {
-                for &(aug_sym_id, _file_idx) in entries {
-                    if let Some(aug_sym) = self.ctx.binder.get_symbol(aug_sym_id)
+                for &(aug_sym_id, file_idx) in entries {
+                    if let Some(aug_sym) = self
+                        .ctx
+                        .get_binder_for_file(file_idx)
+                        .and_then(|binder| binder.get_symbol(aug_sym_id))
                         && aug_sym.escaped_name == interface_name
                         && !matching_sym_ids.contains(&aug_sym_id)
                     {

@@ -244,7 +244,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         &self,
         sym_id: tsz_binder::SymbolId,
         symbol: &tsz_binder::Symbol,
-        def_file_id: Option<u32>,
     ) -> Option<(NodeIndex, &NodeArena)> {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -254,27 +253,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
 
             let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
-            // Highest priority: the arena from the DefId's registered file_id.
-            // This is authoritative for cross-file symbols resolved via
-            // get_or_create_def_id_for_cross_file_symbol, where symbol.decl_file_idx
-            // may be u32::MAX because the binder's file_idx was not set.
-            if let Some(fid) = def_file_id.filter(|&fid| fid != u32::MAX) {
-                candidate_arenas.push(self.ctx.get_arena_for_file(fid));
-            }
             if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
                 candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
             }
             if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
                 candidate_arenas.push(symbol_arena.as_ref());
-            }
-            // Cross-file fallback: prefer the symbol's own decl_file_idx (reliable
-            // even when register_symbol_file_target was not called), then fall back
-            // to resolve_symbol_file_index (for the import-alias path).
-            if symbol.decl_file_idx != u32::MAX {
-                candidate_arenas.push(self.ctx.get_arena_for_file(symbol.decl_file_idx));
-            }
-            if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
-                candidate_arenas.push(self.ctx.get_arena_for_file(file_idx as u32));
             }
             candidate_arenas.push(self.ctx.arena);
 
@@ -775,56 +758,37 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         }
 
-        // Resolve the owning file for this DefId early so we can guard the
-        // symbol_types shortcut below against cross-file SymbolId collisions.
-        // Each binder numbers SymbolIds from 0, so raw SymbolId(N) in file A
-        // and SymbolId(N) in file B refer to different symbols.  symbol_types
-        // is keyed by raw SymbolId only; for a cross-file DefId the entry
-        // would belong to the current file's symbol, not the target's.
-        let def_file_id = self
-            .ctx
-            .definition_store
-            .get(def_id)
-            .and_then(|info| info.file_id);
-        let is_same_file_symbol =
-            def_file_id.is_none_or(|fid| fid as usize == self.ctx.current_file_idx);
-
         // If already resolved via get_type_of_symbol, ensure the TypeEnvironment
         // has the DefId-keyed entry. This handles a timing issue: register_resolved_type
         // may have been called before the DefId was created (DefId is created during
         // type lowering of references, which happens after type alias resolution).
-        // Only apply this shortcut for same-file symbols: cross-file DefIds share
-        // the same raw SymbolId with local symbols, so symbol_types[sym_id] would
-        // yield the local symbol's body instead of the cross-file symbol's body.
-        // The early return above already established that no def is registered for
-        // `def_id`, so this always needs to register the body.
-        if is_same_file_symbol && let Some(&type_id) = self.ctx.symbol_types.get(&sym_id) {
-            let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-            self.ctx
-                .register_def_auto_params_in_envs(def_id, type_id, type_params);
-            for env in [&self.ctx.type_env, &self.ctx.type_environment] {
-                if let Ok(mut env) = env.try_borrow_mut() {
-                    env.register_def_symbol_mapping(def_id, sym_id);
+        if self.ctx.symbol_types.contains_key(&sym_id) {
+            if let Ok(env) = self.ctx.type_env.try_borrow()
+                && env.get_def(def_id).is_none()
+            {
+                drop(env);
+                // Body not registered for this DefId — register it now
+                if let Some(&type_id) = self.ctx.symbol_types.get(&sym_id) {
+                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    if type_params.is_empty() {
+                        self.ctx.register_def_in_envs(def_id, type_id);
+                    } else {
+                        self.ctx
+                            .register_def_with_params_in_envs(def_id, type_id, type_params);
+                    }
+                    // Register symbol mapping in both envs
+                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                        env.register_def_symbol_mapping(def_id, sym_id);
+                    }
+                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+                        env.register_def_symbol_mapping(def_id, sym_id);
+                    }
                 }
             }
             return;
         }
 
-        // Resolve the owning binder for this symbol. Prefer the binder from the
-        // def_id's stored file_id (set by get_or_create_def_id_for_cross_file_symbol),
-        // which is reliable even when register_symbol_file_target was not called.
-        // Fall back to cross_file_symbol_targets (for symbols registered via the
-        // import-alias path), then to get_symbol_from_any_context.
-        let symbol = def_file_id
-            .and_then(|fid| self.ctx.get_binder_for_file(fid as usize))
-            .and_then(|binder| binder.get_symbol(sym_id))
-            .or_else(|| {
-                self.ctx
-                    .resolve_symbol_file_index(sym_id)
-                    .and_then(|fid| self.ctx.get_binder_for_file(fid))
-                    .and_then(|binder| binder.get_symbol(sym_id))
-            })
-            .or_else(|| self.get_symbol_from_any_context(sym_id));
+        let symbol = self.get_symbol_from_any_context(sym_id);
         let Some(symbol) = symbol else {
             return;
         };
@@ -832,9 +796,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         }
 
-        let Some((decl_idx, decl_arena)) =
-            self.find_type_alias_declaration(sym_id, symbol, def_file_id)
-        else {
+        let Some((decl_idx, decl_arena)) = self.find_type_alias_declaration(sym_id, symbol) else {
             return;
         };
         let Some(node) = decl_arena.get(decl_idx) else {
@@ -994,25 +956,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     })
             };
 
-            // Determine the source file index for the declaration arena so that
-            // `import("./relative/path")` specifiers inside the alias body are
-            // resolved relative to the file that *declares* the alias, not the
-            // file that is currently being checked (they differ for cross-file
-            // type aliases).
-            let decl_file_idx = self
-                .ctx
-                .get_file_idx_for_arena(decl_arena)
-                .unwrap_or(self.ctx.current_file_idx);
-
-            // Resolver for `import("./m").Type` patterns that appear inside the
-            // type alias body (e.g. in the extends clause of a conditional type).
-            // Specifiers resolve relative to `decl_file_idx` (the file that
-            // *declares* the alias), which may differ from the file currently
-            // being checked for cross-file type aliases.
-            let import_call_resolver = |call_node: NodeIndex, segments: &[String]| {
-                self.resolve_import_call_segments(decl_arena, decl_file_idx, call_node, segments)
-            };
-
             let make_lowering = |bindings| {
                 tsz_lowering::TypeLowering::with_hybrid_resolver(
                     decl_arena,
@@ -1025,7 +968,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override)
-                .with_import_call_resolver(&import_call_resolver)
             };
 
             // Seed placeholder type parameters first so later constraints/defaults can
@@ -1123,88 +1065,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 env.register_def_symbol_mapping(def_id, sym_id);
             }
         }
-    }
-
-    /// Resolve an `import("./module").Segment.Path` chain to a `Lazy(DefId)` type.
-    ///
-    /// The lowering layer cannot cross file boundaries on its own, so it hands
-    /// the `import(...)` `CALL_EXPRESSION` node and the collected member-access
-    /// segments back to the checker. `arena` and `from_file_idx` describe the
-    /// file that contains the `import(...)` call (the file currently being
-    /// checked, or the file that declares a cross-file type alias), so relative
-    /// module specifiers resolve from the correct origin.
-    ///
-    /// Shared by the `import_call_resolver` closures in `lower_with_resolvers`
-    /// and `ensure_type_alias_resolved_inner`.
-    pub(super) fn resolve_import_call_segments(
-        &self,
-        arena: &NodeArena,
-        from_file_idx: usize,
-        call_node: NodeIndex,
-        segments: &[String],
-    ) -> Option<TypeId> {
-        let first_segment = segments.first()?;
-
-        // Extract the module specifier string from the `import(...)` argument.
-        let call_nd = arena.get(call_node)?;
-        let call = arena.get_call_expr(call_nd)?;
-        let first_arg = *call.arguments.as_ref()?.nodes.first()?;
-        let arg_nd = arena.get(first_arg)?;
-        let module_spec = arena.get_literal(arg_nd)?.text.clone();
-
-        // Resolve the module specifier to a target file.
-        let target_file_idx = self
-            .ctx
-            .resolve_import_target_from_file_with_mode(from_file_idx, &module_spec, None)
-            .or_else(|| self.ctx.resolve_import_target(&module_spec))?;
-        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let target_file_name = target_arena.source_files.first()?.file_name.clone();
-
-        let type_alias_partner_for = |sym_id: tsz_binder::SymbolId| {
-            target_binder
-                .alias_partners
-                .iter()
-                .find_map(|(&type_alias_id, &alias_id)| {
-                    (alias_id == sym_id).then_some(type_alias_id)
-                })
-        };
-
-        // Resolve the first segment as a named export of the target module, then
-        // walk any nested namespace segments (`import("./m").Ns.Inner`).
-        // Direct exported type aliases may be represented by an exported ALIAS
-        // partner; normalize those to the declaration symbol so the lazy DefId
-        // resolves to the alias body instead of an opaque export wrapper.
-        let (mut current_sym, _) = target_binder
-            .resolve_import_with_reexports_type_only(&target_file_name, first_segment)?;
-        if let Some(type_alias_id) = type_alias_partner_for(current_sym) {
-            current_sym = type_alias_id;
-        }
-        for seg in &segments[1..] {
-            let symbol = target_binder
-                .get_symbol(current_sym)
-                .or_else(|| self.ctx.binder.get_symbol(current_sym))?;
-            current_sym = symbol
-                .exports
-                .as_deref()
-                .and_then(|e| e.get(seg.as_str()))
-                .or_else(|| symbol.members.as_deref().and_then(|m| m.get(seg.as_str())))?;
-            if let Some(type_alias_id) = type_alias_partner_for(current_sym) {
-                current_sym = type_alias_id;
-            }
-        }
-
-        // Use the collision-safe variant: it keys on `(sym_id, target_file_idx)`
-        // without touching `cross_file_symbol_targets` or `symbol_to_def`, so a
-        // local symbol sharing the same raw `SymbolId` is not redirected to this
-        // cross-file definition.
-        let def_id = self.ctx.get_or_create_def_id_for_cross_file_symbol(
-            current_sym,
-            target_file_idx,
-            target_binder,
-        );
-        self.ensure_type_alias_resolved(current_sym, def_id);
-        Some(self.ctx.types.lazy(def_id))
     }
 
     /// Resolve a DefId with support for qualified names (e.g., `AnimalType.cat`).

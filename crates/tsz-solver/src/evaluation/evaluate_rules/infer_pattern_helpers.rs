@@ -23,6 +23,34 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    pub(crate) fn implicit_sequence_property_type(
+        &self,
+        source: TypeId,
+        prop_name: Atom,
+    ) -> Option<TypeId> {
+        if self.interner().resolve_atom_ref(prop_name).as_ref() != "length" {
+            return None;
+        }
+
+        let source = match self.interner().lookup(source) {
+            Some(TypeData::ReadonlyType(inner)) => inner,
+            _ => source,
+        };
+
+        match self.interner().lookup(source) {
+            Some(TypeData::Tuple(elements_id)) => {
+                let elements = self.interner().tuple_list(elements_id);
+                if elements.iter().any(|element| element.rest) {
+                    Some(TypeId::NUMBER)
+                } else {
+                    Some(self.interner().literal_number(elements.len() as f64))
+                }
+            }
+            Some(TypeData::Array(_)) => Some(TypeId::NUMBER),
+            _ => None,
+        }
+    }
+
     fn parse_template_number_capture(&self, captured: &str) -> Option<TypeId> {
         let value = if let Some(digits) = captured.strip_prefix("0x") {
             u64::from_str_radix(digits, 16).ok().map(|n| n as f64)?
@@ -1727,6 +1755,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 bindings.extend(combined);
+                true
+            }
+            Some(TypeData::Tuple(_) | TypeData::Array(_) | TypeData::ReadonlyType(_)) => {
+                let pattern_shape = self.interner().object_shape(pattern_shape_id);
+                for pattern_prop in &pattern_shape.properties {
+                    let Some(source_type) =
+                        self.implicit_sequence_property_type(source, pattern_prop.name)
+                    else {
+                        if pattern_prop.optional {
+                            if self.type_contains_infer(pattern_prop.type_id)
+                                && !self.match_infer_pattern(
+                                    TypeId::UNDEFINED,
+                                    pattern_prop.type_id,
+                                    bindings,
+                                    visited,
+                                    checker,
+                                )
+                            {
+                                return false;
+                            }
+                            continue;
+                        }
+                        return false;
+                    };
+                    if !self.match_infer_pattern(
+                        source_type,
+                        pattern_prop.type_id,
+                        bindings,
+                        visited,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                }
                 true
             }
             _ => false,
