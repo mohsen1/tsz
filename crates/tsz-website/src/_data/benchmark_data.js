@@ -252,6 +252,10 @@ function compatibilityRowFor(definition, allResults) {
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
+    diagnosticCodes: Array.isArray(compatibility.diagnostic_codes) ? compatibility.diagnostic_codes.slice(0, 8) : [],
+    reductionCandidates: Array.isArray(compatibility.reduction_candidates)
+      ? compatibility.reduction_candidates.slice(0, 5)
+      : [],
     status: row?.status || "not recorded in latest benchmark artifact",
     url: benchmarkUrl({ name: definition.name }),
   };
@@ -1582,18 +1586,28 @@ export function getProjectCompatibilityDashboard() {
 
   const renderRowDetails = (row) => {
     const deltas = diagnosticDeltas(row);
+    const diagnosticCodes = Array.isArray(row.diagnosticCodes) ? row.diagnosticCodes.filter(Boolean).slice(0, 8) : [];
+    const reductionCandidates = Array.isArray(row.reductionCandidates)
+      ? row.reductionCandidates.filter(Boolean).slice(0, 5)
+      : [];
     const parts = [
       `phase: ${row.phase || "unknown"}`,
       `owner: ${row.family || "not classified"}`,
       ...measurementParts(row),
     ];
+    const queueHtml = row.className === "green" || (!diagnosticCodes.length && !reductionCandidates.length)
+      ? ""
+      : `<div class="compat-queue">
+          <span>${escapeHtml(`queue: ${diagnosticCodes.length ? diagnosticCodes.join(", ") : "unclassified diagnostic"}`)}</span>
+          ${reductionCandidates.map((candidate) => `<code>${escapeHtml(candidate)}</code>`).join("")}
+        </div>`;
     const deltaHtml = row.className === "green"
       ? ""
       : `<div class="compat-deltas">${deltas.length
           ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
           : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
         </div>`;
-    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${deltaHtml}`;
+    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${queueHtml}${deltaHtml}`;
   };
 
   return `<section class="compat-dashboard">
