@@ -93,10 +93,13 @@ impl<'a> FlowAnalyzer<'a> {
         let target_node = self.arena.get(target)?;
         let access = self.arena.get_access_expr(target_node)?;
 
-        let name_atom = if let Some(ident) = self.arena.get_identifier_at(access.name_or_argument) {
+        let name_atom = if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let ident = self.arena.get_identifier_at(access.name_or_argument)?;
             self.interner.intern_string(&ident.escaped_text)
-        } else {
+        } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
             self.literal_atom_from_node_or_type(access.name_or_argument)?
+        } else {
+            return None;
         };
 
         let node_types = self.node_types?;
