@@ -331,12 +331,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        let target_members_for_discriminants: Vec<TypeId> = target_members
+            .iter()
+            .map(|&member| {
+                let evaluated = self.evaluate_type(member);
+                if get_object_shape_id(self.interner, evaluated).is_some() {
+                    evaluated
+                } else {
+                    member
+                }
+            })
+            .collect();
+
         // Find discriminant properties in the source that discriminate target
         let disc_props = find_discriminant_properties(
             self.interner,
             self.resolver,
             &source_shape.properties,
-            target_members,
+            &target_members_for_discriminants,
         );
         if disc_props.is_empty() {
             return SubtypeResult::False;
@@ -357,7 +369,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             for &value in &source_values {
                 let mut value_has_match = false;
-                for (i, &target_member) in target_members.iter().enumerate() {
+                for (i, &target_member) in target_members_for_discriminants.iter().enumerate() {
                     let t_prop =
                         get_property_type_of_object(self.interner, target_member, prop_name);
                     match t_prop {
@@ -431,7 +443,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if !candidates[i] {
                     continue;
                 }
-                if self.check_subtype(narrowed, target_member).is_true() {
+                let normalized_target = target_members_for_discriminants[i];
+                if self.check_subtype(narrowed, target_member).is_true()
+                    || (normalized_target != target_member
+                        && self.check_subtype(narrowed, normalized_target).is_true())
+                {
                     found = true;
                     break;
                 }

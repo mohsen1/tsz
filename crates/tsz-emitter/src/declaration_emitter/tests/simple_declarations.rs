@@ -1253,6 +1253,27 @@ function p() { return Promise.resolve(); }
 }
 
 #[test]
+fn test_js_jsdoc_promise_star_normalizes_to_promise_any() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {Promise.<*>}
+ */
+function p() { return Promise.resolve(); }
+"#,
+    );
+
+    assert!(
+        output.contains("Promise<any>"),
+        "Expected `Promise.<*>` to normalize to `Promise<any>`: {output}"
+    );
+    assert!(
+        !output.contains("Promise<*>"),
+        "Did not expect raw `Promise<*>` token: {output}"
+    );
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -1738,6 +1759,36 @@ export { x, f };
     assert!(
         !output.contains("export { x, f };"),
         "Did not expect a redundant named export clause after folding: {output}"
+    );
+}
+
+#[test]
+fn test_js_named_export_function_preserves_jsdoc_signature_at_export_position() {
+    let output = emit_js_dts(
+        r#"
+export function b() {}
+
+/**
+ * @param {{x: string}} a
+ * @param {{y: typeof b}} b
+ */
+function g(a, b) {
+    return a.x && b.y();
+}
+
+export { g };
+"#,
+    );
+
+    assert!(
+        output.contains("export function g(a: {\n    x: string;\n}, b: {\n    y: typeof import(\".\").b;\n}): void | \"\";"),
+        "Expected folded JS export function to preserve JSDoc param and return types: {output}"
+    );
+    assert!(
+        output.contains(
+            "/**\n * @param {{x: string}} a\n * @param {{y: typeof b}} b\n */\nexport function g"
+        ),
+        "Expected folded JS export function to keep its JSDoc comment: {output}"
     );
 }
 
@@ -2362,6 +2413,29 @@ function foo({ a, b }) {
             "declare function foo({ a, b }: {\n    a: number;\n    b?: number | undefined;\n}): number;"
         ),
         "Expected JSDoc object property tags to type the destructured parameter: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_nested_object_param_properties_type_destructured_parameter() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {Object} opts
+ * @param {string?} opts.reason
+ * @param {Object} opts.suberr
+ * @param {string?} opts.suberr.reason
+ * @param {string?} opts.suberr.code
+ */
+function foo({ reason, suberr }) {}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function foo({ reason, suberr }: {\n    reason: string | null;\n    suberr: {\n        reason: string | null;\n        code: string | null;\n    };\n}): void;"
+        ),
+        "Expected nested JSDoc object property tags to type the destructured parameter: {output}"
     );
 }
 

@@ -15,6 +15,14 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
+
+fn should_resolve_simple_object_missing_interface_decl_from_lib(name: &str) -> bool {
+    matches!(
+        name,
+        "PropertyDescriptor" | "PropertyDescriptorMap" | "RegExpIndicesArray"
+    )
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn normalize_namespace_export_declaration_order(props: &mut [PropertyInfo]) {
         props.sort_by(
@@ -1552,8 +1560,15 @@ impl<'a> CheckerState<'a> {
             // user has local interface declarations that augment/extend the lib
             // type (e.g., `interface Node { forEachChild(...) }`), we must fall
             // through to the full merge path so user-declared members are included.
-            if (has_out_of_arena_decl || is_lib_symbol)
-                && !has_local_interface_decl
+            let should_suppress_missing_interface_decl_reject =
+                tsz_common::perf_counters::enabled_fast()
+                    && !has_local_interface_decl
+                    && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    && should_resolve_simple_object_missing_interface_decl_from_lib(&escaped_name);
+            let can_resolve_lib_interface_without_local_decl =
+                !has_local_interface_decl && (has_out_of_arena_decl || is_lib_symbol);
+
+            if can_resolve_lib_interface_without_local_decl
                 && !self.ctx.lib_contexts.is_empty()
                 && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
             {
@@ -1586,11 +1601,15 @@ impl<'a> CheckerState<'a> {
             if let Some(interface_type) = self.try_lower_simple_local_interface_object(
                 sym_id,
                 &declarations,
-                has_out_of_arena_decl,
-                has_cross_file_same_index,
-                has_local_interface_decl,
-                has_local_interface_heritage_extends,
-                has_local_computed_property_name,
+                simple_local_interface::SimpleLocalInterfaceFacts {
+                    has_out_of_arena_decl,
+                    has_cross_file_same_index,
+                    has_local_interface_decl,
+                    has_local_interface_heritage_extends,
+                    has_local_computed_property_name,
+                    suppress_missing_interface_decl_reject:
+                        should_suppress_missing_interface_decl_reject,
+                },
             ) {
                 tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_fastpath_hit();
                 if let Some(shape) = type_environment::object_shape(self.ctx.types, interface_type)
