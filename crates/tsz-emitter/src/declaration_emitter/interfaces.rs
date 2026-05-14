@@ -219,7 +219,7 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write(&text);
                     } else {
-                        self.emit_parameters(&sig.parameters);
+                        self.emit_index_signature_parameters(&sig.parameters);
                     }
                     self.write("]");
                     if sig.type_annotation.is_some() {

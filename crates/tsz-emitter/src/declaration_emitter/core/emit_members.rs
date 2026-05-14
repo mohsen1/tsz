@@ -1583,10 +1583,81 @@ impl<'a> DeclarationEmitter<'a> {
             .find('\n')
             .map_or(source.len(), |idx| pos + idx);
         let line = source.get(line_start..line_end)?;
-        let start = line.find('[')?;
+        let start = Self::index_signature_open_bracket_before_pos(line, pos - line_start)?;
         let end = line[start + 1..].find(']')? + start + 1;
         let inner = line[start + 1..end].trim();
         (inner.contains(',') && !inner.contains('\n')).then(|| inner.to_string())
+    }
+
+    pub(in crate::declaration_emitter) fn emit_index_signature_parameters(
+        &mut self,
+        params: &NodeList,
+    ) {
+        let mut first = true;
+        for &param_idx in &params.nodes {
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.emit_member_modifiers(&param.modifiers);
+            if param.dot_dot_dot_token {
+                self.write("...");
+            }
+            if let Some(name) = self.recovered_index_signature_parameter_name(param_node) {
+                self.write(&name);
+            } else if let Some(name) = self.get_identifier_text(param.name) {
+                self.write(&name);
+            } else {
+                self.emit_node(param.name);
+            }
+            if param.question_token {
+                self.write("?");
+            }
+            if param.type_annotation.is_some() {
+                self.write(": ");
+                self.emit_type(param.type_annotation);
+            }
+        }
+    }
+
+    fn recovered_index_signature_parameter_name(&self, param_node: &Node) -> Option<String> {
+        let name = self
+            .arena
+            .get_parameter(param_node)
+            .and_then(|param| self.get_identifier_text(param.name))?;
+        if !name.contains(',') && !name.contains('[') {
+            return None;
+        }
+        let source = self.source_file_text.as_ref()?;
+        let pos = param_node.pos as usize;
+        let line_start = source[..pos].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = source[pos..]
+            .find('\n')
+            .map_or(source.len(), |idx| pos + idx);
+        let line = source.get(line_start..line_end)?;
+        let open = Self::index_signature_open_bracket_before_pos(line, pos - line_start)?;
+        let after_open = line.get(open + 1..)?;
+        let colon = after_open.find(':')?;
+        let candidate = after_open.get(..colon)?.trim();
+        (!candidate.is_empty()
+            && candidate
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+        .then(|| candidate.to_string())
+    }
+
+    fn index_signature_open_bracket_before_pos(line: &str, pos_in_line: usize) -> Option<usize> {
+        line[..pos_in_line.min(line.len())]
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| (ch == '[').then_some(idx))
     }
 
     pub(in crate::declaration_emitter) fn emit_type_alias_declaration(
