@@ -85,7 +85,7 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(assigned_type);
         }
 
-        self.is_assignable_to(assigned_type, read_target_type)
+        self.is_assignable_to_strict_null(assigned_type, read_target_type)
             .then_some(assigned_type)
     }
 
