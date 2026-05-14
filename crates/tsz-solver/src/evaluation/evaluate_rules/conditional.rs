@@ -1952,7 +1952,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate(false_inst);
                     };
                     inferred = filtered;
-                } else if is_union || cond.is_distributive {
+                } else if is_union && !cond.is_distributive {
                     inferred = self.filter_inferred_by_constraint_or_undefined(
                         inferred,
                         constraint,
@@ -2008,8 +2008,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.evaluate(false_inst);
                 };
                 inferred = filtered;
-            } else if is_union || cond.is_distributive {
-                // For unions or distributive conditionals, use filter that adds undefined
+            } else if is_union && !cond.is_distributive {
+                // Non-distributive union candidates keep the historical partial-match
+                // behavior; distributive conditionals have already split union members.
                 inferred = self.filter_inferred_by_constraint_or_undefined(
                     inferred,
                     constraint,
@@ -2250,8 +2251,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-            if is_union || cond.is_distributive {
-                // For unions or distributive conditionals, use filter that adds undefined
+            if is_union && !cond.is_distributive {
+                // Non-distributive union candidates keep the historical partial-match
+                // behavior; distributive conditionals have already split union members.
                 inferred = self.filter_inferred_by_constraint_or_undefined(
                     inferred,
                     constraint,

@@ -474,6 +474,49 @@ const ev1: EV1 = "test";
 }
 
 #[test]
+fn test_constrained_infer_object_property_constraint_failure_is_false_branch() {
+    let source = r#"
+type GetString<T> = T extends { name: infer N extends string } ? N : never;
+
+type GS1 = GetString<{ name: "Alice" }>;
+type GS2 = GetString<{ name: number }>;
+
+const ok: GS1 = "Alice";
+const bad: GS2 = "anything";
+"#;
+    let diags = check_strict(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the failed constraint branch to reject assignment to never. Got: {diags:#?}"
+    );
+    assert!(
+        ts2322[0].message_text.contains("never"),
+        "Expected failed constrained object-property infer to evaluate to never, got: {:?}",
+        ts2322[0]
+    );
+}
+
+#[test]
+fn test_distributive_constrained_infer_filters_object_property_union_by_false_branch() {
+    let source = r#"
+type GetString<T> = T extends { name: infer N extends string } ? N : never;
+type Result = GetString<{ name: "Alice" } | { name: number }>;
+
+const ok: Result = "Alice";
+const bad: Result = undefined;
+"#;
+    let diags = check_strict(source);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected distributive constrained infer to drop the nonmatching union member instead of adding undefined. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn test_constrained_infer_extracts_tuple_length_literal() {
     let source = r#"
 type LengthOf<T> = T extends { length: infer L extends number } ? L : never;
