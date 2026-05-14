@@ -8,7 +8,9 @@
 //! full evaluation pipeline rather than treating every string literal as
 //! not-in-keys.
 
-use crate::test_utils::check_source_codes as check_and_get_codes;
+use tsz_checker::test_utils::{
+    check_source_codes as check_and_get_codes, check_source_diagnostics, diagnostic_count,
+};
 
 #[test]
 fn keyof_mapped_type_with_as_clause_no_false_ts2322() {
@@ -71,6 +73,44 @@ const x: K = "c";
         ts2322_count, 1,
         "Expected TS2322 for 'c' not in keyof simple object, got codes: {codes:?}"
     );
+}
+
+#[test]
+fn key_remapped_object_literal_reports_all_property_mismatches() {
+    let source = r#"
+type ObjectFromEntries<T extends readonly [string, any][]> = {
+  [K in T[number] as K[0]]: K[1]
+};
+
+type Entries = [
+  ["name", string],
+  ["age", number],
+  ["active", boolean]
+];
+
+type Obj = ObjectFromEntries<Entries>;
+const wrongObj: Obj = { name: 123, age: "wrong", active: "yes" };
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
+    assert_eq!(
+        ts2322_count, 3,
+        "Expected one TS2322 per mismatching key-remapped property, got: {diagnostics:#?}"
+    );
+
+    for expected in [
+        "Type 'number' is not assignable to type 'string'.",
+        "Type 'string' is not assignable to type 'number'.",
+        "Type 'string' is not assignable to type 'boolean'.",
+    ] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2322 && diag.message_text.contains(expected)),
+            "Expected diagnostic containing {expected:?}, got: {diagnostics:#?}"
+        );
+    }
 }
 
 #[test]

@@ -988,7 +988,7 @@ impl<'a> CheckerState<'a> {
                         type_param_names.iter().copied().collect();
 
                     let direct_literal_conflict_type_params = self
-                        .direct_round1_literal_conflict_type_params(
+                        .direct_round1_literal_preservation_type_params(
                             &shape,
                             args,
                             &round1_arg_types,
