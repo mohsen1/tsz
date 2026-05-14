@@ -2,7 +2,7 @@ use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn should_delegate_dynamic_type_alias_owner(
+    pub(crate) fn should_delegate_dynamic_type_alias_owner(
         &self,
         sym_id: SymbolId,
         file_idx: usize,
@@ -25,14 +25,17 @@ impl<'a> CheckerState<'a> {
         let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return true;
         };
-        if local_symbol.has_any_flags(symbol_flags::ALIAS) {
-            return true;
-        }
 
         if let Some(local_def) = self.ctx.symbol_to_def.borrow().get(&sym_id).copied()
             && let Some(local_def_name) = self.ctx.definition_store.get_name(local_def)
         {
             return self.ctx.types.resolve_atom(local_def_name) != local_symbol.escaped_name;
+        }
+
+        if local_symbol.has_any_flags(symbol_flags::ALIAS)
+            && !local_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+        {
+            return true;
         }
 
         local_symbol.escaped_name != target_symbol.escaped_name

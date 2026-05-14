@@ -1744,7 +1744,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut sym_id = sym_id;
-        if let Some(symbol) = self.get_cross_file_symbol(sym_id)
+        let use_dynamic_symbol_owner = self
+            .ctx
+            .resolve_dynamic_symbol_file_index(sym_id)
+            .is_none_or(|file_idx| self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx));
+        if use_dynamic_symbol_owner
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
@@ -1753,24 +1758,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let def_id = self.ctx.get_or_create_def_id(sym_id);
-
         // Prefer the registered cross-file target before falling back to global
         // symbol lookup, because raw SymbolId values can collide across binders.
         // Extract needed data to avoid holding a borrow during deeper operations.
-        let (flags, value_decl, declarations, sym_escaped_name) =
-            match self.get_cross_file_symbol(sym_id) {
-                Some(symbol) => (
-                    symbol.flags,
-                    symbol.value_declaration,
-                    symbol.declarations.clone(),
-                    symbol.escaped_name.clone(),
-                ),
-                None => {
-                    self.ctx.leave_recursion();
-                    return Vec::new();
-                }
-            };
+        let local_symbol;
+        let source_symbol = if use_dynamic_symbol_owner {
+            self.get_cross_file_symbol(sym_id)
+        } else {
+            local_symbol = self.ctx.binder.get_symbol(sym_id);
+            local_symbol
+        };
+        let (flags, value_decl, declarations, sym_escaped_name) = match source_symbol {
+            Some(symbol) => (
+                symbol.flags,
+                symbol.value_declaration,
+                symbol.declarations.clone(),
+                symbol.escaped_name.clone(),
+            ),
+            None => {
+                self.ctx.leave_recursion();
+                return Vec::new();
+            }
+        };
+        let def_id = if use_dynamic_symbol_owner {
+            self.ctx.get_or_create_def_id(sym_id)
+        } else {
+            self.ctx
+                .get_or_create_def_id_for_symbol_name(sym_id, &sym_escaped_name)
+        };
         let prefers_type_only_decls =
             (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
 

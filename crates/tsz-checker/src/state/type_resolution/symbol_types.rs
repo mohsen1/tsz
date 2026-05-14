@@ -20,10 +20,10 @@ impl<'a> CheckerState<'a> {
             .resolve_dynamic_symbol_file_index(sym_id)
             .is_none()
             .then(|| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
+                self.ctx.binder.get_symbol(sym_id).filter(|symbol| {
+                    symbol.has_any_flags(symbol_flags::ALIAS)
+                        && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                })
             })
             .flatten();
         let symbol_meta = local_alias_symbol
@@ -399,21 +399,25 @@ impl<'a> CheckerState<'a> {
                 });
                 // Return structural type directly for type aliases (not Lazy) so
                 // conditional types are fully resolved during assignability checking.
-                let mut structural_type = if self
-                    .ctx
-                    .resolve_symbol_file_index(sym_id)
-                    .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
-                    && let Some((delegate_type, _)) =
-                        self.delegate_cross_arena_symbol_resolution(sym_id)
-                    && delegate_type != TypeId::UNKNOWN
-                    && delegate_type != TypeId::ERROR
-                {
-                    delegate_type
-                } else if alias_body_is_keyof_type_query {
-                    self.type_reference_symbol_type_with_params(sym_id).0
-                } else {
-                    self.get_type_of_symbol(sym_id)
-                };
+                let mut structural_type =
+                    if self
+                        .ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .is_some_and(|file_idx| {
+                            file_idx != self.ctx.current_file_idx
+                                && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
+                        })
+                        && let Some((delegate_type, _)) =
+                            self.delegate_cross_arena_symbol_resolution(sym_id)
+                        && delegate_type != TypeId::UNKNOWN
+                        && delegate_type != TypeId::ERROR
+                    {
+                        delegate_type
+                    } else if alias_body_is_keyof_type_query {
+                        self.type_reference_symbol_type_with_params(sym_id).0
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    };
                 if (structural_type == TypeId::ANY
                     || structural_type == TypeId::UNKNOWN
                     || structural_type == TypeId::ERROR)
@@ -1291,11 +1295,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            if symbol.has_any_flags(symbol_flags::ALIAS) {
+            if symbol.has_any_flags(symbol_flags::ALIAS)
+                && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+            {
                 if self
                     .ctx
                     .resolve_symbol_file_index(sym_id)
-                    .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                    .is_some_and(|file_idx| {
+                        file_idx != self.ctx.current_file_idx
+                            && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
+                    })
                     && self
                         .get_cross_file_symbol(sym_id)
                         .is_some_and(|target| target.has_any_flags(symbol_flags::TYPE_ALIAS))
@@ -1757,7 +1766,10 @@ impl<'a> CheckerState<'a> {
                 if self
                     .ctx
                     .resolve_symbol_file_index(sym_id)
-                    .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                    .is_some_and(|file_idx| {
+                        file_idx != self.ctx.current_file_idx
+                            && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
+                    })
                     && let Some((alias_type, params)) =
                         self.delegate_cross_arena_symbol_resolution(sym_id)
                     && alias_type != TypeId::UNKNOWN
