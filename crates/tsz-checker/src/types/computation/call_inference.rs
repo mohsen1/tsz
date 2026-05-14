@@ -1704,42 +1704,50 @@ impl<'a> CheckerState<'a> {
         let sanitize_object_entries_any =
             self.is_builtin_object_entries_call(callee_expr) && arg_types.len() == 1;
         let mut changed = false;
-        let sanitized =
-            args.iter()
-                .zip(arg_types.iter().copied())
-                .enumerate()
-                .map(|(index, (&arg_idx, arg_type))| {
-                    // Resolve enum types to their namespace object representation.
-                    // When an enum identifier (like `E1`) is used as a call argument,
-                    // it resolves to an Enum type with a DefId. For inference against
-                    // index-signature targets like `{ [x: string]: T }`, the inference
-                    // engine needs to see the namespace Object type with named member
-                    // properties. This mirrors tsc's behavior where `typeof E1`
-                    // (the enum namespace) has an implicit string index signature.
-                    let enum_def = common::enum_def_id(self.ctx.types, arg_type);
-                    let arg_type = if let Some(def_id) = enum_def {
-                        let sym_id = self.ctx.def_to_symbol_id(def_id);
-                        let ns_type =
-                            sym_id.and_then(|sid| self.ctx.enum_namespace_types.get(&sid).copied());
-                        if let Some(ns) = ns_type {
-                            changed = true;
-                            ns
-                        } else {
-                            arg_type
-                        }
+        let expanded_args;
+        let source_args: &[NodeIndex] = if args.len() == arg_types.len() {
+            args
+        } else {
+            expanded_args = self.build_expanded_args_for_error(args);
+            &expanded_args
+        };
+        let sanitized = source_args
+            .iter()
+            .zip(arg_types.iter().copied())
+            .enumerate()
+            .map(|(index, (&arg_idx, arg_type))| {
+                // Resolve enum types to their namespace object representation.
+                // When an enum identifier (like `E1`) is used as a call argument,
+                // it resolves to an Enum type with a DefId. For inference against
+                // index-signature targets like `{ [x: string]: T }`, the inference
+                // engine needs to see the namespace Object type with named member
+                // properties. This mirrors tsc's behavior where `typeof E1`
+                // (the enum namespace) has an implicit string index signature.
+                let enum_def = common::enum_def_id(self.ctx.types, arg_type);
+                let arg_type = if let Some(def_id) = enum_def {
+                    let sym_id = self.ctx.def_to_symbol_id(def_id);
+                    let ns_type =
+                        sym_id.and_then(|sid| self.ctx.enum_namespace_types.get(&sid).copied());
+                    if let Some(ns) = ns_type {
+                        changed = true;
+                        ns
+                    } else {
+                        arg_type
+                    }
+                } else {
+                    arg_type
+                };
+
+                let arg_type =
+                    if sanitize_object_entries_any && index == 0 && arg_type == TypeId::ANY {
+                        changed = true;
+                        TypeId::UNKNOWN
                     } else {
                         arg_type
                     };
 
-                    let arg_type =
-                        if sanitize_object_entries_any && index == 0 && arg_type == TypeId::ANY {
-                            changed = true;
-                            TypeId::UNKNOWN
-                        } else {
-                            arg_type
-                        };
-
-                    let arg_type = if self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                let arg_type =
+                    if self.ctx.arena.get(arg_idx).is_some_and(|node| {
                         node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
                     }) && self.ctx.enclosing_class.is_some()
                         && !self.is_this_in_nested_function_without_own_this_binding(arg_idx)
@@ -1750,13 +1758,13 @@ impl<'a> CheckerState<'a> {
                         arg_type
                     };
 
-                    let sanitized = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
-                    if sanitized != arg_type {
-                        changed = true;
-                    }
-                    sanitized
-                })
-                .collect();
+                let sanitized = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
+                if sanitized != arg_type {
+                    changed = true;
+                }
+                sanitized
+            })
+            .collect();
         (sanitized, changed)
     }
 
