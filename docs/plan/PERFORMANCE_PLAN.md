@@ -1715,3 +1715,30 @@ Use this contract for changes that update measured claims in this document.
 5. When another open PR already edits the same status-row counters, land an
    additive/non-overlapping docs slice first and rebase the counter edits after
    that PR merges.
+
+---
+
+## 17. Merge-To-Main Discipline (Required)
+
+This plan is only complete when changes are merged to `main`. Open PRs,
+green local runs, and branch-only numbers are intermediate signals, not done
+states.
+
+1. Every perf PR must start from a dedicated worktree tracking `origin/main`.
+2. Before pushing, rerunning CI, or quoting numbers, run:
+   `git fetch origin --prune && git rev-list --left-right --count HEAD...origin/main`.
+3. If `behind > 0`, rebase immediately and `push --force-with-lease` before
+   any rerun or new benchmark claim.
+4. Keep only one active behavior PR per measured status-row trajectory. If a
+   second PR must touch the same counters, it must be docs-only/additive until
+   the first behavior PR merges.
+5. Enable auto-merge on perf PRs once required checks are green.
+6. Cancel superseded CI runs for old SHAs (`gh run cancel`; use force-cancel
+   when a run is stuck) so the newest commit enters the queue quickly.
+7. Failure handling:
+   `behind == 0` -> rerun failed jobs only.
+   `behind > 0` -> rebase first, then rerun.
+8. Keep a periodic drift monitor (60-120s cadence) that alerts on `behind > 0`
+   and check failures until PR merge.
+9. Immediately after merge, clean up lane worktrees/temporary targets and stop
+   lane-specific monitors to avoid stale reminders and disk growth.
