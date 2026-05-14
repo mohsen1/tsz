@@ -2872,6 +2872,41 @@ ab = {};
 }
 
 #[test]
+fn test_private_public_intersection_reduces_to_never_for_asserts_this() {
+    let diags = with_lib_contexts(
+        r#"
+class Value<T> {
+  constructor(private value: T | null) {}
+
+  assertHasValue(): asserts this is { value: T } & Value<T> {
+    if (this.value === null) {
+      throw new Error("No value");
+    }
+  }
+
+  getValue(): T {
+    this.assertHasValue();
+    return this.value;
+  }
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && message.contains("Property 'value' does not exist on type 'never'")
+        }),
+        "Expected TS2339 for private/public impossible intersection reduced to never, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_check_mjs_false_does_not_enforce_annotation_type() {
     // No @ts-check: JSDoc types should NOT be enforced when checkJs is false.
     let source = r#"
