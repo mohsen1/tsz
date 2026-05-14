@@ -132,8 +132,8 @@ numeric[42];
 
     let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
     assert_eq!(
-        ts7053_count, 2,
-        "Expected TS7053 for both mixed union string and numeric index access, while preserving single string-index numeric access and all-number-index union access. Actual diagnostics: {diagnostics:#?}"
+        ts7053_count, 1,
+        "Expected TS7053 for mixed union string access, while preserving numeric reads through string index signatures, single string-index numeric access, and all-number-index union access. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

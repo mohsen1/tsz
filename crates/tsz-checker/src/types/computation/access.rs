@@ -1340,13 +1340,18 @@ impl<'a> CheckerState<'a> {
             && !self.is_array_like_type(object_type_for_access)
         {
             let union_numeric_key_missing = {
-                let union_object_type = self.resolve_lazy_type(pre_resolution_object_type);
-                crate::query_boundaries::common::union_members(self.ctx.types, union_object_type)
+                skip_flow_narrowing && {
+                    let union_object_type = self.resolve_lazy_type(pre_resolution_object_type);
+                    crate::query_boundaries::common::union_members(
+                        self.ctx.types,
+                        union_object_type,
+                    )
                     .is_some_and(|members| {
                         members.iter().any(|&member| {
                             !self.union_member_supports_numeric_literal_key(member, index)
                         })
                     })
+                }
             };
 
             if !union_numeric_key_missing {
