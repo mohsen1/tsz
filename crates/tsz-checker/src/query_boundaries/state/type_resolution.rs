@@ -48,6 +48,11 @@ pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -
     tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
 }
 
+pub(crate) fn is_union_or_intersection(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_union_type(db, type_id)
+        || tsz_solver::type_queries::is_intersection_type(db, type_id)
+}
+
 #[cfg(test)]
 #[path = "../../../tests/state_type_resolution.rs"]
 mod tests;

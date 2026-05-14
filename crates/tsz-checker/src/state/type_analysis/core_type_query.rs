@@ -1452,12 +1452,13 @@ impl<'a> CheckerState<'a> {
                     single_quoted_name: false,
                 });
             }
-            self.append_export_equals_import_type_namespace_props(
-                module_name,
-                exports_table_target,
-                &exports_table,
-                &mut props,
-            );
+            let export_equals_import_type_module = self
+                .append_export_equals_import_type_namespace_props(
+                    module_name,
+                    exports_table_target,
+                    &exports_table,
+                    &mut props,
+                );
             // CommonJS object-literal exports — `module.exports = { foo, bar }` —
             // bind only an `export=` symbol (or no entries at all in `module_exports`),
             // so the binder-driven loop above and `append_export_equals_…` together
@@ -1472,9 +1473,12 @@ impl<'a> CheckerState<'a> {
             );
             Self::normalize_namespace_export_declaration_order(&mut props);
             let namespace_type = self.ctx.types.factory().object(props);
+            let display_module_name = export_equals_import_type_module
+                .as_deref()
+                .unwrap_or(module_name);
             self.ctx.namespace_module_names.insert(
                 namespace_type,
-                self.imported_namespace_display_module_name(module_name),
+                self.imported_namespace_display_module_name(display_module_name),
             );
             Some(namespace_type)
         } else if let Some(surface) =

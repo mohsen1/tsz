@@ -5,6 +5,7 @@
 //! - `assignment_checker` — assignment expression checking (=, +=, etc.)
 //! - `subtype_identity_checker` — subtype, identity, and redeclaration compat
 
+mod application_keyof_helpers;
 pub mod assignability_checker;
 mod assignability_diagnostics;
 mod assignability_type_param_helpers;
