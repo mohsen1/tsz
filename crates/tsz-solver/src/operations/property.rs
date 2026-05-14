@@ -164,6 +164,10 @@ pub struct PropertyAccessEvaluator<'a> {
     /// properties through a type parameter's constraint so that `this` is
     /// preserved for the checker to substitute with the correct receiver type.
     skip_this_binding: Cell<bool>,
+    /// When true, explicit `#private` property names may resolve named private
+    /// fields. Ordinary string/index lookups keep this false so ES-private
+    /// fields do not leak through dynamic property access.
+    allow_private_identifier_properties: Cell<bool>,
 }
 
 struct PropertyAccessGuard<'a> {
@@ -191,6 +195,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             current_prop_name: RefCell::new(None),
             current_prop_atom: RefCell::new(None),
             skip_this_binding: Cell::new(false),
+            allow_private_identifier_properties: Cell::new(false),
         }
     }
 
@@ -218,6 +223,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
     /// Returns the current state of the `skip_this_binding` flag.
     pub(crate) const fn is_skip_this_binding(&self) -> bool {
         self.skip_this_binding.get()
+    }
+
+    pub fn set_allow_private_identifier_properties(&self, allow: bool) {
+        self.allow_private_identifier_properties.set(allow);
+    }
+
+    pub(crate) const fn allow_private_identifier_properties(&self) -> bool {
+        self.allow_private_identifier_properties.get()
     }
 
     /// Helper to access the underlying `TypeDatabase`
