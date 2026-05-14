@@ -25,6 +25,7 @@ use tsz_solver::visitor;
 use crate::transforms::emit_utils::string_literal_text;
 use crate::type_cache_view::TypeCacheView;
 
+mod ambient_module;
 mod public_surface;
 mod type_walk;
 mod value_references;
@@ -321,7 +322,11 @@ impl<'a> UsageAnalyzer<'a> {
             if let Some(module_block) = self.arena.get_module_block(body_node) {
                 if let Some(ref stmts) = module_block.statements {
                     for &stmt_idx in &stmts.nodes {
-                        self.analyze_statement(stmt_idx);
+                        if self.is_ambient_module_body_name(module.name) {
+                            self.analyze_ambient_module_member_statement(stmt_idx);
+                        } else {
+                            self.analyze_statement(stmt_idx);
+                        }
                     }
                 }
             } else if let Some(_nested_module) = self.arena.get_module(body_node) {

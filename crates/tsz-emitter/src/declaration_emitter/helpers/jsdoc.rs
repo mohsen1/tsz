@@ -1498,18 +1498,24 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(&initializer.0)
                 .copied()
                 .or_else(|| self.get_node_type_or_names(&[decl_idx, decl_name, initializer]));
-            if let Some(func_type_id) = func_type_id
-                && let Some(return_type_id) =
-                    tsz_solver::type_queries::get_return_type(*interner, func_type_id)
-            {
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && func.body.is_some()
-                    && self.body_returns_void(func.body)
+            if let Some(func_type_id) = func_type_id {
+                if let Some(predicate_text) =
+                    self.function_type_predicate_text(func_type_id, func.type_parameters.as_ref())
                 {
-                    self.write(": void");
-                } else {
                     self.write(": ");
-                    self.write(&self.print_type_id(return_type_id));
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
+                    tsz_solver::type_queries::get_return_type(*interner, func_type_id)
+                {
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && func.body.is_some()
+                        && self.body_returns_void(func.body)
+                    {
+                        self.write(": void");
+                    } else {
+                        self.write(": ");
+                        self.write(&self.print_type_id(return_type_id));
+                    }
                 }
             } else if func.body.is_some() && self.body_returns_void(func.body) {
                 self.write(": void");
