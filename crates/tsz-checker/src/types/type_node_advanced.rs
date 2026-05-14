@@ -552,10 +552,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     fn full_enum_member_union_parent_type(&self, type_id: TypeId) -> Option<TypeId> {
-        let Some(list_id) = crate::query_boundaries::common::union_list_id(self.ctx.types, type_id)
-        else {
-            return None;
-        };
+        let list_id = crate::query_boundaries::common::union_list_id(self.ctx.types, type_id)?;
         let members = self.ctx.types.type_list(list_id);
         if members.is_empty() {
             return None;
@@ -563,9 +560,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         let mut parent = tsz_binder::SymbolId::NONE;
         for &member_type in members.iter() {
-            let Some(member_parent) = self.enum_parent_for_member_like_type(member_type) else {
-                return None;
-            };
+            let member_parent = self.enum_parent_for_member_like_type(member_type)?;
             if parent.is_none() {
                 parent = member_parent;
             } else if parent != member_parent {
@@ -573,12 +568,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
-        let Some(parent_symbol) = self.ctx.binder.symbols.get(parent) else {
-            return None;
-        };
-        let Some(exports) = parent_symbol.exports.as_ref() else {
-            return None;
-        };
+        let parent_symbol = self.ctx.binder.symbols.get(parent)?;
+        let exports = parent_symbol.exports.as_ref()?;
         let enum_member_count = exports
             .iter()
             .filter(|(_, sym_id)| {
