@@ -7,10 +7,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    // =========================================================================
-    // Statements
-    // =========================================================================
-
     pub(in crate::emitter) fn emit_block(&mut self, node: &Node, idx: NodeIndex) {
         let Some(block) = self.arena.get_block(node) else {
             return;
@@ -168,6 +164,7 @@ impl<'a> Printer<'a> {
             && self.is_single_line(node)
             && !needs_this_capture
             && is_function_body_block
+            && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
             && self.hoisted_for_of_temps.is_empty()
             && self.pending_object_rest_params.is_empty();
@@ -278,6 +275,9 @@ impl<'a> Printer<'a> {
         if is_function_body_block && !self.pending_object_rest_params.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
         }
+
+        let static_super_scope =
+            self.enter_pending_lowered_async_arrow_super_capture_scope(is_function_body_block);
 
         let block_scoped_private_byte_offset =
             Some((self.writer.len(), self.writer.current_line()));
@@ -603,6 +603,7 @@ impl<'a> Printer<'a> {
         if !self.ctx.options.remove_comments {
             self.emit_comments_before_pos(block_close_pos);
         }
+        self.restore_static_super_scope(static_super_scope);
         self.decrease_indent();
         self.map_closing_brace(node);
         self.write_with_end_marker("}");

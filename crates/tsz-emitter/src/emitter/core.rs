@@ -590,6 +590,13 @@ pub struct Printer<'a> {
     /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
     pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
 
+    /// Pending `super` capture declarations for lowered async arrows in a method body.
+    pub(crate) pending_lowered_async_arrow_super_capture: Option<(
+        crate::transforms::emit_utils::AsyncMethodSuperCapture,
+        Option<String>,
+        Option<String>,
+    )>,
+
     /// Current nesting depth of function/method/constructor scopes.
     /// Used to determine if we're inside a function scope (depth > 0) or at top level (0).
     pub(crate) function_scope_depth: u32,
@@ -936,6 +943,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
+            pending_lowered_async_arrow_super_capture: None,
             function_scope_depth: 0,
             arrow_function_scope_depth: 0,
             first_for_of_emitted: false,

@@ -12,6 +12,70 @@ use tsz_scanner::SyntaxKind;
 use super::async_es5_ir::AsyncES5Transformer;
 
 impl<'a> AsyncES5Transformer<'a> {
+    fn class_super_base_ir(&self) -> IRNode {
+        if self.class_super_is_static {
+            IRNode::id(self.class_super_name.clone())
+        } else {
+            IRNode::PropertyAccess {
+                object: Box::new(IRNode::id(self.class_super_name.clone())),
+                property: "prototype".to_string().into(),
+            }
+        }
+    }
+
+    fn class_super_property_ir(&self, name: String) -> IRNode {
+        IRNode::PropertyAccess {
+            object: Box::new(self.class_super_base_ir()),
+            property: name.into(),
+        }
+    }
+
+    fn class_super_element_ir(&self, index: IRNode) -> IRNode {
+        IRNode::ElementAccess {
+            object: Box::new(self.class_super_base_ir()),
+            index: Box::new(index),
+        }
+    }
+
+    fn try_class_super_call(&self, callee_idx: NodeIndex, args: Vec<IRNode>) -> Option<IRNode> {
+        if !self.class_has_super {
+            return None;
+        }
+        let callee_node = self.arena.get(callee_idx)?;
+        let receiver = if callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(callee_node)?;
+            let obj_node = self.arena.get(access.expression)?;
+            if obj_node.kind != SyntaxKind::SuperKeyword as u16 {
+                return None;
+            }
+            let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                access.name_or_argument,
+            );
+            self.class_super_property_ir(name)
+        } else if callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(callee_node)?;
+            let obj_node = self.arena.get(access.expression)?;
+            if obj_node.kind != SyntaxKind::SuperKeyword as u16 {
+                return None;
+            }
+            let index = self.expression_to_ir(access.name_or_argument);
+            self.class_super_element_ir(index)
+        } else {
+            return None;
+        };
+
+        let mut call_args = vec![IRNode::This { captured: false }];
+        call_args.extend(args);
+        Some(IRNode::CallExpr {
+            callee: Box::new(IRNode::PropertyAccess {
+                object: Box::new(receiver),
+                property: "call".to_string().into(),
+            }),
+            arguments: call_args,
+        })
+    }
+
     /// Collect parameter names from a parameter list
     pub fn collect_parameters(&self, params: &tsz_parser::parser::NodeList) -> Vec<String> {
         let mut result = Vec::new();
@@ -69,13 +133,18 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = self.arena.get_call_expr(node) {
-                    let callee = self.expression_to_ir(call.expression);
                     let mut args = Vec::new();
                     if let Some(arg_list) = &call.arguments {
                         for &arg_idx in &arg_list.nodes {
                             args.push(self.expression_to_ir(arg_idx));
                         }
                     }
+                    if let Some(super_call) =
+                        self.try_class_super_call(call.expression, args.clone())
+                    {
+                        return super_call;
+                    }
+                    let callee = self.expression_to_ir(call.expression);
                     IRNode::CallExpr {
                         callee: Box::new(callee),
                         arguments: args,
@@ -87,6 +156,16 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node) {
+                    if self.class_has_super
+                        && let Some(obj_node) = self.arena.get(access.expression)
+                        && obj_node.kind == SyntaxKind::SuperKeyword as u16
+                    {
+                        let prop = crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena,
+                            access.name_or_argument,
+                        );
+                        return self.class_super_property_ir(prop);
+                    }
                     let obj = self.expression_to_ir(access.expression);
                     let prop = crate::transforms::emit_utils::identifier_text_or_empty(
                         self.arena,
@@ -241,6 +320,13 @@ impl<'a> AsyncES5Transformer<'a> {
             // ELEMENT_ACCESS_EXPRESSION: `object[index]`
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node) {
+                    if self.class_has_super
+                        && let Some(obj_node) = self.arena.get(access.expression)
+                        && obj_node.kind == SyntaxKind::SuperKeyword as u16
+                    {
+                        let index = self.expression_to_ir(access.name_or_argument);
+                        return self.class_super_element_ir(index);
+                    }
                     let obj = self.expression_to_ir(access.expression);
                     let index = self.expression_to_ir(access.name_or_argument);
                     IRNode::ElementAccess {
