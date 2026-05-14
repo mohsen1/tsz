@@ -1,10 +1,11 @@
 //! Cross-call cache for `instantiate_type`.
 //!
-//! Storage and key types for the `instantiate_type` memoization cache. PR 2/4
-//! of the `docs/plan/ROADMAP.md` instantiation-cache workstream. This PR ships the
-//! plumbing only — the cache exists on `QueryCache` and is reachable via the
-//! `QueryDatabase` trait, but no production entry point probes it yet. PR 3/4
-//! will wire it into the five `instantiate_type*` entry points.
+//! Storage and key types for the `instantiate_type` memoization cache. The
+//! cache is active when callers use the cache-aware entry points in
+//! `instantiation/instantiate.rs` and pass `Some(&dyn QueryDatabase)`.
+//! Plain `instantiate_type` and `substitute_this_type` calls intentionally
+//! pass `None`, preserving the no-cache compatibility path for raw
+//! `TypeDatabase` callers.
 //!
 //! ### Key shape
 //!
@@ -12,20 +13,26 @@
 //! InstantiationCacheKey = (TypeId, CanonicalSubst, u8 mode_bits, Option<TypeId>)
 //! ```
 //!
-//! - `TypeId` — the source type being substituted into.
+//! - `TypeId` — the source type being substituted into. This is required
+//!   because the same substitution can be applied to many different type
+//!   bodies.
 //! - `CanonicalSubst` — the substitution as a `SmallVec` of `(Atom, TypeId)`
 //!   pairs sorted by `Atom`, so two `TypeSubstitution`s with the same
 //!   `{name -> type_id}` multiset hash and compare equal regardless of the
 //!   underlying `FxHashMap` insertion order. The pairs live directly in the
 //!   key — see the design doc §1 ("Why no `TypeInterner` intern handle") for
 //!   why we deliberately do not intern substitutions on `TypeInterner`.
-//! - `mode_bits` packs the three boolean flags on `TypeInstantiator`:
+//! - `mode_bits` packs the instantiator walk shape. Different walk modes can
+//!   produce different answers for the same `(TypeId, CanonicalSubst)`, so the
+//!   mode byte is part of the key:
 //!   - bit 0: `substitute_infer`
 //!   - bit 1: `preserve_meta_types`
 //!   - bit 2: `preserve_unsubstituted_type_params`
+//!   - bit 3: shallow return-position `this` substitution
 //! - `Option<TypeId>` carries `this_type` when set (used by
-//!   `substitute_this_type`, where the substitution itself is empty but the
-//!   `this_type` slot is populated).
+//!   `substitute_this_type`, where the substitution itself is empty). Without
+//!   this slot, calls that substitute the same body for different receiver
+//!   types would alias.
 //!
 //! ### Why on `QueryCache` and not `TypeInterner`
 //!
@@ -34,6 +41,13 @@
 //! `estimated_size_bytes`. A substitution-keyed cache on `TypeInterner` would
 //! grow unbounded on large repos. Per the design doc §2, cache hooks live on
 //! `QueryDatabase` (not `TypeDatabase`) so the boundary stays clean.
+//!
+//! ### Invalidation and stats
+//!
+//! Cache entries are valid only for the owning `QueryCache` session and are
+//! cleared by `QueryCache::clear()`. Hit/miss counters live beside the cache
+//! on `QueryCache` and feed `QueryCacheStatistics`; raw `TypeInterner` callers
+//! use the trait defaults, which always miss and do not update counters.
 
 use crate::types::TypeId;
 use rustc_hash::FxHashMap;
@@ -146,18 +160,12 @@ impl InstantiationCache {
     }
 
     /// Look up an entry by key. Returns `None` if no entry exists.
-    ///
-    /// Wired into the `instantiate_type*` entry points by PR 3/4 of the
-    /// cache plan. PR 2 ships the storage only.
     #[allow(dead_code)]
     pub fn lookup(&self, key: &InstantiationCacheKey) -> Option<TypeId> {
         self.inner.borrow().get(key).copied()
     }
 
     /// Insert (or overwrite) an entry.
-    ///
-    /// Wired into the `instantiate_type*` entry points by PR 3/4 of the
-    /// cache plan. PR 2 ships the storage only.
     #[allow(dead_code)]
     pub fn insert(&self, key: InstantiationCacheKey, result: TypeId) {
         self.inner.borrow_mut().insert(key, result);
