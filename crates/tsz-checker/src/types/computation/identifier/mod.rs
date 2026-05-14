@@ -5,6 +5,7 @@
 //! applying flow-based narrowing, and handling intrinsic/global names.
 
 mod core;
+mod imported_values;
 mod resolution;
 
 #[cfg(test)]

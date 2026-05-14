@@ -1534,6 +1534,10 @@ impl<'a> CheckerState<'a> {
                 return self.check_flow_usage(idx, module_exports_type, sym_id);
             }
 
+            if has_alias && let Some(value_type) = self.imported_alias_value_type(sym_id, idx) {
+                return self.check_flow_usage(idx, value_type, sym_id);
+            }
+
             // Merged TYPE_ALIAS + VALUE symbols: when a user-defined value (e.g.,
             // `declare const Readonly: unique symbol`) shares a name with a global
             // type alias (e.g., `type Readonly<T> = ...` from lib.d.ts), the binder
