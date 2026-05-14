@@ -1284,6 +1284,90 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.in_const_assertion = prev_in_const_assertion;
 
+        if is_generic_new
+            && inferred_new_type_args.is_none()
+            && let Some(shape) = constructor_shape.as_ref()
+        {
+            let evaluated_shape = {
+                let new_params: Vec<_> = shape
+                    .params
+                    .iter()
+                    .map(|p| tsz_solver::ParamInfo {
+                        name: p.name,
+                        type_id: self.evaluate_type_with_env(p.type_id),
+                        optional: p.optional,
+                        rest: p.rest,
+                    })
+                    .collect();
+                tsz_solver::FunctionShape {
+                    params: new_params,
+                    return_type: shape.return_type,
+                    this_type: shape.this_type,
+                    type_params: shape.type_params.clone(),
+                    type_predicate: shape.type_predicate,
+                    is_constructor: shape.is_constructor,
+                    is_method: shape.is_method,
+                }
+            };
+            let mut substitution = {
+                let env = self.ctx.type_env.borrow();
+                call_checker::compute_contextual_types_with_context(
+                    self.ctx.types,
+                    &self.ctx,
+                    &env,
+                    &evaluated_shape,
+                    &arg_types,
+                    contextual_type,
+                )
+            };
+            for (i, param) in shape.params.iter().enumerate() {
+                let Some(tp_info) =
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, param.type_id)
+                else {
+                    continue;
+                };
+                let Some(tp) = shape.type_params.iter().find(|tp| tp.name == tp_info.name) else {
+                    continue;
+                };
+                let Some(constraint) = tp.constraint else {
+                    continue;
+                };
+                let Some(&arg_idx) = args.get(i) else {
+                    continue;
+                };
+                let Some(literal_arg_type) = self.literal_type_from_initializer(arg_idx) else {
+                    continue;
+                };
+                let widened_literal = crate::query_boundaries::common::widen_literal_type(
+                    self.ctx.types,
+                    literal_arg_type,
+                );
+                if widened_literal == literal_arg_type {
+                    continue;
+                }
+                let instantiated_constraint = crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    constraint,
+                    &substitution,
+                );
+                let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
+                if widened_literal == evaluated_constraint {
+                    substitution.insert(tp.name, literal_arg_type);
+                }
+            }
+            let type_args: Vec<TypeId> = shape
+                .type_params
+                .iter()
+                .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
+                .collect();
+            if type_args
+                .iter()
+                .any(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ANY)
+            {
+                inferred_new_type_args = Some(type_args);
+            }
+        }
+
         // For generic constructors (without const type params), widen scalar literal
         // arg types for error display. During arg collection, preserve_literal_types
         // was true so that generic inference gets precise literal types (e.g., `true`

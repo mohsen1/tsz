@@ -7,6 +7,7 @@
 
 pub mod assignability_checker;
 mod assignability_diagnostics;
+mod assignability_eval;
 mod assignability_type_param_helpers;
 pub mod assignment_checker;
 mod awaited_variance_normalization;
