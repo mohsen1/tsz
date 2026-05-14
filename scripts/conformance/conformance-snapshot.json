@@ -1,19 +1,61 @@
 {
-  "timestamp": "2026-05-12T21:03:01Z",
-  "git_sha": "facc61669952bdb71ce4bc760f038348c6b73d8f",
+  "timestamp": "2026-05-14T18:01:31Z",
+  "git_sha": "1ed6e4fa194d2061fbbb2749803080d81ba4f7c7",
   "summary": {
-    "total_tests": 12582,
-    "passed": 12581,
-    "failed": 1,
-    "pass_rate": 100.0
+    "total_tests": 12585,
+    "passed": 12551,
+    "failed": 34,
+    "pass_rate": 99.7
   },
   "areas_by_pass_rate": [
     {
-      "area": "compiler",
-      "total": 6520,
-      "passed": 6519,
+      "area": "types/members",
+      "total": 34,
+      "passed": 33,
       "failed": 1,
-      "pass_rate": 99.98
+      "pass_rate": 97.06
+    },
+    {
+      "area": "externalModules/typeOnly",
+      "total": 65,
+      "passed": 64,
+      "failed": 1,
+      "pass_rate": 98.46
+    },
+    {
+      "area": "jsdoc/declarations",
+      "total": 92,
+      "passed": 91,
+      "failed": 1,
+      "pass_rate": 98.91
+    },
+    {
+      "area": "salsa",
+      "total": 191,
+      "passed": 190,
+      "failed": 1,
+      "pass_rate": 99.48
+    },
+    {
+      "area": "classes/members",
+      "total": 198,
+      "passed": 197,
+      "failed": 1,
+      "pass_rate": 99.49
+    },
+    {
+      "area": "compiler",
+      "total": 6522,
+      "passed": 6496,
+      "failed": 26,
+      "pass_rate": 99.6
+    },
+    {
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 263,
+      "failed": 1,
+      "pass_rate": 99.62
     },
     {
       "area": "ambient",
@@ -75,13 +117,6 @@
       "area": "classes/constructorDeclarations",
       "total": 39,
       "passed": 39,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
-      "area": "classes/members",
-      "total": 198,
-      "passed": 198,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -290,8 +325,8 @@
     },
     {
       "area": "expressions/binaryOperators",
-      "total": 66,
-      "passed": 66,
+      "total": 65,
+      "passed": 65,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -373,13 +408,6 @@
       "pass_rate": 100.0
     },
     {
-      "area": "externalModules/typeOnly",
-      "total": 65,
-      "passed": 65,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
       "area": "functions",
       "total": 18,
       "passed": 18,
@@ -446,13 +474,6 @@
       "area": "jsdoc",
       "total": 249,
       "passed": 249,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
-      "area": "jsdoc/declarations",
-      "total": 92,
-      "passed": 92,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -534,13 +555,6 @@
       "pass_rate": 100.0
     },
     {
-      "area": "salsa",
-      "total": 191,
-      "passed": 191,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
       "area": "scanner/ecmascript5",
       "total": 27,
       "passed": 27,
@@ -614,13 +628,6 @@
       "area": "types/mapped",
       "total": 26,
       "passed": 26,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
-      "area": "types/members",
-      "total": 34,
-      "passed": 34,
       "failed": 0,
       "pass_rate": 100.0
     },
@@ -702,13 +709,6 @@
       "pass_rate": 100.0
     },
     {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 264,
-      "failed": 0,
-      "pass_rate": 100.0
-    },
-    {
       "area": "types/union",
       "total": 25,
       "passed": 25,
@@ -716,35 +716,160 @@
       "pass_rate": 100.0
     }
   ],
-  "top_failures": [],
-  "not_implemented_codes": [],
-  "partial_codes": [],
-  "one_missing_zero_extra": [],
+  "top_failures": [
+    {
+      "code": "TS2540",
+      "count": 1
+    }
+  ],
+  "not_implemented_codes": [
+    {
+      "code": "TS2540",
+      "count": 1
+    }
+  ],
+  "partial_codes": [
+    {
+      "code": "TS2322",
+      "count": 4
+    }
+  ],
+  "one_missing_zero_extra": [
+    {
+      "code": "TS2540",
+      "count": 1
+    }
+  ],
   "one_extra_zero_missing": [
     {
-      "code": "TS2786",
+      "code": "TS2345",
+      "count": 5
+    },
+    {
+      "code": "TS2339",
+      "count": 4
+    },
+    {
+      "code": "TS1308",
+      "count": 1
+    },
+    {
+      "code": "TS2740",
+      "count": 1
+    },
+    {
+      "code": "TS2353",
+      "count": 1
+    },
+    {
+      "code": "TS2741",
+      "count": 1
+    },
+    {
+      "code": "TS2769",
+      "count": 1
+    },
+    {
+      "code": "TS7006",
+      "count": 1
+    },
+    {
+      "code": "TS2322",
       "count": 1
     }
   ],
   "false_positive_codes": [
     {
-      "code": "TS2786",
+      "code": "TS2345",
+      "count": 3
+    },
+    {
+      "code": "TS2740",
+      "count": 1
+    },
+    {
+      "code": "TS2353",
+      "count": 1
+    },
+    {
+      "code": "TS7006",
+      "count": 1
+    },
+    {
+      "code": "TS2322",
+      "count": 1
+    },
+    {
+      "code": "TS2344",
+      "count": 1
+    },
+    {
+      "code": "TS2536",
       "count": 1
     }
   ],
-  "top_missing_codes": [],
+  "top_missing_codes": [
+    {
+      "code": "TS2322",
+      "count": 4
+    },
+    {
+      "code": "TS2540",
+      "count": 1
+    }
+  ],
   "top_extra_codes": [
     {
-      "code": "TS2786",
+      "code": "TS2339",
+      "count": 8
+    },
+    {
+      "code": "TS2741",
+      "count": 5
+    },
+    {
+      "code": "TS2345",
+      "count": 5
+    },
+    {
+      "code": "TS1308",
+      "count": 1
+    },
+    {
+      "code": "TS2740",
+      "count": 1
+    },
+    {
+      "code": "TS2353",
+      "count": 1
+    },
+    {
+      "code": "TS2769",
+      "count": 1
+    },
+    {
+      "code": "TS7006",
+      "count": 1
+    },
+    {
+      "code": "TS2322",
+      "count": 1
+    },
+    {
+      "code": "TS2344",
+      "count": 1
+    },
+    {
+      "code": "TS2536",
       "count": 1
     }
   ],
   "categories": {
-    "false_positive": 1,
-    "all_missing": 0,
-    "wrong_code": 0,
-    "fingerprint_only": 0,
+    "false_positive": 8,
+    "all_missing": 1,
+    "wrong_code": 13,
+    "fingerprint_only": 10,
     "same_code_count_drift": 0,
-    "close_to_passing": 0
+    "close_to_passing": 9
   }
 }
