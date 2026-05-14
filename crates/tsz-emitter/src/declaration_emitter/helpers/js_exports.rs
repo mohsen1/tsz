@@ -1592,6 +1592,9 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(root_name) = self.get_identifier_text(lhs_access.expression) else {
                 continue;
             };
+            if self.js_export_equals_names.contains(&root_name) {
+                continue;
+            }
             if !top_level_names.contains(&root_name) {
                 continue;
             }
