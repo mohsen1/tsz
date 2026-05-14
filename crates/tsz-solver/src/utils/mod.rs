@@ -29,6 +29,14 @@ pub(crate) fn is_numeric_property_name(interner: &dyn TypeDatabase, name: Atom) 
     is_numeric_literal_name(prop_name.as_ref())
 }
 
+/// If `atom` is a numeric property name, returns the parsed `f64` value.
+/// Returns `None` for string-named atoms, `NaN`/`Infinity` identifiers used as property names,
+/// and any atom that is not a valid JavaScript numeric literal.
+pub(crate) fn atom_as_numeric_key(db: &dyn TypeDatabase, atom: Atom) -> Option<f64> {
+    let name = db.resolve_atom_ref(atom);
+    tsz_common::numeric::parse_numeric_literal_value(name.as_ref())
+}
+
 /// Returns `true` if `name` is a synthetic private-brand marker that the
 /// checker mints for nominal class typing.
 ///
