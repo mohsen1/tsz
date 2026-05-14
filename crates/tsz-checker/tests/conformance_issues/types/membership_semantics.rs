@@ -942,6 +942,98 @@ combo[`foo-${str}-bar`];
 }
 
 #[test]
+fn test_template_pattern_mapped_type_rejects_non_matching_literal_index() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type EventName = `on${string}`;
+type Handler = { [K in EventName]?: () => void };
+
+declare const handlers: Handler;
+declare const bad: "someKey";
+declare const good: "onClick";
+
+const badRead = handlers[bad];
+const goodRead = handlers[good];
+
+export {};
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
+    assert_eq!(
+        ts7053_count, 1,
+        "Expected exactly one TS7053 for the non-matching template literal key. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_template_pattern_index_signature_rejects_non_matching_literal_index() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+declare let direct: { [X: `data-${string}`]: number };
+
+const goodRead = direct["data-id"];
+const badRead = direct["other"];
+
+export {};
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
+    assert_eq!(
+        ts7053_count, 1,
+        "Expected exactly one TS7053 for the non-matching direct template index key. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_template_pattern_index_signature_rejects_non_matching_property_access() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface OnlyOnHandlers {
+    [key: `on${string}`]: () => void;
+}
+
+declare const handlers: OnlyOnHandlers;
+
+handlers.onClick;
+handlers.onHover;
+handlers.random;
+handlers.click;
+
+export {};
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected exactly two TS2339 diagnostics for property names outside the template pattern. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_extends_inherits_instance_members_via_symbol_path() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
