@@ -1016,6 +1016,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return param_type;
         }
 
+        if let Some(tuple_type) = self.const_asserted_array_tuple_type_query(type_query.expr_name) {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(tuple_type, type_arguments);
+            }
+            return tuple_type;
+        }
+
         if let Some(object_type) = self.const_array_to_enum_object_type_query(type_query.expr_name)
         {
             if let Some(type_arguments) = &type_arguments {
@@ -1918,8 +1926,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if name == "default" {
                 return None;
             }
-            let sym_id = self.ctx.binder.file_locals.get(name)?;
-            return Some(sym_id);
+            return self.resolve_value_symbol_in_scope(expr_name);
         }
 
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {

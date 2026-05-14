@@ -252,7 +252,7 @@ impl<'a> CheckerState<'a> {
     fn try_resolve_cross_arena_named_alias_without_child(
         &mut self,
         sym_id: SymbolId,
-    ) -> Option<TypeId> {
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         use CrossArenaAliasShortcutOutcome as AliasOutcome;
 
         let (module_name, import_name, alias_source_file_idx) = {
@@ -366,7 +366,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut result = self.get_type_of_symbol(target_sym_id);
+        let (mut result, params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
+            self.type_reference_symbol_type_with_params(target_sym_id)
+        } else {
+            (self.get_type_of_symbol(target_sym_id), Vec::new())
+        };
         result = self.apply_module_augmentations(&module_name, &import_name, result);
         if result == TypeId::ERROR {
             tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
@@ -386,11 +390,11 @@ impl<'a> CheckerState<'a> {
             sym_id,
             alias_cache_file_idx as u32,
             result,
-            Vec::new(),
+            params.clone(),
         );
         tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(AliasOutcome::Success);
 
-        Some(result)
+        Some((result, params))
     }
 
     /// Delegate symbol resolution to a checker using the correct arena.
@@ -711,7 +715,9 @@ impl<'a> CheckerState<'a> {
                 return Some((cached_type, cached_params));
             }
 
-            if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
+            if let Some((result, params)) =
+                self.try_resolve_cross_arena_named_alias_without_child(sym_id)
+            {
                 if let Some(file_idx) = symbol_type_cache_file_idx
                     && !symbol_type_cache_from_symbol_arena
                 {
@@ -719,10 +725,10 @@ impl<'a> CheckerState<'a> {
                         sym_id,
                         file_idx as u32,
                         result,
-                        Vec::new(),
+                        params.clone(),
                     );
                 }
-                return Some((result, Vec::new()));
+                return Some((result, params));
             }
 
             if let Some(result) = self.direct_actual_lib_symbol_type(
@@ -956,13 +962,23 @@ impl<'a> CheckerState<'a> {
             // inner DefId→TypeId mappings survive child-checker teardown.
             checker.ctx.ensure_type_env_has_definition_store();
 
-            // Use get_type_of_symbol to ensure proper cycle detection.
-            let result = checker.get_type_of_symbol(sym_id);
-            let result_params = checker
-                .ctx
-                .get_existing_def_id(sym_id)
-                .and_then(|def_id| checker.ctx.get_def_type_params(def_id))
-                .unwrap_or_default();
+            // Type aliases need their body and declaration parameters from the
+            // same lowering scope; otherwise generic alias applications cannot
+            // substitute the lowered type parameter ids.
+            let symbol_for_result = checker.get_cross_file_symbol(sym_id);
+            let (result, result_params) = if symbol_for_result
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+            {
+                checker.type_reference_symbol_type_with_params(sym_id)
+            } else {
+                let result = checker.get_type_of_symbol(sym_id);
+                let result_params = checker
+                    .ctx
+                    .get_existing_def_id(sym_id)
+                    .and_then(|def_id| checker.ctx.get_def_type_params(def_id))
+                    .unwrap_or_default();
+                (result, result_params)
+            };
 
             // Collect child data before dropping (child borrows from self.ctx.types).
 
