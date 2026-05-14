@@ -603,13 +603,7 @@ impl<'a> CheckerState<'a> {
             if let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, resolved)
             {
-                if raw_type_id != type_id
-                    && self.is_react_jsx_component_alias_application(raw_type_id)
-                {
-                    types.push((raw_type_id, resolved));
-                } else {
-                    stack.extend(members.into_iter().map(|member| (member, member)));
-                }
+                stack.extend(members.into_iter().map(|member| (member, member)));
             } else {
                 types.push((raw_type_id, resolved));
             }
@@ -833,14 +827,23 @@ impl<'a> CheckerState<'a> {
             ) {
                 continue;
             }
-            if is_union
-                && (self.is_react_jsx_component_alias_application(raw_member_type)
-                    || (is_react_component_alias_union
-                        && self.is_react_jsx_component_branch_display(raw_member_type)))
+            // In a union, React component alias Applications (ComponentType<P>,
+            // ReactType<P>, ComponentClass<P>, StatelessComponent<P>, etc.) are
+            // valid JSX component shapes. Skip the return-type check: their
+            // recursive return types (ReactElement<P> ↔ ComponentClass<P>/SFC<P>)
+            // trigger cycle-detection false positives in the assignability checker.
+            // The alias-application skip does not require props to be extractable
+            // because the skip reason is cycle avoidance, not props availability.
+            // The second clause (branch display) still requires props as an
+            // extra guard that the member is a concrete component shape.
+            let is_alias_app = self.is_react_jsx_component_alias_application(raw_member_type);
+            let is_branch_disp =
+                !is_alias_app && self.is_react_jsx_component_branch_display(raw_member_type);
+            let branch_has_props = is_branch_disp
                 && self
                     .get_jsx_props_type_for_component_member(member_type, None)
-                    .is_some()
-            {
+                    .is_some();
+            if is_union && (is_alias_app || (is_react_component_alias_union && branch_has_props)) {
                 continue;
             }
             let is_unresolved = |t: TypeId| -> bool {

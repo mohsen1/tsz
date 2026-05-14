@@ -736,6 +736,7 @@ impl<'a> CheckerState<'a> {
             });
             let has_multi_call = overloaded_sfc_component_type.is_some();
             let uses_jsx_overload_resolution = has_multi_construct || has_multi_call;
+            let is_react_alias = self.is_react_jsx_component_alias_application(component_type);
 
             if let Some((props_type, raw_has_type_params)) = recovered_props {
                 if has_multi_construct {
@@ -790,7 +791,8 @@ impl<'a> CheckerState<'a> {
                         .as_ref()
                         .is_some_and(|props| self.format_type(*props).contains("Readonly<"))
                         || has_readonly_construct_props
-                        || is_component_type_union;
+                        || is_component_type_union
+                        || is_react_alias;
                     if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                     }
@@ -868,8 +870,13 @@ impl<'a> CheckerState<'a> {
                     children_ctx,
                 );
             } else {
-                // TS2786: component return type must be valid JSX element
-                self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                // TS2786: component return type must be valid JSX element.
+                if !is_react_alias
+                    && !self
+                        .jsx_component_type_has_readonly_construct_props(resolved_component_type)
+                {
+                    self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                }
 
                 // Grammar check: TS17000 for empty expressions in JSX attributes.
                 self.check_grammar_jsx_element(jsx_opening.attributes);
