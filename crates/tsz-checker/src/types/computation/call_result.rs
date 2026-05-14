@@ -128,7 +128,8 @@ impl<'a> CheckerState<'a> {
         let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
         let return_type =
             self.apply_direct_callable_this_substitution(return_type, callee_expr, callee_type);
-        let return_type = self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
+        let return_type =
+            self.refine_mixin_call_return_type(callee_expr, callee_type, arg_types, return_type);
         let return_type = if !self.ctx.compiler_options.sound_mode {
             common::widen_freshness(self.ctx.types, return_type)
         } else {
