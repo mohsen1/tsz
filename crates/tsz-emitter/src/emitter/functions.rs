@@ -1038,9 +1038,12 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(func.body)
             && let Some(block) = self.arena.get_block(body_node)
         {
-            for &stmt in &block.statements.nodes {
-                self.emit(stmt);
-                self.write_line();
+            let statements = block.statements.clone();
+            if !self.emit_statement_list_with_using_scope(&statements) {
+                for &stmt in &statements.nodes {
+                    self.emit(stmt);
+                    self.write_line();
+                }
             }
         }
 
