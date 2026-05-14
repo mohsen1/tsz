@@ -74,6 +74,10 @@ name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
 [[test]]
+name = "array_subclass_inheritance_tests"
+path = "tests/array_subclass_inheritance_tests.rs"
+
+[[test]]
 name = "tuple_rest_array_canonicalization_tests"
 path = "tests/tuple_rest_array_canonicalization_tests.rs"
 
@@ -476,6 +480,10 @@ path = "tests/commonjs_module_export_alias_tests.rs"
 [[test]]
 name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
+
+[[test]]
+name = "recursive_conditional_mapped_infer_tests"
+path = "tests/recursive_conditional_mapped_infer_tests.rs"
 
 [[test]]
 name = "in_chain_narrows_unconstrained_type_param_tests"
@@ -940,6 +948,10 @@ path = "tests/union_index_access_function_application_param_tests.rs"
 [[test]]
 name = "indexed_access_resolved_union_property_tests"
 path = "tests/indexed_access_resolved_union_property_tests.rs"
+
+[[test]]
+name = "indexed_access_unconstrained_param_tests"
+path = "tests/indexed_access_unconstrained_param_tests.rs"
 
 [[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"

@@ -1077,3 +1077,118 @@ let v: A & B = { a: 1, b: 2, foo: 1, bar: 2 };
         "Expected the first excess property 'foo' to be reported, got: {msg}"
     );
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Multiple template literal index signatures — interface & type literal
+// ────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn interface_with_two_template_literal_index_signatures_accepts_both_patterns() {
+    // Structural rule: a property key is valid if it matches ANY index signature
+    // pattern, not just the first one declared.
+    let source = r#"
+interface TemplateIndexed {
+    [key: `data-${string}`]: string;
+    [key: `aria-${string}`]: string;
+}
+const ti: TemplateIndexed = {
+    "data-id": "123",
+    "aria-label": "test",
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Both 'data-*' and 'aria-*' properties should be accepted; got: {diags:?}"
+    );
+}
+
+#[test]
+fn interface_with_two_template_literal_index_signatures_rejects_non_matching_property() {
+    let source = r#"
+interface TemplateIndexed {
+    [key: `data-${string}`]: string;
+    [key: `aria-${string}`]: string;
+}
+const ti: TemplateIndexed = {
+    "foo-bar": "test",
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Property 'foo-bar' doesn't match either pattern; expected TS2353, got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("'foo-bar'"),
+        "Expected 'foo-bar' in error message, got: {:?}",
+        ts2353[0].1
+    );
+}
+
+#[test]
+fn interface_with_three_template_literal_index_signatures_accepts_all_patterns() {
+    // Verify the fix generalizes beyond two patterns (three or more).
+    let source = r#"
+interface MultiPattern {
+    [key: `get${string}`]: () => unknown;
+    [key: `set${string}`]: (v: unknown) => void;
+    [key: `on${string}`]: (e: unknown) => void;
+}
+const handlers: MultiPattern = {
+    getName: () => "test",
+    setValue: (_v: unknown) => {},
+    onClick: (_e: unknown) => {},
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "All three patterns should be accepted; got: {diags:?}"
+    );
+}
+
+#[test]
+fn type_literal_with_two_template_literal_index_signatures_accepts_both_patterns() {
+    // Same fix applies to type aliases with object type literals.
+    let source = r#"
+type TemplateIndexed = {
+    [key: `data-${string}`]: string;
+    [key: `aria-${string}`]: string;
+};
+const ti: TemplateIndexed = {
+    "data-id": "123",
+    "aria-label": "test",
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Both 'data-*' and 'aria-*' properties should be accepted in type literal; got: {diags:?}"
+    );
+}
+
+#[test]
+fn type_literal_with_two_template_literal_index_signatures_rejects_non_matching_property() {
+    let source = r#"
+type TemplateIndexed = {
+    [key: `data-${string}`]: string;
+    [key: `aria-${string}`]: string;
+};
+const ti: TemplateIndexed = {
+    "foo-bar": "test",
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Property 'foo-bar' doesn't match either pattern in type literal; expected TS2353, got: {diags:?}"
+    );
+}

@@ -825,6 +825,10 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         tsz_solver::TypeResolver::get_array_base_type_params(&self.types)
     }
 
+    fn get_readonly_array_base_type(&self) -> Option<tsz_solver::TypeId> {
+        tsz_solver::TypeResolver::get_readonly_array_base_type(&self.types)
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// This implements the `TypeResolver` trait method for Best Common Type (BCT) algorithm.

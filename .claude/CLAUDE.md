@@ -6,26 +6,30 @@
 - `docs/plan/ROADMAP.md` is the single living roadmap. Before starting
   conformance, emit, performance, architecture, LSP/WASM, Sound Mode, or DRY
   cleanup work, read it and keep your work aligned with it.
-- Update `docs/plan/ROADMAP.md` in the same PR when your work changes roadmap
-  status, metrics, sequencing, risks, active priorities, or invalidates a plan
-  assumption. Do not create new roadmap files under `docs/plan/`; update the
-  living roadmap instead.
+- Do **not** update `docs/plan/ROADMAP.md` for routine status, small fixes,
+  ordinary cleanup, or PR bookkeeping. That creates avoidable conflicts across
+  parallel PRs. Keep those details in draft PR bodies, PR comments, issues, or
+  review comments.
+- Update `docs/plan/ROADMAP.md` only when the work changes durable direction:
+  public metrics, release gates, track sequencing, accepted architecture,
+  active priorities, or a roadmap assumption that future agents would otherwise
+  rely on incorrectly. Do not create new roadmap files under `docs/plan/`;
+  update the living roadmap instead when a roadmap change is truly warranted.
 - To avoid duplicate work, roadmap-adjacent implementation must be visible
-  before coding starts: inspect open GitHub issues, draft PRs, and `WIP`
-  labels/titles for overlapping work. If no existing claim covers the task,
-  create or update a GitHub issue for the scope, mark it `WIP`, create a
-  branch, then open a draft PR with the GitHub label `WIP`. Use a title like
-  `[WIP] <scope>: <intent>`.
+  before coding starts: inspect open draft PRs, open PRs, recent merged PRs,
+  and relevant GitHub issues for overlapping work. A GitHub issue is optional;
+  a draft PR with a clear title/body is enough to claim active work.
 - Do not add `[codex]` to PR titles. PR titles should follow the repository
   convention, e.g. `fix(checker): ...`, `chore(lsp-tests): ...`, or `[WIP]
   <scope>: <intent>` while the work is still WIP.
-- While working, keep the GitHub issue current with new facts, root-cause
-  discoveries, and scope changes. Other agents use those issue updates and
-  WIP PRs to decide whether their task duplicates active work.
+- While working, keep the draft PR current with new facts, root-cause
+  discoveries, scope changes, and coordination notes. Other agents use draft
+  PRs, PR comments, and review comments to decide whether their task duplicates
+  active work.
 - Never merge WIP branches. A branch is WIP if its PR is draft, has the `WIP`
   label, has a `[WIP]` title prefix, or the PR/branch description says it is
   WIP. Remove the label/prefix and mark the PR ready only after implementation,
-  verification, and roadmap status updates are complete.
+  verification, and any justified roadmap update are complete.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
   emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
@@ -208,21 +212,46 @@ into hard errors. Both bite often enough to keep in mind upfront:
 - Run `cargo clippy --workspace --all-targets --all-features -- -D warnings`
   locally before pushing when the change needs lint feedback. CI runs it too.
 
-## 20) Skills (Operational)
-Available skills and triggers:
-- `architecture-guardrails`: detect forbidden architecture patterns.
-- `bench-gatekeeper`: benchmark vs baseline.
-- `rust-test-runner`: run Rust tests via Docker wrapper.
-- `sync-and-merge-assistant`: safe sync/merge workflow.
-- `worker-assignment-orchestrator`: assign high-impact tasks.
-- `skill-creator`: create/update skills.
-- `skill-installer`: install curated/repo skills.
+## 19.7) Tracing And Debug Instrumentation
 
-Skill usage rules:
-- If user names a skill or task clearly matches it, use that skill this turn.
-- Read `SKILL.md` minimally; load only needed referenced files.
-- Reuse scripts/assets/templates from skill directories when available.
-- If blocked/missing, state issue briefly and proceed with best fallback.
+The repo has real tracing infrastructure. Use it for internal diagnostics;
+do not add ad-hoc print debugging.
+
+- **Use `tracing`, not `printf`-style debugging.** For Rust internals, prefer
+  `tracing::trace!`, `debug!`, `info!`, `warn!`, `error!`, `trace_span!`, and
+  `debug_span!` with structured fields:
+  ```rust
+  tracing::trace!(type_id = type_id.0, symbol = symbol_id.0, "resolved type");
+  ```
+- **Keep stdout for intentional user output only.** `println!` / `print!` are
+  acceptable for tsc-compatible CLI output, help/version text, protocol output,
+  and explicit tool reports. They are not acceptable as temporary compiler
+  instrumentation. Shell scripts may still use `printf` for their own
+  user-facing output.
+- **Use the existing subscriber knobs.** `tsz`, `tsz-lsp`, and `tsz-server`
+  initialize tracing through `tsz_cli::tracing_config::init_tracing()`. Run with
+  `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -p tsz-cli -- file.ts`, or narrow
+  filters such as `TSZ_LOG="tsz_checker=debug,tsz_solver::narrowing=trace"`.
+  Use `TSZ_LOG_FORMAT=json` for machine-readable traces and
+  `TSZ_LOG=tsz::query_json=trace TSZ_LOG_FORMAT=json` for solver query events.
+- **Avoid eager formatting in hot paths.** Put raw ids and small scalars in
+  tracing fields. For type display in solver traces, use lazy helpers such as
+  `TypeDisplay` and `RelationDisplay`; guard genuinely expensive trace-only
+  work with `tracing::enabled!`.
+- **If trace/debug output is missing, rebuild appropriately before adding
+  prints.** Release-like profiles may compile low-level tracing out for
+  performance; use `cargo run`, `cargo build`, or another debug/dev profile
+  when investigating `trace!` / `debug!` instrumentation.
+- **Tests that assert instrumentation should capture tracing, not stdout.** Use
+  existing test tracing helpers where available instead of printing diagnostics
+  and eyeballing `cargo nextest` output.
+
+## 20) Repo-Local Skills
+
+No repo-local `SKILL.md` files are currently checked in. Do not list or rely on
+TSZ-specific skills here unless their implementation is committed in the repo.
+Runtime-provided global skills may exist outside this checkout; do not document
+them as TSZ repo skills.
 
 ## 20.1) Agent Identity & Collaboration
 
@@ -233,8 +262,12 @@ Skill usage rules:
   must include your AgentName so humans (and other agents) can tell who did it.
 - **Shared GitHub identity.** All agents push as the same GitHub user
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
-  account — check WIP claims, draft PRs, and open issues before starting work,
-  and address other agents by their AgentName when relevant.
+  account — check draft PRs, open PRs, recent merged PRs, and relevant issues
+  before starting work, and address other agents by their AgentName when
+  relevant.
+- **Use `gh` for GitHub operations.** The GitHub CLI is available in this
+  workspace and should be preferred over connector/integration tools for
+  inspecting PRs/issues, creating or updating PRs, and checking CI status.
 - **Stacked PRs for dependent work.** If your new PR depends on another PR
   that should land first, open it as a stacked PR (base = the dependency
   branch, not `main`). When the dependency merges, GitHub automatically
@@ -296,6 +329,41 @@ scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
 # Debug memory usage
 scripts/safe-run.sh --verbose -- cargo build
 ```
+
+## 20.8) Disk-Space And Worktree Hygiene
+- **Do not burn tokens or terminal output on broad disk archaeology.** Avoid
+  `du -sh *`, recursive `du`, or giant sorted size dumps unless a targeted
+  cleanup needs exact ownership. Start with compact checks:
+  ```bash
+  df -h .
+  scripts/setup/disk-worktree-guard.sh
+  ```
+- Before creating a new worktree, check reusable worktrees first:
+  ```bash
+  scripts/setup/disk-worktree-guard.sh
+  git worktree list
+  ```
+- New worktrees must be created adjacent to this checkout, as sister
+  directories under the parent of `tsz`, not nested inside the repo. Example:
+  `git worktree add ../tsz-<short-scope> <branch>`.
+- Prefer reusing an existing sister worktree that has been inactive for at
+  least 4 hours. The guard script prints compact reuse candidates and excludes
+  build/cache directories from its activity check.
+- If disk is nearly full, do not destroy useful caches first. Run the
+  cache-preserving cleanup path:
+  ```bash
+  scripts/setup/disk-worktree-guard.sh --auto-prune
+  scripts/setup/clean.sh --quiet
+  ```
+  This prunes old Cargo incremental directories and normal debris while keeping
+  `.target`, `.target-bench`, `target` artifacts, and the checked-in tsc cache
+  unless `--full` is explicitly chosen.
+- Use `scripts/setup/clean.sh --full` only as a deliberate last resort after
+  confirming the repo/worktree is not being used for an active build.
+- When a run fails immediately after a main merge or branch switch, rule out a
+  stale binary before assuming a source regression. Prefer harnesses that
+  already rebuild stale binaries, such as `scripts/emit/run.sh`; otherwise
+  rebuild the narrow binary once and rerun the focused command.
 
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.

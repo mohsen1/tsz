@@ -1840,3 +1840,131 @@ const ok2: Rev2 = [42, "hello"];
             .collect::<Vec<_>>()
     );
 }
+
+// ============================================================================
+// Tests for issue #6657: infer bindings in complex extends clauses
+//
+// Structural rule: when the extends clause of a conditional type contains
+// `infer X` (regardless of surrounding expression complexity), references to
+// `X` in the true/false branches must resolve without TS2304.
+// ============================================================================
+
+fn no_ts2304(diags: &[tsz_checker::diagnostics::Diagnostic], ctx: &str) {
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    assert!(
+        errors.is_empty(),
+        "{ctx}: expected no TS2304, got: {:?}",
+        errors
+            .iter()
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+fn ts2304_count(diags: &[tsz_checker::diagnostics::Diagnostic]) -> usize {
+    diags.iter().filter(|d| d.code == 2304).count()
+}
+
+/// Utility type in check position: `Pick<T, K> extends infer R`
+/// — `R` must be visible inside the true branch mapped type.
+#[test]
+fn infer_binding_visible_when_check_type_is_utility_application() {
+    let source = r#"
+type Flatten<T, K extends keyof T> =
+    Pick<T, K> extends infer R ? { [P in keyof R]: R[P] } : never;
+interface Obj { a: string; b: number }
+type T1 = Flatten<Obj, "a">;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "Pick<T,K> extends infer R");
+}
+
+/// Intersection in check position: `T & U extends infer V`
+/// — `V` must be visible in the true branch.
+#[test]
+fn infer_binding_visible_when_check_type_is_intersection() {
+    let source = r#"
+type Merge<A, B> =
+    A & B extends infer V ? { [K in keyof V]: V[K] } : never;
+type T2 = Merge<{ x: number }, { y: string }>;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "A & B extends infer V");
+}
+
+/// Real-world `RequiredByKeys` pattern with Omit & Required<Pick>.
+#[test]
+fn infer_binding_visible_in_required_by_keys_pattern() {
+    let source = r#"
+type RequiredByKeys<T, K extends keyof T = keyof T> =
+    Omit<T, K> & Required<Pick<T, K>> extends infer X
+        ? { [P in keyof X]: X[P] }
+        : never;
+interface User { name?: string; age?: number }
+type T3 = RequiredByKeys<User, "name">;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "Omit<T,K> & Required<Pick<T,K>> extends infer X");
+}
+
+/// Multiple infer bindings in the extends clause.
+/// All bound names must be visible in the branches.
+#[test]
+fn multiple_infer_bindings_all_visible_in_branches() {
+    let source = r#"
+type Unpack<T> =
+    T extends { first: infer A; second: infer B }
+        ? { [K in keyof A | keyof B]: K extends keyof A ? A[K] : B[K extends keyof B ? K : never] }
+        : never;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "multiple infer A, B");
+}
+
+/// Renamed infer variable (Q instead of R) — proves the fix is not
+/// tied to any specific identifier spelling.
+#[test]
+fn infer_binding_works_with_any_variable_name() {
+    let source = r#"
+type Spread<T, K extends keyof T> =
+    Pick<T, K> extends infer Q ? { [P in keyof Q]: Q[P] } : never;
+interface Data { x: number; y: string }
+type T4 = Spread<Data, "x">;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "Pick<T,K> extends infer Q (renamed variable)");
+}
+
+/// The simple case (check type is a direct type parameter) must still work:
+/// no regression for `T extends infer R`.
+#[test]
+fn infer_binding_simple_type_param_check_no_regression() {
+    let source = r#"
+type Identity<T> = T extends infer R ? { [P in keyof R]: R[P] } : never;
+type T5 = Identity<{ a: string }>;
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    no_ts2304(&diags, "T extends infer R (simple case regression)");
+}
+
+/// Infer bindings are scoped to the true branch only.
+/// The false branch must still report unknown-name errors for `R`.
+#[test]
+fn infer_binding_not_visible_in_false_branch() {
+    let source = r#"
+type Bad<T> =
+    T extends { a: infer R }
+        ? string
+        : { [K in keyof R]: R[K] };
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert_eq!(
+        ts2304_count(&diags),
+        2,
+        "false branch infer references should remain unbound. Actual diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}

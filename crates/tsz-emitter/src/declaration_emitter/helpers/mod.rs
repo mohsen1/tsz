@@ -101,6 +101,12 @@ pub(crate) struct JsClassLikePrototypeMembers {
     pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
 }
 
+#[derive(Default)]
+pub(crate) struct JsClassStaticMembers {
+    pub(crate) members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
+}
+
 #[derive(Clone)]
 pub(crate) struct JsClassDefinePropertyAccessor {
     pub(crate) property_name: String,
@@ -136,6 +142,7 @@ pub(in crate::declaration_emitter) struct JsDefinedPropertyDecl {
     pub(in crate::declaration_emitter) name: String,
     pub(in crate::declaration_emitter) type_text: String,
     pub(in crate::declaration_emitter) readonly: bool,
+    pub(in crate::declaration_emitter) value: NodeIndex,
 }
 
 #[derive(Clone)]
@@ -211,14 +218,19 @@ mod late_bound_function_analysis;
 mod literal_initializers;
 mod local_asserted_type_alias;
 mod portability_check;
+mod portability_export_paths;
 mod portability_resolve;
 mod returned_function_initializer;
+mod returned_function_initializer_return;
 mod synthetic_dependencies;
+mod synthetic_public_api_dependencies;
 mod type_inference;
 mod type_inference_accessor_property;
 mod type_inference_class_expression;
 mod type_inference_const_assertions;
 mod type_inference_enum_access;
+mod type_inference_expression_literals;
+mod type_inference_fallback_types;
 mod type_inference_flat_map;
 mod type_inference_foreign_names;
 mod type_inference_function_text;
@@ -230,13 +242,22 @@ mod type_inference_object_rewrites;
 mod type_inference_object_unions;
 mod type_inference_package_matching;
 mod type_inference_portable_mapped_objects;
+mod type_inference_public_packages;
 mod type_inference_return_normalization;
 mod type_inference_return_unions;
 mod type_inference_source_call;
+mod type_inference_source_callables;
+mod type_inference_source_text;
+mod type_inference_truncation_expansion;
+mod type_inference_type_annotations;
 mod type_inference_type_nodes;
 mod type_param_rewrite;
+mod type_predicate_text;
 mod type_printing;
 mod type_printing_paths;
+mod type_printing_undefined;
 mod unexported_alias_literal;
 mod variable_decl;
+mod variable_decl_function_initializers;
+mod variable_decl_type_helpers;
 mod visibility;

@@ -2954,6 +2954,8 @@ use sources::{
 
 #[path = "check.rs"]
 mod check;
+#[path = "check_module_graph.rs"]
+mod check_module_graph;
 #[path = "check_utils.rs"]
 mod check_utils;
 use check::{collect_diagnostics, load_checker_libs};
