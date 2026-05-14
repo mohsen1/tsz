@@ -17,6 +17,23 @@ use tsz_checker::test_utils::check_source_codes;
 // Always-nullish literal chains — TS2871 fires
 // =========================================================================
 
+/// Direct repro from #6895: bare `null` and `undefined` left operands are
+/// always nullish, so the `??` fallback is always selected.
+#[test]
+fn direct_nullish_literals_emit_ts2871() {
+    let diags = check_source_codes(
+        "const a: number = null ?? 0;\n\
+         const b: number = undefined ?? 0;\n",
+    );
+    let count = diags.iter().filter(|&&code| code == 2871).count();
+    assert_eq!(
+        count,
+        2,
+        "null ?? x and undefined ?? x must both emit TS2871; got: {:?}",
+        diags.to_vec(),
+    );
+}
+
 /// Direct repro from #5913. `(null ?? undefined)` is always nullish, so
 /// `(null ?? undefined) ?? "fallback"` should emit TS2871.
 #[test]

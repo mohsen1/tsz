@@ -1498,6 +1498,7 @@ impl<'a> CheckerState<'a> {
                     evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
                 let left_is_nullish_chain_or_literal =
                     Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
+                let left_is_nullish_literal = self.is_literal_null_or_undefined_node(left_idx);
                 if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
                     use crate::diagnostics::diagnostic_codes;
                     // tsc points the error at the left operand (the never-nullish expression),
@@ -1513,7 +1514,7 @@ impl<'a> CheckerState<'a> {
                 } else if non_nullish.is_none()
                     && cause.is_some()
                     && !left_is_top_type
-                    && left_is_nullish_chain_or_literal
+                    && (left_is_nullish_chain_or_literal || left_is_nullish_literal)
                 {
                     // TS2871: complementary to TS2869. When the left operand of
                     // `??` is syntactically a nullish-coalescing chain or a
