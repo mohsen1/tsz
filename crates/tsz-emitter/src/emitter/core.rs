@@ -738,6 +738,12 @@ pub struct Printer<'a> {
     /// initializer. This is cleared at the same nested scope boundaries as static `this`.
     pub(crate) scoped_static_super_base_alias: Option<Arc<str>>,
 
+    /// Temporary helper for async-method `super[expr]` capture.
+    pub(crate) scoped_static_super_index_alias: Option<Arc<str>>,
+
+    /// When true, async-method `super[expr]` capture emits through `.value`.
+    pub(crate) scoped_static_super_index_value_access: bool,
+
     /// Temporary alias for named class expressions that are wrapped in a comma
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
     pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
@@ -1019,6 +1025,8 @@ impl<'a> Printer<'a> {
             scoped_static_this_alias: None,
             scoped_static_super_direct_access: false,
             scoped_static_super_base_alias: None,
+            scoped_static_super_index_alias: None,
+            scoped_static_super_index_value_access: false,
             scoped_class_expression_self_alias: None,
             tagged_template_var_map: FxHashMap::default(),
         }
@@ -1370,15 +1378,21 @@ impl<'a> Printer<'a> {
         let prev_this_alias = self.scoped_static_this_alias.clone();
         let prev_super_direct_access = self.scoped_static_super_direct_access;
         let prev_super_alias = self.scoped_static_super_base_alias.clone();
+        let prev_super_index_alias = self.scoped_static_super_index_alias.clone();
+        let prev_super_index_value = self.scoped_static_super_index_value_access;
 
         self.scoped_static_this_alias = this_alias.map(Arc::from);
         self.scoped_static_super_direct_access = super_direct_access;
         self.scoped_static_super_base_alias = super_base_alias.map(Arc::from);
+        self.scoped_static_super_index_alias = None;
+        self.scoped_static_super_index_value_access = false;
 
         self.emit_expression(idx);
         self.scoped_static_this_alias = prev_this_alias;
         self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
+        self.scoped_static_super_index_alias = prev_super_index_alias;
+        self.scoped_static_super_index_value_access = prev_super_index_value;
     }
 
     pub(in crate::emitter) fn with_scoped_static_initializer_context_cleared<R>(
@@ -1388,11 +1402,16 @@ impl<'a> Printer<'a> {
         let prev_this_alias = self.scoped_static_this_alias.take();
         let prev_super_direct_access = self.scoped_static_super_direct_access;
         let prev_super_alias = self.scoped_static_super_base_alias.take();
+        let prev_super_index_alias = self.scoped_static_super_index_alias.take();
+        let prev_super_index_value = self.scoped_static_super_index_value_access;
         self.scoped_static_super_direct_access = false;
+        self.scoped_static_super_index_value_access = false;
         let result = f(self);
         self.scoped_static_this_alias = prev_this_alias;
         self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
+        self.scoped_static_super_index_alias = prev_super_index_alias;
+        self.scoped_static_super_index_value_access = prev_super_index_value;
         result
     }
 
