@@ -595,14 +595,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             // Bivariance only applies when the parameter was declared as a method shorthand;
             // function-type literals are contravariant under --strictFunctionTypes.
-            let use_bivariant_callbacks = (allow_bivariant_callbacks
-                || self.force_bivariant_callbacks)
-                && crate::type_queries::callable_first_sig_is_method(
-                    self.interner,
-                    effective_param_type,
-                )
-                && crate::type_queries::is_callable_type(self.interner, expanded_arg_type)
-                && crate::type_queries::is_callable_type(self.interner, effective_param_type);
+            let callback_bivariance_enabled =
+                allow_bivariant_callbacks || self.force_bivariant_callbacks;
+            let param_signature_is_method = crate::type_queries::callable_first_sig_is_method(
+                self.interner,
+                effective_param_type,
+            );
+            let arg_is_callable =
+                crate::type_queries::is_callable_type(self.interner, expanded_arg_type);
+            let param_is_callable =
+                crate::type_queries::is_callable_type(self.interner, effective_param_type);
+            let use_bivariant_callbacks = callback_bivariance_enabled
+                && param_signature_is_method
+                && arg_is_callable
+                && param_is_callable;
+            trace!(
+                arg_index = i,
+                arg_type_id = %expanded_arg_type.0,
+                param_type_id = %effective_param_type.0,
+                allow_bivariant_callbacks,
+                force_bivariant_callbacks = self.force_bivariant_callbacks,
+                param_signature_is_method,
+                arg_is_callable,
+                param_is_callable,
+                use_bivariant_callbacks,
+                "selected callback variance mode for call argument"
+            );
             if self.callback_requires_more_fixed_params_than_generic_rest_allows(
                 expanded_arg_type,
                 effective_param_type,

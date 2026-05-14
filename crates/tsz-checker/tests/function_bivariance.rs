@@ -33,10 +33,7 @@ fn test_function_variance(source: &str, expected_error_code: u32) {
 
     assert!(
         error_count >= 1,
-        "Expected at least 1 TS{} error, got {}: {:?}",
-        expected_error_code,
-        error_count,
-        diagnostics
+        "Expected at least 1 TS{expected_error_code} error, got {error_count}: {diagnostics:?}"
     );
 }
 
