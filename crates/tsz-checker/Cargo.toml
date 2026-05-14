@@ -1105,5 +1105,9 @@ path = "tests/abstract_method_overload_ts2416_tests.rs"
 name = "self_module_augmentation_isolation_tests"
 path = "tests/self_module_augmentation_isolation_tests.rs"
 
+[[test]]
+name = "simple_local_interface_fastpath_tests"
+path = "tests/simple_local_interface_fastpath_tests.rs"
+
 [lints]
 workspace = true
