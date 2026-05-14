@@ -786,6 +786,10 @@ name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
 [[test]]
+name = "ts2490_unique_symbol_iterator_tests"
+path = "tests/ts2490_unique_symbol_iterator_tests.rs"
+
+[[test]]
 name = "ts2506_cross_file_cycle_tests"
 path = "tests/ts2506_cross_file_cycle_tests.rs"
 
