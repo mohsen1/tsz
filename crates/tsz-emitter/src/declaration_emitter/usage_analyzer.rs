@@ -25,6 +25,7 @@ use tsz_solver::visitor;
 use crate::transforms::emit_utils::string_literal_text;
 use crate::type_cache_view::TypeCacheView;
 
+mod ambient_module;
 mod public_surface;
 mod type_walk;
 mod value_references;
@@ -320,15 +321,8 @@ impl<'a> UsageAnalyzer<'a> {
         if let Some(body_node) = self.arena.get(module.body) {
             if let Some(module_block) = self.arena.get_module_block(body_node) {
                 if let Some(ref stmts) = module_block.statements {
-                    let ambient_module_body = string_literal_text(self.arena, module.name)
-                        .is_some()
-                        || self
-                            .arena
-                            .get(module.name)
-                            .and_then(|node| self.arena.get_identifier(node))
-                            .is_some_and(|ident| ident.escaped_text == "global");
                     for &stmt_idx in &stmts.nodes {
-                        if ambient_module_body {
+                        if self.is_ambient_module_body_name(module.name) {
                             self.analyze_ambient_module_member_statement(stmt_idx);
                         } else {
                             self.analyze_statement(stmt_idx);
@@ -341,40 +335,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         self.current_ambient_module_specifier = previous_ambient_module_specifier;
-    }
-
-    fn analyze_ambient_module_member_statement(&mut self, stmt_idx: NodeIndex) {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return;
-        };
-
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.analyze_function_declaration(stmt_idx);
-            }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                self.analyze_class_declaration(stmt_idx);
-            }
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                self.analyze_interface_declaration(stmt_idx);
-            }
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                self.analyze_type_alias_declaration(stmt_idx);
-            }
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                self.analyze_enum_declaration(stmt_idx);
-            }
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                self.analyze_variable_statement(stmt_idx);
-            }
-            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                self.analyze_import_equals_declaration(stmt_idx);
-            }
-            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.analyze_module_declaration(stmt_idx);
-            }
-            _ => self.analyze_statement(stmt_idx),
-        }
     }
 
     fn analyze_import_equals_declaration(&mut self, import_idx: NodeIndex) {
