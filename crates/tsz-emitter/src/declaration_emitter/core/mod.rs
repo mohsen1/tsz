@@ -4,6 +4,7 @@
 mod emit_declaration_class_helpers;
 mod emit_declarations;
 mod emit_members;
+mod js_class_static;
 mod js_commonjs_constructor;
 mod js_emit;
 mod preamble;
@@ -191,6 +192,10 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_class_like_prototype_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the class-like prototype heuristic (skipped during emit).
     pub(super) js_class_like_prototype_stmts: FxHashSet<NodeIndex>,
+    /// JS `Class.staticMember = value` declarations folded into a merged namespace.
+    pub(super) js_class_static_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    /// Expression statements consumed by the JS static-member collector.
+    pub(super) js_class_static_member_stmts: FxHashSet<NodeIndex>,
     /// `Object.defineProperty(Class.prototype, "x", { get/set })` accessors
     /// folded into matching JS class declarations.
     pub(super) js_class_define_property_accessors:
