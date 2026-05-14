@@ -558,7 +558,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !allow_deferred_js_named_export
             && self.js_deferred_named_export_statements.contains(&stmt_idx)
         {
-            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            }
             return;
         }
         if self
@@ -913,6 +915,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
+        let function_jsdoc = if self.source_is_js_file {
+            self.function_like_jsdoc_for_node(func_idx)
+        } else {
+            None
+        };
 
         // Get function name as string for overload tracking
         let function_name = self.get_function_name(func_idx);
@@ -1019,6 +1026,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(&return_type_text);
         } else if let (Some(return_type_text), true) =
             self.function_body_return_hint(func, func_body)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) =
+            self.js_define_property_jsdoc_body_return_text(func, function_jsdoc.as_deref())
         {
             self.write(": ");
             self.write(&return_type_text);

@@ -472,6 +472,97 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_type_text_for_declaration_emit(
+        &self,
+        type_text: &str,
+    ) -> String {
+        let portable = self.qualify_jsdoc_typeof_self_exports(type_text);
+        Self::format_jsdoc_object_type_text(&portable).unwrap_or(portable)
+    }
+
+    fn qualify_jsdoc_typeof_self_exports(&self, type_text: &str) -> String {
+        if !self.source_is_js_file
+            || !type_text.contains("typeof ")
+            || type_text.contains("typeof import(")
+        {
+            return type_text.to_string();
+        }
+
+        let mut result = type_text.to_string();
+        let mut export_names = self.top_level_self_exported_names();
+        export_names.extend(self.js_named_export_names.iter().cloned());
+        if export_names.is_empty() {
+            return result;
+        }
+
+        let mut names = export_names.iter().collect::<Vec<_>>();
+        names.sort_by_key(|name| std::cmp::Reverse(name.len()));
+        for name in names {
+            let needle = format!("typeof {name}");
+            let replacement = format!("typeof import(\".\").{name}");
+            result = Self::replace_jsdoc_typeof_identifier(&result, &needle, &replacement);
+        }
+        result
+    }
+
+    fn replace_jsdoc_typeof_identifier(text: &str, needle: &str, replacement: &str) -> String {
+        let mut result = String::new();
+        let mut cursor = 0usize;
+        while let Some(relative) = text[cursor..].find(needle) {
+            let start = cursor + relative;
+            let end = start + needle.len();
+            let before_ok = start == 0
+                || !text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(Self::is_jsdoc_identifier_part);
+            let after_ok = end == text.len()
+                || !text[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(Self::is_jsdoc_identifier_part);
+            result.push_str(&text[cursor..start]);
+            if before_ok && after_ok {
+                result.push_str(replacement);
+            } else {
+                result.push_str(&text[start..end]);
+            }
+            cursor = end;
+        }
+        result.push_str(&text[cursor..]);
+        result
+    }
+
+    fn is_jsdoc_identifier_part(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+    }
+
+    fn format_jsdoc_object_type_text(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if inner.is_empty() || inner.contains('\n') {
+            return None;
+        }
+
+        let members = Self::split_jsdoc_params(inner);
+        if members.is_empty() {
+            return None;
+        }
+
+        let mut formatted = String::from("{\n");
+        for member in members {
+            let member = member.trim().trim_end_matches(';').trim();
+            if member.is_empty() || !member.contains(':') {
+                return None;
+            }
+            formatted.push_str("    ");
+            formatted.push_str(member);
+            formatted.push_str(";\n");
+        }
+        formatted.push('}');
+        Some(formatted)
+    }
+
     pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
         let normalized_legacy_generics = type_expr.trim().replace(".<", "<");
         let trimmed = normalized_legacy_generics.as_str();

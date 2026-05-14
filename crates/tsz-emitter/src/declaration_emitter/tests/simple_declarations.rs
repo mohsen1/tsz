@@ -1742,6 +1742,36 @@ export { x, f };
 }
 
 #[test]
+fn test_js_named_export_function_preserves_jsdoc_signature_at_export_position() {
+    let output = emit_js_dts(
+        r#"
+export function b() {}
+
+/**
+ * @param {{x: string}} a
+ * @param {{y: typeof b}} b
+ */
+function g(a, b) {
+    return a.x && b.y();
+}
+
+export { g };
+"#,
+    );
+
+    assert!(
+        output.contains("export function g(a: {\n    x: string;\n}, b: {\n    y: typeof import(\".\").b;\n}): void | \"\";"),
+        "Expected folded JS export function to preserve JSDoc param and return types: {output}"
+    );
+    assert!(
+        output.contains(
+            "/**\n * @param {{x: string}} a\n * @param {{y: typeof b}} b\n */\nexport function g"
+        ),
+        "Expected folded JS export function to keep its JSDoc comment: {output}"
+    );
+}
+
+#[test]
 #[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
 fn test_js_named_exports_preserve_explicit_export_order() {
     let source = r#"
