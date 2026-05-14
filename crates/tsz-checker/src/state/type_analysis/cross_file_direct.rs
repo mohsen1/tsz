@@ -157,6 +157,8 @@ fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
             | "NumberFormatOptionsSignDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
+            | "TextInfo"
+            | "WeekInfo"
     )
 }
 
@@ -175,6 +177,8 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
             | "NumberFormatOptionsUseGroupingRegistry"
             | "Object"
             | "RegExp"
+            | "TextInfo"
+            | "WeekInfo"
     )
 }
 
@@ -966,6 +970,7 @@ mod tests {
     use crate::test_utils::load_lib_files;
     use std::sync::Arc;
     use tsz_binder::BinderState;
+    use tsz_binder::lib_loader::LibFile;
     use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
     use tsz_parser::parser::{ParserState, syntax_kind_ext};
     use tsz_solver::{TypeId, TypeInterner};
@@ -1273,7 +1278,25 @@ mod tests {
 
     #[test]
     fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
-        let lib_files = load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts", "es2020.intl.d.ts"]);
+        let mut lib_files =
+            load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts", "es2020.intl.d.ts"]);
+        lib_files.push(Arc::new(LibFile::from_source(
+            "esnext.intl.d.ts".to_string(),
+            r#"
+                declare namespace Intl {
+                    interface TextInfo {
+                        readonly direction: "ltr" | "rtl";
+                    }
+
+                    interface WeekInfo {
+                        readonly firstDay: number;
+                        readonly weekend: number[];
+                        readonly minimalDays: number;
+                    }
+                }
+            "#
+            .to_string(),
+        )));
         let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
         let root = parser.parse_source_file();
         let mut binder = BinderState::new();
@@ -1311,6 +1334,8 @@ mod tests {
             "NumberFormatOptionsUseGroupingRegistry",
             "Object",
             "RegExp",
+            "TextInfo",
+            "WeekInfo",
         ] {
             let sym_id = state
                 .ctx
