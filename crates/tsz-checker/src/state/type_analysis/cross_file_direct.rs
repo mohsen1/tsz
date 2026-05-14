@@ -938,6 +938,7 @@ impl<'a> CheckerState<'a> {
         interface_arena: &NodeArena,
         delegate_binder: &BinderState,
         type_args: Option<&[TypeId]>,
+        allow_source_file_arena: bool,
     ) -> Option<rustc_hash::FxHashMap<NodeIndex, TypeId>> {
         let sym_id = delegate_binder.get_node_symbol(interface_idx).or_else(|| {
             let arena_ptr = interface_arena as *const NodeArena as usize;
@@ -951,7 +952,7 @@ impl<'a> CheckerState<'a> {
             delegate_binder,
             interface_arena,
             true,
-            false,
+            allow_source_file_arena,
         )?;
 
         let substitution = type_args
