@@ -193,6 +193,22 @@ pub struct TypeCacheView {
 }
 ```
 
+### 6.4 Guardrail Ratchets
+
+Track 9/10 guardrails treat current emitter/DTS reach-through as measurable
+migration debt, not precedent for new work. Guardrail tests should ratchet these
+surfaces downward over time:
+
+- Direct `tsz_solver` access from `tsz-emitter`.
+- Emitter `source_text` recovery and substring scans.
+- Rendered-type strings used as semantic decision inputs.
+
+New emit or declaration emit work should first ask whether the required fact can
+come from parser recovery data, lowering directives, a compiler semantic view, a
+declaration/public API summary, or a query-boundary helper. Increasing a
+ratchet ceiling is a temporary exception and the PR must name the owner,
+invariant, and removal condition.
+
 ---
 
 ## 7. Output Layer
