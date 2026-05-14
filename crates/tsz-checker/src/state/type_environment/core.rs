@@ -574,8 +574,8 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|cond| cond.is_distributive);
         // Preserving Application-form args keeps generic identity intact so the solver's
         // variance fast path can fire instead of falling back to full structural expansion.
-        let body_needs_concrete_args =
-            body_is_conditional || query::body_arg_requires_concrete_form(self.ctx.types, body_type);
+        let body_needs_concrete_args = body_is_conditional
+            || query::body_arg_requires_concrete_form(self.ctx.types, body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
             .map(|&arg| {
