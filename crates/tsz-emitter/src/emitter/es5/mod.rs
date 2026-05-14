@@ -8,6 +8,7 @@ mod bindings_assignment;
 mod bindings_patterns;
 mod helpers;
 mod helpers_async;
+mod helpers_async_generator;
 #[allow(dead_code)]
 pub(in crate::emitter) mod loop_capture;
 mod templates;
