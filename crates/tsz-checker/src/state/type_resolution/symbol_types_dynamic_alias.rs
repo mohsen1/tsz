@@ -26,16 +26,14 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
+        if local_symbol.has_any_flags(symbol_flags::ALIAS) {
+            return true;
+        }
+
         if let Some(local_def) = self.ctx.symbol_to_def.borrow().get(&sym_id).copied()
             && let Some(local_def_name) = self.ctx.definition_store.get_name(local_def)
         {
             return self.ctx.types.resolve_atom(local_def_name) != local_symbol.escaped_name;
-        }
-
-        if local_symbol.has_any_flags(symbol_flags::ALIAS)
-            && !local_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-        {
-            return true;
         }
 
         local_symbol.escaped_name != target_symbol.escaped_name

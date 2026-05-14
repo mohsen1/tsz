@@ -1744,10 +1744,18 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut sym_id = sym_id;
-        let use_dynamic_symbol_owner = self
-            .ctx
-            .resolve_dynamic_symbol_file_index(sym_id)
-            .is_none_or(|file_idx| self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx));
+        let use_dynamic_symbol_owner = match self.ctx.resolve_dynamic_symbol_file_index(sym_id) {
+            None => true,
+            Some(file_idx) => {
+                let target_is_type_alias = self
+                    .ctx
+                    .get_binder_for_file(file_idx)
+                    .and_then(|binder| binder.get_symbol(sym_id))
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS));
+                !target_is_type_alias
+                    || self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
+            }
+        };
         if use_dynamic_symbol_owner
             && let Some(symbol) = self.get_cross_file_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)

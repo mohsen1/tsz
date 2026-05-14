@@ -20,10 +20,10 @@ impl<'a> CheckerState<'a> {
             .resolve_dynamic_symbol_file_index(sym_id)
             .is_none()
             .then(|| {
-                self.ctx.binder.get_symbol(sym_id).filter(|symbol| {
-                    symbol.has_any_flags(symbol_flags::ALIAS)
-                        && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-                })
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
             })
             .flatten();
         let symbol_meta = local_alias_symbol
@@ -1295,9 +1295,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            if symbol.has_any_flags(symbol_flags::ALIAS)
-                && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-            {
+            if symbol.has_any_flags(symbol_flags::ALIAS) {
                 if self
                     .ctx
                     .resolve_symbol_file_index(sym_id)
