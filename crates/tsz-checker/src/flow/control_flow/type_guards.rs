@@ -1136,12 +1136,15 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
-        let empty_object = self.interner.object(vec![]);
-        let object_or_undefined = self.interner.union2(empty_object, TypeId::UNDEFINED);
-        let narrowed = self
-            .interner
-            .factory()
-            .intersection2_raw(param_type, object_or_undefined);
+        let empty_object = crate::query_boundaries::flow_analysis::empty_object_type(self.interner);
+        let object_or_undefined = crate::query_boundaries::flow_analysis::union_types(
+            self.interner,
+            vec![empty_object, TypeId::UNDEFINED],
+        );
+        let narrowed = crate::query_boundaries::flow_analysis::intersection_types(
+            self.interner,
+            vec![param_type, object_or_undefined],
+        );
         if narrowed == param_type || matches!(narrowed, TypeId::NEVER | TypeId::ERROR | TypeId::ANY)
         {
             return None;
