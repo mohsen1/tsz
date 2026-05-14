@@ -94,6 +94,7 @@ impl<'a> CheckerState<'a> {
                     self.declared_identifier_has_literal_only_alias_source(expr_idx)
                 });
             if !declared_identifier_is_literal_only_alias
+                && !self.is_object_rest_assignment_target_anchor(idx)
                 && let Some(expr_idx) = source_expr_idx
                 && let Some(display) =
                     self.declared_identifier_source_display(expr_idx, target, source)
