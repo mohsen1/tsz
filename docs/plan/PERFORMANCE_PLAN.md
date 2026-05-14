@@ -1259,6 +1259,17 @@ Decision record:
 Claim:
 [`claims/perf-delegate-actual-lib-record-2026-05-14.md`](claims/perf-delegate-actual-lib-record-2026-05-14.md).
 
+**2026-05-14 Partial alias follow-up:** an eighth narrow slice admits
+`Partial` in the existing direct actual-lib alias-body allowlist. On
+monorepo-006 this drops `DelegateCrossArenaSymbol` children from 5 to 4,
+`delegate.misses` from 5 to 4, and `checker.with_parent_cache_constructed`
+from 5 to 4 with unchanged diagnostics (`10,198`). Declaration-file residue
+row removed: `Partial` (count `1`).
+Decision record:
+[`perf-runs/2026-05-14-delegate-actual-lib-partial.md`](perf-runs/2026-05-14-delegate-actual-lib-partial.md).
+Claim:
+[`claims/perf-delegate-actual-lib-partial-2026-05-14.md`](claims/perf-delegate-actual-lib-partial-2026-05-14.md).
+
 **2026-05-13 `compute_type_of_symbol` interface fast path:** for local
 single-declaration interfaces, we now skip three high-frequency costs when not
 needed: computed-name precompute maps, member type-parameter prewarm scans, and

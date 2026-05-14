@@ -30,6 +30,7 @@ fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
             | "NumberFormatOptionsSignDisplay"
             | "NumberFormatOptionsStyle"
             | "NumberFormatOptionsUseGrouping"
+            | "Partial"
             | "PropertyKey"
             | "Readonly"
             | "Record"
@@ -1625,75 +1626,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_actual_lib_symbol_type_leaves_partial_on_fallback() {
-        let lib_files = load_lib_files(&["es5.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        let sym_id = state
-            .ctx
-            .binder
-            .file_locals
-            .get("Partial")
-            .expect("Partial should resolve to a lib symbol");
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-        let symbol = state
-            .get_cross_file_symbol(sym_id)
-            .expect("Partial symbol should be available")
-            .clone();
-
-        let proof = state
-            .direct_actual_lib_type_alias_body(
-                sym_id,
-                &symbol,
-                "Partial",
-                delegate_arena.expect("Partial should have a delegate arena"),
-            )
-            .expect("Partial should have a proven actual-lib alias body");
-        assert_eq!(proof.outcome, DirectActualLibAliasBodyOutcome::GenericAlias);
-        assert_eq!(proof.type_params.len(), 1, "Partial should expose T");
-
-        assert!(
-            state
-                .direct_actual_lib_symbol_type(
-                    sym_id,
-                    CrossArenaSymbolMissSource::SymbolArena,
-                    delegate_arena,
-                    false,
-                )
-                .is_none(),
-            "Partial should stay on the existing fallback path",
-        );
-    }
-
-    #[test]
     fn direct_actual_lib_symbol_type_handles_record_generic_alias_body_query() {
         let lib_files = load_lib_files(&["es5.d.ts"]);
         let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
@@ -1954,7 +1886,7 @@ mod tests {
 
         for (name, expected_param_count, expected_outcome) in [
             ("Record", 2, DirectActualLibAliasBodyOutcome::Success),
-            ("Partial", 1, DirectActualLibAliasBodyOutcome::GenericAlias),
+            ("Partial", 1, DirectActualLibAliasBodyOutcome::Success),
             ("Readonly", 1, DirectActualLibAliasBodyOutcome::Success),
         ] {
             let sym_id = state
