@@ -1,4 +1,7 @@
-use tsz_checker::test_utils::check_source_code_messages;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::{
+    check_source_code_messages, check_source_with_libs_code_messages, load_compiled_lib_files,
+};
 
 #[test]
 fn primitive_type_reference_properties_keep_intrinsic_types() {
@@ -81,5 +84,46 @@ const badPair: I = { choice: 1, list: [1], pair: ["x", "ok"] };
             .count()
             >= 2,
         "expected array and tuple number targets in TS2322, got {ts2322:?}",
+    );
+}
+
+#[test]
+fn missing_interface_lib_rows_keep_lib_shapes() {
+    let lib_files = load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2020.symbol.wellknown.d.ts",
+        "lib.es2022.regexp.d.ts",
+    ]);
+    assert!(
+        !lib_files.is_empty(),
+        "compiled lib fixtures should be available"
+    );
+
+    let diagnostics = check_source_with_libs_code_messages(
+        r#"
+const descriptor: PropertyDescriptor = { configurable: "yes" };
+const descriptorMap: PropertyDescriptorMap = { field: { enumerable: "yes" } };
+const iterable: Iterable<number> = {};
+declare const indices: RegExpIndicesArray;
+const firstIndex: [number, number] = indices[0];
+declare const iterator: RegExpStringIterator<RegExpMatchArray>;
+const nextResult: IteratorYieldResult<RegExpMatchArray> | IteratorReturnResult<void> =
+    iterator.next();
+"#,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2322
+            && message.contains("Type 'string' is not assignable to type 'boolean'")),
+        "expected PropertyDescriptor boolean property mismatch, got {diagnostics:?}",
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| *code == 2741
+            || (*code == 2322 && message.contains("is not assignable to type 'Iterable<number>'"))),
+        "expected Iterable structural mismatch, got {diagnostics:?}",
     );
 }
