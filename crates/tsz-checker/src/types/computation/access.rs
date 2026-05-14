@@ -210,6 +210,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return TypeId::ERROR;
         };
+        let is_value_element_access = node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
 
         // In parse-recovery cases like `number[]`, the bracket argument is
         // missing and the parser already reports TS1011. Don't additionally
@@ -1340,8 +1341,9 @@ impl<'a> CheckerState<'a> {
             && !self.is_array_like_type(object_type_for_access)
         {
             let property_name = index.to_string();
-            let keep_index_signature_check =
-                self.union_has_no_common_numeric_index_surface(object_type_for_access, Some(index));
+            let keep_index_signature_check = is_value_element_access
+                && self
+                    .union_has_no_common_numeric_index_surface(object_type_for_access, Some(index));
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             result_type = match result {
@@ -1842,6 +1844,7 @@ impl<'a> CheckerState<'a> {
 
         if !report_no_index
             && use_index_signature_check
+            && is_value_element_access
             && self.union_has_no_common_numeric_index_surface(object_type_for_access, literal_index)
         {
             report_no_index = true;
