@@ -63,6 +63,41 @@ impl<'a> CheckerState<'a> {
         has_construct_signatures(self.ctx.types, type_id)
     }
 
+    /// Classify constructor abstractness for call-argument relation checks.
+    ///
+    /// This keeps symbol-flag and abstract-constructor-set knowledge in the
+    /// checker while letting solver call resolution preserve the raw target
+    /// constructor requirement through generic inference.
+    pub(crate) fn constructor_abstractness_for_assignability(
+        &self,
+        type_id: TypeId,
+    ) -> Option<bool> {
+        if self.is_abstract_ctor(type_id) {
+            return Some(true);
+        }
+
+        if let Some(callable_shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+            && !callable_shape.construct_signatures.is_empty()
+        {
+            return Some(callable_shape.is_abstract);
+        }
+
+        match resolve_abstract_constructor_anchor(self.ctx.types, type_id) {
+            AbstractConstructorAnchor::TypeQuery(_) => None,
+            AbstractConstructorAnchor::CallableType(callable_type) => {
+                if self.is_abstract_ctor(callable_type) {
+                    Some(true)
+                } else {
+                    self.has_construct_sig(callable_type).then_some(false)
+                }
+            }
+            AbstractConstructorAnchor::NotAbstract => {
+                self.has_construct_sig(type_id).then_some(false)
+            }
+        }
+    }
+
     // =========================================================================
     // Mixin Call Return Type Refinement
     // =========================================================================
