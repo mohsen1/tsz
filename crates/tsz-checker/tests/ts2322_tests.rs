@@ -6673,6 +6673,84 @@ fn test_ts2322_constrained_to_object_optional_generic_no_false_positive() {
 }
 
 #[test]
+fn test_ts2322_no_false_positive_explicit_union_undefined_or_empty_object_as_object_assignment() {
+    // Explicit `D | undefined` parameter assigned via `||` fallback to `object`:
+    // tsc accepts this because the truthy branch produces `D & {}`, which IS
+    // assignable to the `object` keyword even for an unconstrained type param.
+    let source = r#"
+        function test<D>(data: D | undefined): object {
+            let d: object = data || {};
+            return d;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for explicit `(D | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_explicit_union_undefined_or_empty_object_various_names() {
+    // Verify name-invariance for the explicit `D | undefined` variant.
+    let source = r#"
+        function withT<T>(x: T | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+        function withValue<Value>(x: Value | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for explicit `(T | undefined) || {{}}` assignment with various names, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_multi_type_param_union_undefined_or_empty_object() {
+    // Structural rule: when `D | E | undefined || {}` is used, where D and E are
+    // both unconstrained type parameters, the result should be assignable to `object`
+    // because each type param gets the `& {}` treatment making the union object-safe.
+    let source = r#"
+        function withTwo<D, E>(x: D | E | undefined): object {
+            let r: object = x || {};
+            return r;
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for `(D | E | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_false_positive_class_method_generic_or_empty_object_as_object() {
+    // The `(D | undefined) || {}` → `object` rule applies in class method contexts too.
+    let source = r#"
+        class Foo<D> {
+            method(data: D | undefined): object {
+                let d: object = data || {};
+                return d;
+            }
+        }
+    "#;
+    let diags = get_all_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for class method `(D | undefined) || {{}}` assigned to `object`, \
+         got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_generic_alias_chain_reduces_to_application_for_infer() {
     // Structural rule: when matching `Application(B, args)` against
     // pattern `Application(B_pat, [infer V])` and `B` is a generic type
