@@ -418,15 +418,39 @@ impl<'a> CheckerState<'a> {
             .get_display_alias(object_type)
             .unwrap_or(object_type);
         let app = crate::query_boundaries::common::type_application(self.ctx.types, app_type)?;
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
-        let def = self.ctx.definition_store.get(def_id)?;
-        if def.kind != tsz_solver::def::DefKind::TypeAlias {
-            return None;
-        }
-        if self.ctx.types.resolve_atom(def.name) != "Record" || app.args.len() != 2 {
+        if !self.application_alias_maps_keys_to_second_type_arg(app.base) || app.args.len() != 2 {
             return None;
         }
         Some(app.args[1])
+    }
+
+    fn application_alias_maps_keys_to_second_type_arg(&self, base: TypeId) -> bool {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != 2 {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+        let Some(mapped) = crate::query_boundaries::common::mapped_type_info(self.ctx.types, body)
+        else {
+            return false;
+        };
+        let Some(template_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, mapped.template)
+        else {
+            return false;
+        };
+
+        mapped.name_type.is_none()
+            && mapped.type_param.name == def.type_params[0].name
+            && template_param.name == def.type_params[1].name
     }
 
     /// Structurally detect whether a return expression is a const assertion

@@ -281,10 +281,38 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let return_name = self.format_type(return_type);
-        let contextual_name = self.format_type(contextual_type);
-        contextual_name
-            .strip_prefix(return_name.as_str())
-            .is_some_and(|suffix| suffix.starts_with('<'))
+        let Some((contextual_base, contextual_args)) =
+            query::get_application_info(self.ctx.types, contextual_type).or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(contextual_type)
+                    .and_then(|alias| query::get_application_info(self.ctx.types, alias))
+            })
+        else {
+            return false;
+        };
+
+        !contextual_args.is_empty()
+            && self.types_share_application_base_identity(return_type, contextual_base)
+            && contextual_args
+                .iter()
+                .any(|&arg| arg != TypeId::ANY && arg != TypeId::UNKNOWN && arg != TypeId::ERROR)
+    }
+
+    fn types_share_application_base_identity(&self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+        if self.ctx.types.get_display_alias(left) == Some(right)
+            || self.ctx.types.get_display_alias(right) == Some(left)
+        {
+            return true;
+        }
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, left)
+            .zip(crate::query_boundaries::common::lazy_def_id(
+                self.ctx.types,
+                right,
+            ))
+            .is_some_and(|(left_def, right_def)| left_def == right_def)
     }
 }
