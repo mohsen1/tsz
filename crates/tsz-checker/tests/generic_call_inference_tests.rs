@@ -1971,6 +1971,42 @@ const viaAlias: never | string = handle(result);
 }
 
 #[test]
+fn unconstrained_generic_callback_parameter_reports_unknown_addition() {
+    let source = r#"
+function identity<T>(fn: (x: T) => T): (x: T) => T {
+  return fn;
+}
+
+const increment = identity(x => x + 1);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 18046 && message.contains("'x' is of type 'unknown'")
+        }),
+        "unconstrained callback parameter should be unknown for arithmetic use. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn renamed_unconstrained_generic_callback_parameter_reports_unknown_multiply() {
+    let source = r#"
+function transform<T>(mapper: (val: T) => T): T {
+  return mapper(undefined as any);
+}
+
+const doubled = transform(n => n * 2);
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 18046 && message.contains("'n' is of type 'unknown'")
+        }),
+        "renamed unconstrained callback parameter should be unknown for arithmetic use. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn renamed_result_union_false_branch_inference_is_structural() {
     let source = r#"
 type Outcome<A, B> =
