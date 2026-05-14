@@ -121,6 +121,38 @@ v.toUpperCase();
 }
 
 #[test]
+fn type_predicate_target_must_name_function_parameter() {
+    let codes = check_source_codes(
+        r#"
+type PredicateCheck<T> = T extends (...args: any[]) => T is infer U ? U : never;
+type PC = PredicateCheck<(x: unknown) => x is string>;
+"#,
+    );
+    assert!(
+        codes.contains(&1225),
+        "expected TS1225 when a type predicate names type parameter `T` instead of a function parameter, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_rest_parameter() {
+    let codes = check_source_codes(
+        r#"
+function isAllStrings(...values: unknown[]): values is string[] {
+    return values.every(value => typeof value === "string");
+}
+
+function assertAllStrings(...values: unknown[]): asserts values is string[] {}
+"#,
+    );
+    let ts1229_count = codes.iter().filter(|&&code| code == 1229).count();
+    assert_eq!(
+        ts1229_count, 2,
+        "expected TS1229 for type and assertion predicates that reference rest parameters, got {codes:?}"
+    );
+}
+
+#[test]
 fn assertion_element_access_emits_ts2776() {
     let codes = check_source_codes(
         r#"
@@ -305,5 +337,101 @@ function assertAnyData(d: { status: "complete" }): asserts d is Data {
     assert!(
         codes.contains(&2677),
         "expected TS2677 for widening assertion predicate, got {codes:?}"
+    );
+}
+
+// --- Generic assertion function narrowing (Issue #5790) ---
+// When a generic assertion function's type parameter T does not appear in any
+// parameter type (e.g., `assertType<T>(value: unknown): asserts value is T`),
+// the solver-instantiated type must be used for narrowing, not the raw T.
+
+#[test]
+fn generic_assertion_with_explicit_type_arg_narrows_correctly() {
+    // `assertType<T>(value: unknown): asserts value is T` called with explicit <string>
+    // must narrow `val` to `string` so `.toUpperCase()` is valid.
+    let codes = check_source_codes(
+        r#"
+function assertType<T>(value: unknown): asserts value is T {}
+let val: unknown = 'hello';
+assertType<string>(val);
+val.toUpperCase();
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "expected no TS2339 after assertType<string>(val), got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_assertion_type_param_name_independent() {
+    // The fix must be structural (not keyed on identifier names).
+    // Using a different type-parameter name (U instead of T) must work the same way.
+    let codes = check_source_codes(
+        r#"
+function assertIs<U>(value: unknown): asserts value is U {}
+let x: unknown = 42;
+assertIs<number>(x);
+x.toFixed(2);
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "expected no TS2339 after assertIs<number>(x), got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_assertion_param_in_predicate_only_different_param_name() {
+    // `assertKind<K>(label: string): asserts label is K` — K is not in any param type.
+    // After assertKind<"foo">(s), s should be narrowed to "foo".
+    let codes = check_source_codes(
+        r#"
+function assertKind<K>(label: unknown): asserts label is K {}
+let s: unknown = 'foo';
+assertKind<string>(s);
+s.toUpperCase();
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "expected no TS2339 for generic assertion with type param only in predicate, got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_assertion_with_param_in_both_predicate_and_arg_still_resolves() {
+    // Regression guard: `assertEqual<T>(value: unknown, expected: T): asserts value is T`
+    // — T IS in a parameter type, so the existing arg-inference path applies.
+    // This must still produce no TS2339.
+    let codes = check_source_codes(
+        r#"
+function assertEqual<T>(value: unknown, expected: T): asserts value is T {}
+let n: unknown = 42;
+assertEqual(n, 0);
+n.toFixed(2);
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "expected no TS2339 for assertEqual<T> where T is in a param, got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_assertion_without_explicit_type_arg_does_not_emit_ts2339() {
+    // Without an explicit type arg, T defaults to `unknown`; the narrowed type is
+    // `unknown` (same as before), so any property access gives TS18046, not TS2339.
+    let codes = check_source_codes(
+        r#"
+function assertType<T>(value: unknown): asserts value is T {}
+let val: unknown = 'hello';
+assertType(val);
+val.toUpperCase();
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "generic assertion without type arg must not produce TS2339 (wrong for 'T'), got {codes:?}"
     );
 }

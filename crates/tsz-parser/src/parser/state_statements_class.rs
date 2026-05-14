@@ -567,6 +567,13 @@ impl ParserState {
                         // `rest`. Keep parsing so JS emit preserves both names.
                         continue;
                     }
+                    if self.is_parameter_start() {
+                        // General missing-comma recovery. For example,
+                        // `constructor(public @dec p: number)` is invalid, but
+                        // tsc preserves the recovered `public, p` parameter list
+                        // and the parameter decorator on `p`.
+                        continue;
+                    }
                     if self.is_token(SyntaxKind::OpenBraceToken)
                         && (self.context_flags & CONTEXT_FLAG_ARROW_PARAMETERS) == 0
                     {

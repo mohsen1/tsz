@@ -1031,11 +1031,11 @@ impl<'a> CheckerState<'a> {
                     .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
             }
 
-            // const: preserve literal type — use the literal type from the
-            // initializer directly, since get_type_of_node may have widened it
-            // (e.g., `const c = 0` should be `0`, not `number`)
+            // const: preserve literal type from the initializer directly.
             if let Some(literal) = self.literal_type_from_initializer(var_decl.initializer) {
                 literal
+            } else if self.is_bare_object_literal_expression(var_decl.initializer) {
+                self.widen_mutable_object_literal_property_types(init_type)
             } else {
                 init_type
             }

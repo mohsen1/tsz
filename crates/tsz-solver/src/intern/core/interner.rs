@@ -85,14 +85,13 @@ struct InternCacheEntry {
 
 /// Combined thread-local cache for both `lookup()` and `intern()` directions.
 ///
-/// Uses `Cell<[T; N]>` for interior mutability. Both cache entry types are
-/// `Copy`, so `Cell::as_array_of_cells()` gives us per-slot `get`/`set` that
-/// lowers to the same single load / single store as a raw pointer deref —
+/// Uses per-slot `Cell<T>` values for interior mutability. Both cache entry
+/// types are `Copy`, so each probe/insert remains one direct slot `get`/`set`
 /// with no `unsafe` and no manual `Send`/`Sync` impls. The cache is reached
 /// only through `thread_local!`, which requires neither bound.
 struct TypeInternerCache {
-    lookup: Cell<[LookupCacheEntry; LOOKUP_CACHE_SIZE]>,
-    intern: Cell<[InternCacheEntry; INTERN_CACHE_SIZE]>,
+    lookup: [Cell<LookupCacheEntry>; LOOKUP_CACHE_SIZE],
+    intern: [Cell<InternCacheEntry>; INTERN_CACHE_SIZE],
 }
 
 const EMPTY_LOOKUP_ENTRY: LookupCacheEntry = LookupCacheEntry {
@@ -112,15 +111,15 @@ const EMPTY_INTERN_ENTRY: InternCacheEntry = InternCacheEntry {
 impl TypeInternerCache {
     const fn new() -> Self {
         Self {
-            lookup: Cell::new([EMPTY_LOOKUP_ENTRY; LOOKUP_CACHE_SIZE]),
-            intern: Cell::new([EMPTY_INTERN_ENTRY; INTERN_CACHE_SIZE]),
+            lookup: [const { Cell::new(EMPTY_LOOKUP_ENTRY) }; LOOKUP_CACHE_SIZE],
+            intern: [const { Cell::new(EMPTY_INTERN_ENTRY) }; INTERN_CACHE_SIZE],
         }
     }
 
     #[inline(always)]
     const fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        let entry = self.lookup.as_array_of_cells()[idx].get();
+        let entry = self.lookup[idx].get();
         if entry.tag == id.0 && entry.instance_id == instance_id {
             Some(entry.data)
         } else {
@@ -131,7 +130,7 @@ impl TypeInternerCache {
     #[inline(always)]
     fn lookup_insert(&self, id: TypeId, instance_id: u32, data: TypeData) {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        self.lookup.as_array_of_cells()[idx].set(LookupCacheEntry {
+        self.lookup[idx].set(LookupCacheEntry {
             tag: id.0,
             instance_id,
             data,
@@ -141,7 +140,7 @@ impl TypeInternerCache {
     #[inline(always)]
     fn intern_probe(&self, hash: u64, instance_id: u32, key: &TypeData) -> Option<TypeId> {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
-        let entry = self.intern.as_array_of_cells()[idx].get();
+        let entry = self.intern[idx].get();
         if entry.hash == hash && entry.instance_id == instance_id && &entry.key == key {
             Some(entry.result)
         } else {
@@ -152,7 +151,7 @@ impl TypeInternerCache {
     #[inline(always)]
     fn intern_insert(&self, hash: u64, instance_id: u32, key: TypeData, result: TypeId) {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
-        self.intern.as_array_of_cells()[idx].set(InternCacheEntry {
+        self.intern[idx].set(InternCacheEntry {
             hash,
             instance_id,
             key,
@@ -179,10 +178,10 @@ static NEXT_INTERNER_INSTANCE_ID: AtomicU32 = AtomicU32::new(1);
 /// causing incorrect type resolution and panics.
 pub fn clear_thread_local_cache() {
     TL_CACHE.with(|cache| {
-        for cell in cache.lookup.as_array_of_cells() {
+        for cell in &cache.lookup {
             cell.set(EMPTY_LOOKUP_ENTRY);
         }
-        for cell in cache.intern.as_array_of_cells() {
+        for cell in &cache.intern {
             cell.set(EMPTY_INTERN_ENTRY);
         }
     });
@@ -538,6 +537,10 @@ pub struct TypeInterner {
     /// Kept as `OnceLock` since params don't contain `DefIds` and are stable
     /// across checkers (the interner allocates `TypeParam` `TypeIds` centrally).
     pub(super) array_base_type_params: OnceLock<Vec<TypeParamInfo>>,
+    /// The global ReadonlyArray base type (e.g., `ReadonlyArray<T>` from lib.d.ts).
+    /// Used by property access resolution to correctly reject mutating methods
+    /// (`push`, `pop`, etc.) on `readonly T[]` types.
+    pub(super) readonly_array_base_type: AtomicU32,
     /// Boxed interface types for primitives (e.g., String interface for `string`).
     /// Registered from lib.d.ts during primordial type setup.
     pub(super) boxed_types: DashMap<IntrinsicKind, TypeId, FxBuildHasher>,
@@ -580,6 +583,12 @@ pub struct TypeInterner {
     /// The formatter checks this to show `Dictionary<string>` instead
     /// of `{ [index: string]: string; }` in error messages.
     pub(super) display_alias: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// Application bases whose type-alias body is a conditional type.
+    ///
+    /// Conditional aliases often evaluate to a branch with its own display
+    /// surface. Keep this small provenance bit so application-preferring alias
+    /// storage can avoid repainting an already-recorded branch intersection.
+    pub(super) conditional_alias_bases: DashMap<TypeId, (), FxBuildHasher>,
     /// As-written origin members for a Union TypeId, used to preserve top-level
     /// alias names that would otherwise be lost during union flattening.
     ///
@@ -652,6 +661,7 @@ impl TypeInterner {
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
+            readonly_array_base_type: AtomicU32::new(u32::MAX),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
             this_type_marker_def_ids: DashMap::with_hasher(FxBuildHasher),
@@ -661,6 +671,7 @@ impl TypeInterner {
             exact_optional_property_types: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
+            conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
@@ -716,6 +727,23 @@ impl TypeInterner {
     pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
         self.array_base_type.store(type_id.0, Ordering::Relaxed);
         let _ = self.array_base_type_params.set(params);
+    }
+
+    /// Set the global `ReadonlyArray<T>` base type from lib.d.ts.
+    pub fn set_readonly_array_base_type(&self, type_id: TypeId) {
+        self.readonly_array_base_type
+            .store(type_id.0, Ordering::Relaxed);
+    }
+
+    /// Get the global `ReadonlyArray<T>` base type, if it has been set.
+    #[inline]
+    pub fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        let raw = self.readonly_array_base_type.load(Ordering::Relaxed);
+        if raw == u32::MAX {
+            None
+        } else {
+            Some(TypeId(raw))
+        }
     }
 
     /// Set the Array base type used for display-order-sensitive queries.
@@ -1415,6 +1443,13 @@ impl TypeInterner {
         if app.args.contains(&evaluated) {
             return;
         }
+        let preserves_conditional_branch_alias = self.is_conditional_alias_base(app.base)
+            && self.get_display_alias(evaluated).is_some_and(|existing| {
+                matches!(self.lookup(existing), Some(TypeData::Intersection(_)))
+            });
+        if preserves_conditional_branch_alias {
+            return;
+        }
         let application_has_generic_args = app
             .args
             .iter()
@@ -1441,6 +1476,16 @@ impl TypeInterner {
     /// Returns `None` if this type was not produced from an Application evaluation.
     pub fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         self.display_alias.get(&type_id).map(|r| *r)
+    }
+
+    /// Record that an application base belongs to a type alias whose body is a
+    /// conditional type. This is diagnostic-only provenance.
+    pub fn mark_conditional_alias_base(&self, base: TypeId) {
+        self.conditional_alias_bases.insert(base, ());
+    }
+
+    pub fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        self.conditional_alias_bases.contains_key(&base)
     }
 
     /// Record the as-written origin members for a flattened Union TypeId.

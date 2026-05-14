@@ -254,6 +254,18 @@ impl<'a> CheckerState<'a> {
                     // `Foo<[...Elements, "abc"]>`) need depth detection even with type params.
                     let should_check_depth = is_class || !args_have_type_params;
                     if should_check_depth {
+                        // During symbol resolution, ensure_relation_input_ready is skipped,
+                        // leaving the alias body unregistered in the TypeEnvironment. Without
+                        // it the evaluator returns the Application unchanged and TS2589 is missed.
+                        if let Some(base_def_id) =
+                            crate::query_boundaries::common::get_application_lazy_def_id(
+                                self.ctx.types,
+                                type_id,
+                            )
+                        {
+                            let _ = self.resolve_and_insert_def_type(base_def_id);
+                        }
+
                         self.ctx.depth_exceeded.set(false);
                         // Use the regular evaluator for ordinary type-reference
                         // probes. The TS2589-specific evaluator treats any repeated
@@ -294,7 +306,7 @@ impl<'a> CheckerState<'a> {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             let (message, code) = if exceeded
                                 && is_type_alias
-                                && self.type_alias_symbol_contains_tuple_spread(sym_id)
+                                && self.type_alias_is_unconditional_tuple_spread(sym_id)
                             {
                                 (
                                     diagnostic_messages::TYPE_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,
@@ -939,7 +951,7 @@ impl<'a> CheckerState<'a> {
                             });
                             let tuple_spread_alias =
                                 application_alias_symbol.is_some_and(|ref_sym| {
-                                    self.type_alias_symbol_contains_tuple_spread(ref_sym)
+                                    self.type_alias_is_unconditional_tuple_spread(ref_sym)
                                 });
 
                             if exceeded || circular_mapped {

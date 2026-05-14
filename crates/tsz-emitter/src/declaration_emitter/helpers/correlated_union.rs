@@ -452,6 +452,20 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            if let Some((param_name, value_text)) = self
+                .infer_constrained_identity_callback_substitution(
+                    &source_function_type,
+                    arg_idx,
+                    type_param_names,
+                    type_param_constraints,
+                )
+                && !substitutions
+                    .iter()
+                    .any(|(name, _)| name.as_str() == param_name)
+            {
+                substitutions.push((param_name, value_text));
+                continue;
+            }
             let Some(argument_function_type) = self.function_type_parts_for_expression(arg_idx)
             else {
                 continue;
@@ -465,6 +479,55 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         substitutions
+    }
+
+    pub(super) fn infer_constrained_identity_callback_substitution(
+        &self,
+        source_function_type: &super::type_inference_function_text::FunctionTypeTextParts,
+        arg_idx: NodeIndex,
+        type_param_names: &[String],
+        type_param_constraints: &[(String, String)],
+    ) -> Option<(String, String)> {
+        if source_function_type.parameters.len() != 1 {
+            return None;
+        }
+        let source_param = source_function_type.parameters.first()?;
+        let param_type = source_param.type_text.trim();
+        if source_param.rest
+            || !type_param_names.iter().any(|name| name == param_type)
+            || source_function_type.return_type.trim() != param_type
+        {
+            return None;
+        }
+        let constraint = Self::type_param_constraint_text(type_param_constraints, param_type)?;
+
+        let arg_idx = self.skip_parenthesized_non_null_and_comma(arg_idx);
+        let arg_node = self.arena.get(arg_idx)?;
+        if arg_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && arg_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.arena.get_function(arg_node)?;
+        if func.type_annotation.is_some() || func.parameters.nodes.len() != 1 {
+            return None;
+        }
+        let arg_param_idx = *func.parameters.nodes.first()?;
+        let arg_param_node = self.arena.get(arg_param_idx)?;
+        let arg_param = self.arena.get_parameter(arg_param_node)?;
+        if arg_param.type_annotation.is_some() {
+            return None;
+        }
+        let arg_param_name = self.get_identifier_text(arg_param.name)?;
+        let body_idx = self.skip_parenthesized_expression(func.body)?;
+        let body_node = self.arena.get(body_idx)?;
+        if body_node.kind != SyntaxKind::Identifier as u16
+            || self.get_identifier_text(body_idx).as_deref() != Some(arg_param_name.as_str())
+        {
+            return None;
+        }
+
+        Some((param_type.to_string(), constraint.to_string()))
     }
 
     fn single_generic_type_argument_text(type_text: &str) -> Option<(&str, &str)> {

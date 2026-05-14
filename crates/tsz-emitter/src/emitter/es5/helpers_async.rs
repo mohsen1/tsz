@@ -267,61 +267,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit an async generator function lowered to `__asyncGenerator` wrapper.
-    /// `async function* f() { ... }` becomes:
-    /// `function f() { return __asyncGenerator(this, arguments, function* f_1() { ... }); }`
-    pub(in crate::emitter) fn emit_async_generator_lowered(
-        &mut self,
-        func: &tsz_parser::parser::node::FunctionData,
-        func_name: &str,
-    ) {
-        // function name(params) {
-        if func_name.is_empty() {
-            self.write("function (");
-        } else {
-            self.write("function ");
-            self.write(func_name);
-            self.write("(");
-        }
-        self.emit_function_parameters_js(&func.parameters.nodes);
-        self.write(") {");
-        self.write_line();
-        self.increase_indent();
-
-        // return __asyncGenerator(this, arguments, function* name_1() {
-        self.write("return ");
-        self.write_helper("__asyncGenerator");
-        self.write("(this, arguments, function* ");
-        if !func_name.is_empty() {
-            self.write(func_name);
-            self.write("_1");
-        }
-        self.write("() {");
-        self.write_line();
-        self.increase_indent();
-
-        // Set flag so `await expr` emits as `yield __await(expr)`
-        let saved = self.ctx.emit_await_as_yield_await;
-        self.ctx.emit_await_as_yield_await = true;
-
-        if let Some(body_node) = self.arena.get(func.body)
-            && let Some(block) = self.arena.get_block(body_node)
-        {
-            for &stmt in &block.statements.nodes {
-                self.emit(stmt);
-                self.write_line();
-            }
-        }
-
-        self.ctx.emit_await_as_yield_await = saved;
-
-        self.decrease_indent();
-        self.write("});");
-        self.write_line();
-        self.decrease_indent();
-        self.write("}");
-    }
-
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
     pub(in crate::emitter) fn emit_async_function_es5(
         &mut self,
@@ -401,6 +346,7 @@ impl<'a> Printer<'a> {
             self.write("(");
         }
         if use_native_generators {
+            self.push_temp_scope();
             // ES2015: when a parameter initializer starts with `await`, match tsc
             // by moving parameters to the inner generator and forwarding `arguments`.
             if !move_params_to_generator {
@@ -680,6 +626,7 @@ impl<'a> Printer<'a> {
         // ES2015 path: __awaiter + function* with yield
 
         // Check if the body is empty and was single-line in source for compact formatting
+        let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
         let body_is_empty_single_line = self
             .arena
             .get(body)
@@ -697,6 +644,9 @@ impl<'a> Printer<'a> {
         // entering the generator: `var arguments_1 = arguments;`
         let body_captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body);
+        let async_parameter_names = self.async_generator_parameter_binding_names(params);
+        let async_shadowed_var_names =
+            self.async_generator_shadowed_var_names(body, &async_parameter_names);
 
         self.write(") {");
         self.write_line();
@@ -749,11 +699,48 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.decrease_indent();
             self.write("}");
+            self.pop_temp_scope();
+            return;
+        }
+
+        if body_is_single_line && async_shadowed_var_names.is_empty() {
+            let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
+            let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
+            self.ctx.emit_await_as_yield = true;
+            if body_captures_arguments {
+                self.ctx.rewrite_arguments_to_arguments_1 = true;
+                self.ctx.arguments_capture_name = arguments_capture_name;
+            }
+            self.function_scope_depth += 1;
+            if let Some(body_node) = self.arena.get(body)
+                && let Some(block) = self.arena.get_block(body_node)
+            {
+                for &stmt in &block.statements.nodes {
+                    self.write(" ");
+                    self.emit(stmt);
+                }
+            }
+            self.function_scope_depth -= 1;
+            self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
+            self.ctx.arguments_capture_name = saved_arguments_capture_name;
+            self.write(" });");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            self.pop_temp_scope();
             return;
         }
 
         self.write_line();
         self.increase_indent();
+        if !async_shadowed_var_names.is_empty() {
+            self.write("var ");
+            self.write(&async_shadowed_var_names.join(", "));
+            self.write(";");
+            self.write_line();
+        }
         let generator_hoist_byte_offset = self.writer.len();
         let generator_hoist_line = self.writer.current_line();
         let hoisted_assignment_start = self.hoisted_assignment_temps.len();
@@ -764,7 +751,14 @@ impl<'a> Printer<'a> {
         let saved_yield = self.ctx.emit_await_as_yield;
         let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
         let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
+        let saved_shadowed_parameter_names =
+            std::mem::take(&mut self.ctx.async_generator_shadowed_parameter_names);
         self.ctx.emit_await_as_yield = true;
+        self.ctx.async_generator_shadowed_parameter_names = if async_shadowed_var_names.is_empty() {
+            Vec::new()
+        } else {
+            async_parameter_names
+        };
         if body_captures_arguments {
             self.ctx.rewrite_arguments_to_arguments_1 = true;
             self.ctx.arguments_capture_name = arguments_capture_name;
@@ -774,13 +768,19 @@ impl<'a> Printer<'a> {
         if let Some(body_node) = self.arena.get(body)
             && let Some(block) = self.arena.get_block(body_node)
         {
-            for &stmt in &block.statements.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt) {
-                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
-                    self.emit_comments_before_pos(actual_start);
+            let statements = block.statements.clone();
+            if !self.emit_statement_list_with_using_scope(&statements) {
+                for &stmt in &statements.nodes {
+                    if let Some(stmt_node) = self.arena.get(stmt) {
+                        let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                        self.emit_comments_before_pos(actual_start);
+                    }
+                    let before_emit_len = self.writer.len();
+                    self.emit(stmt);
+                    if self.writer.len() > before_emit_len && !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
                 }
-                self.emit(stmt);
-                self.write_line();
             }
         }
         let mut ref_vars = Vec::new();
@@ -815,12 +815,14 @@ impl<'a> Printer<'a> {
         self.ctx.emit_await_as_yield = saved_yield;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
         self.ctx.arguments_capture_name = saved_arguments_capture_name;
+        self.ctx.async_generator_shadowed_parameter_names = saved_shadowed_parameter_names;
 
         self.decrease_indent();
         self.write("});");
         self.write_line();
         self.decrease_indent();
         self.write("}");
+        self.pop_temp_scope();
     }
 
     pub(in crate::emitter) fn emit_generator_function_es5(&mut self, function_node: NodeIndex) {
@@ -993,7 +995,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_async_outer_parameter_placeholders(&mut self, params: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_async_outer_parameter_placeholders(
+        &mut self,
+        params: &[NodeIndex],
+    ) {
         let mut first = true;
         for &param_idx in params {
             let Some(param_node) = self.arena.get(param_idx) else {

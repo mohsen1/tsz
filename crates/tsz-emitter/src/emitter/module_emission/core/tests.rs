@@ -1764,6 +1764,106 @@ console.log(url);
     );
 }
 
+#[test]
+fn node_esm_import_equals_require_uses_create_require() {
+    let source = "import mod = require(\"./native.node\");\nmod.doNativeThing(\"good\");\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        resolved_node_module_to_esm: true,
+        target: ScriptTarget::ES2020,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(
+        output.trim_end(),
+        "import { createRequire as _createRequire } from \"module\";\nconst __require = _createRequire(import.meta.url);\nconst mod = __require(\"./native.node\");\nmod.doNativeThing(\"good\");"
+    );
+}
+
+#[test]
+fn node_esm_import_equals_require_reuses_collision_safe_create_require() {
+    let source = "const _createRequire = 1;\nconst __require = 2;\nimport a = require(\"a\");\nimport b = require(\"b\");\na.x;\nb.y;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        resolved_node_module_to_esm: true,
+        target: ScriptTarget::ES2020,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("import { createRequire as _createRequire_1 } from \"module\";\nconst __require_1 = _createRequire_1(import.meta.url);"),
+        "createRequire helper names must avoid source bindings.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const a = __require_1(\"a\");\nconst b = __require_1(\"b\");"),
+        "all import-equals declarations should share the synthesized require binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "runtime import-equals emit should suppress a marker-only export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn node_esm_import_equals_require_preamble_precedes_attached_comment() {
+    let source = "// esm format file\nimport fs = require(\"fs\");\nfs.readFile;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        resolved_node_module_to_esm: true,
+        target: ScriptTarget::ES2020,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(
+        output.trim_end(),
+        "import { createRequire as _createRequire } from \"module\";\nconst __require = _createRequire(import.meta.url);\n// esm format file\nconst fs = __require(\"fs\");\nfs.readFile;"
+    );
+}
+
+#[test]
+fn node_esm_exported_import_equals_require_uses_export_list() {
+    let source = "export import fs2 = require(\"fs\");\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        resolved_node_module_to_esm: true,
+        target: ScriptTarget::ES2020,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(
+        output.trim_end(),
+        "import { createRequire as _createRequire } from \"module\";\nconst __require = _createRequire(import.meta.url);\nconst fs2 = __require(\"fs\");\nexport { fs2 };"
+    );
+}
+
 /// A file without any module syntax or import.meta should NOT get __esModule.
 #[test]
 fn no_import_meta_no_esmodule_marker() {

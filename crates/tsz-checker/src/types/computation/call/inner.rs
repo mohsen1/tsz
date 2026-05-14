@@ -338,6 +338,13 @@ impl<'a> CheckerState<'a> {
             Some(a) => a.nodes.as_slice(),
             None => &[],
         };
+        let explicit_call_type_arguments = call.type_arguments.clone().or_else(|| {
+            self.ctx
+                .arena
+                .get(call.expression)
+                .and_then(|node| self.ctx.arena.get_expr_type_args(node))
+                .and_then(|expr_type_args| expr_type_args.type_arguments.clone())
+        });
 
         if self.callee_name_conflicts_with_namespace_module(call.expression) {
             self.error_not_callable_at(callee_type, call.expression);
@@ -354,7 +361,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if callee is any/error (don't report for those)
         if callee_type == TypeId::ANY {
-            if let Some(ref type_args_list) = call.type_arguments
+            if let Some(ref type_args_list) = explicit_call_type_arguments
                 && !type_args_list.nodes.is_empty()
             {
                 // When the callee is a property access on `this` inside a class and
@@ -404,7 +411,7 @@ impl<'a> CheckerState<'a> {
             self.reemit_namespace_value_error_for_call_callee(call.expression);
             // Still evaluate type arguments to catch TS2304 for unresolved type names
             // (e.g., `this.super<T>(0)` where T is undeclared)
-            if let Some(ref type_args_list) = call.type_arguments {
+            if let Some(ref type_args_list) = explicit_call_type_arguments {
                 for &arg_idx in &type_args_list.nodes {
                     self.get_type_from_type_node(arg_idx);
                 }
@@ -495,7 +502,7 @@ impl<'a> CheckerState<'a> {
 
         // Validate explicit type arguments against constraints (TS2344)
         let mut type_arg_validation = crate::generic_checker::CallTypeArgumentValidation::default();
-        if let Some(ref type_args_list) = call.type_arguments
+        if let Some(ref type_args_list) = explicit_call_type_arguments
             && !type_args_list.nodes.is_empty()
         {
             let validation_callee_type = if matches!(
@@ -562,8 +569,11 @@ impl<'a> CheckerState<'a> {
         // This ensures that when we have `fn<T>(x: T)` and call it as `fn<number>("string")`,
         // the parameter type becomes `number` (after substituting T=number), and we can
         // correctly check if `"string"` is assignable to `number`.
-        let mut callee_type_for_resolution = if call.type_arguments.is_some() {
-            self.apply_type_arguments_to_callable_type(callee_type, call.type_arguments.as_ref())
+        let mut callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
+            self.apply_type_arguments_to_callable_type(
+                callee_type,
+                explicit_call_type_arguments.as_ref(),
+            )
         } else {
             callee_type
         };
@@ -581,10 +591,10 @@ impl<'a> CheckerState<'a> {
             && let Some(annotated_callee_type) =
                 self.explicit_identifier_callee_annotation_type(call.expression)
         {
-            callee_type_for_resolution = if call.type_arguments.is_some() {
+            callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
                 self.apply_type_arguments_to_callable_type(
                     annotated_callee_type,
-                    call.type_arguments.as_ref(),
+                    explicit_call_type_arguments.as_ref(),
                 )
             } else {
                 annotated_callee_type
@@ -599,10 +609,10 @@ impl<'a> CheckerState<'a> {
             && let Some(direct_callee_type) =
                 self.direct_function_call_type_for_type_argument_validation(call.expression)
         {
-            callee_type_for_resolution = if call.type_arguments.is_some() {
+            callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
                 self.apply_type_arguments_to_callable_type(
                     direct_callee_type,
-                    call.type_arguments.as_ref(),
+                    explicit_call_type_arguments.as_ref(),
                 )
             } else {
                 direct_callee_type
@@ -750,7 +760,7 @@ impl<'a> CheckerState<'a> {
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
-            && call.type_arguments.is_none(); // Only use two-pass if no explicit type args
+            && explicit_call_type_arguments.is_none(); // Only use two-pass if no explicit type args
         // Create contextual context from resolved callee type
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
@@ -2885,8 +2895,21 @@ impl<'a> CheckerState<'a> {
             let stored_predicate =
                 call_checker::extract_predicate_signature(self.ctx.types, callee_type_for_call)
                     .filter(|sig| {
+                        // Only defer to `resolve_generic_predicate` when the type parameter
+                        // actually appears in a parameter type; otherwise use the instantiated
+                        // predicate directly (T appears only in the predicate, not in params).
                         sig.predicate.type_id.is_some_and(|pred_ty| {
-                            common::type_param_info(self.ctx.types, pred_ty).is_some()
+                            common::type_param_info(self.ctx.types, pred_ty).is_some_and(
+                                |tp_info| {
+                                    sig.params.iter().any(|p| {
+                                        common::contains_type_parameter_named(
+                                            self.ctx.types,
+                                            p.type_id,
+                                            tp_info.name,
+                                        )
+                                    })
+                                },
+                            )
                         })
                     })
                     .map(|sig| (sig.predicate, sig.params))

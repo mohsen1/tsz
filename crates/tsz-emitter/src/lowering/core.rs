@@ -807,10 +807,10 @@ impl<'a> LoweringPass<'a> {
         let mut directives = Vec::new();
         if self.ctx.target_es5 {
             if func.is_async {
-                self.mark_async_helpers();
-                // Async generators (async function*) need additional helpers
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
+                } else {
+                    self.mark_async_helpers();
                 }
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if func.asterisk_token {
@@ -823,11 +823,15 @@ impl<'a> LoweringPass<'a> {
                 }
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
-        } else if self.ctx.needs_async_lowering && func.is_async {
-            // ES2015/ES2016: async functions need __awaiter (generators are native)
-            self.mark_async_helpers();
+        } else if func.is_async
+            && ((func.asterisk_token && self.ctx.needs_es2018_lowering)
+                || (!func.asterisk_token && self.ctx.needs_async_lowering))
+        {
             if func.asterisk_token {
                 self.mark_async_generator_helpers();
+            } else {
+                // ES2015/ES2016: async functions need __awaiter (generators are native)
+                self.mark_async_helpers();
             }
         }
 
@@ -903,12 +907,55 @@ impl<'a> LoweringPass<'a> {
             self.mark_class_helpers(idx, heritage);
         }
 
-        // TC39 (non-legacy) decorator detection
-        // At ESNext, TC39 decorators are native syntax — no transform needed.
-        let target_supports_native_decorators = self.ctx.options.target == ScriptTarget::ESNext;
+        // TC39 (non-legacy) decorator detection.
+        // At ESNext, TC39 decorators are native syntax only when class fields
+        // can stay native too. With useDefineForClassFields=false, class
+        // initialization semantics still need lowering, so decorators must be
+        // lowered with the class elements they initialize.
+        let target_supports_native_decorators = self.ctx.options.target == ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields;
         let has_tc39_decorators = !self.ctx.options.legacy_decorators
             && !target_supports_native_decorators
             && self.class_has_decorators(class);
+        let has_legacy_class_decorators = self.ctx.options.legacy_decorators
+            && class.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            });
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let has_lowered_static_field = target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member_node| {
+                    member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self
+                            .arena
+                            .get_property_decl(member_node)
+                            .is_some_and(|prop| {
+                                self.has_class_member_modifier(
+                                    &prop.modifiers,
+                                    SyntaxKind::StaticKeyword as u16,
+                                ) && !self.has_class_member_modifier(
+                                    &prop.modifiers,
+                                    SyntaxKind::AbstractKeyword as u16,
+                                ) && !self.has_class_member_modifier(
+                                    &prop.modifiers,
+                                    SyntaxKind::DeclareKeyword as u16,
+                                ) && !prop.initializer.is_none()
+                            })
+                })
+            });
+        if has_legacy_class_decorators
+            && is_default
+            && class.name.is_none()
+            && has_lowered_static_field
+        {
+            self.transforms.helpers_mut().set_function_name = true;
+        }
         if has_tc39_decorators {
             let needs_prop_key = self.class_has_computed_decorated_member(class);
             let needs_set_function_name = self.class_has_private_decorated_member(class);
@@ -1129,13 +1176,11 @@ impl<'a> LoweringPass<'a> {
         }
 
         // Check if this is an async function needing lowering (target < ES2017)
-        let base_directive = if self.ctx.needs_async_lowering && self.has_async_modifier(idx) {
+        let base_directive = if self.has_async_modifier(idx)
+            && ((func.asterisk_token && self.ctx.needs_es2018_lowering)
+                || (!func.asterisk_token && self.ctx.needs_async_lowering))
+        {
             if func.asterisk_token {
-                // Async generators: at ES2015+ use __asyncGenerator + __await (no __awaiter).
-                // At ES5, also need __awaiter + __generator for the outer wrapper.
-                if self.ctx.target_es5 {
-                    self.mark_async_helpers();
-                }
                 self.mark_async_generator_helpers();
             } else {
                 self.mark_async_helpers();
@@ -1766,9 +1811,10 @@ impl<'a> LoweringPass<'a> {
 
         if self.ctx.target_es5 {
             if func.is_async {
-                self.mark_async_helpers();
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
+                } else {
+                    self.mark_async_helpers();
                 }
                 self.transforms.insert(
                     idx,
@@ -1789,7 +1835,10 @@ impl<'a> LoweringPass<'a> {
                     TransformDirective::ES5FunctionParameters { function_node: idx },
                 );
             }
-        } else if self.ctx.needs_async_lowering && func.is_async {
+        } else if func.is_async
+            && ((func.asterisk_token && self.ctx.needs_es2018_lowering)
+                || (!func.asterisk_token && self.ctx.needs_async_lowering))
+        {
             if func.asterisk_token {
                 // ES2015+: async generators need __asyncGenerator + __await helpers
                 self.mark_async_generator_helpers();

@@ -7,6 +7,10 @@
 use super::property::PropertyAccessEvaluator;
 use crate::TypeDatabase;
 use crate::types::{PropertyInfo, TypeData, TypeId};
+use crate::visitor::{
+    array_element_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,
+    tuple_list_id,
+};
 
 /// Information about an iterator type extracted from a type.
 ///
@@ -158,6 +162,65 @@ fn get_tuple_iterator_info(db: &dyn TypeDatabase, tuple_type: TypeId) -> Option<
         }
         _ => None,
     }
+}
+
+/// Shared structural guard for the "string is iterable, so it satisfies an
+/// iterable parameter" shortcuts. Used by both `SubtypeChecker` (boxed-
+/// primitive subtype rule) and `CallEvaluator` (call-site argument check)
+/// so the two paths agree on which targets are *purely* iterable.
+///
+/// Returns `true` when `String` does NOT structurally satisfy `target`
+/// — `target` is (or unwraps / evaluates to) an `Array` or `Tuple`, or
+/// its object shape carries a named property other than the iterable
+/// protocol (`[Symbol.iterator]` / `__@iterator`) and `length`. In
+/// those cases the shortcut MUST NOT fire (`push`/`pop` on `T[]`,
+/// `callee` on `IArguments`, etc.).
+///
+/// `evaluate` is invoked at most once and only after the cheap
+/// array/tuple probes on `target` itself have failed; callers therefore
+/// don't pay the full evaluator walk on common shapes that are already
+/// rejected by syntactic inspection. Behavior matches the long-standing
+/// `SubtypeChecker::target_has_non_iterable_properties` — three array /
+/// tuple probes (`target`, `readonly_inner(target)`, `evaluated`) and an
+/// object-shape lookup on `target`.
+pub fn target_has_non_iterable_property_shape<F>(
+    db: &dyn TypeDatabase,
+    target: TypeId,
+    evaluate: F,
+) -> bool
+where
+    F: FnOnce(TypeId) -> TypeId,
+{
+    if array_element_type(db, target).is_some() || tuple_list_id(db, target).is_some() {
+        return true;
+    }
+    let readonly_inner = readonly_inner_type(db, target).unwrap_or(target);
+    if readonly_inner != target
+        && (array_element_type(db, readonly_inner).is_some()
+            || tuple_list_id(db, readonly_inner).is_some())
+    {
+        return true;
+    }
+    let evaluated = evaluate(target);
+    if evaluated != target
+        && (array_element_type(db, evaluated).is_some() || tuple_list_id(db, evaluated).is_some())
+    {
+        return true;
+    }
+
+    let Some(shape_id) =
+        object_shape_id(db, target).or_else(|| object_with_index_shape_id(db, target))
+    else {
+        return false;
+    };
+    let shape = db.object_shape(shape_id);
+    let sym_iter = db.intern_string("[Symbol.iterator]");
+    let internal_iter = db.intern_string("__@iterator");
+    let length_atom = db.intern_string("length");
+    shape
+        .properties
+        .iter()
+        .any(|prop| prop.name != sym_iter && prop.name != internal_iter && prop.name != length_atom)
 }
 
 /// Extract T from a Promise<T> type.

@@ -5,14 +5,8 @@
 //! `Parameters<T>` requires `T extends (...args: any) => any`, so `Parameters<typeof C>`
 //! must emit TS2344 because `typeof C` is not callable (only constructable).
 
-use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
-
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 /// `Parameters<typeof C>` must emit TS2344 because a class constructor
@@ -194,6 +188,197 @@ type Bad = InstanceType<typeof WithProtectedCtor>;
         ts2344_errors.len(),
         1,
         "Should emit one TS2344 for InstanceType<typeof WithProtectedCtor> with a protected constructor.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
+
+/// `InstanceType<typeof GenericExpr>` where `GenericExpr` is a bare generic
+/// class expression variable must NOT emit TS2344. The class expression
+/// produces a constructor type with generic construct signatures, which
+/// satisfies `abstract new (...args: any) => any`.
+#[test]
+fn test_instance_type_of_bare_generic_class_expr_var_no_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+const GenericExpr = class<T> {
+  constructor(public value: T) {}
+};
+
+type GenericExprType = InstanceType<typeof GenericExpr>;
+        "#,
+    );
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should NOT emit TS2344 for InstanceType<typeof GenericExpr> because typeof GenericExpr is constructable.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
+
+/// `ConstructorParameters<typeof GenericExpr>` should also work: bare generic
+/// class expression variable's typeof satisfies abstract constructor constraints.
+#[test]
+fn test_constructor_parameters_of_bare_generic_class_expr_var_no_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type ConstructorParameters<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: infer P) => any ? P : never;
+
+const GenericExpr = class<T> {
+  constructor(public value: T) {}
+};
+
+type GenericExprParams = ConstructorParameters<typeof GenericExpr>;
+        "#,
+    );
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should NOT emit TS2344 for ConstructorParameters<typeof GenericExpr> because typeof GenericExpr is constructable.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
+
+/// Non-generic class expressions also work: typeof satisfies constructor constraints.
+#[test]
+fn test_instance_type_of_non_generic_class_expr_var_no_ts2344() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+const SimpleExpr = class {
+  constructor(public value: string) {}
+};
+
+type SimpleExprType = InstanceType<typeof SimpleExpr>;
+        "#,
+    );
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Should NOT emit TS2344 for InstanceType<typeof SimpleExpr> because typeof SimpleExpr is constructable.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
+
+/// `InstanceType<typeof GenericExpr>` must resolve to a concrete type (no free
+/// type parameters). When the construct signature's type params are not erased,
+/// R retains them and the alias cannot be used without explicit type arguments.
+#[test]
+fn test_instance_type_of_generic_class_expr_assignable_no_ts2322() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+const GenericExpr = class<T> {
+    constructor(public value: T) {}
+};
+
+type GenericExprType = InstanceType<typeof GenericExpr>;
+
+declare const inst: InstanceType<typeof GenericExpr>;
+declare const inst2: GenericExprType;
+        "#,
+    );
+    let ts2322_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Should NOT emit TS2322 — InstanceType<typeof GenericExpr> must resolve without free type parameters.\nGot: {ts2322_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
+
+/// Type-parameter erasure is structural: renaming the parameter must not change behavior.
+#[test]
+fn test_instance_type_of_generic_class_expr_renamed_tparam_no_ts2322() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+const Box = class<K extends object> {
+    constructor(public contents: K) {}
+};
+
+type BoxInstance = InstanceType<typeof Box>;
+
+declare const b: BoxInstance;
+        "#,
+    );
+    let ts2322_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Should NOT emit TS2322 — erasure must be structural, not name-keyed.\nGot: {ts2322_errors:#?}\nAll: {diagnostics:#?}"
     );
 }
 

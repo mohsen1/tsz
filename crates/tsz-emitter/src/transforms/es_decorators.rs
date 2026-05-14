@@ -9,91 +9,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-/// Strip TypeScript type annotations from function/setter parameters in source text.
-/// Handles `(value: number)` → `(value)`.
-fn strip_param_types(text: &str) -> String {
-    let brace_pos = text.find('{').unwrap_or(text.len());
-    let param_region = &text[..brace_pos];
-    let Some(paren_open) = param_region.rfind('(') else {
-        return text.to_string();
-    };
-    let rest = &text[paren_open + 1..];
-    let Some(paren_close_rel) = rest.find(')') else {
-        return text.to_string();
-    };
-    let params_str = &rest[..paren_close_rel];
-    if !params_str.contains(':') {
-        return text.to_string();
-    }
-    let mut cleaned = Vec::new();
-    for param in params_str.split(',') {
-        let param = param.trim();
-        if param.is_empty() {
-            continue;
-        }
-        if let Some(colon) = param.find(':') {
-            cleaned.push(param[..colon].trim().to_string());
-        } else {
-            cleaned.push(param.to_string());
-        }
-    }
-    let paren_close = paren_open + 1 + paren_close_rel;
-    format!(
-        "{}({}){}",
-        &text[..paren_open],
-        cleaned.join(", "),
-        &text[paren_close + 1..]
-    )
-}
-
-fn normalize_decorator_expr_text(text: &str) -> String {
-    text.replace("=> {}", "=> { }").replace("=>{}", "=> { }")
-}
-
-fn is_comment_line(line: &str) -> bool {
-    line.starts_with("//")
-        || line.starts_with("/*")
-        || line.starts_with('*')
-        || line.ends_with("*/")
-}
-
-/// Information about a decorated member
-#[derive(Debug, Clone)]
-struct DecoratedMember {
-    /// The member node index
-    member_idx: NodeIndex,
-    /// The member kind for the decorator context
-    kind: MemberKind,
-    /// Name of the member
-    name: MemberName,
-    /// Whether the member is static
-    is_static: bool,
-    /// Whether the member is private (#name)
-    is_private: bool,
-    /// Decorator expression texts (e.g. ["dec(1)"])
-    decorator_exprs: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum MemberKind {
-    Method,
-    Getter,
-    Setter,
-    Field,
-    Accessor,
-}
-
-#[derive(Debug, Clone)]
-enum MemberName {
-    /// Simple identifier: `method1`
-    Identifier(String),
-    /// String literal in computed position: `["method2"]`
-    StringLiteral(String),
-    /// Computed expression: `[expr]` - needs `__propKey`
-    Computed(NodeIndex),
-    /// Private identifier: `#method1`
-    Private(String),
-}
+#[path = "es_decorators_helpers.rs"]
+mod helpers;
+use helpers::*;
 
 use crate::transforms::emit_utils::hygienic_temp_name;
 
@@ -114,25 +32,6 @@ pub struct TC39DecoratorEmitter<'a> {
     /// When true, decorated fields stay as class field declarations (ES2022+).
     /// When false, decorated fields move to constructor assignments.
     use_define_for_class_fields: bool,
-}
-
-/// Information about a decorated field for constructor rewrite
-struct DecoratedFieldInfo {
-    /// The field access expression for assignment (e.g., "field1", "\"field2\"", "_a")
-    access_expr: String,
-    /// Whether the access uses bracket notation (computed or string literal)
-    is_bracket_access: bool,
-    /// The original initializer text (e.g., "1", "2"), or empty for no initializer
-    initializer_text: String,
-    /// Index into `decorated_members` for this field
-    member_var_index: usize,
-}
-
-struct DecoratedAutoAccessorInfo {
-    name: String,
-    initializer_text: String,
-    storage_base: String,
-    member_var_index: usize,
 }
 
 impl<'a> TC39DecoratorEmitter<'a> {
@@ -843,6 +742,40 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let field_infos = self.collect_decorated_field_info(decorated_members, computed_key_vars);
         let auto_accessor_infos =
             self.collect_decorated_auto_accessor_info(decorated_members, computed_key_vars);
+        let parameter_properties = self.collect_constructor_parameter_properties(class_data);
+        let has_parameter_properties = !parameter_properties.is_empty();
+        let source_ctor = self.get_constructor_info(class_data);
+        let has_instance_fields = field_infos
+            .iter()
+            .any(|fi| !decorated_members[fi.member_var_index].is_static);
+        let has_instance_auto_accessors = auto_accessor_infos
+            .iter()
+            .any(|info| !decorated_members[info.member_var_index].is_static);
+        let has_instance_method = decorated_members
+            .iter()
+            .any(|m| !m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
+        let needs_ctor = source_ctor.is_some() || has_any_instance || has_parameter_properties;
+        let constructor_output = if needs_ctor {
+            Some(self.render_decorated_constructor(
+                source_ctor.as_ref(),
+                &parameter_properties,
+                &field_infos,
+                &auto_accessor_infos,
+                decorated_members,
+                member_vars,
+                fields_in_class_body,
+                has_instance_fields,
+                has_instance_auto_accessors,
+                has_instance_method,
+                class_name,
+                self.has_extends_clause(&class_data.heritage_clauses),
+                indent,
+                inner_indent,
+                instance_extra_initializers_var,
+            ))
+        } else {
+            None
+        };
 
         let all_members: Vec<_> = class_data
             .members
@@ -885,8 +818,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .iter()
             .enumerate()
             .filter(|(_, (idx, node))| {
-                node.kind != syntax_kind_ext::CONSTRUCTOR
-                    && node.kind != syntax_kind_ext::INDEX_SIGNATURE
+                node.kind != syntax_kind_ext::INDEX_SIGNATURE
                     && node.kind != syntax_kind_ext::SEMICOLON_CLASS_ELEMENT
                     && (fields_in_class_body || !decorated_field_idx_set.contains(idx))
             })
@@ -896,6 +828,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let class_close = self.find_class_close_brace(class_node);
         for &emit_i in &emittable {
             let (member_idx, member_node) = all_members[emit_i];
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                if let Some(output) = &constructor_output {
+                    out.push_str(output);
+                }
+                continue;
+            }
             let next_boundary = if emit_i + 1 < all_members.len() {
                 all_members[emit_i + 1].1.pos as usize
             } else {
@@ -991,7 +929,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         ));
                     }
                 } else {
-                    out.push_str(&format!("{indent}{member_text}\n"));
+                    push_indented_lines(out, indent, &member_text);
                 }
             } else if let Some(assignments) = injected_assignments.get(&member_idx) {
                 let injected = assignments.join(", ");
@@ -1000,16 +938,21 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     let after = &member_text[bracket_start + 1..];
                     if let Some(bracket_end) = self.find_matching_bracket(after) {
                         let rest = &after[bracket_end + 1..];
-                        out.push_str(&format!("{indent}{before}({injected})]{rest}\n"));
+                        push_indented_lines(out, indent, &format!("{before}({injected})]{rest}"));
                     } else {
-                        out.push_str(&format!("{indent}{before}({injected})]() {{ }}\n"));
+                        push_indented_lines(out, indent, &format!("{before}({injected})]() {{ }}"));
                     }
                 } else {
-                    out.push_str(&format!("{indent}{member_text}\n"));
+                    push_indented_lines(out, indent, &member_text);
                 }
             } else {
-                out.push_str(&format!("{indent}{member_text}\n"));
+                push_indented_lines(out, indent, &member_text);
             }
+        }
+        if source_ctor.is_none()
+            && let Some(output) = &constructor_output
+        {
+            out.push_str(output);
         }
 
         // Handle remaining assignments
@@ -1187,163 +1130,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
             ));
         }
 
-        // Constructor
-        let source_ctor = self.get_constructor_info(class_data);
-        let has_instance_fields = field_infos
-            .iter()
-            .any(|fi| !decorated_members[fi.member_var_index].is_static);
-        let has_instance_auto_accessors = auto_accessor_infos
-            .iter()
-            .any(|info| !decorated_members[info.member_var_index].is_static);
-        let has_instance_method = decorated_members
-            .iter()
-            .any(|m| !m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
-        let needs_ctor = source_ctor.is_some() || has_any_instance;
-
-        if needs_ctor {
-            let mut ctor_init_calls: Vec<String> = Vec::new();
-
-            if !fields_in_class_body && has_instance_fields {
-                // Fields move to constructor
-                for (fi_idx, fi) in field_infos.iter().enumerate() {
-                    if decorated_members[fi.member_var_index].is_static {
-                        continue;
-                    }
-                    let var_info = &member_vars[fi.member_var_index];
-                    let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
-                    let init_arg = if fi.initializer_text.is_empty() {
-                        ", void 0".to_string()
-                    } else {
-                        format!(", {}", fi.initializer_text)
-                    };
-                    let instance_field_idx = field_infos[..fi_idx]
-                        .iter()
-                        .filter(|f| !decorated_members[f.member_var_index].is_static)
-                        .count();
-
-                    let rhs = if instance_field_idx == 0 {
-                        format!("{run_init}(this, {init_var}{init_arg})")
-                    } else {
-                        let prev_fi = field_infos[..fi_idx]
-                            .iter()
-                            .rev()
-                            .find(|f| !decorated_members[f.member_var_index].is_static)
-                            .unwrap();
-                        let prev_extra = member_vars[prev_fi.member_var_index]
-                            .extra_initializers_var
-                            .as_deref()
-                            .unwrap_or("_extra");
-                        format!(
-                            "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
-                        )
-                    };
-
-                    if self.use_define_for_class_fields && !self.use_static_blocks {
-                        let key_expr = if fi.is_bracket_access {
-                            fi.access_expr.clone()
-                        } else {
-                            format!("\"{}\"", fi.access_expr)
-                        };
-                        ctor_init_calls.push(format!(
-                            "{inner_indent}Object.defineProperty(this, {key_expr}, {{\n{inner_indent}    enumerable: true,\n{inner_indent}    configurable: true,\n{inner_indent}    writable: true,\n{inner_indent}    value: {rhs}\n{inner_indent}}});\n"
-                        ));
-                    } else {
-                        let lhs = if fi.is_bracket_access {
-                            format!("this[{}]", fi.access_expr)
-                        } else {
-                            format!("this.{}", fi.access_expr)
-                        };
-                        ctor_init_calls.push(format!("{inner_indent}{lhs} = {rhs};\n"));
-                    }
-                }
-                // Last instance field's extra-initializers
-                if let Some(last_fi) = field_infos
-                    .iter()
-                    .rev()
-                    .find(|f| !decorated_members[f.member_var_index].is_static)
-                    && let Some(ref extra_var) =
-                        member_vars[last_fi.member_var_index].extra_initializers_var
-                {
-                    ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
-                }
-            } else if fields_in_class_body && has_instance_fields {
-                // Fields in class body: only last instance field's extra-initializers in constructor
-                if let Some(last_fi) = field_infos
-                    .iter()
-                    .rev()
-                    .find(|f| !decorated_members[f.member_var_index].is_static)
-                    && let Some(ref extra_var) =
-                        member_vars[last_fi.member_var_index].extra_initializers_var
-                {
-                    ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
-                }
-            } else if has_instance_method {
-                ctor_init_calls.push(format!(
-                    "{inner_indent}{run_init}(this, {instance_extra_initializers_var});\n"
-                ));
-            }
-
-            if has_instance_auto_accessors {
-                if self.use_static_blocks {
-                    if let Some(info) = auto_accessor_infos
-                        .iter()
-                        .rev()
-                        .find(|info| !decorated_members[info.member_var_index].is_static)
-                        && let Some(extra_var) = member_vars[info.member_var_index]
-                            .extra_initializers_var
-                            .as_deref()
-                    {
-                        ctor_init_calls
-                            .push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
-                    }
-                } else {
-                    for info in auto_accessor_infos
-                        .iter()
-                        .filter(|info| !decorated_members[info.member_var_index].is_static)
-                    {
-                        let var_info = &member_vars[info.member_var_index];
-                        let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
-                        let init_arg = self.auto_accessor_initializer_arg(info);
-                        let storage_name =
-                            self.auto_accessor_weakmap_storage_name(class_name, info);
-                        ctor_init_calls.push(format!(
-                            "{inner_indent}{storage_name}.set(this, {run_init}(this, {init_var}{init_arg}));\n"
-                        ));
-                    }
-                    if let Some(info) = auto_accessor_infos
-                        .iter()
-                        .rev()
-                        .find(|info| !decorated_members[info.member_var_index].is_static)
-                        && let Some(extra_var) = member_vars[info.member_var_index]
-                            .extra_initializers_var
-                            .as_deref()
-                    {
-                        ctor_init_calls
-                            .push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
-                    }
-                }
-            }
-
-            out.push_str(&format!("{indent}constructor("));
-            if let Some(ctor) = source_ctor {
-                out.push_str(&ctor.params);
-                out.push_str(") {\n");
-                for line in &ctor.body_lines {
-                    out.push_str(&format!("{inner_indent}{}\n", line.trim()));
-                }
-                for call in &ctor_init_calls {
-                    out.push_str(call);
-                }
-                out.push_str(&format!("{indent}}}\n"));
-            } else {
-                out.push_str(") {\n");
-                for call in &ctor_init_calls {
-                    out.push_str(call);
-                }
-                out.push_str(&format!("{indent}}}\n"));
-            }
-        }
-
         if self.use_static_blocks
             && let Some(info) = auto_accessor_infos
                 .iter()
@@ -1359,6 +1145,214 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         (external_assignments, post_iife_assignments)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_decorated_constructor(
+        &self,
+        source_ctor: Option<&ConstructorInfo>,
+        parameter_properties: &[ParameterPropertyInfo],
+        field_infos: &[DecoratedFieldInfo],
+        auto_accessor_infos: &[DecoratedAutoAccessorInfo],
+        decorated_members: &[DecoratedMember],
+        member_vars: &[MemberVarInfo],
+        fields_in_class_body: bool,
+        has_instance_fields: bool,
+        has_instance_auto_accessors: bool,
+        has_instance_method: bool,
+        class_name: &str,
+        has_extends: bool,
+        indent: &str,
+        inner_indent: &str,
+        instance_extra_initializers_var: &str,
+    ) -> String {
+        let run_init = self.helper("__runInitializers");
+        let parameter_properties_run_instance_initializers =
+            has_instance_method && !parameter_properties.is_empty();
+        let mut output = String::new();
+        let mut ctor_init_calls: Vec<String> = Vec::new();
+
+        if self.use_static_blocks && self.use_define_for_class_fields {
+            for (idx, prop) in parameter_properties.iter().enumerate() {
+                if idx == 0 && parameter_properties_run_instance_initializers {
+                    output.push_str(&format!(
+                        "{indent}{} = {run_init}(this, {instance_extra_initializers_var});\n",
+                        prop.name
+                    ));
+                } else {
+                    output.push_str(&format!("{indent}{};\n", prop.name));
+                }
+                ctor_init_calls.push(format!("{inner_indent}this.{0} = {0};\n", prop.name));
+            }
+        } else {
+            for (idx, prop) in parameter_properties.iter().enumerate() {
+                let value = if idx == 0 && parameter_properties_run_instance_initializers {
+                    format!(
+                        "({run_init}(this, {instance_extra_initializers_var}), {})",
+                        prop.name
+                    )
+                } else {
+                    prop.name.clone()
+                };
+                if self.use_define_for_class_fields {
+                    ctor_init_calls.push(format!(
+                        "{inner_indent}Object.defineProperty(this, \"{}\", {{\n{inner_indent}    enumerable: true,\n{inner_indent}    configurable: true,\n{inner_indent}    writable: true,\n{inner_indent}    value: {value}\n{inner_indent}}});\n",
+                        prop.name
+                    ));
+                } else {
+                    ctor_init_calls.push(format!("{inner_indent}this.{0} = {value};\n", prop.name));
+                }
+            }
+        }
+
+        if !fields_in_class_body && has_instance_fields {
+            // Fields move to constructor
+            for (fi_idx, fi) in field_infos.iter().enumerate() {
+                if decorated_members[fi.member_var_index].is_static {
+                    continue;
+                }
+                let var_info = &member_vars[fi.member_var_index];
+                let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
+                let init_arg = if fi.initializer_text.is_empty() {
+                    ", void 0".to_string()
+                } else {
+                    format!(", {}", fi.initializer_text)
+                };
+                let instance_field_idx = field_infos[..fi_idx]
+                    .iter()
+                    .filter(|f| !decorated_members[f.member_var_index].is_static)
+                    .count();
+
+                let rhs = if instance_field_idx == 0 {
+                    format!("{run_init}(this, {init_var}{init_arg})")
+                } else {
+                    let prev_fi = field_infos[..fi_idx]
+                        .iter()
+                        .rev()
+                        .find(|f| !decorated_members[f.member_var_index].is_static)
+                        .unwrap();
+                    let prev_extra = member_vars[prev_fi.member_var_index]
+                        .extra_initializers_var
+                        .as_deref()
+                        .unwrap_or("_extra");
+                    format!(
+                        "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
+                    )
+                };
+
+                if self.use_define_for_class_fields && !self.use_static_blocks {
+                    let key_expr = if fi.is_bracket_access {
+                        fi.access_expr.clone()
+                    } else {
+                        format!("\"{}\"", fi.access_expr)
+                    };
+                    ctor_init_calls.push(format!(
+                        "{inner_indent}Object.defineProperty(this, {key_expr}, {{\n{inner_indent}    enumerable: true,\n{inner_indent}    configurable: true,\n{inner_indent}    writable: true,\n{inner_indent}    value: {rhs}\n{inner_indent}}});\n"
+                    ));
+                } else {
+                    let lhs = if fi.is_bracket_access {
+                        format!("this[{}]", fi.access_expr)
+                    } else {
+                        format!("this.{}", fi.access_expr)
+                    };
+                    ctor_init_calls.push(format!("{inner_indent}{lhs} = {rhs};\n"));
+                }
+            }
+            // Last instance field's extra-initializers
+            if let Some(last_fi) = field_infos
+                .iter()
+                .rev()
+                .find(|f| !decorated_members[f.member_var_index].is_static)
+                && let Some(ref extra_var) =
+                    member_vars[last_fi.member_var_index].extra_initializers_var
+            {
+                ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
+            }
+        } else if fields_in_class_body && has_instance_fields {
+            // Fields in class body: only last instance field's extra-initializers in constructor
+            if let Some(last_fi) = field_infos
+                .iter()
+                .rev()
+                .find(|f| !decorated_members[f.member_var_index].is_static)
+                && let Some(ref extra_var) =
+                    member_vars[last_fi.member_var_index].extra_initializers_var
+            {
+                ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
+            }
+        } else if has_instance_method && !parameter_properties_run_instance_initializers {
+            ctor_init_calls.push(format!(
+                "{inner_indent}{run_init}(this, {instance_extra_initializers_var});\n"
+            ));
+        }
+
+        if has_instance_auto_accessors {
+            if self.use_static_blocks {
+                if let Some(info) = auto_accessor_infos
+                    .iter()
+                    .rev()
+                    .find(|info| !decorated_members[info.member_var_index].is_static)
+                    && let Some(extra_var) = member_vars[info.member_var_index]
+                        .extra_initializers_var
+                        .as_deref()
+                {
+                    ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
+                }
+            } else {
+                for info in auto_accessor_infos
+                    .iter()
+                    .filter(|info| !decorated_members[info.member_var_index].is_static)
+                {
+                    let var_info = &member_vars[info.member_var_index];
+                    let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
+                    let init_arg = self.auto_accessor_initializer_arg(info);
+                    let storage_name = self.auto_accessor_weakmap_storage_name(class_name, info);
+                    ctor_init_calls.push(format!(
+                        "{inner_indent}{storage_name}.set(this, {run_init}(this, {init_var}{init_arg}));\n"
+                    ));
+                }
+                if let Some(info) = auto_accessor_infos
+                    .iter()
+                    .rev()
+                    .find(|info| !decorated_members[info.member_var_index].is_static)
+                    && let Some(extra_var) = member_vars[info.member_var_index]
+                        .extra_initializers_var
+                        .as_deref()
+                {
+                    ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
+                }
+            }
+        }
+
+        output.push_str(&format!("{indent}constructor("));
+        if let Some(ctor) = source_ctor {
+            output.push_str(&ctor.params);
+            output.push_str(") {\n");
+            let split_at = if has_extends {
+                ctor.body_lines
+                    .iter()
+                    .position(|line| line.contains("super("))
+                    .map_or(0, |idx| idx + 1)
+            } else {
+                0
+            };
+            for line in &ctor.body_lines[..split_at] {
+                output.push_str(&format!("{inner_indent}{}\n", line.trim()));
+            }
+            for call in &ctor_init_calls {
+                output.push_str(call);
+            }
+            for line in &ctor.body_lines[split_at..] {
+                output.push_str(&format!("{inner_indent}{}\n", line.trim()));
+            }
+            output.push_str(&format!("{indent}}}\n"));
+        } else {
+            output.push_str(") {\n");
+            for call in &ctor_init_calls {
+                output.push_str(call);
+            }
+            output.push_str(&format!("{indent}}}\n"));
+        }
+        output
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1659,6 +1653,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
             // Strip TS type annotations from setter/method params: `(v: number)` → `(v)`
             let text = strip_param_types(text);
+            let text = normalize_member_indentation(&text);
             let text = text.as_str();
             // Normalize empty method bodies: `{}` -> `{ }`
             if let Some(stripped) = text.strip_suffix("{}") {
@@ -2260,6 +2255,42 @@ impl<'a> TC39DecoratorEmitter<'a> {
         result
     }
 
+    fn collect_constructor_parameter_properties(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<ParameterPropertyInfo> {
+        let mut result = Vec::new();
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.arena.get_constructor(member_node) else {
+                continue;
+            };
+            for &param_idx in &ctor.parameters.nodes {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if !has_parameter_property_modifier(self.arena, &param.modifiers) {
+                    continue;
+                }
+                let name = crate::transforms::emit_utils::identifier_emit_text_or_empty(
+                    self.arena, param.name,
+                );
+                if !name.is_empty() {
+                    result.push(ParameterPropertyInfo { name });
+                }
+            }
+        }
+        result
+    }
+
     fn collect_decorated_auto_accessor_info(
         &self,
         decorated_members: &[DecoratedMember],
@@ -2373,38 +2404,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
         None
     }
-}
-
-fn indent_str(level: usize) -> String {
-    "    ".repeat(level)
-}
-
-fn next_temp_var(counter: &mut u32) -> String {
-    let name = format!("_{}", (b'a' + (*counter % 26) as u8) as char);
-    *counter += 1;
-    name
-}
-
-fn generated_auto_accessor_name(index: u32) -> String {
-    if index < 26 {
-        format!("_{}", (b'a' + index as u8) as char)
-    } else {
-        format!("_{}", index - 26)
-    }
-}
-
-struct MemberVarInfo {
-    decorators_var: String,
-    has_initializers: bool,
-    initializers_var: Option<String>,
-    extra_initializers_var: Option<String>,
-    has_descriptor: bool,
-    descriptor_var: Option<String>,
-}
-
-struct ConstructorInfo {
-    params: String,
-    body_lines: Vec<String>,
 }
 
 #[cfg(test)]

@@ -205,6 +205,13 @@ impl<'a> CheckerState<'a> {
                     // Match tsc: optional parameters display as `(a?: T)`.
                     .with_preserve_optional_parameter_surface_syntax(true)
                     .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks)
+                    .with_builtin_iterator_return_type(
+                        if state.ctx.compiler_options.strict_builtin_iterator_return {
+                            TypeId::UNDEFINED
+                        } else {
+                            TypeId::ANY
+                        },
+                    )
                     .with_exact_optional_property_types(
                         state.ctx.compiler_options.exact_optional_property_types,
                     );
@@ -407,6 +414,21 @@ impl<'a> CheckerState<'a> {
         if let Some(application_display) = application_display {
             let normalized =
                 self.normalize_property_receiver_application_display_type(application_display);
+            if self
+                .property_receiver_application_base_name(normalized)
+                .is_some_and(|name| name == "merge")
+            {
+                let mut formatter = self
+                    .ctx
+                    .create_diagnostic_type_formatter()
+                    .with_long_property_receiver_display()
+                    .with_display_properties()
+                    .with_skip_application_alias_names()
+                    .with_long_property_receiver_object_elision_end_depth(0);
+                return Self::truncate_property_receiver_display(
+                    formatter.format(normalized).into_owned(),
+                );
+            }
             if normalized != application_display {
                 return self.format_type_diagnostic_widened_for_assignability_display(normalized);
             }

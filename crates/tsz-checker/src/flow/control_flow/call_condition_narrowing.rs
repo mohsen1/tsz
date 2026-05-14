@@ -49,6 +49,17 @@ impl<'a> FlowAnalyzer<'a> {
                     type_id,
                 ));
             }
+
+            if let Some(narrowed) = self.narrow_receiver_property_by_predicate(
+                type_id,
+                guard_target,
+                target,
+                is_true_branch,
+                narrowing,
+                &guard,
+            ) {
+                return Some(narrowed);
+            }
         }
 
         let call = self.arena.get_call_expr(cond_node)?;
@@ -77,6 +88,52 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    fn narrow_receiver_property_by_predicate(
+        &self,
+        type_id: TypeId,
+        guard_target: NodeIndex,
+        target: NodeIndex,
+        is_true_branch: bool,
+        narrowing: &NarrowingContext,
+        guard: &TypeGuard,
+    ) -> Option<TypeId> {
+        if !is_true_branch {
+            return None;
+        }
+        let TypeGuard::Predicate {
+            type_id: Some(predicate_type),
+            ..
+        } = *guard
+        else {
+            return None;
+        };
+        let (target_base, property_name) = self.property_reference(target)?;
+        if !self.is_matching_reference(guard_target, target_base) {
+            return None;
+        }
+
+        let property_name = self.interner.resolve_atom_ref(property_name);
+        let predicate_property_type =
+            crate::query_boundaries::common::ContextualTypeContext::with_expected(
+                self.interner,
+                predicate_type,
+            )
+            .get_property_type(property_name.as_ref())?;
+        if matches!(
+            predicate_property_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
+        ) {
+            return None;
+        }
+
+        let property_guard = TypeGuard::Predicate {
+            type_id: Some(predicate_property_type),
+            asserts: false,
+        };
+        let narrowed = narrowing.narrow_type(type_id, &property_guard, GuardSense::Positive);
+        (narrowed != type_id).then_some(narrowed)
     }
 
     fn apply_call_expression_guard(

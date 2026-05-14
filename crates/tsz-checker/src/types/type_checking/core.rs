@@ -830,6 +830,38 @@ impl<'a> CheckerState<'a> {
                         self.maybe_report_implicit_any_parameter(param, false, pi);
                     }
                 }
+                if let Some(return_node) = self.ctx.arena.get(func_type.type_annotation)
+                    && return_node.kind == syntax_kind_ext::TYPE_PREDICATE
+                    && let Some(pred) = self.ctx.arena.get_type_predicate(return_node)
+                    && let Some(target_node) = self.ctx.arena.get(pred.parameter_name)
+                    && let Some(target_ident) = self.ctx.arena.get_identifier(target_node)
+                {
+                    let target_name = target_ident.escaped_text.as_str();
+                    let found_param = func_type.parameters.nodes.iter().any(|&param_idx| {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            return false;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            return false;
+                        };
+                        let Some(name_node) = self.ctx.arena.get(param.name) else {
+                            return false;
+                        };
+                        self.ctx
+                            .arena
+                            .get_identifier(name_node)
+                            .is_some_and(|ident| ident.escaped_text == target_name)
+                    });
+                    if !found_param {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.ctx.error(
+                            target_node.pos,
+                            target_node.end.saturating_sub(target_node.pos),
+                            diagnostic_messages::CANNOT_FIND_PARAMETER.replace("{0}", target_name),
+                            diagnostic_codes::CANNOT_FIND_PARAMETER,
+                        );
+                    }
+                }
                 // Recursively check the return type
                 self.check_type_for_parameter_properties(func_type.type_annotation);
             }
@@ -881,6 +913,13 @@ impl<'a> CheckerState<'a> {
                 for &type_idx in &composite.types.nodes {
                     self.check_type_for_parameter_properties(type_idx);
                 }
+            }
+        } else if node.kind == syntax_kind_ext::CONDITIONAL_TYPE {
+            if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
+                self.check_type_for_parameter_properties(cond.check_type);
+                self.check_type_for_parameter_properties(cond.extends_type);
+                self.check_type_for_parameter_properties(cond.true_type);
+                self.check_type_for_parameter_properties(cond.false_type);
             }
         } else if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             if let Some(type_ref) = self.ctx.arena.get_type_ref(node)

@@ -1,9 +1,9 @@
 //! Typed cross-file query API types from `PERFORMANCE_PLAN.md` §7.
 //!
-//! `cross_file.rs` already defines `CrossFileQueryKind` (the typed bucket
-//! discriminant). This sibling module adds the remaining two types from
-//! the plan's API contract:
+//! This sibling module owns the typed query bucket discriminant and the
+//! remaining two types from the plan's API contract:
 //!
+//! - [`CrossFileQueryKind`]: typed bucket for cache lookup/write storage.
 //! - [`CrossFileQueryKey`]: typed cache key for cross-file query lookups.
 //! - [`CrossFileQueryAnswer`]: typed answer payload returned by typed
 //!   query paths.
@@ -13,16 +13,52 @@
 //! day one without introducing the type alongside the migration. See
 //! `docs/plan/PERFORMANCE_PLAN.md` §7 for the full API rationale.
 //!
-//! These types live in their own file rather than next to
-//! `CrossFileQueryKind` because `cross_file.rs` is already at the 2000-LOC
-//! arch-guard limit. Moving the kind enum here would make it `pub(super)`
-//! at minimum (it's currently `pub(crate)` and used elsewhere); leaving
-//! the enum in `cross_file.rs` and putting the data types here is the
-//! lowest-churn split.
-
-use super::cross_file::CrossFileQueryKind;
 use crate::context::RequestCacheKey;
 use tsz_binder::SymbolId;
+
+/// Typed identifier for the cross-file query bucket a cache lookup or write
+/// targets. Replaces the four `u8` constants that used to live here, matching
+/// the API shape proposed in `docs/plan/PERFORMANCE_PLAN.md` §7 ("Typed
+/// Cross-File Queries"):
+///
+/// > pub enum CrossFileQueryKind {
+/// >     SymbolType,
+/// >     ClassInstanceType,
+/// >     InterfaceType,
+/// >     InterfaceMemberSimpleType,
+/// > }
+///
+/// The discriminant values are the historical `u8` numbers already stored in
+/// `DefinitionStore` cache keys, so the enum remains `#[repr(u8)]`-compatible
+/// with the cache key layout via `as u8`.
+///
+/// Adding a new bucket: add the variant, give it a fresh `u8` discriminant,
+/// and ensure it doesn't collide with existing ones (the storage layer keys
+/// caches by `(u8, file_idx, primary, secondary, args_hash)` so
+/// re-purposing a discriminant would silently corrupt unrelated cache
+/// entries).
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(u8)]
+// Variant names mirror PERFORMANCE_PLAN.md §7 verbatim; the shared "Type"
+// suffix is part of the plan's API contract and must stay.
+#[allow(clippy::enum_variant_names)]
+pub(crate) enum CrossFileQueryKind {
+    InterfaceType = 1,
+    ClassInstanceType = 2,
+    InterfaceMemberSimpleType = 3,
+    SymbolType = 4,
+}
+
+impl CrossFileQueryKind {
+    /// Discriminant value used as the first component of
+    /// `DefinitionStore::resolved_cross_file_queries` cache keys. Stable -
+    /// changing this for an existing variant would invalidate every cached
+    /// entry under that discriminant.
+    #[inline]
+    pub(crate) const fn as_storage_kind(self) -> u8 {
+        self as u8
+    }
+}
 
 /// Typed cache key for cross-file query lookups. Matches
 /// `PERFORMANCE_PLAN.md` §7's API contract verbatim.

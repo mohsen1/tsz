@@ -15,10 +15,10 @@
 # in sync with the actual values.
 
 solver_max_loc        8374
-solver_oversized      14
+solver_oversized    17
 
 binder_max_loc        2890
 binder_oversized      1
 
-emitter_max_loc     9144
-emitter_oversized   22
+emitter_max_loc     4473
+emitter_oversized   19

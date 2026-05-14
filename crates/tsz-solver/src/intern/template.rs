@@ -354,22 +354,42 @@ impl TypeInterner {
                         _ => {}
                     }
 
-                    // Task #47: Remove empty string literals from interpolations
-                    // An empty string literal contributes nothing to the template
-                    if let Some(TypeData::Literal(LiteralValue::String(s))) = self.lookup(*type_id)
-                    {
-                        let s = self.resolve_atom_ref(s);
-                        if s.is_empty() {
-                            // Skip this empty string literal
-                            // Flush pending text first
-                            if let Some(text) = pending_text.take()
-                                && !text.is_empty()
-                            {
-                                normalized.push(TemplateSpan::Text(self.intern_string(&text)));
+                    // Collapse concrete literal type spans to fixed text so
+                    // `${infer L}${"-"}${infer R}` stores Text("-") not Type("-"),
+                    // enabling find/rfind separator search in infer matching.
+                    // BigInt stays as Type; evaluation handles it there.
+                    if let Some(TypeData::Literal(lit)) = self.lookup(*type_id) {
+                        let text_value: Option<String> = match lit {
+                            LiteralValue::String(atom) => {
+                                let s = self.resolve_atom_ref(atom);
+                                (!s.is_empty()).then(|| s.to_string())
                             }
-                            // Don't add the empty type span - continue to next span
-                            continue;
+                            LiteralValue::Number(n) => Some(format!("{}", n.0)),
+                            LiteralValue::Boolean(b) => Some(b.to_string()),
+                            LiteralValue::BigInt(_) => {
+                                if let Some(text) = pending_text.take()
+                                    && !text.is_empty()
+                                {
+                                    normalized.push(TemplateSpan::Text(self.intern_string(&text)));
+                                }
+                                normalized.push(TemplateSpan::Type(*type_id));
+                                continue;
+                            }
+                        };
+                        if let Some(text_value) = text_value {
+                            if let Some(ref mut pt) = pending_text {
+                                pt.push_str(&text_value);
+                                has_consecutive_texts = true;
+                            } else {
+                                pending_text = Some(text_value);
+                            }
+                        } else if let Some(text) = pending_text.take()
+                            && !text.is_empty()
+                        {
+                            normalized.push(TemplateSpan::Text(self.intern_string(&text)));
                         }
+                        changed = true;
+                        continue;
                     }
 
                     // Flush any pending text before adding a type span

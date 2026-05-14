@@ -392,6 +392,108 @@ tr:nth-child(even) { background: var(--table-stripe); }
   margin: 1rem 0;
 }
 
+/* ── Sound Mode inline playgrounds ── */
+.sound-mode-inline-playground {
+  border: 1px solid var(--border-subtle);
+  border-radius: 0;
+  overflow: hidden;
+  margin: 1.5rem 0;
+  background: var(--bg-subtle);
+  font-size: 0.9rem;
+}
+
+.sound-mode-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sound-mode-inline-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.sound-mode-inline-title strong {
+  font-size: 0.9rem;
+}
+
+.sound-mode-inline-title span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.sound-mode-inline-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.sound-mode-inline-check {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sound-mode-inline-check input {
+  accent-color: var(--link);
+  cursor: pointer;
+}
+
+.sound-mode-inline-editor-frame {
+  position: relative;
+}
+
+.sound-mode-inline-editor {
+  width: 100%;
+  background: var(--bg-code);
+}
+
+.sound-mode-inline-editor .monaco-editor,
+.sound-mode-inline-editor .monaco-editor .margin,
+.sound-mode-inline-editor .monaco-editor-background,
+.sound-mode-inline-editor .monaco-editor .inputarea.ime-input {
+  background-color: var(--bg-code) !important;
+}
+
+.sound-mode-inline-error-range {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--solver-color);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+.sound-mode-static-editor {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0;
+  overflow: hidden;
+  margin: 1.25rem 0;
+  background: var(--bg-code);
+}
+
+.sound-mode-static-editor .monaco-editor,
+.sound-mode-static-editor .monaco-editor .margin,
+.sound-mode-static-editor .monaco-editor-background,
+.sound-mode-static-editor .monaco-editor .inputarea.ime-input {
+  background-color: var(--bg-code) !important;
+}
+
 /* ── Install block ── */
 .install-block {
   background: var(--bg-code);
@@ -971,6 +1073,14 @@ tr:nth-child(even) { background: var(--table-stripe); }
   .pipeline { font-size: 0.75rem; }
   .pipeline-stage { padding: 0.3rem 0.5rem; }
   .monaco-code-block { margin-left: -1.25rem; margin-right: -1.25rem; border-radius: 0; }
+  .sound-mode-inline-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .sound-mode-inline-controls {
+    justify-content: space-between;
+    width: 100%;
+  }
   .bench-detail-bars .bench-bar-row {
     grid-template-columns: 2.5rem minmax(0, 1fr);
     grid-template-rows: auto auto;

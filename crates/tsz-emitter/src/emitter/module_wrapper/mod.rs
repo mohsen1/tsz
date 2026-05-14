@@ -1,6 +1,8 @@
 mod bang_module_reference;
 mod system_emit;
+mod system_helpers;
 mod system_hoist;
+mod system_legacy_class_decorators;
 #[cfg(test)]
 mod tests;
 mod wrapper_entry;

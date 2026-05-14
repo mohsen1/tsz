@@ -6,6 +6,7 @@
 use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -195,7 +196,57 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
-
+                let sym_id = sym_id.or_else(|| {
+                    self.ctx
+                        .binder
+                        .file_locals
+                        .get(name)
+                        .filter(|&sym_id| self.symbol_has_declared_type_meaning(sym_id))
+                        .map(|sym_id| {
+                            self.ctx
+                                .binder
+                                .get_symbol(sym_id)
+                                .and_then(|symbol| {
+                                    symbol.import_module.as_ref().and_then(|module_name| {
+                                        symbol.import_name.as_deref().and_then(|import_name| {
+                                            self.resolve_cross_file_export_from_file(
+                                                module_name,
+                                                import_name,
+                                                Some(self.ctx.current_file_idx),
+                                            )
+                                        })
+                                    })
+                                })
+                                .unwrap_or_else(|| {
+                                    let mut visited = AliasCycleTracker::new();
+                                    self.resolve_alias_symbol(sym_id, &mut visited)
+                                        .unwrap_or(sym_id)
+                                })
+                        })
+                        .or_else(|| {
+                            let lib_binders = self.get_lib_binders();
+                            self.ctx
+                                .binder
+                                .get_global_type_with_libs(name, &lib_binders)
+                        })
+                });
+                let sym_id = sym_id.map(|sym_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .and_then(|symbol| {
+                            symbol.import_module.as_ref().and_then(|module_name| {
+                                symbol.import_name.as_deref().and_then(|import_name| {
+                                    self.resolve_cross_file_export_from_file(
+                                        module_name,
+                                        import_name,
+                                        Some(self.ctx.current_file_idx),
+                                    )
+                                })
+                            })
+                        })
+                        .unwrap_or(sym_id)
+                });
                 let intrinsic_reference_is_unshadowed = type_param.is_none()
                     && match sym_id {
                         Some(sym_id) => self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id),
@@ -253,6 +304,39 @@ impl<'a> CheckerState<'a> {
                         return factory.readonly_type(array_type);
                     }
                     return array_type;
+                }
+
+                if !self.ctx.compiler_options.no_lib
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                    && self.is_promise_like_name(name)
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    let type_args: Vec<TypeId> = args
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                        .collect();
+                    if !type_args.is_empty() {
+                        let promise_base =
+                            crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                                name,
+                                self.ctx.binder,
+                                self.ctx.global_file_locals_index.as_deref(),
+                                self.ctx
+                                    .all_binders
+                                    .as_ref()
+                                    .map(|binders| binders.as_ref().as_slice()),
+                                &self.ctx.lib_contexts,
+                            )
+                            .map(|sym_id| {
+                                let _ = self.resolve_lib_type_by_name(name);
+                                let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
+                                factory.lazy(def_id)
+                            })
+                            .unwrap_or(TypeId::PROMISE_BASE);
+                        return factory.application(promise_base, type_args);
+                    }
                 }
 
                 if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
@@ -494,6 +578,51 @@ impl<'a> CheckerState<'a> {
                     return factory.application(base_type_id, default_args);
                 }
                 // Stable-identity: create Lazy(DefId) (body already resolved above)
+                return self.ctx.create_lazy_type_ref(sym_id);
+            }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+                && self.symbol_has_declared_type_meaning(sym_id)
+            {
+                let mut visited = AliasCycleTracker::new();
+                let sym_id = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .and_then(|symbol| {
+                        symbol.import_module.as_ref().and_then(|module_name| {
+                            symbol.import_name.as_deref().and_then(|import_name| {
+                                self.resolve_cross_file_export_from_file(
+                                    module_name,
+                                    import_name,
+                                    Some(self.ctx.current_file_idx),
+                                )
+                            })
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        self.resolve_alias_symbol(sym_id, &mut visited)
+                            .unwrap_or(sym_id)
+                    });
+                let _ = self.type_reference_symbol_type(sym_id);
+                let type_params = self.get_type_params_for_symbol(sym_id);
+                let required_count = type_params
+                    .iter()
+                    .filter(|param| param.default.is_none())
+                    .count();
+                if required_count > 0 {
+                    return TypeId::ERROR;
+                }
+                if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
+                    let default_args: Vec<TypeId> =
+                        crate::query_boundaries::common::resolve_default_type_args(
+                            self.ctx.types,
+                            &type_params,
+                        );
+                    let def_id = self
+                        .ctx
+                        .get_or_create_def_id_with_params(sym_id, type_params);
+                    return factory.application(factory.lazy(def_id), default_args);
+                }
                 return self.ctx.create_lazy_type_ref(sym_id);
             }
 
@@ -916,7 +1045,6 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
-        let mut extra_string_indices = Vec::new();
         let mut extra_number_indices = Vec::new();
         let mut has_abstract_construct_sig = false;
         // Global member counter for preserving source declaration order across
@@ -1202,10 +1330,13 @@ impl<'a> CheckerState<'a> {
                             extra_number_indices.push(info);
                         }
                     } else {
-                        if string_index.is_none() {
-                            string_index = Some(info);
-                        } else {
-                            extra_string_indices.push(info);
+                        match string_index.as_mut() {
+                            None => string_index = Some(info),
+                            Some(existing) => {
+                                super::interface_type::merge_string_index_by_union(
+                                    existing, info, factory,
+                                );
+                            }
                         }
                     }
                 }
@@ -1419,13 +1550,6 @@ impl<'a> CheckerState<'a> {
                 symbol: None,
                 is_abstract: has_abstract_construct_sig,
             });
-            for idx in extra_string_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    string_index: Some(idx),
-                    ..ObjectShape::default()
-                });
-                result = self.ctx.types.intersect_types_raw2(result, member);
-            }
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),
@@ -1443,13 +1567,6 @@ impl<'a> CheckerState<'a> {
                 number_index,
                 ..ObjectShape::default()
             });
-            for idx in extra_string_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    string_index: Some(idx),
-                    ..ObjectShape::default()
-                });
-                result = self.ctx.types.intersect_types_raw2(result, member);
-            }
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),

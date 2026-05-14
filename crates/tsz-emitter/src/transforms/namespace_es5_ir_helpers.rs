@@ -115,7 +115,16 @@ pub(super) fn convert_function_parameters(
         .filter_map(|&p| {
             let param_node = arena.get(p)?;
             let param = arena.get_parameter_at(p)?;
-            let name = get_identifier_text(arena, param.name)?;
+            let name = get_identifier_text(arena, param.name)
+                .filter(|name| !name.is_empty())
+                .or_else(|| {
+                    recovered_parameter_name_from_type_or_range(
+                        arena,
+                        source_text?,
+                        p,
+                        param.type_annotation,
+                    )
+                })?;
             let rest = param.dot_dot_dot_token;
             // Convert default value if present
             let default_value = (param.initializer.is_some())
@@ -132,6 +141,64 @@ pub(super) fn convert_function_parameters(
             })
         })
         .collect()
+}
+
+pub(super) fn recover_empty_function_parameters_from_header(
+    arena: &NodeArena,
+    source_text: Option<&str>,
+    func_idx: NodeIndex,
+    body_idx: NodeIndex,
+) -> Option<Vec<IRParam>> {
+    let source_text = source_text?;
+    let func_node = arena.get(func_idx)?;
+    let body_node = arena.get(body_idx)?;
+    let header =
+        crate::safe_slice::slice(source_text, func_node.pos as usize, body_node.pos as usize)
+            .ok()?;
+    let open_offset = header.find('(')?;
+    let close_offset = header.rfind(')')?;
+    if close_offset <= open_offset {
+        return None;
+    }
+    let raw = header.get(open_offset + 1..close_offset)?;
+    recovered_parameter_name_from_colon_header(raw).map(|name| vec![IRParam::new(name)])
+}
+
+fn recovered_parameter_name_from_type_or_range(
+    arena: &NodeArena,
+    source_text: &str,
+    param_idx: NodeIndex,
+    type_annotation: NodeIndex,
+) -> Option<String> {
+    let raw = arena
+        .get(type_annotation)
+        .and_then(|type_node| {
+            crate::safe_slice::slice(source_text, type_node.pos as usize, type_node.end as usize)
+                .ok()
+        })
+        .or_else(|| {
+            arena.get(param_idx).and_then(|param_node| {
+                crate::safe_slice::slice(
+                    source_text,
+                    param_node.pos as usize,
+                    param_node.end as usize,
+                )
+                .ok()
+            })
+        })?;
+
+    raw.trim_matches(|ch: char| ch == ':' || ch.is_whitespace())
+        .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
+fn recovered_parameter_name_from_colon_header(raw: &str) -> Option<String> {
+    let after_colon = raw.trim().strip_prefix(':')?;
+    after_colon
+        .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
 }
 
 fn extract_parameter_leading_comment(

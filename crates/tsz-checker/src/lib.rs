@@ -138,6 +138,9 @@ mod environment_capabilities_tests;
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]
+#[path = "tests/generic_default_application_arg_preservation_tests.rs"]
+mod generic_default_application_arg_preservation_tests;
+#[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
@@ -261,6 +264,12 @@ mod ts2323_tests;
 #[path = "../tests/ts2347_tests.rs"]
 mod ts2347_tests;
 #[cfg(test)]
+#[path = "../tests/ts2352_disjoint_literal_property_tests.rs"]
+mod ts2352_disjoint_literal_property_tests;
+#[cfg(test)]
+#[path = "../tests/ts2352_intersection_assertion_tests.rs"]
+mod ts2352_intersection_assertion_tests;
+#[cfg(test)]
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
 #[cfg(test)]
@@ -382,6 +391,9 @@ mod bigint_target_ts2737_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/call_spread_constructor_parameters_tests.rs"]
+mod call_spread_constructor_parameters_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
@@ -439,17 +451,26 @@ mod for_in_narrowing_tests;
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
+#[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
+mod generic_class_constructor_literal_preservation_tests;
+#[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
 #[path = "tests/generic_rest_satisfies_anchor_tests.rs"]
 mod generic_rest_satisfies_anchor_tests;
 #[cfg(test)]
+#[path = "tests/generic_spread_iterability_tests.rs"]
+mod generic_spread_iterability_tests;
+#[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
+#[cfg(test)]
+#[path = "../tests/interface_extends_array_json_tests.rs"]
+mod interface_extends_array_json_tests;
 #[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
@@ -538,6 +559,9 @@ mod never_initializer_falls_through_tests;
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
 #[cfg(test)]
+#[path = "../tests/new_expression_source_display_tests.rs"]
+mod new_expression_source_display_tests;
+#[cfg(test)]
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;
 #[cfg(test)]
@@ -549,6 +573,9 @@ mod object_spread_optional_merge_tests;
 #[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
+#[cfg(test)]
+#[path = "tests/partial_pick_indexed_access_write_tests.rs"]
+mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;

@@ -189,6 +189,9 @@ impl<'a> LoweringPass<'a> {
         let helpers = self.transforms.helpers_mut();
         helpers.await_helper = true;
         helpers.async_generator = true;
+        if self.ctx.target_es5 {
+            helpers.generator = true;
+        }
     }
 
     pub(super) fn mark_class_helpers(
@@ -405,6 +408,11 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            if self.ctx.options.legacy_decorators
+                && self.member_decorator_expressions_have_private_field_read(member_node)
+            {
+                return true;
+            }
             // Static blocks: scan the block itself (its pos..end covers all statements)
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 if self.subtree_has_private_field_read(member_idx) {
@@ -435,6 +443,11 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            if self.ctx.options.legacy_decorators
+                && self.member_decorator_expressions_have_private_field_write(member_node)
+            {
+                return true;
+            }
             // Static blocks: scan the block itself
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 if self.subtree_has_private_field_write(member_idx) {
@@ -465,6 +478,11 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            if self.ctx.options.legacy_decorators
+                && self.member_decorator_expressions_have_private_in_expression(member_node)
+            {
+                return true;
+            }
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 if self.subtree_has_private_in_expression(member_idx) {
                     return true;
@@ -483,6 +501,107 @@ impl<'a> LoweringPass<'a> {
             }
         }
         false
+    }
+
+    fn member_decorator_expressions_have_private_field_read(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.member_decorator_expressions_match(member_node, |this, expr| {
+            this.subtree_has_private_field_read(expr)
+        })
+    }
+
+    fn member_decorator_expressions_have_private_field_write(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.member_decorator_expressions_match(member_node, |this, expr| {
+            this.subtree_has_private_field_write(expr)
+        })
+    }
+
+    fn member_decorator_expressions_have_private_in_expression(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.member_decorator_expressions_match(member_node, |this, expr| {
+            this.subtree_has_private_in_expression(expr)
+        })
+    }
+
+    fn member_decorator_expressions_match(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+        predicate: impl Fn(&Self, NodeIndex) -> bool,
+    ) -> bool {
+        let (modifiers, parameters): (
+            Option<&tsz_parser::parser::NodeList>,
+            Option<&tsz_parser::parser::NodeList>,
+        ) = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.arena.get_method_decl(member_node) else {
+                    return false;
+                };
+                (method.modifiers.as_ref(), Some(&method.parameters))
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    return false;
+                };
+                (prop.modifiers.as_ref(), None)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let Some(accessor) = self.arena.get_accessor(member_node) else {
+                    return false;
+                };
+                (accessor.modifiers.as_ref(), None)
+            }
+            _ => return false,
+        };
+
+        if let Some(modifiers) = modifiers
+            && self.decorator_expressions_match(&modifiers.nodes, &predicate)
+        {
+            return true;
+        }
+
+        if let Some(parameters) = parameters {
+            for &param_idx in &parameters.nodes {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if let Some(modifiers) = param.modifiers.as_ref()
+                    && self.decorator_expressions_match(&modifiers.nodes, &predicate)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn decorator_expressions_match(
+        &self,
+        modifiers: &[NodeIndex],
+        predicate: &impl Fn(&Self, NodeIndex) -> bool,
+    ) -> bool {
+        modifiers.iter().copied().any(|mod_idx| {
+            let Some(mod_node) = self.arena.get(mod_idx) else {
+                return false;
+            };
+            if mod_node.kind != syntax_kind_ext::DECORATOR {
+                return false;
+            }
+            let Some(decorator) = self.arena.get_decorator(mod_node) else {
+                return false;
+            };
+            predicate(self, decorator.expression)
+        })
     }
 
     /// Scan a subtree for `#field in obj` expressions.
@@ -791,7 +910,11 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
-    fn has_class_member_modifier(&self, modifiers: &Option<NodeList>, modifier: u16) -> bool {
+    pub(super) fn has_class_member_modifier(
+        &self,
+        modifiers: &Option<NodeList>,
+        modifier: u16,
+    ) -> bool {
         let Some(mods) = modifiers else {
             return false;
         };

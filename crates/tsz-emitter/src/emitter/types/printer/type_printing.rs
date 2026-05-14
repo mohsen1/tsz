@@ -2031,6 +2031,12 @@ impl<'a> TypePrinter<'a> {
         } else {
             self.print_type(app.base)
         };
+        if Self::is_parameters_utility_name(&base_text)
+            && app.args.len() == 1
+            && let Some(tuple_text) = self.print_parameters_utility_tuple(app.args[0])
+        {
+            return tuple_text;
+        }
 
         if app.args.is_empty() {
             base_text
@@ -2048,6 +2054,149 @@ impl<'a> TypePrinter<'a> {
                 format!("{base_text}<{}>", args.join(", "))
             }
         }
+    }
+
+    fn is_parameters_utility_name(type_text: &str) -> bool {
+        type_text
+            .trim()
+            .rsplit(['.', ' '])
+            .next()
+            .is_some_and(|name| name == "Parameters")
+    }
+
+    fn print_parameters_utility_tuple(&self, arg: TypeId) -> Option<String> {
+        if let Some(func_id) = visitor::function_shape_id(self.interner, arg) {
+            let func = self.interner.function_shape(func_id);
+            return Some(self.print_parameters_tuple_elements(&func.params));
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, arg) {
+            let callable = self.interner.callable_shape(callable_id);
+            if callable.call_signatures.len() == 1 && callable.construct_signatures.is_empty() {
+                return Some(
+                    self.print_parameters_tuple_elements(&callable.call_signatures[0].params),
+                );
+            }
+        }
+
+        self.print_parameters_tuple_from_function_text(&self.print_type(arg))
+    }
+
+    fn print_parameters_tuple_elements(&self, params: &[tsz_solver::types::ParamInfo]) -> String {
+        let mut parts = Vec::with_capacity(params.len());
+        for param in params {
+            let mut part = String::new();
+            if let Some(name) = param.name {
+                if param.rest {
+                    part.push_str("...");
+                }
+                part.push_str(&self.resolve_atom(name));
+                if param.optional {
+                    part.push('?');
+                }
+                part.push_str(": ");
+            } else if param.rest {
+                part.push_str("...");
+            }
+
+            let display_type = if param.optional {
+                self.optional_param_display_type(param.type_id)
+            } else {
+                param.type_id
+            };
+            part.push_str(&self.print_type(display_type));
+            if param.name.is_none() && param.optional && !param.rest {
+                part.push('?');
+            }
+            parts.push(part);
+        }
+
+        format!("[{}]", parts.join(", "))
+    }
+
+    fn print_parameters_tuple_from_function_text(&self, type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let arrow_idx = Self::find_top_level_arrow_in_type_text(trimmed)?;
+        let head = trimmed.get(..arrow_idx)?.trim_end();
+        let open_idx = head.rfind('(')?;
+        let params_text = head.get(open_idx + 1..)?.strip_suffix(')')?.trim();
+        if params_text.is_empty() {
+            return Some("[]".to_string());
+        }
+        let parts = Self::split_top_level_commas_in_type_text(params_text)
+            .into_iter()
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        Some(format!("[{}]", parts.join(", ")))
+    }
+
+    fn find_top_level_arrow_in_type_text(text: &str) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut angle_depth = 0usize;
+        let mut i = 0usize;
+        while i + 1 < bytes.len() {
+            match bytes[i] {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                b'=' if bytes[i + 1] == b'>'
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    return Some(i);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn split_top_level_commas_in_type_text(text: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0usize;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut angle_depth = 0usize;
+
+        for (idx, byte) in text.bytes().enumerate() {
+            match byte {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                b',' if paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    if let Some(part) = text.get(start..idx) {
+                        parts.push(part);
+                    }
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+        if let Some(part) = text.get(start..) {
+            parts.push(part);
+        }
+        parts
     }
 
     fn visible_type_application_arg_count(&self, base: TypeId, args: &[TypeId]) -> usize {

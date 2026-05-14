@@ -50,6 +50,8 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     cache: FxHashMap<TypeId, TypeId>,
     /// Unified recursion guard for `TypeId` cycle detection, depth, and iteration limits.
     guard: crate::recursion::RecursionGuard<TypeId>,
+    /// Recursion guard for mapped-key constraint simplification.
+    pub(super) keyof_constraint_guard: crate::recursion::RecursionGuard<TypeId>,
     /// Per-DefId recursion depth counter.
     /// Allows recursive type aliases (like `TrimRight`) to expand up to `MAX_DEF_DEPTH`
     /// times before stopping, matching tsc's TS2589 "Type instantiation is excessively
@@ -150,6 +152,9 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
+            keyof_constraint_guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
+            ),
             def_depth: FxHashMap::default(),
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
@@ -186,6 +191,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Matches TypeScript's instantiation depth limit that triggers TS2589.
     const MAX_DEF_DEPTH: u32 = 100;
 
+    /// When the structural per-`TypeId` recursion guard hits its depth limit,
+    /// surface it as TS2589 only if some DefId has been recursively expanded at
+    /// least this many times — otherwise treat the bailout as the stack-protection
+    /// cost of legitimate finite recursion and leave the type opaque.
+    ///
+    /// Calibration: empirically, `Permutation<U>` with `|U| ≤ 3` peaks around
+    /// `def_depth ≈ 33` when it hits the structural limit, while unbounded
+    /// patterns like `type Foo<T,B> = { "true": Foo<T, Foo<T,B>> }[T]` saturate
+    /// near `def_depth ≈ 50`.
+    const REAL_INSTANTIATION_BAILOUT_THRESHOLD: u32 = 40;
+
     /// Create a new evaluator with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         TypeEvaluator {
@@ -195,6 +211,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
             guard: crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeEvaluation,
+            ),
+            keyof_constraint_guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
             def_depth: FxHashMap::default(),
@@ -466,8 +485,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             });
             if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
                 GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                self.guard.mark_exceeded();
-                return TypeId::ERROR;
+                // Cross-evaluator stack protection: leave `type_id` opaque
+                // rather than propagating ERROR. The outer evaluator can
+                // proceed at a shallower depth without inheriting a sticky
+                // exceeded flag. See the analogous DepthExceeded arm below.
+                return type_id;
             }
             let result = self.evaluate_guarded(type_id);
             GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
@@ -540,8 +562,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return type_id;
             }
             RecursionResult::DepthExceeded => {
-                self.cache.insert(type_id, TypeId::ERROR);
-                return TypeId::ERROR;
+                // The per-`TypeId` guard's depth limit is structural — it caps the
+                // type-tree walk to protect the stack, not the instantiation chain.
+                // tsc's `instantiationDepth` (the source of TS2589) is mirrored by
+                // `def_depth`, so consult that to decide whether the bailout is a
+                // real runaway (escalate) or just the structural cost of legitimate
+                // finite recursion like the type-challenges `Permutation<U>` /
+                // `Combination<U>` patterns (silently leave `type_id` opaque).
+                let max_def_depth = self.def_depth.values().copied().max().unwrap_or(0);
+                if max_def_depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
+                    self.cache.insert(type_id, TypeId::ERROR);
+                    return TypeId::ERROR;
+                }
+                self.guard.clear_exceeded();
+                self.cache.insert(type_id, type_id);
+                return type_id;
             }
             RecursionResult::IterationExceeded => {
                 self.cache.insert(type_id, type_id);
@@ -661,10 +696,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
             let def_kind = self.resolver.get_def_kind(def_id);
             let is_type_alias_def = matches!(def_kind, Some(crate::def::DefKind::TypeAlias));
-            let prefer_application_display_alias = is_type_alias_def
-                && resolved.is_some_and(|body| {
-                    !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
-                });
+            let resolved_has_conditional_body = resolved.is_some_and(|body| {
+                matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            });
+            if is_type_alias_def && resolved_has_conditional_body {
+                self.interner.mark_conditional_alias_base(app.base);
+            }
+            let prefer_application_display_alias =
+                is_type_alias_def && !resolved_has_conditional_body;
 
             tracing::trace!(
                 ?def_id,
@@ -918,6 +957,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             evaluated,
                             &app.args,
                         );
+                    } else {
+                        // Parametric structural (interface/class) applications:
+                        // also record a back-reference from the evaluated
+                        // structural form to the original Application so
+                        // `reduce_alias_body_to_application_form` can recover
+                        // it when the source has been eagerly evaluated to a
+                        // structural shape (e.g. via `ReturnType<typeof f>`
+                        // expanding through a Conditional alias body and
+                        // instantiating the Promise interface).
+                        self.store_parametric_structural_back_reference(
+                            evaluated,
+                            original_type_id,
+                        );
                     }
                     if let Some(db) = self.query_db {
                         db.insert_application_eval_cache(
@@ -1082,7 +1134,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             _ => result.0 <= display_origin.0,
                         }
                         && result_is_non_empty_structural;
-                    if !skip_type_alias_repaint {
+                    let keep_existing_conditional_branch_alias = is_type_alias_def
+                        && !prefer_application_display_alias
+                        && matches!(
+                            self.interner.lookup(display_origin),
+                            Some(TypeData::Application(_))
+                        )
+                        && self.interner.get_display_alias(result).is_some();
+                    if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
                         if prefer_application_display_alias
                             || (self.expand_application_display_alias_args
                                 && matches!(
@@ -1168,6 +1227,71 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         self.interner
             .store_display_alias_preferring_application(instantiated, original_type_id);
+    }
+
+    /// Record a back-reference from an evaluated structural form to its
+    /// originating parametric Application — the interface/class counterpart
+    /// to `store_intermediate_application_display_alias` (which only stores
+    /// for type-alias bodies that are themselves Applications).
+    ///
+    /// Read by `reduce_alias_body_to_application_form` to recover the
+    /// Application form when the source has been eagerly evaluated to its
+    /// structural shape (e.g. `Promise<{id}>` substituted into a structural
+    /// Object). The downstream `store_display_alias_preferring_application`
+    /// applies its own safety gates (alloc-order, intrinsic-skip, generic-
+    /// args) that prevent overriding aliases for pre-existing types.
+    fn store_parametric_structural_back_reference(
+        &self,
+        evaluated: TypeId,
+        original_type_id: TypeId,
+    ) {
+        if evaluated == original_type_id || evaluated == TypeId::ERROR {
+            return;
+        }
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(original_type_id) else {
+            return;
+        };
+        let app = self.interner.type_application(app_id);
+        if app.args.is_empty() {
+            return;
+        }
+        let app_def = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver
+                .get_def_kind(def_id)
+                .map(|kind| (def_id, kind)),
+            Some(TypeData::TypeQuery(sym_ref)) => {
+                self.resolver.symbol_to_def_id(sym_ref).and_then(|def_id| {
+                    self.resolver
+                        .get_def_kind(def_id)
+                        .map(|kind| (def_id, kind))
+                })
+            }
+            _ => None,
+        };
+        // This back-reference is for nominal parametric shapes. Type-alias
+        // applications still need their evaluated structural form for displays
+        // such as TS2339 on conditional helper aliases.
+        let is_type_alias = matches!(app_def, Some((_, crate::def::DefKind::TypeAlias)));
+        if is_type_alias {
+            return;
+        }
+        // Fast path: all-intrinsic args trivially have no free type
+        // parameters; skip the recursive `contains_generic_type_parameters_db`
+        // traversal that fires on every parametric application evaluation.
+        let all_intrinsic = app.args.iter().all(|a| a.is_intrinsic());
+        if !all_intrinsic
+            && app.args.iter().any(|&arg| {
+                crate::type_queries::contains_generic_type_parameters_db(self.interner, arg)
+            })
+        {
+            return;
+        }
+        if !Self::is_structural_display_alias_result(self.interner, evaluated) {
+            return;
+        }
+        self.interner
+            .store_display_alias_preferring_application(evaluated, original_type_id);
     }
 
     fn is_structural_display_alias_result(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -2279,15 +2403,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let elements = self.interner.tuple_list(tuple_list_id);
 
-        // Quick check: does any element need evaluation?
-        let needs_eval = elements
-            .iter()
-            .any(|elem| Self::is_evaluable_meta_type(self.interner, elem.type_id));
+        // Quick check: does any element need evaluation or structural normalization?
+        // Also triggers when a rest element holds a concrete Tuple that must be
+        // flattened — e.g. `[L, ...R]` after infer-binding R to `[1, 2]`.
+        // ReadonlyType(Tuple) rest elements are already caught by is_evaluable_meta_type.
+        let needs_eval = elements.iter().any(|elem| {
+            Self::is_evaluable_meta_type(self.interner, elem.type_id)
+                || (elem.rest
+                    && matches!(self.interner.lookup(elem.type_id), Some(TypeData::Tuple(_))))
+        });
         if !needs_eval {
             return original_type_id;
         }
 
-        let mut result: Vec<TupleElement> = Vec::with_capacity(elements.len());
+        let mut alternatives: Vec<Vec<TupleElement>> = vec![Vec::with_capacity(elements.len())];
         let mut changed = false;
         let mut spread_product = 1usize;
 
@@ -2315,42 +2444,107 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
 
-                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
+                let evaluated_inner =
+                    crate::type_queries::data::unwrap_readonly(self.interner, evaluated);
+                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated_inner)
+                {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
-                    for inner_elem in inner_elements.iter() {
-                        result.push(*inner_elem);
+                    for alternative in &mut alternatives {
+                        alternative.extend(inner_elements.iter().copied());
                     }
                     changed = true;
                     continue;
                 } else if let Some(TypeData::Array(element_type)) = self.interner.lookup(evaluated)
                 {
                     // Rest element evaluating to an array stays as rest
-                    result.push(TupleElement {
+                    let rest_element = TupleElement {
                         type_id: element_type,
                         name: elem.name,
                         optional: elem.optional,
                         rest: true,
-                    });
+                    };
+                    for alternative in &mut alternatives {
+                        alternative.push(rest_element);
+                    }
                     if element_type != elem.type_id {
                         changed = true;
                     }
                     continue;
+                } else if let Some(TypeData::Union(list_id)) = self.interner.lookup(evaluated) {
+                    let members = self.interner.type_list(list_id);
+                    let mut spread_alternatives: Vec<Vec<TupleElement>> =
+                        Vec::with_capacity(members.len());
+                    for &member in members.iter() {
+                        match self.interner.lookup(member) {
+                            Some(TypeData::Tuple(inner_list_id)) => {
+                                spread_alternatives
+                                    .push(self.interner.tuple_list(inner_list_id).to_vec());
+                            }
+                            Some(TypeData::Array(element_type)) => {
+                                spread_alternatives.push(vec![TupleElement {
+                                    type_id: element_type,
+                                    name: elem.name,
+                                    optional: elem.optional,
+                                    rest: true,
+                                }]);
+                            }
+                            _ => {
+                                spread_alternatives.push(vec![TupleElement {
+                                    type_id: member,
+                                    name: elem.name,
+                                    optional: elem.optional,
+                                    rest: true,
+                                }]);
+                            }
+                        }
+                    }
+
+                    let alternative_count =
+                        alternatives.len().saturating_mul(spread_alternatives.len());
+                    if alternative_count >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                        self.interner.mark_union_too_complex();
+                        return TypeId::ERROR;
+                    }
+
+                    let mut distributed = Vec::with_capacity(alternative_count);
+                    for prefix in alternatives {
+                        for spread in &spread_alternatives {
+                            let mut next = prefix.clone();
+                            next.extend(spread.iter().copied());
+                            distributed.push(next);
+                        }
+                    }
+                    alternatives = distributed;
+                    changed = true;
+                    continue;
                 }
             }
 
-            result.push(TupleElement {
+            let next_element = TupleElement {
                 type_id: evaluated,
                 name: elem.name,
                 optional: elem.optional,
                 rest: elem.rest,
-            });
+            };
+            for alternative in &mut alternatives {
+                alternative.push(next_element);
+            }
         }
 
         if !changed {
             return original_type_id;
         }
 
-        self.interner.tuple(result)
+        if alternatives.len() == 1 {
+            self.interner.tuple(alternatives.pop().unwrap_or_default())
+        } else {
+            self.interner.union(
+                alternatives
+                    .into_iter()
+                    .map(|elems| self.interner.tuple(elems))
+                    .collect(),
+            )
+        }
     }
 
     fn tuple_spread_alternative_count(&self, type_id: TypeId) -> Option<usize> {

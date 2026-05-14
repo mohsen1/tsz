@@ -1,11 +1,28 @@
 use crate::enums::evaluator::EnumEvaluator;
-use tsz_parser::parser::node::MethodDeclData;
+use tsz_parser::parser::node::{IndexSignatureData, MethodDeclData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::declaration_emitter) enum ClassMemberKind {
+    Property,
+    Method,
+    Accessor,
+    Signature,
+    IndexSignature,
+    Constructor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::declaration_emitter) struct ClassMemberInfo {
+    pub kind: ClassMemberKind,
+    pub name: Option<NodeIndex>,
+    pub is_static: bool,
+}
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_method_declaration(
@@ -248,46 +265,37 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
-            if let Some(method_type_id) = method_type_id
-                && let Some(return_type_id) =
+            if let Some(method_type_id) = method_type_id {
+                if let Some(predicate_text) = self
+                    .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
+                {
+                    self.write(": ");
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
-            {
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
                 {
-                    self.write(": void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
-                    && method.type_annotation.is_none()
-                    && method_body.is_none()
-                {
-                    // Ambient methods without explicit return type: tsc emits `any`
-                    self.write(": any");
-                } else {
-                    self.write(": ");
-                    self.write(&self.print_type_id(return_type_id));
-                }
-            } else if let Some(method_type_id) = method_type_id {
-                if method_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
-                {
-                    self.write(": void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else {
-                    self.write(": ");
-                    self.write(&self.print_type_id(method_type_id));
+                    if (return_type_id == tsz_solver::types::TypeId::ANY
+                        || return_type_id == tsz_solver::types::TypeId::NEVER)
+                        && method_body.is_some()
+                        && self.body_returns_void(method_body)
+                    {
+                        self.write(": void");
+                    } else if method_body.is_some()
+                        && let Some(type_text) =
+                            self.function_body_preferred_return_type_text(method_body)
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
+                        && method.type_annotation.is_none()
+                        && method_body.is_none()
+                    {
+                        // Ambient methods without explicit return type: tsc emits `any`
+                        self.write(": any");
+                    } else {
+                        self.write(": ");
+                        self.write(&self.print_type_id(return_type_id));
+                    }
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -339,7 +347,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let method_name = method.name;
         if method.type_annotation.is_some() {
-            self.emit_type(method.type_annotation);
+            if let Some(type_text) = self.preferred_annotation_name_text(method.type_annotation) {
+                self.write(&type_text);
+            } else {
+                self.emit_type(method.type_annotation);
+            }
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             let method_type_id = cache
                 .node_types
@@ -350,38 +362,28 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
-            if let Some(method_type_id) = method_type_id
-                && let Some(return_type_id) =
+            if let Some(method_type_id) = method_type_id {
+                if let Some(predicate_text) = self
+                    .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
+                {
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
-            {
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
                 {
-                    self.write("void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write_type_text_with_current_indent(&type_text);
-                } else {
-                    let type_text = self.print_type_id(return_type_id);
-                    self.write_type_text_with_current_indent(&type_text);
-                }
-            } else if let Some(method_type_id) = method_type_id {
-                if method_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
-                {
-                    self.write("void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write_type_text_with_current_indent(&type_text);
-                } else {
-                    let type_text = self.print_type_id(method_type_id);
-                    self.write_type_text_with_current_indent(&type_text);
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && method_body.is_some()
+                        && self.body_returns_void(method_body)
+                    {
+                        self.write("void");
+                    } else if method_body.is_some()
+                        && let Some(type_text) =
+                            self.function_body_preferred_return_type_text(method_body)
+                    {
+                        self.write_type_text_with_current_indent(&type_text);
+                    } else {
+                        let type_text = self.print_type_id(return_type_id);
+                        self.write_type_text_with_current_indent(&type_text);
+                    }
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -989,6 +991,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
         } else if !is_getter
             && !is_private
+            && let Some(type_text) = self.js_setter_param_declared_type_text(&accessor.parameters)
+        {
+            self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
+        } else if !is_getter
+            && !is_private
             && let Some(type_text) =
                 self.paired_getter_type_predicate_text(accessor_idx, &accessor.parameters)
         {
@@ -1013,14 +1020,24 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(type_text) = self.jsdoc_return_type_text_for_node(accessor_idx) {
                 self.write(": ");
                 self.write(&type_text);
+            } else if let Some(type_text) = self.jsdoc_type_text_for_node(accessor_idx) {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(type_text) = self.matching_setter_parameter_type_text(accessor_idx) {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_id) =
                 self.get_node_type_or_names(&[accessor_idx, accessor.name])
             {
-                // If solver returned `any` but body clearly returns void, prefer void
-                if type_id == tsz_solver::types::TypeId::ANY
+                // Invalid ambient-style accessors in `.ts` sources have no body.
+                // tsc declaration emit prints `any` for their getter type even
+                // when checker recovery reports `void`.
+                if accessor_body.is_none()
+                    && !self.source_is_declaration_file
+                    && type_id == tsz_solver::types::TypeId::VOID
+                {
+                    self.write(": any");
+                } else if type_id == tsz_solver::types::TypeId::ANY
                     && accessor_body.is_some()
                     && self.body_returns_void(accessor_body)
                 {
@@ -1480,6 +1497,23 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn js_setter_param_declared_type_text(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+    ) -> Option<String> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let param_idx = *params.nodes.first()?;
+        let decl = self.jsdoc_param_decl_for_parameter(param_idx, 0)?;
+        let mut type_text = decl.type_text;
+        if decl.optional && !Self::type_text_has_undefined_branch(&type_text) {
+            type_text.push_str(" | undefined");
+        }
+        Some(type_text)
+    }
+
     pub(in crate::declaration_emitter) fn emit_index_signature(&mut self, sig_idx: NodeIndex) {
         let Some(sig_node) = self.arena.get(sig_idx) else {
             return;
@@ -1494,16 +1528,121 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_member_modifiers(&sig.modifiers);
 
         self.write("[");
-        self.emit_parameters(&sig.parameters);
+        if let Some(text) = self.recovered_legacy_index_signature_parameters(sig_node, sig) {
+            self.write(&text);
+        } else {
+            self.emit_parameters(&sig.parameters);
+        }
         self.write("]");
 
         if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(sig.type_annotation);
+        } else if !self.source_is_declaration_file {
+            self.write(": any");
         }
 
         self.write(";");
         self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn recovered_legacy_index_signature_parameters(
+        &self,
+        sig_node: &Node,
+        sig: &IndexSignatureData,
+    ) -> Option<String> {
+        let source = self.source_file_text.as_ref()?;
+        let pos = sig
+            .parameters
+            .nodes
+            .first()
+            .and_then(|idx| self.arena.get(*idx))
+            .map_or(sig_node.pos as usize, |node| node.pos as usize);
+        let line_start = source[..pos].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = source[pos..]
+            .find('\n')
+            .map_or(source.len(), |idx| pos + idx);
+        let line = source.get(line_start..line_end)?;
+        let start = Self::index_signature_open_bracket_before_pos(line, pos - line_start)?;
+        let end = line[start + 1..].find(']')? + start + 1;
+        let inner = line[start + 1..end].trim();
+        (inner.contains(',') && !inner.contains('\n')).then(|| inner.to_string())
+    }
+
+    pub(in crate::declaration_emitter) fn emit_index_signature_parameters(
+        &mut self,
+        params: &NodeList,
+    ) {
+        let mut first = true;
+        for &param_idx in &params.nodes {
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let comment_pos = self
+                .arena
+                .get(param.name)
+                .map_or(param_node.pos, |name_node| name_node.pos);
+            self.emit_inline_parameter_comment(comment_pos);
+            self.emit_member_modifiers(&param.modifiers);
+            if param.dot_dot_dot_token {
+                self.write("...");
+            }
+            if let Some(name) = self.recovered_index_signature_parameter_name(param_node) {
+                self.write(&name);
+            } else if let Some(name) = self.get_identifier_text(param.name) {
+                self.write(&name);
+            } else {
+                self.emit_node(param.name);
+            }
+            if param.question_token {
+                self.write("?");
+            }
+            if param.type_annotation.is_some() {
+                self.write(": ");
+                self.emit_type(param.type_annotation);
+            }
+        }
+    }
+
+    fn recovered_index_signature_parameter_name(&self, param_node: &Node) -> Option<String> {
+        let name = self
+            .arena
+            .get_parameter(param_node)
+            .and_then(|param| self.get_identifier_text(param.name))?;
+        if !name.contains(',') && !name.contains('[') {
+            return None;
+        }
+        let source = self.source_file_text.as_ref()?;
+        let pos = param_node.pos as usize;
+        let line_start = source[..pos].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = source[pos..]
+            .find('\n')
+            .map_or(source.len(), |idx| pos + idx);
+        let line = source.get(line_start..line_end)?;
+        let open = Self::index_signature_open_bracket_before_pos(line, pos - line_start)?;
+        let after_open = line.get(open + 1..)?;
+        let colon = after_open.find(':')?;
+        let candidate = after_open.get(..colon)?.trim();
+        (!candidate.is_empty()
+            && candidate
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+        .then(|| candidate.to_string())
+    }
+
+    fn index_signature_open_bracket_before_pos(line: &str, pos_in_line: usize) -> Option<usize> {
+        line[..pos_in_line.min(line.len())]
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| (ch == '[').then_some(idx))
     }
 
     pub(in crate::declaration_emitter) fn emit_type_alias_declaration(
@@ -1791,26 +1930,63 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn class_member_info(
+        &self,
+        member_idx: NodeIndex,
+    ) -> Option<ClassMemberInfo> {
+        let member_node = self.arena.get(member_idx)?;
+
+        if let Some(prop) = self.arena.get_property_decl(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Property,
+                name: Some(prop.name),
+                is_static: self.arena.is_static(&prop.modifiers),
+            });
+        }
+        if let Some(method) = self.arena.get_method_decl(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Method,
+                name: Some(method.name),
+                is_static: self.arena.is_static(&method.modifiers),
+            });
+        }
+        if let Some(accessor) = self.arena.get_accessor(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Accessor,
+                name: Some(accessor.name),
+                is_static: self.arena.is_static(&accessor.modifiers),
+            });
+        }
+        if let Some(sig) = self.arena.get_signature(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Signature,
+                name: Some(sig.name),
+                is_static: false,
+            });
+        }
+        if let Some(index) = self.arena.get_index_signature(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::IndexSignature,
+                name: None,
+                is_static: self.arena.is_static(&index.modifiers),
+            });
+        }
+        if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Constructor,
+                name: None,
+                is_static: false,
+            });
+        }
+        None
+    }
+
     /// Get the name `NodeIndex` of a class or interface member, if it has one.
     pub(in crate::declaration_emitter) fn get_member_name_idx(
         &self,
         member_idx: NodeIndex,
     ) -> Option<NodeIndex> {
-        let member_node = self.arena.get(member_idx)?;
-
-        if let Some(prop) = self.arena.get_property_decl(member_node) {
-            return Some(prop.name);
-        }
-        if let Some(method) = self.arena.get_method_decl(member_node) {
-            return Some(method.name);
-        }
-        if let Some(accessor) = self.arena.get_accessor(member_node) {
-            return Some(accessor.name);
-        }
-        if let Some(sig) = self.arena.get_signature(member_node) {
-            return Some(sig.name);
-        }
-        None
+        self.class_member_info(member_idx)?.name
     }
 
     /// Check if a member has a computed property name that should NOT be emitted in `.d.ts`.
@@ -1832,33 +2008,11 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         members: &tsz_parser::parser::NodeList,
     ) -> bool {
-        for &member_idx in &members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            // Check property declarations
-            if let Some(prop) = self.arena.get_property_decl(member_node)
-                && let Some(name_node) = self.arena.get(prop.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-            // Check method declarations
-            if let Some(method) = self.arena.get_method_decl(member_node)
-                && let Some(name_node) = self.arena.get(method.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-            // Check accessors
-            if let Some(accessor) = self.arena.get_accessor(member_node)
-                && let Some(name_node) = self.arena.get(accessor.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-        }
-        false
+        members
+            .nodes
+            .iter()
+            .copied()
+            .any(|member_idx| self.member_has_private_identifier_name(member_idx))
     }
 
     /// Check if a function body has any return statements with value expressions.
@@ -1898,6 +2052,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 true
             }
+            k if k == syntax_kind_ext::THROW_STATEMENT => true,
             k if k == syntax_kind_ext::BLOCK => {
                 if let Some(block) = self.arena.get_block(stmt_node) {
                     self.block_returns_void(&block.statements)

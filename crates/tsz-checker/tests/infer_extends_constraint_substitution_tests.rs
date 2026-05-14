@@ -43,6 +43,63 @@ fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool 
     diags.iter().any(|d| d.code == code)
 }
 
+#[test]
+fn template_literal_middle_infer_matches_known_substring() {
+    let source = r#"
+type DropString<S extends string, T extends string> =
+  S extends `${infer Before}${T}${infer After}`
+    ? `${Before}${After}`
+    : S;
+
+type DS1 = DropString<'hello', 'l'>;
+const ds1: DS1 = 'helo';
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected DropString<'hello', 'l'> to evaluate to 'helo', got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn template_literal_trailing_infer_matches_union_suffix() {
+    let source = r#"
+type Whitespace = ' ' | '\t' | '\n';
+
+type TrimRight<S extends string> =
+  S extends `${infer Rest}${Whitespace}`
+    ? TrimRight<Rest>
+    : S;
+
+type TR1 = TrimRight<'hello  '>;
+const tr1: TR1 = 'hello';
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected TrimRight<'hello  '> to evaluate to 'hello', got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn template_literal_type_parameter_delimiters_match() {
+    let source = r#"
+type Param<S extends string, L extends string, R extends string> =
+  S extends `${L}${infer X}${R}` ? X : never;
+
+type P1 = Param<"(hello)", "(", ")">;
+const p1: P1 = "hello";
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "expected Param<'(hello)', '(', ')'> to evaluate to 'hello', got diagnostics: {diags:?}"
+    );
+}
+
 /// `infer A extends keyof T` should work when T is a substituted type parameter.
 /// `GetPath<T, P>` recursively walks a path through an object type.
 #[test]
@@ -338,5 +395,95 @@ let c: "no_match" = r;  // should NOT error: R should be "no_match"
         !has_error(&diags, 2322),
         "Should NOT get TS2322: 'z' is not keyof Obj, so result should be 'no_match'. Got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_constrained_infer_preserves_tuple_head_literal() {
+    let source = r#"
+type FirstString<T> = T extends [infer F extends string, ...any[]] ? F : never;
+type FS1 = FirstString<["hello", 1, true]>;
+
+const fs1: FS1 = "hello";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained tuple-head infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn named_function_parameter_infer_extracts_first_arg() {
+    let source = r#"
+type FirstArg<T> = T extends (first: infer F, ...args: any[]) => any ? F : never;
+type FA = FirstArg<(a: number, b: string) => void>;
+
+const fa: FA = 42;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected named function parameter infer to extract number. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_preserves_function_return_literal() {
+    let source = r#"
+type ReturnString<T> = T extends (...args: any[]) => (infer R extends string) ? R : never;
+type RS1 = ReturnString<() => "hello">;
+
+const rs1: RS1 = "hello";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained function-return infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn named_single_function_parameter_infer_extracts_arg() {
+    let source = r#"
+type Arg<T> = T extends (x: infer X) => any ? X : never;
+type A = Arg<(value: string) => void>;
+
+const a: A = "value";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected single named function parameter infer to extract string. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_constrained_infer_preserves_object_property_literal() {
+    let source = r#"
+type ExtractValue<T> = T extends { value: infer V extends string | number } ? V : never;
+type EV1 = ExtractValue<{ value: "test" }>;
+
+const ev1: EV1 = "test";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected constrained object-property infer to preserve the literal type. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn named_method_parameter_infer_extracts_arg() {
+    let source = r#"
+type MethodArg<T> = T extends { method(arg: infer A): any } ? A : never;
+type A = MethodArg<{ method(value: boolean): void }>;
+
+const a: A = true;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        !has_error(&diags, 2322),
+        "Expected named method parameter infer to extract boolean. Got: {diags:#?}"
     );
 }

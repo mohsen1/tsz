@@ -63,6 +63,9 @@ pub struct TypeLowering<'a> {
     /// Optional resolver for lazy type parameter metadata. This is used when
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
+    /// Optional compiler-controlled intrinsic replacement for the lib-only
+    /// `BuiltinIteratorReturn` alias.
+    pub(super) builtin_iterator_return_type: Option<TypeId>,
     /// When true, prefer identifier-text `DefId` resolution over raw NodeIndex-based
     /// resolution. This is needed for cross-arena lowering where the same `NodeIndex`
     /// may refer to different identifiers in different arenas.
@@ -97,6 +100,10 @@ pub(super) struct InterfaceParts {
     pub(super) call_signatures: Vec<CallSignature>,
     pub(super) construct_signatures: Vec<CallSignature>,
     pub(super) string_index: Option<IndexSignature>,
+    /// Additional string-keyed index signatures whose key type differs from
+    /// `string_index.key_type`. Merged into `string_index` via key-type union
+    /// in `finish_interface_parts`, where the type interner is available.
+    pub(super) extra_string_indices: Vec<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
     /// Base `declaration_order` for the current declaration pass.
     current_pass_base: u32,
@@ -134,6 +141,7 @@ impl InterfaceParts {
             call_signatures: Vec::new(),
             construct_signatures: Vec::new(),
             string_index: None,
+            extra_string_indices: Vec::new(),
             number_index: None,
             current_pass_base: 0,
             pass_local_counter: 0,
@@ -275,19 +283,31 @@ impl InterfaceParts {
     }
 
     pub(super) fn merge_index_signature(&mut self, index: IndexSignature) {
-        let target = if index.key_type == TypeId::NUMBER {
-            &mut self.number_index
-        } else {
-            &mut self.string_index
-        };
+        if index.key_type == TypeId::NUMBER {
+            if let Some(existing) = self.number_index.as_mut() {
+                if existing.value_type != index.value_type || existing.readonly != index.readonly {
+                    existing.value_type = TypeId::ERROR;
+                    existing.readonly = false;
+                }
+            } else {
+                self.number_index = Some(index);
+            }
+            return;
+        }
 
-        if let Some(existing) = target.as_mut() {
-            if existing.value_type != index.value_type || existing.readonly != index.readonly {
-                existing.value_type = TypeId::ERROR;
-                existing.readonly = false;
+        if let Some(existing) = self.string_index.as_mut() {
+            if existing.key_type == index.key_type {
+                if existing.value_type != index.value_type || existing.readonly != index.readonly {
+                    existing.value_type = TypeId::ERROR;
+                    existing.readonly = false;
+                }
+            } else {
+                // Distinct pattern: defer key-type union to finish_interface_parts
+                // where the type interner is available.
+                self.extra_string_indices.push(index);
             }
         } else {
-            *target = Some(index);
+            self.string_index = Some(index);
         }
     }
 }
@@ -327,6 +347,7 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: None,
             computed_symbol_name_resolver: None,
             lazy_type_params_resolver: None,
+            builtin_iterator_return_type: None,
             prefer_name_def_id_resolution: false,
             preferred_self_name: None,
             preferred_self_def_id: None,
@@ -439,6 +460,7 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: self.computed_name_resolver,
             computed_symbol_name_resolver: self.computed_symbol_name_resolver,
             lazy_type_params_resolver: self.lazy_type_params_resolver,
+            builtin_iterator_return_type: self.builtin_iterator_return_type,
             prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
             preferred_self_name: self.preferred_self_name.clone(),
             preferred_self_def_id: self.preferred_self_def_id,
@@ -713,6 +735,14 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(DefId) -> Option<Vec<TypeParamInfo>>,
     ) -> Self {
         self.lazy_type_params_resolver = Some(resolver);
+        self
+    }
+
+    /// Replace lib `BuiltinIteratorReturn` references while lowering in
+    /// checker-controlled lib/source-file direct paths. Normal user lowering
+    /// leaves this unset so a user alias with the same name can still shadow it.
+    pub const fn with_builtin_iterator_return_type(mut self, ty: TypeId) -> Self {
+        self.builtin_iterator_return_type = Some(ty);
         self
     }
 
@@ -2088,9 +2118,26 @@ impl<'a> TypeLowering<'a> {
 
     fn finish_interface_parts(
         &self,
-        parts: InterfaceParts,
+        mut parts: InterfaceParts,
         symbol_id: Option<tsz_binder::SymbolId>,
     ) -> TypeId {
+        // When an interface (or merged interface group) carries multiple string-keyed
+        // index signatures with distinct key patterns (e.g. `[k: \`data-${string}\`]`
+        // and `[k: \`aria-${string}\`]`), union their key types so that excess-property
+        // checking accepts a property whose name matches ANY of the patterns.
+        for extra in parts.extra_string_indices.drain(..) {
+            if let Some(ref mut existing) = parts.string_index {
+                existing.key_type = self.interner.union2(existing.key_type, extra.key_type);
+                if existing.value_type != extra.value_type {
+                    existing.value_type =
+                        self.interner.union2(existing.value_type, extra.value_type);
+                }
+                existing.readonly &= extra.readonly;
+            } else {
+                parts.string_index = Some(extra);
+            }
+        }
+
         let mut properties = Vec::with_capacity(parts.properties.len());
         for (name, entry) in parts.properties {
             // Use forward declaration order when available (corrects reverse iteration order)

@@ -1099,6 +1099,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.get_display_alias(type_id)
     }
 
+    fn mark_conditional_alias_base(&self, base: TypeId) {
+        self.interner.mark_conditional_alias_base(base);
+    }
+
+    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        self.interner.is_conditional_alias_base(base)
+    }
+
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         self.interner
             .store_union_origin(union_type_id, origin_members);
@@ -1140,6 +1148,10 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn get_array_display_base_type(&self) -> Option<TypeId> {
         self.interner.get_array_display_base_type()
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        self.interner.get_readonly_array_base_type()
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
@@ -1198,6 +1210,10 @@ impl TypeResolver for QueryCache<'_> {
     fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         self.interner.get_array_base_type_params()
     }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        self.interner.get_readonly_array_base_type()
+    }
 }
 
 impl QueryDatabase for QueryCache<'_> {
@@ -1215,6 +1231,10 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn register_array_display_base_type(&self, type_id: TypeId) {
         self.interner.set_array_display_base_type(type_id);
+    }
+
+    fn register_readonly_array_base_type(&self, type_id: TypeId) {
+        self.interner.set_readonly_array_base_type(type_id);
     }
 
     fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {

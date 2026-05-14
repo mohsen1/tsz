@@ -14,4 +14,5 @@ pub(crate) mod cross_file;
 mod cross_file_cache;
 pub(crate) mod cross_file_direct;
 pub(crate) mod cross_file_query_types;
+mod cross_file_residue;
 mod symbol_type_helpers;

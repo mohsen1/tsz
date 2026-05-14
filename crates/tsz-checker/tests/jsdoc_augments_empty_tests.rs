@@ -1,17 +1,14 @@
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_js_source_code_messages_with_options;
 
 fn check_js_with_jsdoc(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source(
+    check_js_source_code_messages_with_options(
         source,
         "a.js",
         CheckerOptions {
-            check_js: true,
             ..CheckerOptions::default()
         },
     )
-    .into_iter()
-    .map(|d| (d.code, d.message_text))
-    .collect()
 }
 
 #[test]

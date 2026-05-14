@@ -50,8 +50,12 @@ import argparse
 import pathlib
 import re
 import sys
-import tomllib
 from dataclasses import dataclass
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11 on some CI/self-hosted images.
+    tomllib = None
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 CHECKER_CONTEXT_RS = ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs"
@@ -70,6 +74,13 @@ VALID_LIFETIMES = frozenset(
         # `Unknown` is intentionally NOT in this set: it is the explicit
         # "must classify before merge" sentinel that triggers CI failure.
     }
+)
+
+SIMPLE_INLINE_ENTRY_RE = re.compile(
+    r'^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*\{\s*'
+    r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+    r'reason\s*=\s*"([^"]*)"\s*'
+    r"\}\s*(?:#.*)?$"
 )
 
 
@@ -145,14 +156,41 @@ def load_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, str]]:
     """
     if not toml_path.exists():
         return {}
-    with toml_path.open("rb") as fh:
-        raw = tomllib.load(fh)
+    if tomllib is not None:
+        with toml_path.open("rb") as fh:
+            raw = tomllib.load(fh)
+    else:
+        raw = load_simple_inline_manifest(toml_path)
     out: dict[str, dict[str, str]] = {}
     for field_name, entry in raw.items():
         if not isinstance(entry, dict):
             continue
         lifetime = entry.get("lifetime", "")
         reason = entry.get("reason", "")
+        out[field_name] = {"lifetime": lifetime, "reason": reason}
+    return out
+
+
+def load_simple_inline_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, str]]:
+    """Parse the simple inline-table manifest shape on Python < 3.11.
+
+    The checked-in manifest intentionally uses one inline table per field:
+    `field = { lifetime = "...", reason = "..." }`.
+    """
+    out: dict[str, dict[str, str]] = {}
+    lines = toml_path.read_text(encoding="utf-8").splitlines()
+    for line_number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = SIMPLE_INLINE_ENTRY_RE.match(line)
+        if match is None:
+            raise RuntimeError(
+                f"{toml_path.relative_to(ROOT)}:{line_number}: unsupported TOML syntax "
+                "for Python < 3.11 fallback parser; use one inline table with "
+                '`lifetime` and `reason`, or run with Python 3.11+.'
+            )
+        field_name, lifetime, reason = match.groups()
         out[field_name] = {"lifetime": lifetime, "reason": reason}
     return out
 

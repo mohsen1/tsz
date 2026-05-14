@@ -1045,6 +1045,16 @@ pub fn resolve_compiler_options(
     }
     if let Some(v) = options.strict_builtin_iterator_return {
         resolved.checker.strict_builtin_iterator_return = v;
+    } else if options
+        .invalidated_options
+        .iter()
+        .any(|key| key == "strictBuiltinIteratorReturn")
+        && let Some(strict) = options.strict
+    {
+        // tsc reports TS5024 for an invalid explicitly-provided
+        // strictBuiltinIteratorReturn value, but the invalid sub-option does
+        // not block the strict umbrella from selecting the effective value.
+        resolved.checker.strict_builtin_iterator_return = strict;
     }
 
     if let Some(no_emit) = options.no_emit {

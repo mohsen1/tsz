@@ -905,6 +905,15 @@ impl<'a> Printer<'a> {
             );
         }
 
+        if self.ctx.target_es5
+            && !self.ctx.options.legacy_decorators
+            && let Some(class_node_ref) = self.arena.get(class_node)
+            && let Some(class_data) = self.arena.get_class(class_node_ref)
+            && self.class_has_tc39_decorator_nodes(class_data)
+        {
+            es5_emitter.set_tc39_decorators(true);
+        }
+
         // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
         if self.ctx.options.legacy_decorators
             && let Some(class_node_ref) = self.arena.get(class_node)
@@ -998,6 +1007,57 @@ impl<'a> Printer<'a> {
         }
 
         es5_emitter
+    }
+
+    fn class_has_tc39_decorator_nodes(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        let has_decorator = |mods: &Option<tsz_parser::parser::NodeList>| {
+            mods.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+        };
+
+        if has_decorator(&class_data.modifiers) {
+            return true;
+        }
+
+        class_data.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .is_some_and(|method| has_decorator(&method.modifiers)),
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .is_some_and(|prop| has_decorator(&prop.modifiers)),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .is_some_and(|accessor| has_decorator(&accessor.modifiers))
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    self.arena.get_constructor(member_node).is_some_and(|ctor| {
+                        ctor.parameters.nodes.iter().any(|&param_idx| {
+                            self.arena
+                                .get(param_idx)
+                                .and_then(|param_node| self.arena.get_parameter(param_node))
+                                .is_some_and(|param| has_decorator(&param.modifiers))
+                        })
+                    })
+                }
+                _ => false,
+            }
+        })
     }
 
     fn emit_tc39_decorators(

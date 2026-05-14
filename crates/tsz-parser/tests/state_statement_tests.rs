@@ -39,7 +39,12 @@ fn parse_statement_recovery_on_malformed_top_level_diagnostics() {
 }
 
 #[test]
-fn top_level_modifier_before_break_recovers_as_empty_statement() {
+fn top_level_modifier_before_break_recovers_as_break_statement() {
+    // tsc's recovery for `public break;` at the top level: strip the
+    // out-of-context modifier, parse `break;` as a normal break statement
+    // (so JS emit produces `break;` rather than `;`), and emit only TS1128
+    // at the modifier position. The checker does not complain about the
+    // orphan break in this error-recovery context.
     let (parser, root) = parse_source("public break;");
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -55,8 +60,8 @@ fn top_level_modifier_before_break_recovers_as_empty_statement() {
     let statement_node = arena.get(statement).expect("statement");
     assert_eq!(
         statement_node.kind,
-        syntax_kind_ext::EMPTY_STATEMENT,
-        "top-level `public break;` should not leave a break statement for checker diagnostics"
+        syntax_kind_ext::BREAK_STATEMENT,
+        "top-level `public break;` should keep `break;` after stripping the modifier so JS emit matches tsc"
     );
 }
 

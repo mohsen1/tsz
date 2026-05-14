@@ -924,6 +924,69 @@ impl<'a> CheckerState<'a> {
             .any(|child_idx| self.type_node_contains_infer_binding_named(child_idx, name))
     }
 
+    /// Walk `extends_type` collecting every `infer X` binding and push each as a
+    /// provisional type parameter into `type_parameter_scope`. Returns save-state
+    /// for `pop_infer_bindings`.
+    fn push_infer_bindings_from_extends(
+        &mut self,
+        extends_type: NodeIndex,
+    ) -> Vec<(String, Option<TypeId>)> {
+        if extends_type.is_none() {
+            return Vec::new();
+        }
+        let factory = self.ctx.types.factory();
+        let mut pushes: Vec<(String, Option<TypeId>)> = Vec::new();
+        let mut stack = vec![extends_type];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::INFER_TYPE {
+                if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
+                    if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+                        && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                        && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let name = ident.escaped_text.clone();
+                        let atom = self.ctx.types.intern_string(&name);
+                        let provisional = factory.type_param(tsz_solver::TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        });
+                        let previous = self
+                            .ctx
+                            .type_parameter_scope
+                            .insert(name.clone(), provisional);
+                        pushes.push((name, previous));
+                    }
+                    // The constraint of `infer X extends Constraint` may itself
+                    // contain `infer Y extends C2`; tsc binds those nested names
+                    // in the true branch too. Descend into the type-parameter
+                    // subtree to pick them up.
+                    stack.push(infer_data.type_parameter);
+                }
+                continue;
+            }
+            for child in self.ctx.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+        pushes
+    }
+
+    fn pop_infer_bindings(&mut self, pushes: Vec<(String, Option<TypeId>)>) {
+        for (name, previous) in pushes.into_iter().rev() {
+            if let Some(prev) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+        }
+    }
+
     /// Walk a type argument AST node and return true if it contains a reference
     /// to the alias `alias_sid` inside a "computation" context that would cause
     /// a true cycle during type argument resolution.
@@ -1232,6 +1295,11 @@ impl<'a> CheckerState<'a> {
                 //
                 // This minimizes side effects from type resolution while still catching
                 // invalid mapped type keys inside conditional types.
+                //
+                // Infer-binding scope: `infer X` declarations in ExtendsType bind `X` in
+                // TrueType only. Push them as provisional type parameters only while
+                // recursing into TrueType so references to `X` inside FalseType still
+                // report TS2304 like `tsc`.
                 if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
                     let true_is_mapped = self
                         .ctx
@@ -1251,7 +1319,10 @@ impl<'a> CheckerState<'a> {
                                 check_type,
                             );
                         if !check_is_type_param {
+                            let infer_pushes =
+                                self.push_infer_bindings_from_extends(cond.extends_type);
                             self.check_type_node(cond.true_type);
+                            self.pop_infer_bindings(infer_pushes);
                         }
                     }
                     let false_is_mapped = self

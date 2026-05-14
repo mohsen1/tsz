@@ -15,15 +15,336 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.call_expression_returned_local_class_constructor_text(expr_idx, false))
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
+                    .or_else(|| self.generic_call_literal_type_text(expr_idx))
+                    .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
+                    .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
+                    .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
-                    .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
             })
             .map(Self::normalize_constructor_arrow_return_object_text)
             .map(|type_text| {
                 self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &type_text)
                     .unwrap_or(type_text)
+            })
+            .map(|type_text| {
+                Self::expand_parameters_utility_tuple_type_text(&type_text).unwrap_or(type_text)
+            })
+    }
+
+    fn call_expression_local_overload_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let args = call.arguments.as_ref()?;
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(call.expression)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+
+        let mut candidates = Vec::new();
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            if callable.body.is_some()
+                || callable
+                    .type_parameters
+                    .is_some_and(|params| !params.nodes.is_empty())
+                || callable.type_annotation.is_none()
+                || !self.function_signature_accepts_call_arguments(
+                    self.arena,
+                    callable.parameters,
+                    call,
+                )
+            {
+                continue;
+            }
+            let Some(return_type) = self
+                .emit_type_node_text_from_arena(self.arena, callable.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, callable.type_annotation))
+            else {
+                continue;
+            };
+            let exact =
+                self.overload_signature_exact_literal_match(callable.parameters, &args.nodes);
+            if exact || self.overload_signature_accepts_arguments(callable.parameters, &args.nodes)
+            {
+                candidates.push((exact, return_type.trim().to_string()));
+            }
+        }
+
+        candidates
+            .iter()
+            .find_map(|(exact, return_type)| exact.then(|| return_type.clone()))
+            .or_else(|| {
+                candidates
+                    .into_iter()
+                    .next()
+                    .map(|(_, return_type)| return_type)
+            })
+    }
+
+    fn overload_signature_exact_literal_match(
+        &self,
+        parameters: &NodeList,
+        arg_nodes: &[NodeIndex],
+    ) -> bool {
+        !arg_nodes.is_empty()
+            && parameters
+                .nodes
+                .iter()
+                .zip(arg_nodes.iter())
+                .all(|(&param_idx, &arg_idx)| {
+                    let Some(param_type) = self.overload_parameter_type_text(param_idx) else {
+                        return false;
+                    };
+                    let Some(arg_type) = self.overload_argument_type_text(arg_idx) else {
+                        return false;
+                    };
+                    Self::overload_type_text_is_single_literal(&arg_type)
+                        && param_type.trim() == arg_type.trim()
+                })
+    }
+
+    fn overload_signature_accepts_arguments(
+        &self,
+        parameters: &NodeList,
+        arg_nodes: &[NodeIndex],
+    ) -> bool {
+        parameters
+            .nodes
+            .iter()
+            .zip(arg_nodes.iter())
+            .all(|(&param_idx, &arg_idx)| {
+                let Some(param_type) = self.overload_parameter_type_text(param_idx) else {
+                    return false;
+                };
+                let Some(arg_type) = self.overload_argument_type_text(arg_idx) else {
+                    return false;
+                };
+                Self::overload_type_accepts_argument_type(&param_type, &arg_type)
+            })
+    }
+
+    fn overload_parameter_type_text(&self, param_idx: NodeIndex) -> Option<String> {
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        self.emit_type_node_text_from_arena(self.arena, param.type_annotation)
+            .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+            .map(|text| text.trim().to_string())
+    }
+
+    fn overload_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+        self.reference_declared_type_annotation_text(arg_idx)
+            .or_else(|| self.const_literal_initializer_text(arg_idx))
+            .or_else(|| self.preferred_expression_type_text(arg_idx))
+            .filter(|text| text != "any" && text != "unknown")
+            .map(|text| text.trim().to_string())
+    }
+
+    fn overload_type_accepts_argument_type(param_type: &str, arg_type: &str) -> bool {
+        let param_parts = Self::split_top_level_union_type_parts(param_type);
+        let arg_parts = Self::split_top_level_union_type_parts(arg_type);
+        !arg_parts.is_empty()
+            && arg_parts.iter().all(|arg_part| {
+                param_parts.iter().any(|param_part| {
+                    Self::overload_type_part_accepts_argument(param_part, arg_part)
+                })
+            })
+    }
+
+    fn overload_type_part_accepts_argument(param_part: &str, arg_part: &str) -> bool {
+        let param_part = param_part.trim();
+        let arg_part = arg_part.trim();
+        param_part == arg_part
+            || Self::overload_literal_primitive_name(arg_part)
+                .is_some_and(|primitive| primitive == param_part)
+    }
+
+    fn overload_type_text_is_single_literal(type_text: &str) -> bool {
+        let parts = Self::split_top_level_union_type_parts(type_text);
+        parts.len() == 1 && Self::overload_literal_primitive_name(&parts[0]).is_some()
+    }
+
+    fn overload_literal_primitive_name(type_text: &str) -> Option<&'static str> {
+        let trimmed = type_text.trim();
+        if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+        {
+            return Some("string");
+        }
+        if matches!(trimmed, "true" | "false") {
+            return Some("boolean");
+        }
+        trimmed.parse::<f64>().ok().map(|_| "number")
+    }
+
+    fn call_expression_function_variable_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        if call.type_arguments.is_some() {
+            return None;
+        }
+        let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        if let Some(sym_id) = self.value_reference_symbol(callee_idx) {
+            let binder = self.binder?;
+            let sym_id = self
+                .resolve_portability_import_alias(sym_id, binder)
+                .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+            if self
+                .with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+                    let decl_node = source_arena.get(decl_idx)?;
+                    Some(
+                        // A local function variable can call itself inside its
+                        // own initializer; reusing that initializer type would
+                        // recursively re-enter declaration inference.
+                        std::ptr::eq(source_arena, self.arena)
+                            && decl_node.pos <= expr_node.pos
+                            && expr_node.end <= decl_node.end,
+                    )
+                })
+                .unwrap_or(false)
+            {
+                return None;
+            }
+        }
+        let type_text = self.local_variable_initializer_type_text(callee_idx)?;
+        let parts = Self::parse_function_type_text(&type_text)?;
+        let return_type = parts.return_type.trim();
+        if return_type == "any" || return_type == "unknown" || !return_type.contains('"') {
+            return None;
+        }
+        Some(return_type.to_string())
+    }
+
+    fn generic_call_returned_identity_callback_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        if call.type_arguments.is_some() {
+            return None;
+        }
+        let arguments = call.arguments.as_ref()?;
+        let binder = self.binder?;
+        let sym_id = self.value_reference_symbol(call.expression).or_else(|| {
+            let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+            let callee_name = self.get_identifier_text(callee_idx)?;
+            binder.file_locals.get(&callee_name)
+        })?;
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            // Do not infer from the declaration currently being emitted.
+            if std::ptr::eq(source_arena, self.arena)
+                && decl_node.pos <= expr_node.pos
+                && expr_node.end <= decl_node.end
+            {
+                return None;
+            }
+            let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
+            let returned_param_index =
+                self.returned_parameter_index_from_function_body(source_arena, func)?;
+            let returned_param_node =
+                source_arena.get(*func.parameters.nodes.get(returned_param_index)?)?;
+            let returned_param = source_arena.get_parameter(returned_param_node)?;
+            let param_type_text = self
+                .emit_type_node_text_from_arena(source_arena, returned_param.type_annotation)
+                .or_else(|| {
+                    self.source_slice_from_arena(source_arena, returned_param.type_annotation)
+                })?;
+            let source_function_type = Self::parse_function_type_text(param_type_text.trim())?;
+
+            let mut type_param_constraints = Vec::new();
+            let type_param_names = func
+                .type_parameters
+                .as_ref()?
+                .nodes
+                .iter()
+                .copied()
+                .filter_map(|param_idx| {
+                    let param_node = source_arena.get(param_idx)?;
+                    let param = source_arena.get_type_parameter(param_node)?;
+                    let name = identifier_text(source_arena, param.name)?;
+                    if param.constraint.is_some()
+                        && let Some(constraint) = self
+                            .emit_type_node_text_from_arena(source_arena, param.constraint)
+                            .or_else(|| {
+                                self.source_slice_from_arena(source_arena, param.constraint)
+                            })
+                    {
+                        type_param_constraints.push((name.clone(), constraint));
+                    }
+                    Some(name)
+                })
+                .collect::<Vec<_>>();
+            let arg_idx = *arguments.nodes.get(returned_param_index)?;
+            let (param_name, value_text) = self.infer_constrained_identity_callback_substitution(
+                &source_function_type,
+                arg_idx,
+                &type_param_names,
+                &type_param_constraints,
+            )?;
+            Some(Self::replace_whole_words_in_text(
+                param_type_text.trim(),
+                &[(param_name, value_text)],
+            ))
+        })
+    }
+
+    fn returned_parameter_index_from_function_body(
+        &self,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+    ) -> Option<usize> {
+        let body_node = source_arena.get(func.body)?;
+        let block = source_arena.get_block(body_node)?;
+        if block.statements.nodes.len() != 1 {
+            return None;
+        }
+        let stmt_node = source_arena.get(*block.statements.nodes.first()?)?;
+        let ret = source_arena.get_return_statement(stmt_node)?;
+        let returned_name = identifier_text(source_arena, ret.expression)?;
+        func.parameters
+            .nodes
+            .iter()
+            .copied()
+            .enumerate()
+            .find_map(|(index, param_idx)| {
+                let param_node = source_arena.get(param_idx)?;
+                let param = source_arena.get_parameter(param_node)?;
+                (identifier_text(source_arena, param.name).as_deref()
+                    == Some(returned_name.as_str()))
+                .then_some(index)
             })
     }
 
@@ -375,6 +696,22 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         if self.function_expression_has_type_parameters(call.expression) {
+            return true;
+        }
+
+        if call
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return true;
+        }
+
+        if self
+            .arena
+            .get(call.expression)
+            .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS)
+        {
             return true;
         }
 

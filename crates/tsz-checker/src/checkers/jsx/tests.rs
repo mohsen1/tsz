@@ -1109,6 +1109,110 @@ fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     );
 }
 
+/// React component alias types (`ComponentType<P>`, `ComponentClass<P>`, etc.) with
+/// multi-constructor overloads must not emit TS2786. The multi-construct path goes
+/// through `check_jsx_overloaded_sfc`; the same React-alias skip that guards the
+/// non-overload path must apply there too to avoid cycle-detection false positives.
+///
+/// This test uses two different type-parameter names (`T` and `K`) to prove the rule
+/// is structural, not tied to any specific identifier spelling.
+#[test]
+fn jsx_react_component_alias_with_multi_construct_no_ts2786() {
+    // Shared React namespace used across shape variants.
+    let make_source = |type_alias: &str, jsx_tag: &str| {
+        format!(
+            r#"
+        declare namespace JSX {{
+            interface Element extends React.ReactElement<any> {{}}
+            interface ElementClass extends React.Component<any> {{
+                render(): React.ReactNode;
+            }}
+            interface ElementAttributesProperty {{ props: {{}}; }}
+            interface IntrinsicElements {{}}
+        }}
+        declare namespace React {{
+            type ReactNode = ReactElement<any> | string | number | null;
+            interface ReactElement<P> {{ props: P; }}
+            interface Component<P = {{}}, S = {{}}> {{
+                props: Readonly<P>;
+                render(): ReactNode;
+            }}
+            // Two constructors to trigger the has_multi_construct path.
+            interface ComponentClass<P = {{}}, S = {{}}> {{
+                new(props: P, context?: any): Component<P, S>;
+                new(props: P): Component<P, S>;
+            }}
+            interface FunctionComponent<P = {{}}> {{
+                (props: P, context?: any): ReactElement<any> | null;
+            }}
+            type ComponentType<P = {{}}> = ComponentClass<P> | FunctionComponent<P>;
+        }}
+        interface Props {{ x?: number; }}
+        {type_alias}
+        const elem = <{jsx_tag} />;
+        "#
+        )
+    };
+
+    // Shape 1: variable typed as ComponentType<T> (type-param name T)
+    let src1 = make_source("declare var a: React.ComponentType<Props>;", "a");
+    let d1 = check_jsx_codes(&src1);
+    assert!(
+        !d1.contains(&2786),
+        "ComponentType<T> with multi-construct should not emit TS2786, got: {d1:?}"
+    );
+
+    // Shape 2: variable typed as ComponentClass<K> directly (type-param name K)
+    let src2 = make_source("declare var x: React.ComponentClass<Props>;", "x");
+    let d2 = check_jsx_codes(&src2);
+    assert!(
+        !d2.contains(&2786),
+        "ComponentClass<K> with multi-construct should not emit TS2786, got: {d2:?}"
+    );
+
+    // Shape 3: union ComponentType<T1> | ComponentType<T2> — members are React aliases
+    let src3 = make_source(
+        "interface Props2 { y?: string; } declare var a: React.ComponentType<Props> | React.ComponentType<Props2>;",
+        "a",
+    );
+    let d3 = check_jsx_codes(&src3);
+    assert!(
+        !d3.contains(&2786),
+        "Union of ComponentType aliases with multi-construct should not emit TS2786, got: {d3:?}"
+    );
+}
+
+/// Non-React overloaded components with invalid return types must still emit TS2786
+/// alongside TS2769 when all overloads fail — the React-alias skip must not suppress
+/// unrelated components. Both required props ensure no overload matches `<Bad />`.
+#[test]
+fn jsx_non_react_overload_with_invalid_return_still_emits_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { marker: true; }
+            interface IntrinsicElements {}
+        }
+        // Two call signatures with required props; neither returns JSX.Element.
+        // <Bad /> provides no attributes, so both overloads fail (required props missing).
+        interface BrokenSfc {
+            (props: { a: string }): { wrong: true };
+            (props: { b: number }): { wrong: true };
+        }
+        declare var Bad: BrokenSfc;
+        <Bad />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2786),
+        "Non-React overloaded component with invalid return type should still emit TS2786, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&2769),
+        "Non-React overloaded component should still emit TS2769 when no overload matches, got: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn jsx_intrinsic_excess_attrs_report_for_intersection_alias_props() {
     let diagnostics = check_jsx(

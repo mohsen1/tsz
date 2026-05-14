@@ -606,6 +606,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let assertion_expr = self.ctx.arena.skip_parenthesized(decl.initializer);
+        let initializer_is_const_assertion = self
+            .ctx
+            .arena
+            .get(assertion_expr)
+            .and_then(|node| self.ctx.arena.get_type_assertion(node))
+            .and_then(|assertion| self.ctx.arena.get(assertion.type_node))
+            .is_some_and(|type_node| type_node.kind == SyntaxKind::ConstKeyword as u16);
         let initializer = self
             .ctx
             .arena
@@ -623,14 +631,25 @@ impl<'a> CheckerState<'a> {
                 if self.type_query_property_name_text(prop.name).as_deref()
                     == Some(property_name.as_str())
                 {
-                    return self.literal_type_from_const_member_initializer(prop.initializer);
+                    let member_type =
+                        self.literal_type_from_const_member_initializer(prop.initializer)?;
+                    return Some(if initializer_is_const_assertion {
+                        member_type
+                    } else {
+                        self.widen_literal_type(member_type)
+                    });
                 }
             } else if element_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_shorthand_property(element_node)?;
                 if self.type_query_property_name_text(prop.name).as_deref()
                     == Some(property_name.as_str())
                 {
-                    return self.literal_type_from_const_member_initializer(prop.name);
+                    let member_type = self.literal_type_from_const_member_initializer(prop.name)?;
+                    return Some(if initializer_is_const_assertion {
+                        member_type
+                    } else {
+                        self.widen_literal_type(member_type)
+                    });
                 }
             }
         }

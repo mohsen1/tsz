@@ -8,9 +8,11 @@ Thank you for your interest in contributing to tsz, a TypeScript compiler writte
 git clone https://github.com/mohsen1/tsz.git
 cd tsz
 ./scripts/setup/setup.sh   # installs hooks, initializes TypeScript submodule
-cargo build                 # verify everything compiles
-cargo test -p tsz-checker -p tsz-solver  # run core tests
 ```
+
+Open a draft PR to run the light CI suite: lint, dist-fast build, and unit
+tests. Mark the PR ready for review when it should run the heavy suites:
+WASM, conformance, emit, fourslash, and snapshot gates.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide.
 
@@ -37,43 +39,35 @@ See [docs/architecture/BOUNDARIES.md](docs/architecture/BOUNDARIES.md) for the f
 
 ## What to Work On
 
-### Conformance Tests
+### Conformance Maintenance
 
-The primary measure of progress is conformance with `tsc`. Each test compares tsz's diagnostics against TypeScript's expected output.
+tsz is expected to stay at 100% conformance with `tsc`. Each test compares
+tsz's diagnostics against TypeScript's expected output.
 
-To find good first issues, use the offline analysis tools:
+Use the offline analysis tools to inspect the current snapshot:
 
 ```bash
-# Find tests where we emit 1 extra error (false positives — usually simpler to fix)
-python3 scripts/conformance/query-conformance.py --one-extra
-
-# Find tests closest to passing
-python3 scripts/conformance/query-conformance.py --close 1
-
-# Deep-dive a specific error code
-python3 scripts/conformance/query-conformance.py --code TS2322
+python3 scripts/conformance/query-conformance.py --dashboard
 ```
 
-### Workflow for Conformance Fixes
+### Workflow For Semantic Changes
 
-1. **Research** — use offline analysis tools (zero CPU cost)
-2. **Pick one test** — read the TypeScript source, understand the expected behavior
-3. **Understand the root cause** — read the relevant checker/solver code
-4. **Fix the root cause** — not a symptom. Follow architecture rules
-5. **Verify** — run the specific test, check broader area for regressions
-6. **Run unit tests** — `cargo test -p tsz-checker -p tsz-solver`
+1. **Check active work** — inspect draft PRs, open PRs, recent merged PRs, and relevant issues before starting
+2. **Claim the scope** — open a draft PR early; a GitHub issue is optional
+3. **Research** — use offline analysis tools and existing tests before running heavy commands
+4. **Understand the root cause** — read the relevant checker/solver code
+5. **Fix the root cause** — not a symptom. Follow architecture rules
+6. **Verify narrowly** — run only targeted local checks needed for debugging
+7. **Push updates to the draft PR** — let CI run build, lint, and unit tests; do not wait idle
+8. **Mark ready for review** — triggers conformance, emit, fourslash, WASM, and snapshot gates
+
+Include your stable `AgentName` in every PR body and substantive PR comment.
+Use the draft PR body for scope, invariants, findings, verification, and
+coordination notes.
 
 ```bash
-# Build the conformance runner
-cargo build --profile dist-fast -p tsz-conformance
-
-# Run a specific test
-.target/dist-fast/tsz-conformance --filter "testName" --verbose \
-  --cache-file scripts/conformance/tsc-cache-full.json
-
-# Check for regressions in the same area
-.target/dist-fast/tsz-conformance --filter "relatedArea" \
-  --cache-file scripts/conformance/tsc-cache-full.json
+# Run a specific test when debugging the root cause
+./scripts/conformance/conformance.sh run --filter "testName" --verbose
 ```
 
 ### Architecture Contributions
@@ -90,7 +84,7 @@ Key questions for every semantic PR:
 ## Code Style
 
 - Run `cargo fmt` before committing (hooks auto-fix)
-- `cargo clippy` with `-D warnings` must pass
+- `cargo clippy` with `-D warnings` must pass in CI
 - Checker files should stay under ~2000 LOC
 - Prefer dedicated files per major concern
 - Use visitor helpers for type traversal — avoid repeated `TypeKey` matching
@@ -99,10 +93,10 @@ Key questions for every semantic PR:
 
 Hooks run automatically and check:
 - Formatting (`cargo fmt`)
-- Linting (`cargo clippy` with deny warnings)
-- Architecture boundaries
-- WASM compatibility
-- Unit tests for affected crates
+- TypeScript submodule guard
+
+Build, lint, unit, WASM, conformance, emit, and fourslash verification runs in
+CI. Draft PRs get the light CI suite; ready-for-review PRs get the full suite.
 
 To skip hooks in emergencies: `TSZ_SKIP_HOOKS=1 git commit -m "message"`
 

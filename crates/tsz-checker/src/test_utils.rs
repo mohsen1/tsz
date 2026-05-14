@@ -74,6 +74,246 @@ pub fn check_js_source_diagnostics(source: &str) -> Vec<Diagnostic> {
     )
 }
 
+/// Types that expose a diagnostic code for code-only test assertions.
+pub trait HasDiagnosticCode {
+    fn diagnostic_code(&self) -> u32;
+}
+
+impl HasDiagnosticCode for Diagnostic {
+    fn diagnostic_code(&self) -> u32 {
+        self.code
+    }
+}
+
+impl<T: HasDiagnosticCode + ?Sized> HasDiagnosticCode for &T {
+    fn diagnostic_code(&self) -> u32 {
+        (*self).diagnostic_code()
+    }
+}
+
+impl<T> HasDiagnosticCode for (u32, T) {
+    fn diagnostic_code(&self) -> u32 {
+        self.0
+    }
+}
+
+/// Types that expose both diagnostic code and message text.
+pub trait HasDiagnosticMessage: HasDiagnosticCode {
+    fn diagnostic_message(&self) -> &str;
+}
+
+impl HasDiagnosticMessage for Diagnostic {
+    fn diagnostic_message(&self) -> &str {
+        &self.message_text
+    }
+}
+
+impl<T: HasDiagnosticMessage + ?Sized> HasDiagnosticMessage for &T {
+    fn diagnostic_message(&self) -> &str {
+        (*self).diagnostic_message()
+    }
+}
+
+impl HasDiagnosticMessage for (u32, String) {
+    fn diagnostic_message(&self) -> &str {
+        &self.1
+    }
+}
+
+impl HasDiagnosticMessage for (u32, &str) {
+    fn diagnostic_message(&self) -> &str {
+        self.1
+    }
+}
+
+/// Project diagnostic-like values to their diagnostic codes.
+pub fn diagnostic_codes<T: HasDiagnosticCode>(diagnostics: &[T]) -> Vec<u32> {
+    diagnostics
+        .iter()
+        .map(HasDiagnosticCode::diagnostic_code)
+        .collect()
+}
+
+/// Count diagnostics with the given diagnostic code.
+pub fn diagnostic_count<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> usize {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.diagnostic_code() == code)
+        .count()
+}
+
+/// Count diagnostics whose code matches the supplied predicate.
+pub fn diagnostic_count_where<T: HasDiagnosticCode>(
+    diagnostics: &[T],
+    mut matches: impl FnMut(u32) -> bool,
+) -> usize {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| matches(diagnostic.diagnostic_code()))
+        .count()
+}
+
+/// Borrow diagnostics with the given diagnostic code.
+pub fn diagnostics_with_code<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> Vec<&T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.diagnostic_code() == code)
+        .collect()
+}
+
+/// Borrow diagnostics whose code matches the supplied predicate.
+pub fn diagnostics_where<T: HasDiagnosticCode>(
+    diagnostics: &[T],
+    mut matches: impl FnMut(u32) -> bool,
+) -> Vec<&T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| matches(diagnostic.diagnostic_code()))
+        .collect()
+}
+
+/// Borrow diagnostics with any of the supplied diagnostic codes.
+pub fn diagnostics_with_any_code<'a, T: HasDiagnosticCode>(
+    diagnostics: &'a [T],
+    codes: &[u32],
+) -> Vec<&'a T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| codes.contains(&diagnostic.diagnostic_code()))
+        .collect()
+}
+
+/// Borrow diagnostics excluding the supplied diagnostic codes.
+pub fn diagnostics_without_codes<'a, T: HasDiagnosticCode>(
+    diagnostics: &'a [T],
+    excluded_codes: &[u32],
+) -> Vec<&'a T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| !excluded_codes.contains(&diagnostic.diagnostic_code()))
+        .collect()
+}
+
+/// Return whether any diagnostic has the given code.
+pub fn has_diagnostic_code<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.diagnostic_code() == code)
+}
+
+/// Return whether any diagnostic code matches the supplied predicate.
+pub fn has_diagnostic_code_where<T: HasDiagnosticCode>(
+    diagnostics: &[T],
+    mut matches: impl FnMut(u32) -> bool,
+) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| matches(diagnostic.diagnostic_code()))
+}
+
+/// Return whether any diagnostic has one of the supplied diagnostic codes.
+pub fn has_any_diagnostic_code<T: HasDiagnosticCode>(diagnostics: &[T], codes: &[u32]) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| codes.contains(&diagnostic.diagnostic_code()))
+}
+
+/// Return whether any diagnostic matches an arbitrary predicate.
+pub fn has_diagnostic_where<T>(diagnostics: &[T], matches: impl FnMut(&T) -> bool) -> bool {
+    diagnostics.iter().any(matches)
+}
+
+/// Project diagnostics to `(code, message_text)` pairs.
+pub fn diagnostic_code_messages(
+    diagnostics: impl IntoIterator<Item = Diagnostic>,
+) -> Vec<(u32, String)> {
+    diagnostics
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+/// Borrow diagnostics as `(code, message_text)` pairs.
+pub fn diagnostic_code_message_refs(diagnostics: &[Diagnostic]) -> Vec<(u32, &str)> {
+    diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.as_str()))
+        .collect()
+}
+
+/// Borrow diagnostics with the given code as `(code, message_text)` pairs.
+pub fn diagnostic_code_message_refs_with_code(
+    diagnostics: &[Diagnostic],
+    code: u32,
+) -> Vec<(u32, &str)> {
+    diagnostics_with_code(diagnostics, code)
+        .into_iter()
+        .map(|d| (d.code, d.message_text.as_str()))
+        .collect()
+}
+
+/// Borrow diagnostic messages for diagnostics with the given code.
+pub fn diagnostic_messages_with_code(diagnostics: &[Diagnostic], code: u32) -> Vec<&str> {
+    diagnostics_with_code(diagnostics, code)
+        .into_iter()
+        .map(|d| d.message_text.as_str())
+        .collect()
+}
+
+/// Return whether any diagnostic has the given code and message fragment.
+pub fn has_diagnostic_code_message<T: HasDiagnosticMessage>(
+    diagnostics: &[T],
+    code: u32,
+    message_fragment: &str,
+) -> bool {
+    diagnostics.iter().any(|diagnostic| {
+        diagnostic.diagnostic_code() == code
+            && diagnostic.diagnostic_message().contains(message_fragment)
+    })
+}
+
+/// Return whether any diagnostic message contains the supplied text.
+pub fn has_diagnostic_message<T: HasDiagnosticMessage>(
+    diagnostics: &[T],
+    message_fragment: &str,
+) -> bool {
+    diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.diagnostic_message().contains(message_fragment))
+}
+
+/// Borrow diagnostics with the given code and message text.
+pub fn diagnostics_with_code_message<'a, T: HasDiagnosticMessage>(
+    diagnostics: &'a [T],
+    code: u32,
+    message_fragment: &str,
+) -> Vec<&'a T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.diagnostic_code() == code
+                && diagnostic.diagnostic_message().contains(message_fragment)
+        })
+        .collect()
+}
+
+/// Borrow diagnostics with the given code and any message text.
+pub fn diagnostics_with_code_any_message<'a, T: HasDiagnosticMessage>(
+    diagnostics: &'a [T],
+    code: u32,
+    message_fragments: &[&str],
+) -> Vec<&'a T> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.diagnostic_code() == code
+                && message_fragments
+                    .iter()
+                    .any(|fragment| diagnostic.diagnostic_message().contains(fragment))
+        })
+        .collect()
+}
+
 /// Parse, bind, and type-check JavaScript source, returning only diagnostic codes.
 ///
 /// The caller supplies the test file name and any additional checker options.
@@ -89,53 +329,57 @@ pub fn check_js_source_codes_with_options(
         check_js: true,
         ..options
     };
-    check_source(source, file_name, options)
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
+    diagnostic_codes(&check_source(source, file_name, options))
+}
+
+/// Parse, bind, and type-check JavaScript source, returning `(code, message_text)` pairs.
+pub fn check_js_source_code_messages_with_options(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        ..options
+    };
+    diagnostic_code_messages(check_source(source, file_name, options))
+}
+
+/// Parse, bind, and type-check JavaScript source, returning `(code, message_text)` pairs.
+pub fn check_js_source_code_messages(source: &str) -> Vec<(u32, String)> {
+    check_js_source_code_messages_with_options(source, "test.js", CheckerOptions::default())
 }
 
 /// Parse, bind, and type-check source, returning only diagnostic codes.
 ///
 /// Convenience wrapper for tests that only inspect error codes.
 pub fn check_source_codes(source: &str) -> Vec<u32> {
-    check_source_diagnostics(source)
-        .iter()
-        .map(|d| d.code)
-        .collect()
+    diagnostic_codes(&check_source_diagnostics(source))
 }
 
 /// Parse, bind, and type-check a named TypeScript source string, returning only diagnostic codes.
 pub fn check_source_codes_named(source: &str, file_name: &str) -> Vec<u32> {
-    check_source(source, file_name, CheckerOptions::default())
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
+    diagnostic_codes(&check_source(source, file_name, CheckerOptions::default()))
 }
 
 /// Parse, bind, and type-check source, returning `(code, message_text)` pairs.
 ///
 /// Convenience wrapper for tests that inspect both error codes and message text.
 pub fn check_source_code_messages(source: &str) -> Vec<(u32, String)> {
-    check_source_diagnostics(source)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(check_source_diagnostics(source))
 }
 
 /// Parse, bind, and type-check source with `experimental_decorators` enabled, returning codes.
 pub fn check_source_codes_experimental_decorators(source: &str) -> Vec<u32> {
-    check_source(
+    diagnostic_codes(&check_source(
         source,
         "test.ts",
         CheckerOptions {
             experimental_decorators: true,
             ..CheckerOptions::default()
         },
-    )
-    .iter()
-    .map(|d| d.code)
-    .collect()
+    ))
 }
 
 /// Parse, bind, and type-check source with `no_unused_parameters` enabled.
@@ -175,10 +419,7 @@ pub fn check_with_options_code_messages(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
-    check_with_options(source, options)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(check_with_options(source, options))
 }
 
 /// Canonical "strict" `CheckerOptions` for tests that opt into the
@@ -206,10 +447,7 @@ pub fn check_source_strict(source: &str) -> Vec<Diagnostic> {
 
 /// Code-only projection of [`check_source_strict`].
 pub fn check_source_strict_codes(source: &str) -> Vec<u32> {
-    check_source_strict(source)
-        .into_iter()
-        .map(|d| d.code)
-        .collect()
+    diagnostic_codes(&check_source_strict(source))
 }
 
 /// `(code, message_text)` projection of [`check_source_strict`].
@@ -219,11 +457,11 @@ pub fn check_source_strict_messages(source: &str) -> Vec<(u32, String)> {
 
 /// Strict `(code, message_text)` diagnostics excluding TS2318 missing-default-lib noise.
 pub fn check_source_strict_messages_without_missing_libs(source: &str) -> Vec<(u32, String)> {
-    check_source_strict(source)
-        .into_iter()
-        .filter(|d| d.code != 2318)
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(
+        check_source_strict(source)
+            .into_iter()
+            .filter(|d| d.code != 2318),
+    )
 }
 
 /// Standard `lib.d.ts` source roots probed by checker tests, ordered by
@@ -305,6 +543,7 @@ fn compiled_lib_test_roots() -> Vec<PathBuf> {
     let m = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut roots = vec![
         m.join("../../TypeScript/lib"),
+        m.join("../tsz-website/src/lib"),
         m.join("../../scripts/conformance/node_modules/typescript/lib"),
         m.join("../../scripts/emit/node_modules/typescript/lib"),
         m.join("../../scripts/node_modules/typescript/lib"),
@@ -434,10 +673,9 @@ pub fn check_source_with_libs_code_messages(
     options: CheckerOptions,
     lib_files: &[Arc<LibFile>],
 ) -> Vec<(u32, String)> {
-    check_source_with_libs(source, file_name, options, lib_files)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(check_source_with_libs(
+        source, file_name, options, lib_files,
+    ))
 }
 
 /// Parse, bind, and type-check a multi-file project, returning the entry
@@ -500,6 +738,80 @@ pub fn check_multi_file(
     checker.ctx.set_all_binders(Arc::clone(&all_binders));
     checker.ctx.set_current_file_idx(entry_idx);
     checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+    checker.ctx.diagnostics.clone()
+}
+
+/// Parse, bind, and type-check a multi-file project with lib contexts loaded.
+///
+/// This is the lib-aware counterpart to [`check_multi_file`]. Each project
+/// file is bound through [`tsz_binder::BinderState::bind_source_file_with_libs`],
+/// and the checker receives matching `lib_contexts`, so regressions involving
+/// local/imported names that conflict with globals (`Boolean`, `String`, ...)
+/// exercise the same lookup path as project compiles.
+pub fn check_multi_file_with_libs(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> Vec<Diagnostic> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        if lib_files.is_empty() {
+            binder.bind_source_file(parser.get_arena(), root);
+        } else {
+            binder.bind_source_file_with_libs(parser.get_arena(), root, lib_files);
+        }
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .unwrap_or_else(|| panic!("entry_file {entry_file:?} not found in files"));
+    let (resolved_module_paths, resolved_modules) =
+        crate::module_resolution::build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    if lib_files.is_empty() {
+        checker.ctx.set_lib_contexts(Vec::new());
+    } else {
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
     checker
         .ctx
         .set_resolved_module_paths(Arc::new(resolved_module_paths));
@@ -577,8 +889,10 @@ mod tests {
     //! These pin the contracts that 100s of checker tests rely on:
     //! - `check_source_diagnostics` ≡ `check_source(source, "test.ts", default)`.
     //! - `check_source_codes` is a code-only projection of `check_source_diagnostics`.
+    //! - `diagnostic_code_messages` is a `(code, message)` projection of diagnostics.
     //! - `check_source_code_messages` projects to (code, message) pairs.
     //! - `check_js_source_diagnostics` uses `test.js` + `check_js: true`.
+    //! - `check_js_source_code_messages_with_options` uses checked-JS options.
     //! - `check_source_codes_experimental_decorators` enables the decorator flag.
     //! - `check_source_no_unused_params` / `_no_unused_locals` enable the
     //!   matching unused-detection flag.
@@ -605,6 +919,17 @@ mod tests {
         let codes = check_source_codes(source);
         let projected: Vec<u32> = diags.iter().map(|d| d.code).collect();
         assert_eq!(codes, projected);
+    }
+
+    #[test]
+    fn diagnostic_code_messages_projects_owned_diagnostics() {
+        let source = "interface I {} const x = new I();";
+        let diags = check_source_diagnostics(source);
+        let projected: Vec<(u32, String)> = diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect();
+        assert_eq!(diagnostic_code_messages(diags), projected);
     }
 
     #[test]
@@ -660,6 +985,26 @@ mod tests {
             js_codes, ts_codes,
             "JS source with TS syntax should emit different diagnostics than TS path"
         );
+    }
+
+    #[test]
+    fn check_js_source_code_messages_with_options_matches_checked_js_projection() {
+        let source = "var x: number = 'hi';";
+        let opts = CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        };
+        let pairs = check_js_source_code_messages_with_options(source, "custom.js", opts.clone());
+        let explicit = check_source(
+            source,
+            "custom.js",
+            CheckerOptions {
+                allow_js: true,
+                check_js: true,
+                ..opts
+            },
+        );
+        assert_eq!(pairs, diagnostic_code_messages(explicit));
     }
 
     #[test]

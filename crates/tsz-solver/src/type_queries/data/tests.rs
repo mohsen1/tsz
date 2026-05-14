@@ -875,6 +875,178 @@ fn contains_application_union_without_app() {
 }
 
 // =========================================================================
+// contains_type_parameters_except_name_db
+// =========================================================================
+
+#[test]
+fn contains_type_parameters_except_name_ignores_iter_var_constraint() {
+    use crate::types::ConditionalType;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    // T (free) and K whose constraint references T.
+    let t_param = interner.type_param(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let keyof_t = interner.keyof(t_param);
+    let k_param = interner.type_param(TypeParamInfo {
+        name: k_name,
+        constraint: Some(keyof_t),
+        default: None,
+        is_const: false,
+    });
+
+    // Sanity: a bare K should not look free relative to itself, even though
+    // its baked-in constraint walks back to T.
+    assert!(!contains_type_parameters_except_name_db(
+        &interner, k_param, k_name,
+    ));
+
+    // `{} extends Pick<Obj, K> ? K : never` — but with `Pick` modelled as a
+    // Lazy alias and `Obj` as a concrete object — must report no free
+    // parameters when the iteration variable `K` is excluded.
+    let obj_prop = crate::types::PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: crate::types::Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let obj = interner.object(vec![obj_prop]);
+    let pick_base = interner.lazy(crate::def::DefId(7));
+    let pick_app = interner.application(pick_base, vec![obj, k_param]);
+    let empty_obj = interner.object(vec![]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: empty_obj,
+        extends_type: pick_app,
+        true_type: k_param,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert!(
+        !contains_type_parameters_except_name_db(&interner, cond, k_name),
+        "K's stale `keyof T` constraint must not count as a free reference"
+    );
+
+    // A genuinely free `U` in the same position must still be detected.
+    let u_name = interner.intern_string("U");
+    let u_param = interner.type_param(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let cond_with_u = interner.conditional(ConditionalType {
+        check_type: u_param,
+        extends_type: pick_app,
+        true_type: k_param,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert!(contains_type_parameters_except_name_db(
+        &interner,
+        cond_with_u,
+        k_name,
+    ));
+
+    // Renamed iteration variable: same structure with `P` instead of `K`
+    // must behave identically — the rule is structural, not name-based.
+    let p_name = interner.intern_string("P");
+    let keyof_t_for_p = interner.keyof(t_param);
+    let p_param = interner.type_param(TypeParamInfo {
+        name: p_name,
+        constraint: Some(keyof_t_for_p),
+        default: None,
+        is_const: false,
+    });
+    let pick_app_p = interner.application(pick_base, vec![obj, p_param]);
+    let cond_with_p = interner.conditional(ConditionalType {
+        check_type: empty_obj,
+        extends_type: pick_app_p,
+        true_type: p_param,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    assert!(!contains_type_parameters_except_name_db(
+        &interner,
+        cond_with_p,
+        p_name,
+    ));
+}
+
+#[test]
+fn contains_type_parameters_except_name_ignores_nested_mapped_param_metadata() {
+    // When a `Mapped` appears inside the type being checked, the visitor must
+    // not descend into the nested mapped's `type_param.constraint`/`default`
+    // either — same rule, recursive case. Without this guard,
+    // `for_each_child_by_id`'s default Mapped child enumeration would surface
+    // the outer alias parameter `T` through the inner mapped's iter-var
+    // metadata.
+    use crate::types::{MappedType, PropertyInfo, Visibility};
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+    let inner_iter_name = interner.intern_string("InnerKey");
+    let a_name = interner.intern_string("a");
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let keyof_t = interner.keyof(t_param);
+    let inner_iter = TypeParamInfo {
+        name: inner_iter_name,
+        constraint: Some(keyof_t),
+        default: None,
+        is_const: false,
+    };
+    let inner_obj = interner.object(vec![PropertyInfo {
+        name: a_name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }]);
+    let nested_mapped = interner.mapped(MappedType {
+        type_param: inner_iter,
+        constraint: inner_obj,
+        name_type: None,
+        template: TypeId::STRING,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    assert!(
+        !contains_type_parameters_except_name_db(&interner, nested_mapped, k_name),
+        "nested Mapped's iter-var constraint metadata must not surface T"
+    );
+}
+
+// =========================================================================
 // is_literal_or_primitive_or_compound_of_those
 // =========================================================================
 //

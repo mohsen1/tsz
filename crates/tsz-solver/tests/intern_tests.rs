@@ -663,7 +663,7 @@ fn test_template_literal_list_interning_deduplication() {
 }
 
 #[test]
-fn test_intersection_visibility_merging() {
+fn test_intersection_private_public_property_conflict_reduces_to_never() {
     let interner = TypeInterner::new();
 
     // Create object { x: number } with private visibility
@@ -689,16 +689,41 @@ fn test_intersection_visibility_merging() {
         TypeId::STRING,
     )]);
 
-    // Intersection should merge visibility (Private > Public = Private)
+    // A private/public same-name property conflict is impossible.
     let intersection = interner.intersection2(obj_private, obj_public);
+    assert_eq!(intersection, TypeId::NEVER);
+}
 
-    if let Some(TypeData::Object(shape_id)) = interner.lookup(intersection) {
-        let shape = interner.object_shape(shape_id);
-        assert_eq!(shape.properties.len(), 1);
-        assert_eq!(shape.properties[0].visibility, Visibility::Private);
-    } else {
-        panic!("Expected object type");
-    }
+#[test]
+fn test_intersection_protected_public_property_merges_as_public() {
+    let interner = TypeInterner::new();
+    let name = interner.intern_string("x");
+
+    let obj_protected = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Protected,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }]);
+    let obj_public = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+
+    let intersection = interner.intersection2(obj_protected, obj_public);
+
+    let Some(TypeData::Object(shape_id)) = interner.lookup(intersection) else {
+        panic!("expected protected/public intersection to remain an object");
+    };
+    let shape = interner.object_shape(shape_id);
+    assert_eq!(shape.properties.len(), 1);
+    assert_eq!(shape.properties[0].visibility, Visibility::Public);
 }
 
 #[test]

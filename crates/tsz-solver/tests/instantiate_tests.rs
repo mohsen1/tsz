@@ -665,6 +665,97 @@ fn test_instantiate_mapped_type_shadowed_param() {
 }
 
 #[test]
+fn test_instantiate_mapped_with_lazy_application_in_as_clause_defers() {
+    // The instantiator's `NoopResolver` cannot resolve Lazy alias references,
+    // so eagerly evaluating an instantiated mapped type whose `name_type`
+    // embeds `Application(Lazy(_), ...)` (e.g. `as ... extends Pick<T, K> ?
+    // K : never`) would collapse the unresolvable Pick application to
+    // `never` and silently drop every key. The instantiator must defer
+    // evaluation to the outer evaluator (which has a real `TypeResolver`).
+    //
+    // Adjacent-case coverage: this test renames the iteration variable from
+    // `K` to `P` to prove the fix is structural, not name-based.
+    use crate::types::{ConditionalType, MappedType, PropertyInfo, Visibility};
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let p_name = interner.intern_string("P");
+    let a_name = interner.intern_string("a");
+
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param_info);
+    let keyof_t = interner.keyof(t_type);
+    let p_param_info = TypeParamInfo {
+        name: p_name,
+        constraint: Some(keyof_t),
+        default: None,
+        is_const: false,
+    };
+    let p_type = interner.type_param(p_param_info);
+
+    // name_type = `{} extends Pick<T, P> ? P : never` with Pick as a Lazy alias.
+    let empty_obj = interner.object(vec![]);
+    let pick_base = interner.lazy(DefId(99));
+    let pick_app = interner.application(pick_base, vec![t_type, p_type]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: empty_obj,
+        extends_type: pick_app,
+        true_type: p_type,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    // template = T[P]
+    let template = interner.index_access(t_type, p_type);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: p_param_info,
+        constraint: keyof_t,
+        name_type: Some(cond),
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T -> concrete object { a: number }.
+    let obj_prop = PropertyInfo {
+        name: a_name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let obj = interner.object(vec![obj_prop]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, obj);
+    let result = instantiate_type(&interner, mapped, &subst);
+
+    // The instantiator must leave the mapped type unevaluated. If it
+    // eagerly evaluated under `NoopResolver`, `Pick<{a: number}, P>` would
+    // resolve to `never` and the mapped type would collapse to `never` or
+    // an empty object.
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
+        "expected deferred Mapped; got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
 fn test_instantiation_depth_limit_returns_error() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
@@ -2037,7 +2128,8 @@ fn test_instantiate_mapped_over_tuple_with_wrapper_template() {
 }
 
 // =============================================================================
-// Tests for template_has_lazy_application_in_composite
+// Tests for template_has_lazy_application_in_composite and
+// type_contains_lazy_application (new helper for Conditional check/extends)
 // =============================================================================
 
 #[test]
@@ -2174,6 +2266,15 @@ fn test_mapped_type_with_lazy_union_template_defers_evaluation() {
     }
 }
 
+/// Regression: mapped type with `App(LazyAlias, [T[K]]) extends true ? K : never`
+/// as the template must defer eager evaluation when instantiated with a concrete T.
+///
+/// Before the fix, `template_has_lazy_application_in_composite` only checked the
+/// Conditional's true/false branches, missing the `check_type` `App(LazyAlias, ...)`.
+/// This caused the `NoopResolver` evaluator to see an unresolvable Application,
+/// making every conditional branch collapse to `never`, so the mapped type produced
+/// `never` instead of the correct key union.
+///
 /// Homomorphic mapped type `{ [K in keyof T]: T[K] }` instantiated with T = any
 /// and T has NO constraint should NOT produce bare `any`. It should fall through
 /// to standard mapped type instantiation producing an object with index signatures.
@@ -2560,5 +2661,194 @@ fn test_canonical_stable_across_iter_order() {
         first.as_slice(),
         sorted.as_slice(),
         "canonical pairs must be sorted by Atom",
+    );
+}
+
+// =============================================================================
+// Homomorphic Mapped Type Union Distribution Tests
+// =============================================================================
+
+/// When `{ [P in keyof T]: T[P] }` is instantiated with T = A | B (non-array),
+/// the result must distribute to `{ [P in keyof A]: A[P] } | { [P in keyof B]: B[P] }`.
+/// This mirrors tsc's `instantiateMappedType → mapTypeWithAlias` behavior.
+#[test]
+fn test_homomorphic_mapped_distributes_over_union_of_objects() {
+    use crate::evaluation::evaluate::evaluate_type;
+    use crate::objects::{PropertyCollectionResult, collect_properties};
+    use crate::relations::subtype::NoopResolver;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let p_name = interner.intern_string("P");
+
+    let t_param = TypeParamInfo::simple(t_name);
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let p_param = TypeParamInfo::simple(p_name);
+    let p_type = interner.intern(TypeData::TypeParameter(p_param));
+
+    // Mapped type: { [P in keyof T]: T[P] }
+    let keyof_t = interner.keyof(t_type);
+    let template = interner.index_access(t_type, p_type);
+    let mapped = interner.mapped(MappedType {
+        type_param: p_param,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // NodeA = { type: "A", name: string }
+    let type_key = interner.intern_string("type");
+    let name_key = interner.intern_string("name");
+    let id_key = interner.intern_string("id");
+    let lit_a = interner.literal_string("A");
+    let node_a = interner.object(vec![
+        crate::types::PropertyInfo::new(type_key, lit_a),
+        crate::types::PropertyInfo {
+            declaration_order: 1,
+            ..crate::types::PropertyInfo::new(name_key, TypeId::STRING)
+        },
+    ]);
+
+    // NodeB = { type: "B", id: number }
+    let lit_b = interner.literal_string("B");
+    let node_b = interner.object(vec![
+        crate::types::PropertyInfo::new(type_key, lit_b),
+        crate::types::PropertyInfo {
+            declaration_order: 1,
+            ..crate::types::PropertyInfo::new(id_key, TypeId::NUMBER)
+        },
+    ]);
+
+    // T = NodeA | NodeB
+    let union_t = interner.union(vec![node_a, node_b]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, union_t);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+
+    // After instantiation, result should be a union (distributed)
+    match interner.lookup(instantiated) {
+        Some(TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert_eq!(
+                members.len(),
+                2,
+                "Expected union of 2 distributed mapped types"
+            );
+
+            // Evaluate each member and check its properties
+            let evaluated: Vec<TypeId> = members
+                .iter()
+                .map(|&m| evaluate_type(&interner, m))
+                .collect();
+
+            let resolver = NoopResolver;
+            let mut has_name = false;
+            let mut has_id = false;
+            for &ev in &evaluated {
+                if let PropertyCollectionResult::Properties { properties, .. } =
+                    collect_properties(ev, &interner, &resolver)
+                {
+                    let prop_names: Vec<_> = properties.iter().map(|p| p.name).collect();
+                    if prop_names.contains(&name_key) {
+                        has_name = true;
+                    }
+                    if prop_names.contains(&id_key) {
+                        has_id = true;
+                    }
+                }
+            }
+            assert!(
+                has_name,
+                "NodeA branch should have 'name' property after distribution"
+            );
+            assert!(
+                has_id,
+                "NodeB branch should have 'id' property after distribution"
+            );
+        }
+        other => panic!("Expected Union after distributing mapped type over union, got {other:?}"),
+    }
+}
+
+/// Distribution must produce union member count equal to the union input,
+/// covering different member names (varied spelling proves the fix is structural).
+#[test]
+fn test_homomorphic_mapped_distributes_over_union_varied_names() {
+    use crate::evaluation::evaluate::evaluate_type;
+    use crate::objects::{PropertyCollectionResult, collect_properties};
+    use crate::relations::subtype::NoopResolver;
+
+    let interner = TypeInterner::new();
+
+    // Build Partial<T> = { [K in keyof T]?: T[K] }  with T mapped to Foo | Bar
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+    let t_param = TypeParamInfo::simple(t_name);
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let k_param = TypeParamInfo::simple(k_name);
+    let k_type = interner.intern(TypeData::TypeParameter(k_param));
+    let keyof_t = interner.keyof(t_type);
+    let template = interner.index_access(t_type, k_type);
+    let partial_t = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: Some(crate::types::MappedModifier::Add),
+    });
+
+    // Foo = { x: number }
+    let x_key = interner.intern_string("x");
+    let y_key = interner.intern_string("y");
+    let foo = interner.object(vec![crate::types::PropertyInfo::new(x_key, TypeId::NUMBER)]);
+    // Bar = { y: string }
+    let bar = interner.object(vec![crate::types::PropertyInfo::new(y_key, TypeId::STRING)]);
+
+    let union_t = interner.union(vec![foo, bar]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, union_t);
+    let instantiated = instantiate_type(&interner, partial_t, &subst);
+
+    let result = evaluate_type(&interner, instantiated);
+
+    // Should be a union of 2 objects each with their member-specific properties
+    let Some(TypeData::Union(list_id)) = interner.lookup(result) else {
+        panic!("Expected Union, got {:?}", interner.lookup(result));
+    };
+    let members = interner.type_list(list_id);
+    assert_eq!(
+        members.len(),
+        2,
+        "Partial<Foo|Bar> should have 2 union members"
+    );
+
+    let resolver = NoopResolver;
+    let mut found_x = false;
+    let mut found_y = false;
+    for &m in members.iter() {
+        if let PropertyCollectionResult::Properties { properties, .. } =
+            collect_properties(m, &interner, &resolver)
+        {
+            for prop in &properties {
+                if prop.name == x_key {
+                    found_x = true;
+                }
+                if prop.name == y_key {
+                    found_y = true;
+                }
+            }
+        }
+    }
+    assert!(
+        found_x,
+        "Partial<Foo> branch must have optional 'x' property"
+    );
+    assert!(
+        found_y,
+        "Partial<Bar> branch must have optional 'y' property"
     );
 }

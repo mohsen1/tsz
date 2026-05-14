@@ -418,16 +418,75 @@ impl<'a> BinaryOpEvaluator<'a> {
         Self { interner }
     }
 
+    /// Apply the `D & {}` `NonNullable` approximation for unconstrained type parameters.
+    ///
+    /// When a type parameter `D` appears as the non-nullish component of a `??` or
+    /// `||` expression (`(D | undefined) ?? X` → `(D & {}) | X`), tsc uses this
+    /// intersection to represent the fact that `D` is non-nullable. Callers outside
+    /// this module (e.g., the checker's inline `??` result path) can use this to
+    /// replicate the same treatment without duplicating the logic.
+    ///
+    /// `original` is the full left-hand type (e.g. `D | undefined`); `narrowed` is
+    /// the non-nullish portion (e.g. `D`). Returns `narrowed & {}` when `narrowed`
+    /// is an unconstrained type parameter, otherwise returns `narrowed` unchanged.
+    pub fn apply_non_nullable_approximation(&self, original: TypeId, narrowed: TypeId) -> TypeId {
+        self.non_nullable_type_parameter_result(original, narrowed)
+    }
+
     fn non_nullable_type_parameter_result(&self, original: TypeId, narrowed: TypeId) -> TypeId {
+        // Apply the D & {} non-nullable intersection only for unconstrained type
+        // parameters. This matches tsc's NonNullable<T> approximation for the
+        // truthy side of `(T | undefined) || X`: tsc produces `(T & {}) | X`,
+        // which for X = {} reduces to {} (since T & {} <: {}).
+        //
+        // Constrained type parameters (e.g., D extends string) must NOT receive
+        // the & {} treatment: their constraint already determines assignability,
+        // and adding & {} to a primitive-constrained param would incorrectly let
+        // the intersection pass the `object` keyword check via the `any`-member
+        // intersection rule.
+        if self.is_unconstrained_type_parameter(narrowed) {
+            return self
+                .interner
+                .intersection2(narrowed, self.interner.object(vec![]));
+        }
+
+        // Distribute over union members: NonNullable<D | E> = (D & {}) | (E & {})
+        // where each unconstrained type param gets the & {} treatment.
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(narrowed) {
+            let members = self.interner.type_list(list_id);
+            let has_unconstrained = members
+                .iter()
+                .any(|&m| self.is_unconstrained_type_parameter(m));
+            if has_unconstrained {
+                let empty_obj = self.interner.object(vec![]);
+                let transformed: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        if self.is_unconstrained_type_parameter(m) {
+                            self.interner.intersection2(m, empty_obj)
+                        } else {
+                            m
+                        }
+                    })
+                    .collect();
+                return self.interner.union(transformed);
+            }
+        }
+
         if narrowed != original {
             return narrowed;
         }
-        if self.is_type_parameter_like(original) {
-            return self
-                .interner
-                .intersection2(original, self.interner.object(vec![]));
-        }
         narrowed
+    }
+
+    /// Return `true` if `type_id` is a type parameter or infer type with **no** constraint.
+    fn is_unconstrained_type_parameter(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
+                info.constraint.is_none()
+            }
+            _ => false,
+        }
     }
 
     fn is_type_parameter_like(&self, type_id: TypeId) -> bool {
@@ -905,7 +964,12 @@ impl<'a> BinaryOpEvaluator<'a> {
             } else if non_nullish_left == TypeId::NEVER {
                 right
             } else {
-                self.union2_subtype_reduce(non_nullish_left, right)
+                // Apply the same non-nullable type-parameter treatment as `||`:
+                // `(D | undefined) ?? X` → `(D & {}) | X`, matching tsc's
+                // NonNullable<D> approximation for unconstrained generics.
+                let non_nullish_left_final =
+                    self.non_nullable_type_parameter_result(left, non_nullish_left);
+                self.union2_subtype_reduce(non_nullish_left_final, right)
             }
         };
 

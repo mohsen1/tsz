@@ -21,10 +21,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
 
-// =============================================================================
-// Assignability Checking Methods
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
         if let Some(shape) =
@@ -1717,6 +1713,27 @@ impl<'a> CheckerState<'a> {
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        thread_local! {
+            static ASSIGNABILITY_EVAL_VISITING: std::cell::RefCell<FxHashSet<TypeId>> =
+                Default::default();
+        }
+
+        let entered =
+            ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().insert(type_id));
+        if !entered {
+            return type_id;
+        }
+
+        let result = self.evaluate_type_for_assignability_inner(type_id);
+        ASSIGNABILITY_EVAL_VISITING.with(|visiting| visiting.borrow_mut().remove(&type_id));
+        result
+    }
+
+    fn evaluate_type_for_assignability_inner(&mut self, type_id: TypeId) -> TypeId {
         let kind = classify_for_assignability_eval(self.ctx.types, type_id);
         let mut evaluated = match kind {
             AssignabilityEvalKind::Application => {
@@ -2158,10 +2175,12 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         self.ensure_relation_inputs_ready(&[source, target]);
-        let source = self.substitute_this_type_if_needed(source);
-        let target = self.substitute_this_type_if_needed(target);
+        let mut source = self.substitute_this_type_if_needed(source);
+        let mut target = self.substitute_this_type_if_needed(target);
         let raw_source = source;
         let raw_target = target;
+        source = self.normalize_awaited_application_args_for_variance(source);
+        target = self.normalize_awaited_application_args_for_variance(target);
 
         if source != TypeId::NEVER
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
@@ -2328,6 +2347,9 @@ impl<'a> CheckerState<'a> {
         if let Some(concrete_target) = self.concrete_remapped_mapped_assignability_target(target) {
             return self.is_assignable_to(source, concrete_target);
         }
+
+        source = self.normalize_index_access_for_assignability(source, 0);
+        target = self.normalize_index_access_for_assignability(target, 0);
 
         let source_eval = self.evaluate_type_for_assignability(source);
         let target_eval = self.evaluate_type_for_assignability(target);

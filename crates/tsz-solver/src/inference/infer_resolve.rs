@@ -407,36 +407,9 @@ impl<'a> InferenceContext<'a> {
         // Check if this is a const type parameter to preserve literal types
         let is_const = self.is_var_const(root);
 
-        // Filter out call-local inference placeholders from contra-candidates.
-        // Both bare placeholders (`__infer_0`) AND types that contain stale
-        // placeholders from previous inference rounds (e.g., unions like
-        // `__infer_0 | PromiseLike<__infer_0>`) are filtered. Source placeholders
-        // (`__infer_src_*`) are preserved because HOFI can hoist them into returned
-        // generic function types.
         let mut concrete_contra_candidates: Vec<_> = contra_candidates
             .iter()
-            .filter(|c| {
-                // Check bare placeholder first (fast path)
-                if crate::type_queries::data::is_bare_current_infer_placeholder_db(
-                    self.interner,
-                    c.type_id,
-                ) {
-                    return false;
-                }
-                // Check if the type contains any non-infer type parameters.
-                // If it ONLY contains `__infer_*` placeholders (no real type params),
-                // it's a stale inference artifact and should be filtered.
-                if crate::type_queries::data::contains_current_infer_placeholder_db(
-                    self.interner,
-                    c.type_id,
-                ) && !crate::type_queries::data::contains_non_infer_type_parameters_db(
-                    self.interner,
-                    c.type_id,
-                ) {
-                    return false;
-                }
-                true
-            })
+            .filter(|c| self.is_concrete_contra_candidate(c.type_id))
             .cloned()
             .collect();
 
@@ -781,12 +754,15 @@ impl<'a> InferenceContext<'a> {
                         resolved
                     }
                 }
-                // Arrays and tuples: widen element types unconditionally.
-                // `[true]` inferred as `Array<true>` should widen to `Array<boolean>`.
-                // Unlike objects, arrays don't have a freshness concept that should
-                // prevent widening.
+                // Arrays and tuples: only widen when the candidate is fresh
+                // (not from a type assertion). Mirrors tsc's RequiresWidening
+                // semantics: `as T` produces non-fresh types that must not widen.
                 Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
-                    widening::widen_type_for_inference(self.interner, resolved)
+                    if has_type_annotation_candidate {
+                        resolved
+                    } else {
+                        widening::widen_type_for_inference(self.interner, resolved)
+                    }
                 }
                 _ => resolved,
             }
@@ -1754,18 +1730,10 @@ impl<'a> InferenceContext<'a> {
                     _ => true,
                 });
             }
-            // Filter out only call-local inference placeholders from contra-candidates.
-            // Higher-order source placeholders and real outer type parameters remain
-            // meaningful inference evidence.
             let mut concrete_contra_candidates: Vec<_> = info
                 .contra_candidates
                 .iter()
-                .filter(|c| {
-                    !crate::type_queries::data::is_bare_current_infer_placeholder_db(
-                        self.interner,
-                        c.type_id,
-                    )
-                })
+                .filter(|c| self.is_concrete_contra_candidate(c.type_id))
                 .cloned()
                 .collect();
             // Mirror the priority filter from `compute_constraint_result`: when

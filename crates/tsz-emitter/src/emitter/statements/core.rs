@@ -7,10 +7,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    // =========================================================================
-    // Statements
-    // =========================================================================
-
     pub(in crate::emitter) fn emit_block(&mut self, node: &Node, idx: NodeIndex) {
         let Some(block) = self.arena.get_block(node) else {
             return;
@@ -168,6 +164,7 @@ impl<'a> Printer<'a> {
             && self.is_single_line(node)
             && !needs_this_capture
             && is_function_body_block
+            && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
             && self.hoisted_for_of_temps.is_empty()
             && self.pending_object_rest_params.is_empty();
@@ -279,6 +276,9 @@ impl<'a> Printer<'a> {
             self.emit_pending_object_rest_param_preamble(false);
         }
 
+        let static_super_scope =
+            self.enter_pending_lowered_async_arrow_super_capture_scope(is_function_body_block);
+
         let block_scoped_private_byte_offset =
             Some((self.writer.len(), self.writer.current_line()));
         let hoisted_var_byte_offset = if is_function_body_block {
@@ -299,7 +299,7 @@ impl<'a> Printer<'a> {
         let prev_block_using_env = self.block_using_env.take();
         let block_using_names: Option<(String, String, String, bool)> = if block_using_lowered {
             let using_async = self.block_has_await_using(&block.statements);
-            let (env_name, error_name, result_name) = self.next_disposable_env_names();
+            let (env_name, error_name, result_name) = self.disposable_env_names_for_node(idx);
             let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
 
             // Block-level using: tsc uses `const` for the __addDisposableResource calls
@@ -603,6 +603,7 @@ impl<'a> Printer<'a> {
         if !self.ctx.options.remove_comments {
             self.emit_comments_before_pos(block_close_pos);
         }
+        self.restore_static_super_scope(static_super_scope);
         self.decrease_indent();
         self.map_closing_brace(node);
         self.write_with_end_marker("}");
@@ -636,7 +637,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
+    pub(in crate::emitter) fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
         let rest_params: Vec<(String, NodeIndex)> =
             std::mem::take(&mut self.pending_object_rest_params);
         for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {
@@ -832,13 +833,14 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // VariableStatement.declarations contains a VARIABLE_DECLARATION_LIST
-        // Emit the declaration list (which handles the let/const/var keyword)
-        if self
+        if self.emit_async_generator_shadow_variable_statement(node) {
+            return;
+        }
+        let is_accessor = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword)
-            || self.has_recovered_accessor_modifier(node)
-        {
+            || self.has_recovered_accessor_modifier(node);
+        if is_accessor {
             self.write("accessor ");
         }
         for &decl_list_idx in &var_stmt.declarations.nodes {
@@ -1503,6 +1505,12 @@ impl<'a> Printer<'a> {
         }
         self.map_trailing_semicolon(node);
         if !self.output_ends_with_semicolon() {
+            self.write_semicolon();
+        }
+        if self
+            .expression_statement_consumed_invalid_backslash_semicolon(node, expr_stmt.expression)
+        {
+            self.write_line();
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);

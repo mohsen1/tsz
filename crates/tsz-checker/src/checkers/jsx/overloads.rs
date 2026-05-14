@@ -44,12 +44,15 @@ impl<'a> CheckerState<'a> {
     /// Generic overloads are instantiated with constraint/default substitutions
     /// before checking, matching tsc's behavior of attempting inference for each
     /// candidate signature.
+    /// When `skip_return_check` is true, the TS2786 return-type check is skipped
+    /// to avoid cycle-detection false positives from recursive React alias return types.
     pub(crate) fn check_jsx_overloaded_sfc(
         &mut self,
         component_type: TypeId,
         attributes_idx: NodeIndex,
         tag_name_idx: NodeIndex,
         children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
+        skip_return_check: bool,
     ) {
         // Try call signatures first (SFC overloads), then construct signatures
         // (class component overloads like React.Component with 2 constructors).
@@ -220,10 +223,10 @@ impl<'a> CheckerState<'a> {
                 tag_name_idx
             };
 
-        // TS2786: When no overload matches, also check if the component's return
-        // type is compatible with JSX.Element. tsc emits TS2786 alongside TS2769
-        // when none of the overloads return a valid JSX element type.
-        self.check_jsx_component_return_type(component_type, tag_name_idx);
+        // TS2786: skipped for React aliases (cycle-detection false positives).
+        if !skip_return_check {
+            self.check_jsx_component_return_type(component_type, tag_name_idx);
+        }
 
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
         self.error_at_node(

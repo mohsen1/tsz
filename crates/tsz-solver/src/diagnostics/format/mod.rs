@@ -133,6 +133,9 @@ pub struct TypeFormatter<'a> {
     /// This lets a recursive alias expand one structural layer before nested
     /// self-references elide as `...`.
     skipped_type_alias_expansion_visiting: FxHashSet<DefId>,
+    /// Optional compiler-controlled display replacement for the lib-only
+    /// `BuiltinIteratorReturn` alias.
+    builtin_iterator_return_type: Option<TypeId>,
     /// When true, don't follow `display_alias` when it points to an Intersection
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
@@ -374,6 +377,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_display_alias_chase: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
+            builtin_iterator_return_type: None,
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
@@ -589,6 +593,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_display_alias_chase: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
+            builtin_iterator_return_type: None,
             skip_intersection_display_alias: false,
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
@@ -719,6 +724,28 @@ impl<'a> TypeFormatter<'a> {
             .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
     }
 
+    fn display_alias_application_base_has_conditional_body(&self, alias_origin: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            _ => def_store.find_def_for_type(app.base),
+        };
+
+        def_id
+            .and_then(|def_id| def_store.get(def_id))
+            .and_then(|def| def.body)
+            .is_some_and(|body| {
+                matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            })
+    }
+
     /// Skip type alias names for aliases whose body is a generic Application.
     /// Used in assignability messages where tsc shows the Application form.
     pub const fn with_skip_application_alias_names(mut self) -> Self {
@@ -782,6 +809,13 @@ impl<'a> TypeFormatter<'a> {
             self.preserve_optional_property_surface_syntax = true;
             self.preserve_optional_parameter_surface_syntax = true;
         }
+        self
+    }
+
+    /// Replace diagnostic display of the compiler-internal lib alias
+    /// `BuiltinIteratorReturn` with the option-selected concrete type.
+    pub const fn with_builtin_iterator_return_type(mut self, ty: TypeId) -> Self {
+        self.builtin_iterator_return_type = Some(ty);
         self
     }
 
@@ -1395,6 +1429,8 @@ impl<'a> TypeFormatter<'a> {
                         self.interner.lookup(alias_origin),
                         Some(TypeData::Application(_))
                     ))
+                || (self.skip_application_alias_names
+                    && self.display_alias_application_base_has_conditional_body(alias_origin))
                 || (is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin));
             if (!is_simple_type
@@ -1560,12 +1596,25 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
             TypeData::UnresolvedTypeName(name) => {
+                if self.atom(*name).as_ref() == "BuiltinIteratorReturn"
+                    && let Some(replacement) = self.builtin_iterator_return_type
+                {
+                    return self.format(replacement);
+                }
                 if let Some((def_id, body)) = self.skipped_type_alias_body_by_name(*name) {
                     return self.format_skipped_type_alias_body(def_id, body);
                 }
                 Cow::Owned(self.atom(*name).to_string())
             }
             TypeData::Lazy(def_id) => {
+                if let Some(replacement) = self.builtin_iterator_return_type
+                    && let Some(def_store) = self.def_store
+                    && let Some(def) = def_store.get(*def_id)
+                    && def.kind == crate::def::DefKind::TypeAlias
+                    && self.atom(def.name).as_ref() == "BuiltinIteratorReturn"
+                {
+                    return self.format(replacement);
+                }
                 if self.skip_type_alias_def_ids.contains(def_id)
                     && let Some(def_store) = self.def_store
                     && let Some(def) = def_store.get(*def_id)

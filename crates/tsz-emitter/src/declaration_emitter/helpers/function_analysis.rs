@@ -365,7 +365,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let name = self.js_define_property_name(args.nodes[1])?;
-        let (mut type_text, readonly) = self.js_define_property_descriptor(args.nodes[2])?;
+        let (mut type_text, readonly, value) = self.js_define_property_descriptor(args.nodes[2])?;
         if name == "name" && type_text == "any" {
             type_text = "string".to_string();
         }
@@ -373,6 +373,7 @@ impl<'a> DeclarationEmitter<'a> {
             name,
             type_text,
             readonly,
+            value,
         })
     }
 
@@ -413,12 +414,203 @@ impl<'a> DeclarationEmitter<'a> {
         if self.declaration_property_name_text(&name) != name {
             return None;
         }
-        let (type_text, readonly) = self.js_define_property_descriptor(args.nodes[2])?;
+        let (type_text, readonly, value) = self.js_define_property_descriptor(args.nodes[2])?;
         Some(JsDefinedPropertyDecl {
             name,
             type_text,
             readonly,
+            value,
         })
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_define_property_namespace_member_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, JsDefinedPropertyDecl)> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_node = self.arena.get(expr_stmt.expression)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        if !self.is_object_define_property_call(call.expression) {
+            return None;
+        }
+        let args = call.arguments.as_ref()?;
+        if args.nodes.len() != 3 {
+            return None;
+        }
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(args.nodes[0]);
+        let receiver_node = self.arena.get(receiver)?;
+        if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let receiver_access = self.arena.get_access_expr(receiver_node)?;
+        let root = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(receiver_access.expression);
+        if !self.is_exports_identifier_reference(root) && !self.is_module_exports_reference(root) {
+            return None;
+        }
+        let root_name = self.get_identifier_text(receiver_access.name_or_argument)?;
+
+        let name = self.js_define_property_name(args.nodes[1])?;
+        if self.declaration_property_name_text(&name) != name {
+            return None;
+        }
+        let (type_text, readonly, value) = self.js_define_property_descriptor(args.nodes[2])?;
+        Some((
+            root_name,
+            JsDefinedPropertyDecl {
+                name,
+                type_text,
+                readonly,
+                value,
+            },
+        ))
+    }
+
+    pub(crate) fn collect_js_commonjs_define_property_export_local_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return names;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(property) = self.js_commonjs_define_property_export_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            let Some(local_name) = self.get_identifier_text(property.value) else {
+                continue;
+            };
+            if self
+                .js_top_level_function_declaration_by_name(source_file, &local_name)
+                .is_some()
+            {
+                names.insert(local_name);
+            }
+        }
+
+        names
+    }
+
+    pub(in crate::declaration_emitter) fn js_define_property_function_initializer(
+        &self,
+        value_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        self.js_define_property_function_initializer_inner(value_idx, 0)
+    }
+
+    pub(in crate::declaration_emitter) fn js_define_property_function_initializer_for_export_name(
+        &self,
+        export_name: &str,
+    ) -> Option<NodeIndex> {
+        let source_file = self.current_source_file_idx.and_then(|source_file_idx| {
+            self.arena
+                .get(source_file_idx)
+                .and_then(|node| self.arena.get_source_file(node))
+        })?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(property) = self.js_commonjs_define_property_export_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            if property.name == export_name {
+                return self.js_define_property_function_initializer(property.value);
+            }
+        }
+
+        None
+    }
+
+    fn js_define_property_function_initializer_inner(
+        &self,
+        value_idx: NodeIndex,
+        depth: u8,
+    ) -> Option<NodeIndex> {
+        if depth > 8 {
+            return None;
+        }
+        let value_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(value_idx);
+        if self.is_js_function_initializer(value_idx) {
+            return Some(value_idx);
+        }
+
+        let source_file = self.current_source_file_idx.and_then(|source_file_idx| {
+            self.arena
+                .get(source_file_idx)
+                .and_then(|node| self.arena.get_source_file(node))
+        })?;
+
+        if let Some(local_name) = self.get_identifier_text(value_idx) {
+            return self.js_top_level_function_declaration_by_name(source_file, &local_name);
+        }
+
+        let value_node = self.arena.get(value_idx)?;
+        if value_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(value_node)?;
+        let export_name = self.get_identifier_text(access.name_or_argument)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        if !self.is_exports_identifier_reference(receiver)
+            && !self.is_module_exports_reference(receiver)
+        {
+            return None;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(property) = self.js_commonjs_define_property_export_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            if property.name == export_name {
+                return self
+                    .js_define_property_function_initializer_inner(property.value, depth + 1);
+            }
+        }
+
+        None
+    }
+
+    fn js_top_level_function_declaration_by_name(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        name: &str,
+    ) -> Option<NodeIndex> {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                continue;
+            }
+            let Some(func) = self.arena.get_function(stmt_node) else {
+                continue;
+            };
+            if self.get_identifier_text(func.name).as_deref() == Some(name) {
+                return Some(stmt_idx);
+            }
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn is_object_define_property_call(
@@ -474,7 +666,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn js_define_property_descriptor(
         &self,
         expr_idx: NodeIndex,
-    ) -> Option<(String, bool)> {
+    ) -> Option<(String, bool, NodeIndex)> {
         let expr_node = self.arena.get(expr_idx)?;
         let object = self.arena.get_literal_expr(expr_node)?;
         let mut value_expr = None;
@@ -504,7 +696,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.js_string_concatenation_type_text(value_expr))
             .or_else(|| self.allowlisted_initializer_type_text(value_expr))
             .unwrap_or_else(|| "any".to_string());
-        Some((type_text, !writable))
+        Some((type_text, !writable, value_expr))
     }
 
     pub(in crate::declaration_emitter) fn js_string_concatenation_type_text(
@@ -1162,16 +1354,7 @@ impl<'a> DeclarationEmitter<'a> {
         let class_node = self.arena.get(class_idx)?;
         let class_decl = self.arena.get_class(class_node)?;
         for &member_idx in &class_decl.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            let member_name_idx = if let Some(method) = self.arena.get_method_decl(member_node) {
-                method.name
-            } else if let Some(prop) = self.arena.get_property_decl(member_node) {
-                prop.name
-            } else if let Some(accessor) = self.arena.get_accessor(member_node) {
-                accessor.name
-            } else {
+            let Some(member_name_idx) = self.get_member_name_idx(member_idx) else {
                 continue;
             };
             if self.get_identifier_text(member_name_idx).as_deref() != Some(member_name) {

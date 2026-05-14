@@ -1,6 +1,11 @@
 //! Tests for spread and rest operator type checking
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{
+    check_source_diagnostics, diagnostic_code_message_refs as diagnostic_code_messages,
+    diagnostic_code_message_refs_with_code as diagnostic_code_messages_with_code, diagnostic_codes,
+    diagnostic_count, diagnostic_count_where, diagnostic_messages_with_code, diagnostics_where,
+    diagnostics_with_code, has_diagnostic_where,
+};
 
 #[test]
 fn test_array_spread_with_tuple() {
@@ -13,10 +18,7 @@ const arr = [...t];  // Should be (string | number)[]
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322 or TS2488
-    let errors = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322 || d.code == 2488)
-        .count();
+    let errors = diagnostic_count_where(&diagnostics, |code| matches!(code, 2322 | 2488));
     assert_eq!(
         errors, 0,
         "Expected no errors for array spread with tuple, got {errors}"
@@ -33,10 +35,7 @@ const arr = [...nums];  // Should be number[]
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322 or TS2488
-    let errors = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322 || d.code == 2488)
-        .count();
+    let errors = diagnostic_count_where(&diagnostics, |code| matches!(code, 2322 | 2488));
     assert_eq!(
         errors, 0,
         "Expected no errors for array spread with array, got {errors}"
@@ -53,7 +52,7 @@ const arr = [...num];  // Should emit TS2488
     let diagnostics = check_source_diagnostics(source);
 
     // Should emit TS2488
-    let ts2488_count = diagnostics.iter().filter(|d| d.code == 2488).count();
+    let ts2488_count = diagnostic_count(&diagnostics, 2488);
     assert!(
         ts2488_count >= 1,
         "Expected at least 1 TS2488 error for non-iterable spread, got {ts2488_count}"
@@ -87,7 +86,7 @@ let k5: [number, string, boolean, ...boolean[]] = [1, ...sbb_];
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 — spreading [string, boolean, ...boolean[]] should preserve the rest \
@@ -108,7 +107,7 @@ let k6: [number, string, boolean, boolean, ...boolean[]] = [1, ...sbb_];
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert!(
         ts2322_count >= 1,
         "Expected at least one TS2322 — source [string, boolean, ...boolean[]] cannot satisfy \
@@ -127,7 +126,7 @@ const merged = { ...obj1, ...obj2 };  // Should be { a: number, b: number, c: nu
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for object spread, got {ts2322_count}"
@@ -152,9 +151,9 @@ const { c, d, e, f, g } = {
 ";
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2339 = diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.code == 2339)
+    let ts2339 = diagnostics_with_code(&diagnostics, 2339)
+        .into_iter()
+        .next()
         .unwrap_or_else(|| panic!("Expected TS2339 for missing g, got {diagnostics:#?}"));
 
     assert!(
@@ -178,7 +177,7 @@ sum(1, 2, 3);
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for rest parameter, got {ts2322_count}"
@@ -197,7 +196,7 @@ sum(1, "two", 3);  // Should emit TS2345
     let diagnostics = check_source_diagnostics(source);
 
     // Should emit TS2345 for string argument (TS2345 is for function arguments, TS2322 is for assignments)
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert!(
         ts2345_count >= 1,
         "Expected at least 1 TS2345 error for wrong type in rest parameter, got {ts2345_count}"
@@ -220,7 +219,7 @@ f1("foo", ...t4);
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count, 0,
         "Expected tuple-union rest spreads to be accepted, got diagnostics: {diagnostics:#?}"
@@ -237,15 +236,15 @@ f1("foo");
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count, 2,
         "Expected aggregate rest argument mismatches for tuple-union rest, got diagnostics: {diagnostics:#?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == 2345 && d.message_text.contains("[10]")),
+        has_diagnostic_where(&diagnostics, |d| {
+            d.code == 2345 && d.message_text.contains("[10]")
+        }),
         "Expected literal tuple display for aggregate rest mismatch, got diagnostics: {diagnostics:#?}"
     );
 }
@@ -277,7 +276,7 @@ baz(1, 2);
 
     let diagnostics = check_source_diagnostics(source);
     assert!(
-        diagnostics.iter().any(|d| {
+        has_diagnostic_where(&diagnostics, |d| {
             d.code == 2345
                 && d.message_text.contains("[10, 20]")
                 && d.message_text.contains("CoolArray<number>")
@@ -285,7 +284,7 @@ baz(1, 2);
         "Expected aggregate TS2345 for explicit CoolArray rest type argument, got diagnostics: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(|d| {
+        has_diagnostic_where(&diagnostics, |d| {
             d.code == 2345
                 && d.message_text.contains("[]")
                 && d.message_text.contains("CoolArray<never>")
@@ -293,7 +292,7 @@ baz(1, 2);
         "Expected empty aggregate rest mismatch to infer CoolArray<never>, got diagnostics: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(|d| {
+        has_diagnostic_where(&diagnostics, |d| {
             d.code == 2345
                 && d.message_text.contains("[number]")
                 && d.message_text.contains("CoolArray<unknown>")
@@ -301,7 +300,7 @@ baz(1, 2);
         "Expected direct scalar aggregate rest mismatch to widen to [number] vs CoolArray<unknown>, got diagnostics: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(|d| {
+        has_diagnostic_where(&diagnostics, |d| {
             d.code == 2345
                 && d.message_text.contains("[number, number]")
                 && d.message_text.contains("CoolArray<unknown>")
@@ -328,7 +327,7 @@ function g11<U extends string[], V extends [number, number]>(u: U, v: V) {
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count, 0,
         "Expected generic spread arguments to remain assignable to inferred generic rest tuples, got diagnostics: {diagnostics:#?}"
@@ -360,7 +359,7 @@ const zipped3 = opt1.zip3(opt2, opt3);
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    let ts2345: Vec<_> = diagnostics_with_code(&diagnostics, 2345);
     assert!(
         ts2345.is_empty(),
         "Expected inferred rest tuples to satisfy Array<Option<any>> constraints, got diagnostics: {diagnostics:#?}"
@@ -381,7 +380,7 @@ interface Settable {
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2416_count = diagnostics.iter().filter(|d| d.code == 2416).count();
+    let ts2416_count = diagnostic_count(&diagnostics, 2416);
     assert_eq!(
         ts2416_count, 0,
         "Expected method overloads to satisfy tuple-union rest surface without TS2416, got diagnostics: {diagnostics:#?}"
@@ -399,7 +398,7 @@ const [first, second, ...rest] = arr;
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for array destructuring with rest, got {ts2322_count}"
@@ -418,7 +417,7 @@ const [s, n, ...rest] = t;
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for tuple destructuring with rest, got {ts2322_count}"
@@ -452,17 +451,13 @@ function evaluate(expression: Expression): boolean {
 ";
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count,
         0,
         "Expected no TS2345 from discriminated tuple rest destructuring, got {} errors: {:?}",
         ts2345_count,
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2345)
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        diagnostic_messages_with_code(&diagnostics, 2345)
     );
 }
 
@@ -482,17 +477,13 @@ let numberB: number;
 
     let diagnostics = check_source_diagnostics(source);
 
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count,
         0,
         "Expected no TS2322 for tuple assignment destructuring, got {} errors: {:?}",
         ts2322_count,
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2322)
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        diagnostic_messages_with_code(&diagnostics, 2322)
     );
 }
 
@@ -509,7 +500,7 @@ add(...args);  // Should work
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for spread in function call, got {ts2322_count}"
@@ -530,7 +521,7 @@ add(...args);  // Should emit TS2345
 
     // TypeScript emits TS2556 for this case: "A spread argument must either have a tuple type or be passed to a rest parameter."
     // The spread array has type (string | number)[] which is not a tuple type.
-    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    let ts2556_count = diagnostic_count(&diagnostics, 2556);
     assert!(
         ts2556_count >= 1,
         "Expected at least 1 TS2556 error for spread of non-tuple array, got {ts2556_count}"
@@ -557,22 +548,16 @@ rest("e", ...mixed);
 
     let diagnostics = check_source_diagnostics(source);
 
-    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    let ts2556_count = diagnostic_count(&diagnostics, 2556);
     assert_eq!(
         ts2556_count,
         0,
         "Expected no TS2556 when non-tuple spreads only cover optional/rest parameters, got diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2556)
-            .map(|d| (&d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_code_messages_with_code(&diagnostics, 2556)
     );
 
-    let optional_tail_messages: Vec<&str> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .map(|d| d.message_text.as_str())
+    let optional_tail_messages: Vec<&str> = diagnostic_messages_with_code(&diagnostics, 2345)
+        .into_iter()
         .filter(|msg| msg.contains("string | number"))
         .collect();
     // tsc displays the declared parameter type (without `| undefined`) for
@@ -600,7 +585,7 @@ greet(...args);  // Should work
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for spread tuple in function call, got {ts2322_count}"
@@ -621,7 +606,7 @@ greet(...args);  // Should emit TS2345
     let diagnostics = check_source_diagnostics(source);
 
     // Should emit TS2345 (for function arguments) - boolean is not assignable to number
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert!(
         ts2345_count >= 1,
         "Expected at least 1 TS2345 error for spread tuple with wrong types, got {ts2345_count}"
@@ -642,7 +627,7 @@ const person: Person = { ...partial, age: 30 };
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for object spread with contextual type, got {ts2322_count}"
@@ -664,10 +649,8 @@ const y: number = inferred.y;
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| matches!(d.code, 2322 | 2339 | 2741))
-        .collect();
+    let relevant: Vec<_> =
+        diagnostics_where(&diagnostics, |code| matches!(code, 2322 | 2339 | 2741));
     assert!(
         relevant.is_empty(),
         "Object spread from any should preserve any-ness, got: {diagnostics:?}"
@@ -687,10 +670,7 @@ function build(this: any): Target {
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| matches!(d.code, 2741 | 2783))
-        .collect();
+    let relevant: Vec<_> = diagnostics_where(&diagnostics, |code| matches!(code, 2741 | 2783));
     assert!(
         relevant.is_empty(),
         "Object spread from this:any options should not emit TS2741/TS2783, got: {diagnostics:?}"
@@ -708,7 +688,7 @@ const combined = [...arr1, ...arr2];  // Should be number[]
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for nested array spread, got {ts2322_count}"
@@ -728,7 +708,7 @@ logAll("hello", 42);  // Should emit TS2345
     let diagnostics = check_source_diagnostics(source);
 
     // Should emit TS2345 for number argument (TS2345 is for function arguments)
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert!(
         ts2345_count >= 1,
         "Expected at least 1 TS2345 error for wrong type in rest parameter with annotation, got {ts2345_count}"
@@ -766,7 +746,7 @@ class Foo {
 }
 ";
     let diagnostics = check_source_diagnostics(source);
-    let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
+    let ts2683_count = diagnostic_count(&diagnostics, 2683);
     assert_eq!(
         ts2683_count, 0,
         "Expected no TS2683 for `this` in class getter/setter/method, got {ts2683_count}"
@@ -788,7 +768,7 @@ var obj = {
 };
 ";
     let diagnostics = check_source_diagnostics(source);
-    let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
+    let ts2683_count = diagnostic_count(&diagnostics, 2683);
     assert_eq!(
         ts2683_count, 0,
         "Expected no TS2683 for `this` in object literal getter/method, got {ts2683_count}"
@@ -807,7 +787,7 @@ var obj = {
 };
 ";
     let diagnostics = check_source_diagnostics(source);
-    let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
+    let ts2683_count = diagnostic_count(&diagnostics, 2683);
     assert_eq!(
         ts2683_count, 0,
         "Expected no TS2683 for `this` in object literal function expression, got {ts2683_count}"
@@ -824,7 +804,7 @@ const chars = [...str];  // Should be string[]
     let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2488 (string is iterable)
-    let ts2488_count = diagnostics.iter().filter(|d| d.code == 2488).count();
+    let ts2488_count = diagnostic_count(&diagnostics, 2488);
     assert_eq!(
         ts2488_count, 0,
         "Expected no TS2488 error for string spread, got {ts2488_count}"
@@ -841,7 +821,7 @@ var { ...rest, x } = { x: 1 };
 
     let diagnostics = check_source_diagnostics(source);
 
-    let ts2462_count = diagnostics.iter().filter(|d| d.code == 2462).count();
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
     assert!(
         ts2462_count >= 1,
         "Expected TS2462 for object rest that is not last, got {ts2462_count}. Diagnostics: {diagnostics:#?}"
@@ -856,7 +836,7 @@ var [...rest, x] = [1, 2, 3];
 
     let diagnostics = check_source_diagnostics(source);
 
-    let ts2462_count = diagnostics.iter().filter(|d| d.code == 2462).count();
+    let ts2462_count = diagnostic_count(&diagnostics, 2462);
     assert!(
         ts2462_count >= 1,
         "Expected TS2462 for array rest that is not last, got {ts2462_count}"
@@ -876,15 +856,12 @@ function f<T extends { a: string, b: string }>(obj: T) {
 }
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    let ts2783_count = diagnostic_count(&diagnostics, 2783);
     assert_eq!(
         ts2783_count,
         0,
         "Expected no TS2783 for object rest with type parameter constraint, got {ts2783_count}. Diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_code_messages(&diagnostics)
     );
 }
 
@@ -899,7 +876,7 @@ function f(obj: Obj) {
 }
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 for object rest with concrete type, got {ts2322_count}"
@@ -922,15 +899,12 @@ let o1 = { a: 'hello', x: 42 };
 let o2: { b: string, x: number } = test(o1);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2741_count = diagnostics.iter().filter(|d| d.code == 2741).count();
+    let ts2741_count = diagnostic_count(&diagnostics, 2741);
     assert_eq!(
         ts2741_count,
         0,
         "Expected no TS2741 for generic rest spread return, got diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_code_messages(&diagnostics)
     );
 }
 
@@ -946,10 +920,7 @@ let input = { x: 1, y: 2, z: 'hello', w: true };
 let output: { sum: number, z: string, w: boolean } = pick(input);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let error_count = diagnostics
-        .iter()
-        .filter(|d| d.code == 2741 || d.code == 2322)
-        .count();
+    let error_count = diagnostic_count_where(&diagnostics, |code| matches!(code, 2741 | 2322));
     assert_eq!(
         error_count, 0,
         "Expected no TS2741/TS2322 for generic rest spread with multiple properties"
@@ -967,7 +938,7 @@ function getName<T extends { name: string }>(obj: T): string {
 }
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322: destructured named property should have constraint type"
@@ -987,7 +958,8 @@ let o2: { b: number } = test(o1);
 "#;
     let diagnostics = check_source_diagnostics(source);
     // b is string, not number — should have an error
-    let has_type_error = diagnostics.iter().any(|d| d.code == 2322 || d.code == 2741);
+    let has_type_error =
+        diagnostic_count_where(&diagnostics, |code| matches!(code, 2322 | 2741)) > 0;
     assert!(
         has_type_error,
         "Expected a type error when assigning {{ b: string }} to {{ b: number }}"
@@ -1021,15 +993,12 @@ function test<T extends { a: string, b: string }>(obj: T): T {
 }
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    let ts2783_count = diagnostic_count(&diagnostics, 2783);
     assert_eq!(
         ts2783_count,
         0,
         "Expected no TS2783 for generic rest re-spread; got: {:?}",
-        diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_code_messages(&diagnostics)
     );
 }
 
@@ -1051,7 +1020,7 @@ class C {
 "#;
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+    let ts2339: Vec<_> = diagnostics_with_code(&diagnostics, 2339);
     assert_eq!(
         ts2339.len(),
         2,
@@ -1085,7 +1054,7 @@ declare var n: number[];
 withRest(...n);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    let ts2556_count = diagnostic_count(&diagnostics, 2556);
     assert!(
         ts2556_count >= 1,
         "Expected TS2556 for non-tuple spread at non-rest position, got {ts2556_count}"
@@ -1101,7 +1070,7 @@ declare var n: number[];
 withRest('a', ...n);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    let ts2556_count = diagnostic_count(&diagnostics, 2556);
     assert_eq!(
         ts2556_count, 0,
         "Expected no TS2556 when spread is at rest position, got {ts2556_count}"
@@ -1117,7 +1086,7 @@ declare var n: number[];
 noRest(...n);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    let ts2556_count = diagnostic_count(&diagnostics, 2556);
     assert!(
         ts2556_count >= 1,
         "Expected TS2556 for spread to function without rest param, got {ts2556_count}"
@@ -1133,7 +1102,7 @@ declare var t: [number];
 withRest(...t);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    let ts2556_count = diagnostic_count(&diagnostics, 2556);
     assert_eq!(
         ts2556_count, 0,
         "Expected no TS2556 for tuple spread (known length), got {ts2556_count}"
@@ -1153,7 +1122,7 @@ function invoker<K extends string | number | symbol, A extends any[]>(key: K, ..
 }
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    let ts2556_count = diagnostic_count(&diagnostics, 2556);
     assert_eq!(
         ts2556_count, 0,
         "Expected no TS2556 for spread into generic IndexAccess callable, got {ts2556_count}. Diagnostics: {diagnostics:?}"
@@ -1176,7 +1145,7 @@ declare function mapped<T extends unknown[]>(...args: TupleMapper<T>): void;
 mapped("hello", 42);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count, 0,
         "Mapped tuple rest param should not produce false TS2345, got {ts2345_count}. Diagnostics: {diagnostics:?}"
@@ -1192,7 +1161,7 @@ declare function mapTuple<T extends unknown[]>(...args: TupleMapper<T>): T;
 const result = mapTuple("hello", 42);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count, 0,
         "Generic mapped tuple inference should not produce false TS2345, got {ts2345_count}. Diagnostics: {diagnostics:?}"
@@ -1207,7 +1176,7 @@ declare function f(...args: [string, number]): void;
 f(42, "hello");
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert!(
         ts2345_count >= 1,
         "Plain tuple rest param should still reject mismatched args, got {ts2345_count} TS2345 errors"
@@ -1229,16 +1198,12 @@ declare let f10: (...x: [number, string, ...boolean[]]) => void;
 f10(...t1);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count,
         0,
         "Variadic tuple spread should not produce false TS2345, got {ts2345_count}. Diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2345)
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        diagnostic_messages_with_code(&diagnostics, 2345)
     );
 }
 
@@ -1253,16 +1218,12 @@ f10(42, ...t2);
 f10(42, "hello", ...t3);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count,
         0,
         "Partial variadic tuple spread should not produce false TS2345, got {ts2345_count}. Diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2345)
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        diagnostic_messages_with_code(&diagnostics, 2345)
     );
 }
 
@@ -1276,31 +1237,23 @@ f10(42, "hello", true, ...t4);
 f10(42, "hello", true, ...t4, false);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count,
         0,
         "Empty tuple spread with trailing args should not produce false TS2345, got {ts2345_count}. Diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2345)
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        diagnostic_messages_with_code(&diagnostics, 2345)
     );
 }
 
 fn assert_no_ts2345_for_generic_rest_call(source: &str) {
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert_eq!(
         ts2345_count,
         0,
         "Generic rest parameter calls should compare each argument against its positional tuple element, got TS2345 diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2345)
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        diagnostic_messages_with_code(&diagnostics, 2345)
     );
 }
 
@@ -1345,7 +1298,7 @@ declare let f10: (...x: [number, string, ...boolean[]]) => void;
 f10(...bad);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert!(
         ts2345_count >= 1,
         "Mismatched variadic rest type should produce TS2345, got {ts2345_count}"
@@ -1364,7 +1317,7 @@ declare function fn(a: number, b: number, bb: number, ...c: number[]): number;
 fn(...nnnu, x);
 ";
     let diagnostics = check_source_diagnostics(source);
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2345_count = diagnostic_count(&diagnostics, 2345);
     assert!(
         ts2345_count >= 1,
         "Optional tuple element spread should emit TS2345 for number | undefined vs number, got {ts2345_count}"
@@ -1382,7 +1335,7 @@ declare function fs2(a: string, b: string): void;
 fs2("a", ...s2);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2554_count = diagnostics.iter().filter(|d| d.code == 2554).count();
+    let ts2554_count = diagnostic_count(&diagnostics, 2554);
     assert!(
         ts2554_count >= 1,
         "Tuple spread with too many args should emit TS2554, got {ts2554_count}"
@@ -1398,10 +1351,8 @@ declare function fs2(a: string, b: string): void;
 fs2(...s2);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let error_count = diagnostics
-        .iter()
-        .filter(|d| d.code == 2554 || d.code == 2556 || d.code == 2345)
-        .count();
+    let error_count =
+        diagnostic_count_where(&diagnostics, |code| matches!(code, 2554 | 2556 | 2345));
     assert_eq!(
         error_count, 0,
         "Exact tuple spread should not error, got {error_count}"
@@ -1418,7 +1369,7 @@ declare function fs2_(a: string, b: string, ...c: string[]): void;
 fs2_(...s_, ...s_);
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    let ts2556_count = diagnostic_count(&diagnostics, 2556);
     assert_eq!(
         ts2556_count, 1,
         "Non-tuple spread should emit exactly 1 TS2556 per call, got {ts2556_count}"
@@ -1437,7 +1388,7 @@ type T1 = [...string[], ...number[]];
 type T2 = [...Array<string>, ...number[]];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    let ts1265_count = diagnostic_count(&diagnostics, 1265);
     assert_eq!(
         ts1265_count, 2,
         "Expected 2 TS1265 errors for rest after rest with concrete arrays, got {ts1265_count}"
@@ -1453,7 +1404,7 @@ type T3 = [...Array<string>, ...number[]];
 type T4 = [...Array<string>, ...Array<number>];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    let ts1265_count = diagnostic_count(&diagnostics, 1265);
     assert_eq!(
         ts1265_count, 4,
         "Expected TS1265 for every concrete rest after rest, got {ts1265_count}: {diagnostics:?}"
@@ -1467,7 +1418,7 @@ fn test_ts1265_not_emitted_for_variadic_type_param_spreads() {
 type Tup3<T extends unknown[], U extends unknown[], V extends unknown[]> = [...T, ...U, ...V];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    let ts1265_count = diagnostic_count(&diagnostics, 1265);
     assert_eq!(
         ts1265_count, 0,
         "TS1265 should NOT fire for variadic type param spreads [...T, ...U, ...V], got {ts1265_count}"
@@ -1481,7 +1432,7 @@ fn test_ts1266_optional_after_rest() {
 type T1 = [number, ...string[], boolean?];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts1266_count = diagnostics.iter().filter(|d| d.code == 1266).count();
+    let ts1266_count = diagnostic_count(&diagnostics, 1266);
     assert_eq!(
         ts1266_count, 1,
         "Expected 1 TS1266 error for optional after rest, got {ts1266_count}"
@@ -1496,8 +1447,8 @@ type T1 = [number, ...string[], ...boolean[]];
 type T2 = [number, ...string[], boolean?];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
-    let ts1266_count = diagnostics.iter().filter(|d| d.code == 1266).count();
+    let ts1265_count = diagnostic_count(&diagnostics, 1265);
+    let ts1266_count = diagnostic_count(&diagnostics, 1266);
     assert_eq!(ts1265_count, 1, "Expected 1 TS1265, got {ts1265_count}");
     assert_eq!(ts1266_count, 1, "Expected 1 TS1266, got {ts1266_count}");
 }
@@ -1540,7 +1491,7 @@ fn test_ts1265_not_emitted_for_multiple_fixed_length_tuple_spreads() {
 type Triple = [...[1, 2], ...[3, 4], ...[5, 6]];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    let ts1265_count = diagnostic_count(&diagnostics, 1265);
     assert_eq!(
         ts1265_count, 0,
         "TS1265 must not fire for three fixed-length tuple spreads, got {ts1265_count}: {diagnostics:?}"
@@ -1554,7 +1505,7 @@ fn test_ts1265_still_fires_for_array_after_variable_length_tuple_spread() {
 type T = [...[string, ...number[]], ...boolean[]];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
+    let ts1265_count = diagnostic_count(&diagnostics, 1265);
     assert_eq!(
         ts1265_count, 1,
         "TS1265 must fire when a variadic spread follows a variable-length tuple spread, got {ts1265_count}: {diagnostics:?}"
@@ -1572,12 +1523,12 @@ var x: any;
 [{ ...x }] = [{ abc: 1 }];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2698 = diagnostics.iter().filter(|d| d.code == 2698).count();
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
     assert_eq!(
         ts2698,
         0,
         "TS2698 should not be emitted for rest in destructuring assignment, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -1589,12 +1540,12 @@ var y: any;
 for ([{ ...y }] of [[{ abc: 1 }]]) ;
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2698 = diagnostics.iter().filter(|d| d.code == 2698).count();
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
     assert_eq!(
         ts2698,
         0,
         "TS2698 should not be emitted for rest in for-of destructuring, got: {:?}",
-        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diagnostics)
     );
 }
 
@@ -1608,17 +1559,13 @@ var x, y;
 for ([{ ...y }] of [[{ abc: 1 }]]) ;
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2698_count = diagnostics.iter().filter(|d| d.code == 2698).count();
+    let ts2698_count = diagnostic_count(&diagnostics, 2698);
     assert_eq!(
         ts2698_count,
         0,
         "Expected no TS2698 for object rest in destructuring with implicit any, got {ts2698_count}. \
          Errors: {:?}",
-        diagnostics
-            .iter()
-            .filter(|d| d.code == 2698)
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        diagnostic_messages_with_code(&diagnostics, 2698)
     );
 }
 
@@ -1640,14 +1587,11 @@ function test(opts: Opts) {
 }
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    let ts2783_count = diagnostic_count(&diagnostics, 2783);
     assert!(
         ts2783_count >= 1,
         "Expected TS2783 for spread overwriting explicit property in function arg, got {ts2783_count}. Diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_code_messages(&diagnostics)
     );
 }
 
@@ -1674,14 +1618,11 @@ create({
 });
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    let ts2783_count = diagnostic_count(&diagnostics, 2783);
     assert!(
         ts2783_count >= 1,
         "Expected TS2783 for spread from this.options overwriting explicit property, got {ts2783_count}. Diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_code_messages(&diagnostics)
     );
 }
 
@@ -1783,15 +1724,12 @@ Extension.create({
 });
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    let ts2783_count = diagnostic_count(&diagnostics, 2783);
     assert_eq!(
         ts2783_count,
         2,
         "Expected one TS2783 for each overwritten `editor` property, got {ts2783_count}. Diagnostics: {:?}",
-        diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_code_messages(&diagnostics)
     );
 }
 
@@ -1803,7 +1741,7 @@ var x: undefined;
 var z = { ...x };
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2698_count = diagnostics.iter().filter(|d| d.code == 2698).count();
+    let ts2698_count = diagnostic_count(&diagnostics, 2698);
     assert!(
         ts2698_count >= 1,
         "Expected TS2698 for spreading undefined in expression context, got {ts2698_count}"
@@ -1834,7 +1772,7 @@ var array: number[] = [0, 1, ...strs];
     // Should produce exactly one TS2322 — the elaborated element-level
     // message anchored at the spread expression, not the whole-array
     // fallback.
-    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    let ts2322: Vec<_> = diagnostics_with_code(&diagnostics, 2322);
     assert_eq!(
         ts2322.len(),
         1,
@@ -1870,11 +1808,10 @@ var c: MyNumberArray = [...strs];
     // (which would mean we drilled into the spread). Either no diagnostic
     // (lib not loaded — `MyNumberArray` resolves loosely) or a whole-array
     // TS2322 against MyNumberArray is acceptable.
-    let drilled: Vec<_> = diagnostics
-        .iter()
+    let drilled: Vec<_> = diagnostics_with_code(&diagnostics, 2322)
+        .into_iter()
         .filter(|d| {
-            d.code == 2322
-                && d.message_text.contains("'string'")
+            d.message_text.contains("'string'")
                 && d.message_text.contains("'number'")
                 && !d.message_text.contains("string[]")
         })
@@ -1905,14 +1842,11 @@ var [c4, c5, c6] = foo(1);
 ";
 
     let diagnostics = check_source_diagnostics(source);
-    let ts2488_count = diagnostics.iter().filter(|d| d.code == 2488).count();
+    let ts2488_count = diagnostic_count(&diagnostics, 2488);
     assert!(
         ts2488_count >= 1,
         "Expected at least 1 TS2488 for destructuring an interface with only a \
          numeric index signature in ES2015+, got {ts2488_count}: {:?}",
-        diagnostics
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_code_messages(&diagnostics)
     );
 }

@@ -269,6 +269,10 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(source, target);
         }
 
+        if self.is_object_rest_assignment_target_anchor(anchor_idx) {
+            return self.format_type_for_assignability_message(source);
+        }
+
         if let Some(expr_idx) = self.direct_diagnostic_source_expression(anchor_idx) {
             if !in_arith_compound
                 && self.is_literal_sensitive_assignment_target(target)
@@ -1562,15 +1566,12 @@ impl<'a> CheckerState<'a> {
                 ctor_display.push('>');
                 return Some(ctor_display);
             }
-            // For generic constructor calls without explicit type args (e.g.
-            // `new D()` where `class D<T>`), use the type formatter which
-            // respects display_alias to show inferred type params like
-            // `D<unknown>`. Without this, the expression text "D" would be
-            // returned, losing the inferred type arguments.
+            // With display alias: show the named type (e.g. `D<unknown>` not `D`).
+            // Without: variable name is not a type name; let caller format the actual type.
             if self.ctx.types.get_display_alias(display_type).is_some() {
                 return Some(self.format_type_diagnostic_structural(display_type));
             }
-            return Some(ctor_display);
+            return None;
         }
 
         Some(self.format_property_receiver_type_for_diagnostic(display_type))
@@ -1810,6 +1811,110 @@ impl<'a> CheckerState<'a> {
             .parent_of(expr_idx)
             .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
             .is_some_and(|parent| parent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+    }
+
+    pub(in crate::error_reporter) fn is_object_rest_assignment_target_anchor(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        let mut current = expr_idx;
+        let mut saw_spread_wrapper = false;
+        let mut object_idx = None;
+
+        while let Some(parent_idx) = self.ctx.arena.parent_of(current) {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || parent_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                saw_spread_wrapper = true;
+                current = parent_idx;
+                continue;
+            }
+            if parent_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION && saw_spread_wrapper
+            {
+                object_idx = Some(parent_idx);
+                break;
+            }
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            {
+                break;
+            }
+            current = parent_idx;
+        }
+        let Some(object_idx) = object_idx else {
+            return false;
+        };
+
+        self.assignment_target_expression(anchor_idx)
+            .is_some_and(|target_idx| {
+                self.ctx.arena.skip_parenthesized_and_assertions(target_idx) == object_idx
+            })
+    }
+
+    pub(in crate::error_reporter) fn computed_index_signature_object_literal_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        target: Option<TypeId>,
+    ) -> Option<String> {
+        let target = target?;
+        let shape = crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target)?;
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.ctx.arena.get_literal_expr(node)?;
+        let mut computed_key_kind = None;
+        let mut computed_value_types = Vec::new();
+
+        for child_idx in literal.elements.nodes.iter().copied() {
+            let child = self.ctx.arena.get(child_idx)?;
+            let prop = self.ctx.arena.get_property_assignment(child)?;
+            let name_node = self.ctx.arena.get(prop.name)?;
+            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                return None;
+            }
+            let computed = self.ctx.arena.get_computed_property(name_node)?;
+            let raw_key_type = self.get_type_of_node(computed.expression);
+            let key_type = self.widen_type_for_display(raw_key_type);
+            let key_kind = if key_type == TypeId::STRING {
+                "string"
+            } else if key_type == TypeId::NUMBER {
+                "number"
+            } else {
+                return None;
+            };
+            if computed_key_kind.is_some_and(|existing| existing != key_kind) {
+                return None;
+            }
+            computed_key_kind = Some(key_kind);
+
+            let value_type = self.get_type_of_node(prop.initializer);
+            if value_type == TypeId::ERROR {
+                return None;
+            }
+            computed_value_types.push(self.widen_type_for_display(value_type));
+        }
+
+        let key_kind = computed_key_kind?;
+        if computed_value_types.is_empty()
+            || !((key_kind == "string" && shape.string_index.is_some())
+                || (key_kind == "number" && shape.number_index.is_some()))
+        {
+            return None;
+        }
+
+        let value_type = if computed_value_types.len() == 1 {
+            computed_value_types[0]
+        } else {
+            self.ctx.types.factory().union(computed_value_types)
+        };
+        let value_display = self.format_type_for_assignability_message(value_type);
+        Some(format!("{{ [x: {key_kind}]: {value_display}; }}"))
     }
 
     pub(in crate::error_reporter) fn literal_assignment_source_display_for_target(

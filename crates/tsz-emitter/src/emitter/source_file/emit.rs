@@ -82,6 +82,9 @@ impl<'a> Printer<'a> {
             self.wrapped_export_module_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.async_generator_inner_name_counts.clear();
+        self.reserved_disposable_env_names.clear();
+        self.node_esm_create_require_names = None;
         self.commonjs_tslib_import_binding = "tslib_1".to_string();
         self.ctx.arguments_capture_counter = 0;
         self.first_for_of_emitted = false;
@@ -601,6 +604,8 @@ impl<'a> Printer<'a> {
         let will_emit_helpers = !self.ctx.options.no_emit_helpers
             && self.transforms.helpers_populated()
             && self.transforms.helpers().any_needed();
+        let needs_node_esm_create_require_preamble =
+            self.source_needs_node_esm_create_require(&source.statements);
 
         // Pre-compute the detached comment boundary for erased first statements.
         // tsc's algorithm: scan header comment ranges, find the FIRST blank-line
@@ -796,7 +801,9 @@ impl<'a> Printer<'a> {
                     //    the first real statement.
                     let should_defer = (is_commonjs
                         && (is_triple_slash_no_space || (!is_detached && !is_amd_dependency)))
-                        || (will_emit_helpers && !is_detached && !is_amd_dependency);
+                        || ((will_emit_helpers || needs_node_esm_create_require_preamble)
+                            && !is_detached
+                            && !is_amd_dependency);
                     // When JSX auto-import will generate ESM imports, defer
                     // /// <reference> directives so they appear AFTER the import,
                     // matching tsc's ordering.
@@ -853,6 +860,9 @@ impl<'a> Printer<'a> {
             self.jsx_auto_import_text()
         };
         let mut emitted_jsx_esm_import = false;
+        if needs_node_esm_create_require_preamble {
+            self.emit_node_esm_create_require_preamble();
+        }
         if !self.ctx.is_commonjs()
             && let Some(ref jsx_import) = jsx_import_text
         {
@@ -1087,6 +1097,19 @@ impl<'a> Printer<'a> {
             if has_top_level_using
                 && source.statements.nodes.iter().any(|&stmt_idx| {
                     self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                        let after_first_using = source
+                            .statements
+                            .nodes
+                            .iter()
+                            .take_while(|&&idx| idx != stmt_idx)
+                            .any(|&idx| {
+                                self.arena
+                                    .get(idx)
+                                    .is_some_and(|node| self.statement_is_top_level_using(node))
+                            });
+                        if !after_first_using {
+                            return false;
+                        }
                         (stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                             && self
                                 .arena
@@ -1098,10 +1121,27 @@ impl<'a> Printer<'a> {
                                         && export.module_specifier.is_none()
                                         && self.arena.get(export.export_clause).is_some_and(
                                             |clause_node| {
-                                                clause_node.kind
-                                                    != syntax_kind_ext::FUNCTION_DECLARATION
-                                                    && clause_node.kind
-                                                        != syntax_kind_ext::CLASS_DECLARATION
+                                                if clause_node.kind
+                                                    == syntax_kind_ext::FUNCTION_DECLARATION
+                                                {
+                                                    return false;
+                                                }
+                                                if clause_node.kind
+                                                    == syntax_kind_ext::CLASS_DECLARATION
+                                                {
+                                                    return self
+                                                        .arena
+                                                        .get_class(clause_node)
+                                                        .is_some_and(|class| {
+                                                            self.ctx.options.legacy_decorators
+                                                                && !self
+                                                                    .collect_class_decorators(
+                                                                        &class.modifiers,
+                                                                    )
+                                                                    .is_empty()
+                                                        });
+                                                }
+                                                true
                                             },
                                         )
                                 }))
@@ -1851,6 +1891,7 @@ impl<'a> Printer<'a> {
                     emitted,
                     &local_name,
                     export_name,
+                    false,
                 );
                 self.writer.truncate(before_len);
                 self.write(&rewritten);
@@ -2183,264 +2224,6 @@ impl<'a> Printer<'a> {
         // Exit root scope for block-scoped variable tracking
         self.ctx.block_scope_state.exit_scope();
     }
-
-    fn recovered_yield_call_statement_text(&self, node: &Node) -> Option<String> {
-        let expr_stmt = self.arena.get_expression_statement(node)?;
-        let expr_node = self.arena.get(expr_stmt.expression)?;
-        let is_recovered_yield = if expr_node.kind == syntax_kind_ext::YIELD_EXPRESSION {
-            let yield_expr = self.arena.get_unary_expr_ex(expr_node)?;
-            yield_expr.expression.is_none()
-        } else {
-            self.arena
-                .get_identifier(expr_node)
-                .is_some_and(|ident| ident.escaped_text == "yield")
-        };
-        if !is_recovered_yield {
-            return None;
-        }
-
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let mut pos = start.checked_add("yield".len())?;
-        while pos < bytes.len() && matches!(bytes[pos], b' ' | b'\t') {
-            pos += 1;
-        }
-        if bytes.get(pos) != Some(&b'(') {
-            return None;
-        }
-
-        let mut depth = 0_i32;
-        let mut end = pos;
-        while end < bytes.len() {
-            match bytes[end] {
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end += 1;
-                        break;
-                    }
-                }
-                b'\n' | b'\r' => return None,
-                _ => {}
-            }
-            end += 1;
-        }
-        if depth != 0 {
-            return None;
-        }
-
-        let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
-        Some(format!("{recovered};"))
-    }
-
-    fn recovered_invalid_jsx_closing_fragment_statement_text(&self, node: &Node) -> Option<String> {
-        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return None;
-        }
-
-        let text = self.source_text?;
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let tail = text.get(start..)?;
-        tail.starts_with("</>").then(|| " > ;".to_string())
-    }
-
-    fn recovered_ambient_class_parenthesized_tail_text(&self, node: &Node) -> Option<String> {
-        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
-            return None;
-        }
-
-        let class = self.arena.get_class(node)?;
-        if !self.arena.is_declare(&class.modifiers) || class.heritage_clauses.is_some() {
-            return None;
-        }
-
-        let text = self.source_text?;
-        let cursor = class.type_parameters.as_ref().map_or_else(
-            || self.arena.get(class.name).map(|name| name.end),
-            |params| Some(params.end),
-        )?;
-        let start = self.skip_trivia_forward(cursor, node.end) as usize;
-        let bytes = text.as_bytes();
-        if bytes.get(start) != Some(&b'(') {
-            return None;
-        }
-
-        let mut depth = 0_i32;
-        let mut end = start;
-        while end < bytes.len() {
-            match bytes[end] {
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end += 1;
-                        break;
-                    }
-                }
-                b'\n' | b'\r' => return None,
-                _ => {}
-            }
-            end += 1;
-        }
-        if depth != 0 || end > node.end as usize {
-            return None;
-        }
-
-        let recovered = crate::safe_slice::slice(text, start, end).ok()?.trim_end();
-        Some(format!("{recovered};"))
-    }
-
-    fn is_recovered_yield_operand_statement(&self, node: &Node) -> bool {
-        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return false;
-        }
-        let Some(text) = self.source_text else {
-            return false;
-        };
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        text.as_bytes().get(start) == Some(&b'(')
-    }
-
-    fn recovered_trailing_binary_operator_text(
-        &self,
-        previous: &Node,
-        current: &Node,
-    ) -> Option<String> {
-        if previous.kind != syntax_kind_ext::EXPRESSION_STATEMENT
-            || current.kind != syntax_kind_ext::EXPRESSION_STATEMENT
-        {
-            return None;
-        }
-
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let previous_start = (previous.pos as usize).min(bytes.len());
-        let mut previous_end = (previous.end as usize).min(bytes.len());
-        while previous_end > previous_start
-            && matches!(bytes[previous_end - 1], b' ' | b'\t' | b'\r' | b'\n')
-        {
-            previous_end -= 1;
-        }
-
-        let previous_text = text.get(previous_start..previous_end)?;
-        let operator = [
-            "instanceof",
-            "===",
-            "!==",
-            ">>>",
-            "&&",
-            "||",
-            "??",
-            "==",
-            "!=",
-            "<=",
-            ">=",
-            "<<",
-            ">>",
-            "**",
-            "in",
-            "|",
-            "&",
-            "^",
-            "<",
-            ">",
-            "+",
-            "-",
-            "*",
-            "/",
-            "%",
-        ]
-        .into_iter()
-        .find(|operator| previous_text.ends_with(operator))?;
-
-        let mut start = previous_end.checked_sub(operator.len())?;
-        while start > previous_start && matches!(bytes[start - 1], b' ' | b'\t') {
-            start -= 1;
-        }
-
-        let current_expr = self
-            .arena
-            .get_expression_statement(current)
-            .and_then(|stmt| self.arena.get(stmt.expression))?;
-        let end = (current_expr.pos as usize).min(bytes.len());
-        if end < previous_end {
-            return None;
-        }
-
-        let recovered = text.get(start..end)?;
-        if recovered.contains('\n') || recovered.contains('\r') {
-            return None;
-        }
-        Some(recovered.to_string())
-    }
-
-    fn recovered_leading_arrow_chain_text(
-        &self,
-        previous: &Node,
-        current: &Node,
-    ) -> Option<String> {
-        if previous.kind != syntax_kind_ext::EXPRESSION_STATEMENT
-            || current.kind != syntax_kind_ext::EXPRESSION_STATEMENT
-        {
-            return None;
-        }
-
-        let text = self.source_text?;
-        let previous_text = text.get(previous.pos as usize..previous.end as usize)?;
-        if !previous_text.trim_end().ends_with('?') {
-            return None;
-        }
-
-        let current_expr = self
-            .arena
-            .get_expression_statement(current)
-            .and_then(|stmt| self.arena.get(stmt.expression))?;
-        let start = (previous.end as usize).min(text.len());
-        let end = (current_expr.pos as usize).min(text.len());
-        if start >= end {
-            return None;
-        }
-
-        let gap = text.get(start..end)?.trim();
-        if !gap.ends_with("=>") {
-            return None;
-        }
-
-        let mut parts = gap.split("=>").map(str::trim).collect::<Vec<_>>();
-        if parts.len() < 2 || parts.pop() != Some("") || parts.iter().any(|part| part.is_empty()) {
-            return None;
-        }
-
-        Some(format!("{} => ", parts.join(" => ")))
-    }
-
-    fn recovered_debugger_namespace_line(&self, node: &Node) -> Option<(u32, Option<&'a str>)> {
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let mut line_end = start;
-        while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
-            line_end += 1;
-        }
-
-        let line = crate::safe_slice::slice(text, start, line_end).ok()?;
-        let trimmed = line.trim_start();
-        let rest = trimmed.strip_prefix("declare namespace debugger")?;
-        if rest.as_bytes().first().is_some_and(is_identifier_continue) {
-            return None;
-        }
-
-        let trailing_comment = line
-            .find("//")
-            .map(|comment_start| line[comment_start..].trim());
-        Some((line_end as u32, trailing_comment))
-    }
-}
-
-const fn is_identifier_continue(byte: &u8) -> bool {
-    byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$'
 }
 
 fn jsx_dev_file_name(file_name: &str) -> String {

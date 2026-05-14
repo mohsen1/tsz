@@ -9,13 +9,13 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 
 fn check_with_es2015(source: &str) -> Vec<Diagnostic> {
-    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&[
-        "lib.es5.d.ts",
-        "lib.es2015.d.ts",
-        "lib.es2015.collection.d.ts",
-        "lib.es2015.core.d.ts",
-        "lib.es2015.iterable.d.ts",
-        "lib.es2015.symbol.d.ts",
+    let lib_files = tsz_checker::test_utils::load_lib_files(&[
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.core.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.symbol.d.ts",
     ]);
     assert!(!lib_files.is_empty());
     tsz_checker::test_utils::check_source_with_libs(
@@ -97,5 +97,47 @@ type Use = Box<Source>;
     assert!(
         ts2344.is_empty(),
         "lib Required<T> shortcut must keep accepting matching arg, got: {diags:?}"
+    );
+}
+
+#[test]
+fn lib_required_indexed_by_mapped_keyof_key_emits_no_ts2536() {
+    let source = r#"
+type Test<T> = {
+  [K in keyof T]: Required<T>[K];
+};
+
+type Obj = { a: number; b?: string };
+type T1 = Test<Obj>;
+const t1: T1 = { a: 1, b: 'x' };
+"#;
+    let diags = check_with_es2015(source);
+    assert!(
+        diags.is_empty(),
+        "lib Required<T>[K] should accept K from keyof T, got: {diags:?}"
+    );
+}
+
+#[test]
+fn local_required_alias_indexed_by_unrelated_keyof_key_still_emits_ts2536() {
+    let source = r#"
+type Required<T> = { marker: string };
+type Test<T> = {
+  [K in keyof T]: Required<T>[K];
+};
+"#;
+    let diags = tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2536: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2536).collect();
+    assert!(
+        !ts2536.is_empty(),
+        "local Required<T> must not receive the lib mapped key-space shortcut, got: {diags:?}"
     );
 }

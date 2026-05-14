@@ -1133,7 +1133,57 @@ function patchSessionClient(SessionClient, ts) {
                 const nativeResult = getNative();
                 if (nativeResult && nativeResult.length > 0) {
                     const tszHasImportFix = tszResult.some(f => f.fixName === "import");
-                    if (hasAutoImportExclusionPreferences() && tszHasImportFix) {
+                    const importSpecifiersFromFixes = (fixes) => {
+                        const specs = new Set();
+                        for (const fix of fixes || []) {
+                            if (fix?.fixName !== "import") continue;
+                            for (const change of fix.changes || []) {
+                                for (const textChange of change.textChanges || []) {
+                                    const text = String(textChange.newText || "");
+                                    const match = text.match(/\bfrom\s+["']([^"']+)["']/) ||
+                                        text.match(/\brequire\(["']([^"']+)["']\)/);
+                                    if (match) specs.add(match[1]);
+                                }
+                            }
+                        }
+                        return specs;
+                    };
+                    const programUsesSpecifier = (specifier) => {
+                        try {
+                            const program = this.getProgram?.();
+                            return !!program?.getSourceFiles?.().some(sf => {
+                                const text = String(sf.text || "");
+                                return text.includes(`from "${specifier}"`) ||
+                                    text.includes(`from '${specifier}'`) ||
+                                    text.includes(`import "${specifier}"`) ||
+                                    text.includes(`import '${specifier}'`) ||
+                                    text.includes(`require("${specifier}")`) ||
+                                    text.includes(`require('${specifier}')`);
+                            });
+                        } catch {
+                            return false;
+                        }
+                    };
+                    const tszImportSpecs = importSpecifiersFromFixes(tszResult);
+                    const nativeImportSpecs = importSpecifiersFromFixes(nativeResult);
+                    const tszMatchesExistingSpecifier = [...tszImportSpecs].some(spec =>
+                        programUsesSpecifier(spec) && !nativeImportSpecs.has(spec)
+                    );
+                    const isBarePackageSpecifier = (spec) => {
+                        if (!spec || spec.startsWith(".")) return false;
+                        const parts = spec.split("/");
+                        return spec.startsWith("@") ? parts.length === 2 : parts.length === 1;
+                    };
+                    const tszMatchesNestedManifestName = [...tszImportSpecs].some(spec =>
+                        !spec.startsWith(".") &&
+                        spec.includes("/") &&
+                        !nativeImportSpecs.has(spec) &&
+                        [...nativeImportSpecs].some(nativeSpec =>
+                            isBarePackageSpecifier(nativeSpec) &&
+                            spec.endsWith(`/${nativeSpec}`)
+                        )
+                    );
+                    if ((hasAutoImportExclusionPreferences() || tszMatchesExistingSpecifier || tszMatchesNestedManifestName) && tszHasImportFix) {
                         finalResult = tszResult;
                     } else {
                         finalResult = nativeResult;

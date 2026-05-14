@@ -1269,13 +1269,22 @@ impl<'a> NamespaceES5Transformer<'a> {
             let body_source_range = self.arena.pos_end_at(func_data.body);
 
             // Convert function to IR (stripping type annotations)
+            let mut parameters =
+                convert_function_parameters(self.arena, &func_data.parameters, self.source_text);
+            if parameters.is_empty()
+                && let Some(recovered) = recover_empty_function_parameters_from_header(
+                    self.arena,
+                    self.source_text,
+                    func_idx,
+                    func_data.body,
+                )
+            {
+                parameters = recovered;
+            }
+
             IRNode::FunctionDecl {
                 name: func_name.clone().into(),
-                parameters: convert_function_parameters(
-                    self.arena,
-                    &func_data.parameters,
-                    self.source_text,
-                ),
+                parameters,
                 body: convert_function_body(self.arena, func_data.body),
                 body_source_range,
                 leading_comment: None,

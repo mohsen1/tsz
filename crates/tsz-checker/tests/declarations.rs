@@ -89,6 +89,91 @@ export const x = 0;
 }
 
 #[test]
+fn test_ts2664_for_unresolved_relative_module_augmentation() {
+    let diagnostics = crate::test_utils::check_multi_file(
+        &[(
+            "/project/src/test.ts",
+            r#"
+export {};
+
+declare module "./nonexistent" {
+    interface Extra {
+        extra: boolean;
+    }
+}
+"#,
+        )],
+        "/project/src/test.ts",
+        crate::context::CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2664),
+        "Expected TS2664 for unresolved relative module augmentation, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2664_for_unresolved_parent_relative_module_augmentation() {
+    let diagnostics = crate::test_utils::check_multi_file(
+        &[(
+            "/project/src/nested/test.ts",
+            r#"
+export {};
+
+declare module "../missing" {
+    interface Extra {
+        extra: boolean;
+    }
+}
+"#,
+        )],
+        "/project/src/nested/test.ts",
+        crate::context::CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2664),
+        "Expected TS2664 for unresolved parent-relative module augmentation, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_no_ts2664_for_resolved_relative_module_augmentation() {
+    let diagnostics = crate::test_utils::check_multi_file(
+        &[
+            (
+                "/project/src/target.ts",
+                r#"
+export interface Existing {
+    value: string;
+}
+"#,
+            ),
+            (
+                "/project/src/test.ts",
+                r#"
+export {};
+
+declare module "./target" {
+    interface Existing {
+        extra: boolean;
+    }
+}
+"#,
+            ),
+        ],
+        "/project/src/test.ts",
+        crate::context::CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2664),
+        "Did not expect TS2664 for resolved relative module augmentation, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2564_property_without_initializer() {
     // Test that TS2564 is reported for properties without initializers
     let source = r#"

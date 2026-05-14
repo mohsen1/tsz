@@ -1122,8 +1122,7 @@ impl TypeInterner {
     /// Intern a readonly array type
     /// Returns a distinct type from mutable arrays to enforce readonly semantics
     pub fn readonly_array(&self, element: TypeId) -> TypeId {
-        let array_type = self.array(element);
-        self.intern(TypeData::ReadonlyType(array_type))
+        self.readonly_type(self.array(element))
     }
 
     /// Intern a tuple type.
@@ -1181,13 +1180,19 @@ impl TypeInterner {
     /// Intern a readonly tuple type
     /// Returns a distinct type from mutable tuples to enforce readonly semantics
     pub fn readonly_tuple(&self, elements: Vec<TupleElement>) -> TypeId {
-        let tuple_type = self.tuple(elements);
-        self.intern(TypeData::ReadonlyType(tuple_type))
+        self.readonly_type(self.tuple(elements))
     }
 
     /// Wrap any type in a `ReadonlyType` marker
-    /// This is used for the `readonly` type operator
+    ///
+    /// Invariant: at most one `ReadonlyType` layer. Callers that compose
+    /// readonly wrapping (e.g. the const-assertion visitor unwrapping and
+    /// re-wrapping after recursing into a Tuple/Array arm) rely on this so
+    /// that subtype/display paths can peel exactly one layer.
     pub fn readonly_type(&self, inner: TypeId) -> TypeId {
+        if matches!(self.lookup(inner), Some(TypeData::ReadonlyType(_))) {
+            return inner;
+        }
         self.intern(TypeData::ReadonlyType(inner))
     }
 

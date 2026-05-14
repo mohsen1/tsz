@@ -5,7 +5,7 @@
 //! on non-class declarations emits TS8022.
 
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_js_source_diagnostics, check_source};
+use crate::test_utils::{check_js_source_diagnostics, check_source, diagnostic_codes};
 
 fn check_strict_js_source_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(
@@ -19,10 +19,6 @@ fn check_strict_js_source_diagnostics(source: &str) -> Vec<crate::diagnostics::D
             ..CheckerOptions::default()
         },
     )
-}
-
-fn diagnostic_codes(diagnostics: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
-    diagnostics.iter().map(|d| d.code).collect()
 }
 
 /// @readonly on class property → TS2540 when assigned outside constructor

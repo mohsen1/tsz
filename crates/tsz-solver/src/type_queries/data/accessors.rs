@@ -611,7 +611,13 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
             has_symbol_key = true;
             continue;
         }
-        key_types.push(db.literal_string_atom(p.name));
+        // `keyof { 1: ... }` yields the numeric literal `1`, not `"1"` —
+        // see crate::utils::literal_key_for_property_name for the rule.
+        key_types.push(crate::utils::literal_key_for_property_name(
+            db,
+            p.name,
+            p.is_string_named,
+        ));
     }
     // Include `symbol` in keyof when the object has computed symbol properties.
     if has_symbol_key {

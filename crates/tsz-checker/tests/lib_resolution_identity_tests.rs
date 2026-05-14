@@ -19,6 +19,11 @@ use tsz_binder::state::LibContext as BinderLibContext;
 use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::{
+    diagnostic_count, diagnostics_with_any_code, diagnostics_with_code,
+    diagnostics_with_code_any_message, diagnostics_with_code_message, diagnostics_without_codes,
+    has_any_diagnostic_code, has_diagnostic_code, has_diagnostic_code_message,
+};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
@@ -65,10 +70,6 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
 
 fn lib_files_available() -> bool {
     !load_lib_files_for_test().is_empty()
-}
-
-fn has_error(diagnostics: &[(u32, String)], code: u32) -> bool {
-    diagnostics.iter().any(|(c, _)| *c == code)
 }
 
 fn compile_with_lib(source: &str) -> Vec<(u32, String)> {
@@ -373,15 +374,9 @@ async function f(): Promise<string> { return "hello"; }
 "#,
     );
     // Filter out TS2318 (missing global type) which is acceptable
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !has_error(
-            &real_errors
-                .iter()
-                .map(|&&(c, ref m)| (c, m.clone()))
-                .collect::<Vec<_>>(),
-            2322
-        ),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise<number> should not produce TS2322 with lib loaded.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -400,9 +395,9 @@ const first: number = arr[0];
 const bad: Array<number> = ["a", "b"];
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        real_errors.iter().any(|(c, _)| *c == 2322),
+        has_diagnostic_code(&real_errors, 2322),
         "Expected TS2322 for string[] assigned to number[].\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -421,9 +416,9 @@ m.set("key", 42);
 m.set("key", true);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        real_errors.iter().any(|(c, _)| *c == 2345),
+        has_diagnostic_code(&real_errors, 2345),
         "Expected TS2345 for boolean argument to Map.set(string, number).\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -438,12 +433,9 @@ fn test_map_constructor_rejects_heterogeneous_value_inference() {
 const map = new Map([["", true], ["", 0]]);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        real_errors.iter().any(|(c, _)| *c == 2769),
+        has_diagnostic_code(&real_errors, 2769),
         "Map constructor should reject heterogeneous value inference instead of widening to a union.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -462,10 +454,10 @@ async function chain(): Promise<number> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     // Should not have type errors in basic Promise chaining
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2345),
+        !has_any_diagnostic_code(&real_errors, &[2322, 2345]),
         "Promise chaining should not produce type errors.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -484,9 +476,9 @@ const arr: ReadonlyArray<number> = [1, 2, 3];
 const len: number = arr.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "ReadonlyArray.length should be accessible.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -503,9 +495,9 @@ interface User { name: string; age: number; }
 const partial: Partial<User> = { name: "Alice" };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Partial<User> should accept partial objects.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -521,9 +513,9 @@ fn test_record_type_alias_lib_resolution() {
 const rec: Record<string, number> = { a: 1, b: 2 };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Record<string, number> should accept object literals.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -549,9 +541,9 @@ const val: number = arr.customMethod();
 export {};
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Augmented Array.customMethod should be accessible.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -574,9 +566,9 @@ async function fetchAll(): Promise<number[]> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise.all should preserve number[] type.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -594,9 +586,9 @@ const arr: NumArray = [1, 2, 3];
 const len: number = arr.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2304 || *c == 2339),
+        !has_any_diagnostic_code(&real_errors, &[2304, 2339]),
         "Type alias referencing lib Array should resolve.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -616,9 +608,9 @@ const result = arr.concat([4, 5]);
 const len: number = result.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Array.concat and .length should be accessible via heritage.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -643,13 +635,13 @@ const [oops1] = [1, 2, 3].reduce((accu, el) => accu.concat(el), []);
 const [oops2] = [1, 2, 3].reduce((acc: number[], e) => acc.concat(e), []);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        real_errors.iter().any(|(code, _)| *code == 2488),
+        has_diagnostic_code(&real_errors, 2488),
         "Destructuring the failed reduce result should report TS2488.\nDiagnostics: {real_errors:#?}"
     );
     assert!(
-        real_errors.iter().any(|(code, _)| *code == 2769),
+        has_diagnostic_code(&real_errors, 2769),
         "The reduce/concat overload failure should report TS2769.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -668,9 +660,9 @@ function f(p1: Promise<number>, p2: Promise<number>): void {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise<number> identity should be stable across references.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -694,9 +686,9 @@ async function gather(): Promise<[number, string]> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise.all with tuple should not produce TS2322.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -719,9 +711,9 @@ async function useNum(): Promise<void> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Awaiting Promise<number> should yield number.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -741,9 +733,9 @@ const arr: NumArr = [1, 2, 3];
 const len: number = arr.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "NumArr (alias for Array<number>) should have .length.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -762,9 +754,9 @@ const err: TypeError = new TypeError("boom");
 const msg: string = err.message;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "TypeError.message should be accessible.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -783,9 +775,9 @@ async function risky(): Promise<number> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise.reject().catch() should resolve without TS2322.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -809,12 +801,9 @@ const arr: Array<number> = [1, 2, 3];
 const len: number = arr.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2669)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2669]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Array.length should still be accessible after global augmentation.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -834,9 +823,9 @@ const e: Error = new Error("test");
 const result: Error = identity(e);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2345),
+        !has_any_diagnostic_code(&real_errors, &[2322, 2345]),
         "Error type should be consistent across references.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -864,12 +853,9 @@ const trimmed: string = s.trimToLength(3);
 export {};
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2669)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2669]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Augmented String.trimToLength should be accessible via resolve_augmentation_node.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -896,12 +882,9 @@ const label: string = n.toLabel();
 export {};
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2669)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2669]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Number.toFixed and augmented Number.toLabel should both be accessible.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -925,9 +908,9 @@ const mapped: Array<string> = arr.map(x => x.toString());
 const p: Promise<number> = Promise.resolve(42);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Array and Promise accessed via with_params path should resolve with stable DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -950,9 +933,9 @@ async function unwrap(): Promise<void> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Type alias to Promise<number> should resolve correctly.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -978,9 +961,9 @@ const result: Promise<number> = fetchData().then(s => s.length);
 const final_result: Promise<boolean> = result.then(n => n > 0);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise.then() chain should propagate types through stable DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -1000,10 +983,7 @@ const raced = Promise.race([p1, p2]);
 "#,
     );
     // No TS2322 or TS2345 from lib resolution issues
-    let type_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345)
-        .collect();
+    let type_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2345]);
     assert!(
         type_errors.is_empty(),
         "Promise.race should resolve without type errors.\nDiagnostics: {type_errors:#?}"
@@ -1026,10 +1006,7 @@ const hasA: boolean = m.has("a");
 const size: number = s.size;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Set and Map generic lib types should resolve correctly.\nDiagnostics: {real_errors:#?}"
@@ -1054,10 +1031,7 @@ async function getStr(): StrPromise {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339]);
     assert!(
         real_errors.is_empty(),
         "Type alias to generic lib types should resolve correctly.\nDiagnostics: {real_errors:#?}"
@@ -1080,8 +1054,8 @@ const p3 = Promise.all([p1, p2]);
     );
     // Should not emit TS2339 (property not found) for Promise static methods
     assert!(
-        !diagnostics.iter().any(|(c, msg)| *c == 2339
-            && (msg.contains("resolve") || msg.contains("all") || msg.contains("reject"))),
+        diagnostics_with_code_any_message(&diagnostics, 2339, &["resolve", "all", "reject"])
+            .is_empty(),
         "Promise static methods should be resolved from lib.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -1102,10 +1076,7 @@ const nums: ReadonlyArray<number> = [1, 2, 3];
 const result: number = process(nums);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "ReadonlyArray should resolve with heritage chain.\nDiagnostics: {real_errors:#?}"
@@ -1135,9 +1106,9 @@ const full: Config = { host: "localhost", port: 8080, debug: false };
 const bad: Partial<Config> = { host: 123 };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        real_errors.iter().any(|(c, _)| *c == 2322),
+        has_diagnostic_code(&real_errors, 2322),
         "Partial<Config> should reject {{ host: 123 }} with TS2322.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -1156,9 +1127,9 @@ type UserSummary = Pick<User, "name" | "email">;
 const summary: UserSummary = { name: "Alice", email: "a@b.com" };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Pick<User, 'name' | 'email'> should accept {{ name, email }}.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -1182,9 +1153,9 @@ async function getNum(): Promise<number> { return 42; }
 const p: Promise<number> = getNum();
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Array and Promise boxed types should resolve via stable DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -1209,9 +1180,9 @@ class Board {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339 || *c == 7006),
+        !has_any_diagnostic_code(&real_errors, &[2339, 7006]),
         "Array boxed type registration should preserve Array<T> methods and callback inference.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -1246,10 +1217,7 @@ function cons(hs: HTMLHeadingElement[]): Tree {
 }
 "#,
     );
-    let array_surface_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2339 || *c == 7006 || *c == 7031)
-        .collect();
+    let array_surface_errors = diagnostics_with_any_code(&diagnostics, &[2339, 7006, 7031]);
     assert!(
         array_surface_errors.is_empty(),
         "Recursive interface aliases should not overwrite the registered Array<T> base.\nDiagnostics: {array_surface_errors:#?}"
@@ -1369,7 +1337,7 @@ tgt2 = src2;
             ..Default::default()
         },
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     let message = real_errors
         .iter()
         .find(|(code, _)| *code == 2741)
@@ -1401,9 +1369,9 @@ type FrozenUser = Readonly<{ name: string; age: number }>;
 const user: FrozenUser = { name: "Alice", age: 30 };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Record and Readonly type aliases should resolve via stable main-binder DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -1427,9 +1395,9 @@ async function consume(): Promise<void> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "AsyncResult<T> alias to Promise<T> should resolve via stable lib DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -1448,10 +1416,7 @@ const msg: string = e.message;
 const name: string = e.name;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Error hierarchy should resolve with stable lib helpers.\nDiagnostics: {real_errors:#?}"
@@ -1486,10 +1451,7 @@ function sum(items: ReadonlyArray<number>): number {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Heritage keyword type args should resolve via stable helpers.\nDiagnostics: {real_errors:#?}"
@@ -1514,9 +1476,9 @@ async function multiPromise(): Promise<void> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2345),
+        !has_any_diagnostic_code(&real_errors, &[2322, 2345]),
         "Promise generic params should resolve without file_sym_id repair.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -1538,10 +1500,7 @@ const hasKey: boolean = m.has("key");
 const sz: number = m.size;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Map<string, number> with keyword type args should resolve.\nDiagnostics: {real_errors:#?}"
@@ -1570,10 +1529,7 @@ async function transform(): Promise<string> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Promise.then() return type should resolve through stable lowering.\nDiagnostics: {real_errors:#?}"
@@ -1594,10 +1550,7 @@ const p: Promise<number> = new Promise<number>((resolve, reject) => {
 });
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2345]);
     assert!(
         real_errors.is_empty(),
         "new Promise<number>() should resolve without type errors.\nDiagnostics: {real_errors:#?}"
@@ -1623,10 +1576,7 @@ const x: number = arr.customMethod();
 "#,
     );
     // Should not have TS2339 for customMethod (augmentation merged)
-    let ts2339: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, msg)| *c == 2339 && msg.contains("customMethod"))
-        .collect();
+    let ts2339 = diagnostics_with_code_message(&diagnostics, 2339, "customMethod");
     assert!(
         ts2339.is_empty(),
         "Global augmentation should merge customMethod into Array.\nDiagnostics: {ts2339:#?}"
@@ -1647,10 +1597,7 @@ const arr: MyArray = ["a", "b"];
 const len: number = arr.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339]);
     assert!(
         real_errors.is_empty(),
         "Array<string> type alias referencing lib should resolve.\nDiagnostics: {real_errors:#?}"
@@ -1674,10 +1621,7 @@ function makePromise(): Promise<number> {
 acceptPromise(makePromise());
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2345]);
     assert!(
         real_errors.is_empty(),
         "Promise<number> identity should be consistent across references.\nDiagnostics: {real_errors:#?}"
@@ -1698,10 +1642,7 @@ const partial: Partial<Config> = { host: "localhost" };
 const picked: Pick<Config, "host"> = { host: "localhost" };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Partial<T> and Pick<T,K> should resolve through stable lib alias path.\nDiagnostics: {real_errors:#?}"
@@ -1724,7 +1665,7 @@ const len: number = arr.length;
 "#,
     );
     assert!(
-        !has_error(&diagnostics, 2322),
+        !has_diagnostic_code(&diagnostics, 2322),
         "Array<number> should resolve without TS2322.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -1750,7 +1691,7 @@ const len: number = arr.length;
     );
     // Neither the original `length` member nor the augmented `customMethod`
     // should cause TS2339 (property does not exist).
-    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diagnostics, 2339);
     assert!(
         ts2339.is_empty(),
         "Augmented Array<T> should have both original and custom members.\nDiagnostics: {ts2339:#?}"
@@ -1776,7 +1717,7 @@ async function g() {
 "#,
     );
     assert!(
-        !has_error(&diagnostics, 2322),
+        !has_diagnostic_code(&diagnostics, 2322),
         "Promise<string> unwrap should yield string.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -1796,7 +1737,7 @@ async function nested(): Promise<number> {
 "#,
     );
     assert!(
-        !has_error(&diagnostics, 2322),
+        !has_diagnostic_code(&diagnostics, 2322),
         "Nested Promise should flatten correctly.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -1817,10 +1758,7 @@ async function tupleAll() {
 "#,
     );
     // Should not produce TS2769 (no overload matches) or TS2345 (argument not assignable)
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2769 || *c == 2345)
-        .collect();
+    let errors = diagnostics_with_any_code(&diagnostics, &[2769, 2345]);
     assert!(
         errors.is_empty(),
         "Promise.all([p1, p2]) should type-check.\nDiagnostics: {errors:#?}"
@@ -1862,10 +1800,7 @@ async function copyExtensions(
             ..Default::default()
         },
     );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
+    let errors = diagnostics_with_code(&diagnostics, 2322);
     assert!(
         errors.is_empty(),
         "Promise.all async map tuple context should not produce TS2322.\nDiagnostics: {errors:#?}"
@@ -1888,7 +1823,7 @@ const first: string = arr[0];
 "#,
     );
     assert!(
-        !has_error(&diagnostics, 2322),
+        !has_diagnostic_code(&diagnostics, 2322),
         "Type alias to Array<string> should resolve through lib.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -1908,7 +1843,7 @@ async function f(): AsyncString {
 "#,
     );
     assert!(
-        !has_error(&diagnostics, 2322),
+        !has_diagnostic_code(&diagnostics, 2322),
         "Promise type alias should resolve through lib.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -1931,7 +1866,7 @@ const result = iter.next();
     );
     // iter.next() should be accessible through the heritage chain
     assert!(
-        !has_error(&diagnostics, 2339),
+        !has_diagnostic_code(&diagnostics, 2339),
         "Iterator .next() should be accessible through heritage chain.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -1953,10 +1888,7 @@ s.add("hello");
 const has: boolean = s.has("hello");
 "#,
     );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         errors.is_empty(),
         "Map and Set generic operations should resolve.\nDiagnostics: {errors:#?}"
@@ -1984,10 +1916,7 @@ const msg: string = e.message;
 const code: number = e.code;
 "#,
     );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339)
-        .collect();
+    let errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339]);
     assert!(
         errors.is_empty(),
         "Error subclass should inherit Error members via stable DefId.\nDiagnostics: {errors:#?}"
@@ -2017,10 +1946,7 @@ const len: number = arr.length;
 const pushed: number = arr.push(4);
 "#,
     );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339)
-        .collect();
+    let errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339]);
     assert!(
         errors.is_empty(),
         "Array augmentation via stable resolver should preserve both original \
@@ -2047,10 +1973,7 @@ const s: string = n.toFixed(2);
 const s2: string = n.toFixed2(2);
 "#,
     );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339)
-        .collect();
+    let errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339]);
     assert!(
         errors.is_empty(),
         "Number augmentation via stable resolver should preserve both original \
@@ -2080,10 +2003,7 @@ result.then(data => {
             ..Default::default()
         },
     );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339)
-        .collect();
+    let errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339]);
     assert!(
         errors.is_empty(),
         "Promise resolution should use stable DefId path.\nDiagnostics: {errors:#?}"
@@ -2104,7 +2024,7 @@ const p: MyPromise<number> = Promise.resolve(42);
 "#,
     );
     // We check there are no false TS2322 errors from broken type identity.
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diagnostics, 2322);
     assert!(
         ts2322.is_empty(),
         "import-type Promise alias should resolve without TS2322.\nDiagnostics: {ts2322:#?}"
@@ -2128,10 +2048,7 @@ const joined: string = arr.join(",");
 const includes: boolean = arr.includes(1);
 "#,
     );
-    let errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2339 || *c == 2322)
-        .collect();
+    let errors = diagnostics_with_any_code(&diagnostics, &[2339, 2322]);
     assert!(
         errors.is_empty(),
         "Array methods from ReadonlyArray heritage should resolve via stable helpers.\n\
@@ -2160,7 +2077,7 @@ const b: Promise<boolean> = getBool();
             ..Default::default()
         },
     );
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diagnostics, 2322);
     assert!(
         ts2322.is_empty(),
         "Multiple Promise<T> instantiations should all use stable DefId.\n\
@@ -2374,9 +2291,9 @@ const strs: Array<string> = wrap("hello");
 const bad: Array<number> = wrap("oops");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        real_errors.iter().any(|(c, _)| *c == 2322),
+        has_diagnostic_code(&real_errors, 2322),
         "Array<number> = wrap('oops') should produce TS2322 when type params are primed.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -2396,9 +2313,9 @@ function wrapInPromise<T>(value: T): Promise<T> {
 const p: Promise<number> = wrapInPromise(42);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise<number> = wrapInPromise(42) should resolve with primed type params.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -2422,9 +2339,9 @@ const a: Numbers = [1, 2, 3];
 const b: Numbers = 42;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "MaybeArray<number> union with lib Array should resolve.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -2445,9 +2362,9 @@ const a: A = 42;
 const b: B = "hello";
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "UnwrapPromise conditional type should infer through lib Promise.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -2471,7 +2388,7 @@ const caught = p.catch(err => "error");
 "#,
     );
     // Promise members from different lib declarations should all be accessible
-    let property_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let property_errors = diagnostics_with_code(&diagnostics, 2339);
     assert!(
         property_errors.is_empty(),
         "Promise members (then, catch) should be accessible across lib declarations.\nDiagnostics: {property_errors:#?}"
@@ -2496,10 +2413,7 @@ const r1: string = handleError(te);
 const r2: string = handleError(re);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Error subclasses should be assignable to Error via heritage.\nDiagnostics: {real_errors:#?}"
@@ -2522,10 +2436,7 @@ for (const n of arr) {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345 || *c == 2488)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345, 2488]);
     assert!(
         real_errors.is_empty(),
         "for..of on Array should work via Iterable heritage.\nDiagnostics: {real_errors:#?}"
@@ -2551,10 +2462,7 @@ const p3: Promise<boolean> = p2.then(s => s.length > 0);
 const p4: Promise<number[]> = Promise.all([p1, p1]);
 "#,
     );
-    let type_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let type_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         type_errors.is_empty(),
         "Promise chaining and Promise.all should work with stable lib DefIds.\nDiagnostics: {type_errors:#?}"
@@ -2584,10 +2492,7 @@ const b: number = await getNum();
 const c: boolean = await getBool();
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2345]);
     assert!(
         real_errors.is_empty(),
         "Promise type alias instantiations should share the same lib DefId.\nDiagnostics: {real_errors:#?}"
@@ -2612,10 +2517,7 @@ const filtered: Array<number> = arr.filter(n => n > 1);
 const joined: string = arr.join(",");
 "#,
     );
-    let prop_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2339 || *c == 2322 || *c == 2345)
-        .collect();
+    let prop_errors = diagnostics_with_any_code(&diagnostics, &[2339, 2322, 2345]);
     assert!(
         prop_errors.is_empty(),
         "Array members from merged lib declarations should all be accessible.\nDiagnostics: {prop_errors:#?}"
@@ -2639,10 +2541,7 @@ s.add("c");
 const has: boolean = s.has("a");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Map/Set generic lib types should resolve correctly.\nDiagnostics: {real_errors:#?}"
@@ -2665,10 +2564,7 @@ const rec: Record<string, number> = { a: 1, b: 2 };
 const val: number = rec["a"];
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2345]);
     assert!(
         real_errors.is_empty(),
         "Partial/Record lib type aliases should resolve with stable DefIds.\nDiagnostics: {real_errors:#?}"
@@ -2691,10 +2587,7 @@ const p: Promise<number> = new Promise<number>((resolve) => {
 const p2: Promise<string> = Promise.resolve("hello");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345 || *c == 2339)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2345, 2339]);
     assert!(
         real_errors.is_empty(),
         "Promise as both constructor and type should work.\nDiagnostics: {real_errors:#?}"
@@ -2715,10 +2608,7 @@ const sym: symbol = Symbol("test");
 const sym2: symbol = Symbol.for("global");
 "#,
     );
-    let critical_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345)
-        .collect();
+    let critical_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2345]);
     assert!(
         critical_errors.is_empty(),
         "Symbol lib type should resolve with dedup_decl_arenas.\nDiagnostics: {critical_errors:#?}"
@@ -2745,10 +2635,7 @@ const result: Promise<number> = Promise.resolve(42);
 const p: Promise<boolean> = new Promise((resolve) => resolve(true));
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
         real_errors.is_empty(),
         "Promise generic instantiation via stable helpers should not emit errors.\nDiagnostics: {real_errors:#?}"
@@ -2772,10 +2659,7 @@ m.set("key", 42);
     );
     // import("lib") won't resolve (no actual module), but Map<string, number>
     // should work without errors through the stable helpers.
-    let map_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2345)
-        .collect();
+    let map_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2345]);
     assert!(
         map_errors.is_empty(),
         "Map generic usage via stable helpers should not emit type errors.\nDiagnostics: {map_errors:#?}"
@@ -2796,10 +2680,7 @@ const chained = p.then(v => v.toString());
 const caught = chained.catch(err => "fallback");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
         real_errors.is_empty(),
         "Promise.then/catch chaining via stable helpers should not emit errors.\nDiagnostics: {real_errors:#?}"
@@ -2821,10 +2702,7 @@ const joined: string = arr.join(",");
 const sliced: number[] = arr.slice(0, 2);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
         real_errors.is_empty(),
         "Array heritage resolution via stable helpers should not emit errors.\nDiagnostics: {real_errors:#?}"
@@ -2843,10 +2721,7 @@ type P = Promise<string>;
 const x: P = Promise.resolve("hello");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
         real_errors.is_empty(),
         "Promise type alias via stable helpers should not emit errors.\nDiagnostics: {real_errors:#?}"
@@ -2867,10 +2742,7 @@ const first: string = arr[0];
 const mapped: number[] = arr.map(s => s.length);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
         real_errors.is_empty(),
         "Array type with params via stable helpers should not emit errors.\nDiagnostics: {real_errors:#?}"
@@ -2893,10 +2765,7 @@ const p3: Promise<boolean> = Promise.resolve(true);
 async function wrap<T>(val: T): Promise<T> { return val; }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
         real_errors.is_empty(),
         "Multiple Promise instantiations should share DefId via stable path.\nDiagnostics: {real_errors:#?}"
@@ -2920,16 +2789,10 @@ const q: Promise<string> = p.then(n => String(n));
 const bad: Promise<number> = p.then(n => String(n));
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     // We expect an error on the `bad` line (string not assignable to number),
     // but no spurious errors on the valid lines.
-    let spurious: Vec<_> = real_errors
-        .iter()
-        .filter(|(c, _)| *c == 2304 || *c == 2339)
-        .collect();
+    let spurious = diagnostics_with_any_code(&real_errors, &[2304, 2339]);
     assert!(
         spurious.is_empty(),
         "Promise.then() should not produce missing-name or missing-property errors.\nDiagnostics: {real_errors:#?}"
@@ -2952,12 +2815,9 @@ const p = new Promise<number>((resolve, reject) => {
 const q: Promise<number> = p;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2304),
+        !has_diagnostic_code(&real_errors, 2304),
         "new Promise should not produce TS2304 (cannot find name).\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -2978,12 +2838,9 @@ type NameOnly = Pick<User, "name">;
 const u: NameOnly = { name: "Alice" };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Pick<User, 'name'> should accept {{name: string}}.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3002,12 +2859,9 @@ type WithoutEmail = Omit<User, "email">;
 const u: WithoutEmail = { name: "Alice", age: 30 };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Omit<User, 'email'> should accept {{name, age}}.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3029,13 +2883,10 @@ const len: number = nums.length;
 const bad: Arr<number> = ["a"];
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     // Should have TS2322 for the bad line but not TS2304/TS2339 for missing names
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2304 || *c == 2339),
+        !has_any_diagnostic_code(&real_errors, &[2304, 2339]),
         "Type alias wrapping lib Array should resolve names and members.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3053,12 +2904,9 @@ const m: Map<string, Array<number>> = new Map();
 m.set("key", [1, 2, 3]);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2304),
+        !has_diagnostic_code(&real_errors, 2304),
         "Nested lib generic Map<string, Array<number>> should resolve.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3080,12 +2928,9 @@ const p: Promise<string> = fetchData();
 const q: Promise<number> = Promise.resolve(42);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2339),
+        !has_any_diagnostic_code(&real_errors, &[2322, 2339]),
         "Promise<T> should resolve correctly without false assignability or property errors.\n\
          Diagnostics: {real_errors:#?}"
     );
@@ -3103,12 +2948,9 @@ const p = Promise.resolve(42);
 const q: Promise<string> = p.then((x) => x.toString());
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Promise.then should be accessible without TS2339.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3126,12 +2968,9 @@ const p = new Promise<number>((resolve, reject) => {
 });
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2304 || *c == 2339),
+        !has_any_diagnostic_code(&real_errors, &[2304, 2339]),
         "new Promise<number>() should resolve without 'not found' errors.\n\
          Diagnostics: {real_errors:#?}"
     );
@@ -3150,12 +2989,9 @@ const msg: string = e.message;
 const name: string = e.name;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Error.message and Error.name should be accessible.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3172,12 +3008,9 @@ const re = /hello/;
 const result: boolean = re.test("hello world");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "RegExp.test should be accessible.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3195,12 +3028,9 @@ const a: StringArray = ["hello", "world"];
 const len: number = a.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2304 || *c == 2322),
+        !has_any_diagnostic_code(&real_errors, &[2304, 2322]),
         "Type alias to Array<string> should resolve via lib.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3221,12 +3051,9 @@ const lenB: number = b.length;
 const lenC: number = c.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Multiple Array<T> instantiations should all have .length.\n\
          Diagnostics: {real_errors:#?}"
     );
@@ -3250,12 +3077,9 @@ const first: number = arr[0];
 const mapped: Array<string> = arr.map((x) => x.toString());
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339 || *c == 2304),
+        !has_any_diagnostic_code(&real_errors, &[2339, 2304]),
         "Array.map should be accessible via get_canonical_lib_def_id path.\n\
          Diagnostics: {real_errors:#?}"
     );
@@ -3276,12 +3100,9 @@ async function allPromises() {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2304),
+        !has_diagnostic_code(&real_errors, 2304),
         "Promise.all should resolve without 'not found' errors.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3300,13 +3121,10 @@ const sym = Symbol("test");
 const desc: string | undefined = sym.description;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 2583)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 2583]);
     // Symbol should be resolvable
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2304),
+        !has_diagnostic_code(&real_errors, 2304),
         "Symbol should resolve via lib context fallback arena.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3334,9 +3152,9 @@ const p: Promise<string> = Promise.resolve("ok");
 const bad: Array<number> = ["a", "b"];
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        real_errors.iter().any(|(c, _)| *c == 2322),
+        has_diagnostic_code(&real_errors, 2322),
         "Expected TS2322 for string[] assigned to Array<number>.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3359,9 +3177,9 @@ const rec: Record<string, boolean> = { active: true };
 const bad_rec: Record<string, boolean> = { active: 42 };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        real_errors.iter().any(|(c, _)| *c == 2322),
+        has_diagnostic_code(&real_errors, 2322),
         "Expected TS2322 for number assigned to Record<string, boolean>.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3382,10 +3200,7 @@ const result = Promise.resolve(42)
 const final_val: Promise<number> = result;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "Promise chain should resolve consistently via register_lib_def_resolved.\nDiagnostics: {real_errors:#?}"
@@ -3414,9 +3229,9 @@ async function consumeDeferred(): Promise<void> {
 }
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Nested type alias to Promise should resolve via stable lib DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3437,10 +3252,7 @@ wm.set(obj, "value");
 const val: string | undefined = wm.get(obj);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c == 2322 || *c == 2339 || *c == 2345)
-        .collect();
+    let real_errors = diagnostics_with_any_code(&diagnostics, &[2322, 2339, 2345]);
     assert!(
         real_errors.is_empty(),
         "WeakMap<object, string> should resolve via stable lib helpers.\nDiagnostics: {real_errors:#?}"
@@ -3466,9 +3278,9 @@ async function fetchData(): Promise<string> {
 const result: Promise<number> = fetchData().then(s => s.length);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise.then() chain should resolve via stable DefId path.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3488,9 +3300,9 @@ const p2: Promise<string> = Promise.resolve("a");
 const all = Promise.all([p1, p2]);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise.all([]) should resolve without TS2322.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3510,9 +3322,9 @@ const p = new Promise<number>((resolve, reject) => {
 });
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2345),
+        !has_any_diagnostic_code(&real_errors, &[2322, 2345]),
         "Promise constructor should resolve executor params.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3537,9 +3349,9 @@ const it = gen();
 const first = it.next();
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "IterableIterator heritage chain should resolve.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3559,9 +3371,9 @@ const msg: string = e.message;
 const name: string = e.name;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2339),
+        !has_any_diagnostic_code(&real_errors, &[2322, 2339]),
         "Error subclass should resolve via stable lib identity.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3579,9 +3391,9 @@ fn test_lib_ref_symbol_iterator_wellknown() {
 const sym: typeof Symbol.iterator = Symbol.iterator;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Symbol.iterator should resolve via stable lib identity.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3603,9 +3415,9 @@ const arr: LibArray = ["a", "b"];
 const len: number = arr.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Type alias to lib Array should resolve via stable DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3625,9 +3437,9 @@ async function f(): MyPromise<number> { return 42; }
 const p: MyPromise<string> = f().then(n => String(n));
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Generic type alias wrapping Promise should resolve.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3652,11 +3464,11 @@ export {};
 "#,
     );
     assert!(
-        has_error(&diagnostics, 1064),
+        has_diagnostic_code(&diagnostics, 1064),
         "local Promise alias should not satisfy async return type identity.\nDiagnostics: {diagnostics:#?}"
     );
     assert!(
-        has_error(&diagnostics, 2322),
+        has_diagnostic_code(&diagnostics, 2322),
         "async body should be checked against the local Promise alias payload.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -3676,9 +3488,9 @@ const partial: Partial<Foo> = { a: 1 };
 const rec: Record<string, number> = { x: 1, y: 2 };
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Partial/Record utility types should resolve via stable lib path.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3699,9 +3511,9 @@ const first: number = ra[0];
 // ReadonlyArray should not have push
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "ReadonlyArray<number> should resolve via stable lib DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3731,7 +3543,7 @@ const bad: Promise<string> = p;
 "#,
     );
     assert!(
-        has_error(&diagnostics, 2322),
+        has_diagnostic_code(&diagnostics, 2322),
         "Assigning Promise<number> to Promise<string> should produce TS2322.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -3755,7 +3567,7 @@ const r: Promise<number> = q;
     // We expect a TS2322 for the last assignment if types propagate correctly.
     // If lib resolution is broken, we'd see TS2339 or missing members instead.
     assert!(
-        !has_error(&diagnostics, 2339),
+        !has_diagnostic_code(&diagnostics, 2339),
         "Promise.then should resolve member 'then' via stable lib DefId.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -3776,7 +3588,7 @@ const all = Promise.all([a, b]);
 "#,
     );
     assert!(
-        !has_error(&diagnostics, 2345),
+        !has_diagnostic_code(&diagnostics, 2345),
         "Promise.all with mixed tuple should not produce false TS2345.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -3797,10 +3609,7 @@ const p: MyPromise<number> = Promise.resolve(42);
 const val: number = 0;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
         real_errors.is_empty(),
         "Type alias wrapping Promise<T> should resolve without errors.\nDiagnostics: {real_errors:#?}"
@@ -3824,12 +3633,9 @@ const re: RangeError = new RangeError("bad range");
 const reMsg: string = re.message;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Error subclass heritage should resolve 'message'/'name' members via stable DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3853,7 +3659,7 @@ const n: number = val;
     // TS2322 expected: number | undefined not assignable to number
     // If Map resolution is broken, we'd get TS2339 for missing .get()
     assert!(
-        !has_error(&diagnostics, 2339),
+        !has_diagnostic_code(&diagnostics, 2339),
         "Map<K,V>.get should resolve via stable lib DefId.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -3881,7 +3687,7 @@ async function bad(): Promise<string> {
 "#,
     );
     assert!(
-        has_error(&diagnostics, 2322),
+        has_diagnostic_code(&diagnostics, 2322),
         "Returning number from Promise<string> async function should produce TS2322.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -3901,12 +3707,9 @@ s.add(1);
 const exists: boolean = s.has(1);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Set<T>.has() and .add() should resolve via stable lib DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3927,10 +3730,7 @@ function unwrap<T>(p: Promise<T>): T {
 const n: number = unwrap(Promise.resolve(42));
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
         real_errors.is_empty(),
         "Generic function with Promise<T> constraint should resolve via stable DefId.\nDiagnostics: {real_errors:#?}"
@@ -3951,12 +3751,9 @@ const arr: number[] = Array.from([1, 2, 3]);
 const arr2: string[] = Array.from("hello");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Array.from() should resolve via stable lib DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -3981,12 +3778,9 @@ const arr: number[] = [1, 2, 3];
 const len: number = arr.length;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133 && *c != 2669)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133, 2669]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Global augmentation of Array should preserve .length via stable DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4007,7 +3801,7 @@ const winner = Promise.race([p1, p2]);
 "#,
     );
     assert!(
-        !has_error(&diagnostics, 2339),
+        !has_diagnostic_code(&diagnostics, 2339),
         "Promise.race should resolve via stable lib DefId.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -4026,12 +3820,9 @@ const time: number = d.getTime();
 const iso: string = d.toISOString();
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Date methods should resolve via stable lib DefId.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4057,10 +3848,7 @@ async function fetchData(): Promise<string> {
 const result: Promise<number> = Promise.resolve(42);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
         real_errors.is_empty(),
         "Promise should resolve via SymbolId-typed resolution path without errors.\nDiagnostics: {real_errors:#?}"
@@ -4082,12 +3870,9 @@ const evens: number[] = nums.filter(x => x % 2 === 0);
 const joined: string = nums.join(", ");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Array methods should resolve through SymbolId-typed lib heritage chain.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4105,10 +3890,7 @@ type MyPromise = Promise<string>;
 const p: MyPromise = Promise.resolve("test");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
         real_errors.is_empty(),
         "Type alias referencing Promise should work via SymbolId-typed path.\nDiagnostics: {real_errors:#?}"
@@ -4128,10 +3910,7 @@ const p: Promise<Array<number>> = Promise.resolve([1, 2, 3]);
 const nested: Array<Promise<string>> = [Promise.resolve("a")];
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
         real_errors.is_empty(),
         "Nested lib generics should resolve via SymbolId-typed path.\nDiagnostics: {real_errors:#?}"
@@ -4151,12 +3930,9 @@ const p = Promise.resolve(42);
 const chained = p.then(x => x.toString()).catch(e => "error");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 2318 && *c != 6133)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[2318, 6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Promise .then/.catch chain should resolve via SymbolId-typed path.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4182,9 +3958,9 @@ async function fetchData(): Promise<{ name: string; age: number }> {
 const result: Promise<{ name: string; age: number }> = fetchData();
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322 || *c == 2345),
+        !has_any_diagnostic_code(&real_errors, &[2322, 2345]),
         "Promise<{{name, age}}> return type should be stable across references.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4204,9 +3980,9 @@ async function getItems(): Promise<Array<string>> {
 const items: Promise<Array<string>> = getItems();
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Promise<Array<string>> nested generics should resolve via stable helpers.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4225,9 +4001,9 @@ const msg: string = e.message;
 const name: string = e.name;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Error lib type properties should resolve via stable DefId path.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4245,9 +4021,9 @@ const r = new RegExp("test");
 const result: boolean = r.test("hello");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "RegExp lib type should resolve .test() via stable helpers.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4266,9 +4042,9 @@ m.set("a", 1);
 const val: number | undefined = m.get("a");
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Map<string, number> should resolve .set/.get via stable helpers.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4290,7 +4066,7 @@ declare const a: AC;
     );
     // We just verify no crash and no TS2304 (cannot find name)
     assert!(
-        !diagnostics.iter().any(|(c, _)| *c == 2304),
+        !has_diagnostic_code(&diagnostics, 2304),
         "typeof Promise/Array should resolve via stable lib identity.\nDiagnostics: {diagnostics:#?}"
     );
 }
@@ -4309,12 +4085,9 @@ const p2 = Promise.resolve("two");
 const settled = Promise.all([p1, p2]);
 "#,
     );
-    let real_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, _)| *c != 6133 && *c != 2318)
-        .collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[6133, 2318]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339),
+        !has_diagnostic_code(&real_errors, 2339),
         "Promise.all should resolve via stable lowering.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4335,9 +4108,9 @@ const first: number | undefined = arr[0];
 const mapped: Array<string> = arr.map(x => x.toString());
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[6133]);
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2339 || *c == 2322),
+        !has_any_diagnostic_code(&real_errors, &[2339, 2322]),
         "Array merged interface should have stable DefId across lib files.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4356,10 +4129,10 @@ type Result = UnwrapPromise<Promise<number>>;
 const x: Result = 42;
 "#,
     );
-    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 6133).collect();
+    let real_errors = diagnostics_without_codes(&diagnostics, &[6133]);
     // Conditional type inference on Promise should work
     assert!(
-        !real_errors.iter().any(|(c, _)| *c == 2322),
+        !has_diagnostic_code(&real_errors, 2322),
         "Conditional type unwrapping Promise should work.\nDiagnostics: {real_errors:#?}"
     );
 }
@@ -4477,7 +4250,7 @@ var t = {};
 var p = new Proxy(t, {});
 "#,
     );
-    let ts2351: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2351).collect();
+    let ts2351 = diagnostics_with_code(&diagnostics, 2351);
     assert!(
         ts2351.is_empty(),
         "Expected no TS2351 for `new Proxy(t, {{}})`, got: {ts2351:#?}"
@@ -4500,7 +4273,7 @@ var p = new Proxy(obj, {
 });
 "#,
     );
-    let ts2351: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2351).collect();
+    let ts2351 = diagnostics_with_code(&diagnostics, 2351);
     assert!(
         ts2351.is_empty(),
         "Expected no TS2351 for Proxy with handler methods, got: {ts2351:#?}"
@@ -4540,7 +4313,7 @@ function soonFrozenObjectDeprecation<T extends object>(obj: T) {
 }
 "#,
     );
-    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diagnostics, 2322);
     assert!(
         ts2322.is_empty(),
         "Expected identity-wrapped Proxy handler callbacks to use contextual targets, got: {ts2322:#?}"
@@ -4560,11 +4333,11 @@ class C extends Iterator<number> {}
 "#,
     );
     assert!(
-        diagnostics.iter().any(|(code, _)| *code == 2511),
+        has_diagnostic_code(&diagnostics, 2511),
         "Expected TS2511 for abstract builtin Iterator construction. Got: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(|(code, _)| *code == 2515),
+        has_diagnostic_code(&diagnostics, 2515),
         "Expected TS2515 for missing abstract Iterator.next implementation. Got: {diagnostics:#?}"
     );
     assert!(
@@ -4607,29 +4380,25 @@ const iter3 = iter2.flatMap(() => g1);
 "#,
     );
 
-    let ts2416_count = diagnostics.iter().filter(|(code, _)| *code == 2416).count();
+    let ts2416_count = diagnostic_count(&diagnostics, 2416);
     assert_eq!(
         ts2416_count, 2,
         "Expected two TS2416 Iterator.next diagnostics. Got: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(|(code, _)| *code == 2345),
+        has_diagnostic_code(&diagnostics, 2345),
         "Expected TS2345 for Iterator.from rejecting Generator TNext. Got: {diagnostics:#?}"
     );
     assert!(
-        diagnostics.iter().any(|(code, _)| *code == 2322),
+        has_diagnostic_code(&diagnostics, 2322),
         "Expected TS2322 for flatMap callback rejecting Generator TNext. Got: {diagnostics:#?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|(_, message)| { message.contains("Iterator<number, undefined, unknown>") }),
+        has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
         "Expected Iterator heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .any(|(_, message)| { message.contains("Iterator<string, undefined, unknown>") }),
+        has_diagnostic_code_message(&diagnostics, 2416, "Iterator<string, undefined, unknown>"),
         "Expected Iterator<string> heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
     );
 }
@@ -4651,7 +4420,7 @@ interface Next<A> {
 const result: Next<number> = map.values().next();
 "#,
     );
-    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
     assert_eq!(
         ts2322_count, 2,
         "Expected strict built-in iterator return to report both MapIterator.next assignments. Got: {diagnostics:#?}"
@@ -4672,10 +4441,7 @@ fn test_synthesized_array_iterator_methods_see_es2025_helpers() {
     .toArray();
 "#,
     );
-    let false_iterator_helper_diags: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 2339 | 7006))
-        .collect();
+    let false_iterator_helper_diags = diagnostics_with_any_code(&diagnostics, &[2339, 7006]);
     assert!(
         false_iterator_helper_diags.is_empty(),
         "Expected synthesized ArrayIterator methods to inherit es2025 iterator helpers. Got: {diagnostics:#?}"

@@ -940,6 +940,50 @@ fn test_tuple_type_in_declaration() {
 }
 
 #[test]
+fn test_tuple_object_index_signature_preserves_parameter_name() {
+    let output = emit_dts("export type H = string | [string, { [key: string]: unknown }, ...H[]];");
+    assert!(
+        output.contains(
+            "export type H = string | [string, {\n    [key: string]: unknown;\n}, ...H[]];"
+        ),
+        "Expected object index signature inside tuple to preserve its parameter name: {output}"
+    );
+}
+
+#[test]
+fn test_multiline_tuple_type_argument_preserves_tuple_breaks() {
+    let output = emit_dts(
+        r#"
+export type Point = TypedObject<[
+    {
+        name: "x";
+        type: "f64";
+    },
+    {
+        name: "y";
+        type: "f64";
+    }
+]>;
+"#,
+    );
+    assert!(
+        output.contains(
+            "export type Point = TypedObject<[\n    {\n        name: \"x\";\n        type: \"f64\";\n    },\n    {\n        name: \"y\";\n        type: \"f64\";\n    }\n]>;"
+        ),
+        "Expected multiline tuple type argument to preserve tuple breaks: {output}"
+    );
+}
+
+#[test]
+fn test_single_line_tuple_type_argument_stays_compact() {
+    let output = emit_dts("export type PairBox = Box<[string, number]>;");
+    assert!(
+        output.contains("export type PairBox = Box<[string, number]>;"),
+        "Expected single-line tuple type argument to stay compact: {output}"
+    );
+}
+
+#[test]
 fn test_conditional_type_in_declaration() {
     let output = emit_dts("export type IsString<T> = T extends string ? true : false;");
     assert!(

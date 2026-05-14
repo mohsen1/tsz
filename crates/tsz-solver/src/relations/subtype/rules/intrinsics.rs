@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::TypeDatabase;
 use crate::objects::apparent::apparent_primitive_shape;
-use crate::operations::iterators::get_iterator_info;
+use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
 use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, TypeId};
 use crate::visitor::{
     application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
@@ -439,48 +439,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// let m: number = new Number(); // ❌ Number is not assignable to number
     /// let o: Object = 42;           // ✅ number <: Number <: Object
     /// ```
-    /// Check if a target type has named properties beyond `[Symbol.iterator]`
-    /// and `__@iterator` (the iterable protocol). Properties like `length` and
-    /// numeric index signatures that `String` naturally has are also excluded.
     fn target_has_non_iterable_properties(&mut self, target: TypeId) -> bool {
-        // Arrays/tuples carry methods like `push`/`pop`/`slice` that `String`
-        // does not provide, so they must NOT slip through the iterable
-        // shortcut. Catch all three forms a target can take:
-        //   - `TypeData::Array` / `TypeData::Tuple` (no lib loaded)
-        //   - `ReadonlyType<Array|Tuple>` wrappers
-        //   - `Application(Array, [T])` (the global `Array<T>` interface)
-        // The probe `evaluate_type(target)` covers the Application form by
-        // resolving it to its structural array body. Without this guard,
-        // `string <: string[]` (and via `boolean | string[]` etc.) leaked
-        // through and silently suppressed downstream constraint diagnostics.
-        for probe in [
-            target,
-            readonly_inner_type(self.interner, target).unwrap_or(target),
-            self.evaluate_type(target),
-        ] {
-            if array_element_type(self.interner, probe).is_some()
-                || tuple_list_id(self.interner, probe).is_some()
-            {
-                return true;
-            }
-        }
-        let shape = object_shape_id(self.interner, target)
-            .or_else(|| object_with_index_shape_id(self.interner, target))
-            .map(|id| self.interner.object_shape(id));
-        let Some(shape) = shape else {
-            return false;
-        };
-        let sym_iter = self.interner.intern_string("[Symbol.iterator]");
-        let internal_iter = self.interner.intern_string("__@iterator");
-        let length_atom = self.interner.intern_string("length");
-        for prop in &shape.properties {
-            if prop.name == sym_iter || prop.name == internal_iter || prop.name == length_atom {
-                continue;
-            }
-            // This property is not part of the iterable protocol or String's natural shape
-            return true;
-        }
-        false
+        target_has_non_iterable_property_shape(self.interner, target, |t| self.evaluate_type(t))
     }
 
     pub(crate) fn is_boxed_primitive_subtype(

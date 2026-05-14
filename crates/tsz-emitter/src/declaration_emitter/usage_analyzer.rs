@@ -1,5 +1,3 @@
-//! Usage Analyzer for Import/Export Elision
-//!
 //! Analyzes exported declarations to determine which imports are actually used
 //! in the public API surface. This prevents "Module not found" errors by eliding
 //! unused imports from .d.ts files, matching TypeScript's behavior.
@@ -27,6 +25,8 @@ use tsz_solver::visitor;
 use crate::transforms::emit_utils::string_literal_text;
 use crate::type_cache_view::TypeCacheView;
 
+mod ambient_module;
+mod public_surface;
 mod type_walk;
 mod value_references;
 
@@ -295,6 +295,9 @@ impl<'a> UsageAnalyzer<'a> {
             k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
                 self.analyze_export_assignment(stmt_idx);
             }
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                self.analyze_commonjs_assignment_public_surface(stmt_idx)
+            }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.analyze_module_declaration(stmt_idx);
             }
@@ -319,7 +322,11 @@ impl<'a> UsageAnalyzer<'a> {
             if let Some(module_block) = self.arena.get_module_block(body_node) {
                 if let Some(ref stmts) = module_block.statements {
                     for &stmt_idx in &stmts.nodes {
-                        self.analyze_statement(stmt_idx);
+                        if self.is_ambient_module_body_name(module.name) {
+                            self.analyze_ambient_module_member_statement(stmt_idx);
+                        } else {
+                            self.analyze_statement(stmt_idx);
+                        }
                     }
                 }
             } else if let Some(_nested_module) = self.arena.get_module(body_node) {
@@ -704,18 +711,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
-    fn analyze_expression_public_surface(&mut self, expr_idx: NodeIndex) {
-        let expr_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(expr_idx);
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return;
-        };
-        if expr_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
-            self.analyze_class_declaration(expr_idx);
-        }
-    }
-
     /// Analyze a class declaration.
     fn analyze_class_declaration(&mut self, class_idx: NodeIndex) {
         let Some(class_node) = self.arena.get(class_idx) else {
@@ -769,7 +764,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
-    /// Analyze a property declaration.
     fn analyze_property_declaration(&mut self, prop_idx: NodeIndex) {
         let Some(prop_node) = self.arena.get(prop_idx) else {
             return;
@@ -786,11 +780,11 @@ impl<'a> UsageAnalyzer<'a> {
             || self.member_has_private_identifier_name(prop.name);
 
         if !is_private {
-            // Walk type annotation (explicit or inferred)
             if prop.type_annotation.is_some() {
                 self.analyze_type_node(prop.type_annotation);
             } else {
                 self.walk_inferred_type(prop_idx);
+                self.analyze_export_default_initializer_reference(prop.initializer);
             }
         }
 
@@ -847,7 +841,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
-    /// Analyze a constructor.
     fn analyze_constructor(&mut self, ctor_idx: NodeIndex) {
         let Some(ctor_node) = self.arena.get(ctor_idx) else {
             return;
@@ -864,13 +857,12 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         }
 
-        // Walk parameters (public and protected constructors)
         for &param_idx in &ctor.parameters.nodes {
             self.analyze_parameter(param_idx);
         }
+        self.analyze_constructor_public_surface_assignments(ctor.body);
     }
 
-    /// Analyze an accessor (getter/setter).
     fn analyze_accessor(&mut self, accessor_idx: NodeIndex) {
         let Some(accessor_node) = self.arena.get(accessor_idx) else {
             return;

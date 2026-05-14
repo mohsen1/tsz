@@ -3,6 +3,7 @@
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -40,6 +41,19 @@ impl<'a> CheckerState<'a> {
             .any(|d| d.code == code && d.start >= start && d.start < end)
     }
 
+    fn type_arg_is_unknown_keyword(&self, type_arg_idx: NodeIndex) -> bool {
+        self.node_text(type_arg_idx)
+            .is_some_and(|text| text.trim() == "unknown")
+            || self
+                .type_arg_identifier_name(type_arg_idx)
+                .is_some_and(|name| name == "unknown")
+            || self
+                .ctx
+                .arena
+                .get(type_arg_idx)
+                .is_some_and(|node| node.kind == SyntaxKind::UnknownKeyword as u16)
+    }
+
     /// Validate each type argument against its corresponding type parameter
     /// constraint. Reports TS2344 when a type argument doesn't satisfy its
     /// constraint. Shared by call expressions, new expressions, and type refs.
@@ -65,26 +79,35 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self.type_arg_is_unknown_keyword(arg_idx)
+                {
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let inst_constraint = self.instantiate_constraint_with_type_args(
+                        constraint_resolved,
+                        type_params,
+                        &type_args,
+                    );
+                    if !matches!(inst_constraint, TypeId::ANY | TypeId::UNKNOWN) {
+                        let constraint_str =
+                            self.format_type_diagnostic_constraint(inst_constraint);
+                        self.error_at_node_msg(
+                            arg_idx,
+                            crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+                            &["unknown", &constraint_str],
+                        );
+                        continue;
+                    }
+                }
+
                 // Skip constraint checking when the type argument is an error type
                 // (avoids cascading errors from unresolved references)
                 if type_arg == TypeId::ERROR {
                     continue;
                 }
 
-                // Skip constraint checking when an inner generic type ref
-                // already emitted TS2314 / TS2315 / TS2707 (wrong type-arg
-                // count). tsc propagates `errorType` through the surrounding
-                // type expression so the outer constraint check silently
-                // passes, suppressing what would otherwise be a cascading
-                // TS2344 like
-                //   Type 'Outer<Inner<bad-count>>' does not satisfy 'X'.
-                // The lowering pipeline preserves the as-written Application
-                // shape, so a `contains_error_type` check on the type_id
-                // never fires here — instead, look at whether any of those
-                // arity diagnostics point into the type-arg AST node range.
-                //
-                // Test fixture: type-challenges 00008-medium-readonly-2 (#4904)
-                // and the broader `extra-2344-with-2314` cluster.
+                // Suppress cascading TS2344 when an inner type ref already
+                // emitted a type-argument arity diagnostic.
                 if let Some(&arg_idx) = type_args_list.nodes.get(i)
                     && self.type_arg_subtree_has_arity_error(arg_idx)
                 {
@@ -97,13 +120,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Skip constraint checking when the type argument is `this` type.
-                // The `this` type is polymorphic (like a type parameter constrained
-                // to the enclosing type) and its constraint satisfaction depends on
-                // the instantiation context. TSC defers this check, so we should too.
-                // Example: `interface Bar extends Foo { other: BoxOfFoo<this>; }`
-                // where `BoxOfFoo<T extends Foo>` — `this` satisfies `T extends Foo`
-                // because `this` in `Bar` is bounded by `Bar` which extends `Foo`.
+                // `this` is polymorphic; tsc defers this constraint check.
                 if query::is_this_type(self.ctx.types.as_type_database(), type_arg) {
                     continue;
                 }
@@ -117,10 +134,8 @@ impl<'a> CheckerState<'a> {
                     ) {
                         continue;
                     }
-                    // The scoped-param substitution below is intentionally only
-                    // used for primitive constraints. For object, tuple, mapped,
-                    // and indexed constraints the substituted shape can lose the
-                    // relation that makes the original generic argument valid.
+                    // Only use scoped-param substitution for primitive constraints;
+                    // richer shapes can lose the relation that makes them valid.
                     if self.type_node_is_generic_ref_with_scoped_type_param_arg(arg_idx)
                         && query::is_primitive_type(
                             self.ctx.types.as_type_database(),
@@ -178,15 +193,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Skip constraint checking for `this` type arguments or types that
-                // contain `this` (e.g., `this['params']`). The polymorphic `this` type
-                // is type-parameter-like and its concrete type is only known at
-                // instantiation time. TSC defers constraint validation for `this`
-                // references, so we must skip them to avoid false TS2344 errors.
-                // Example: `interface TObject<T> extends TSchema { static: Reduce<T, this['params']> }`
-                // where `Reduce<T, P extends unknown[]>` — `this['params']` satisfies
-                // `unknown[]` because `TSchema.params: unknown[]`, but we can't prove it
-                // structurally at definition time without resolving `this`.
+                // Defer `this`-containing references; their concrete type is
+                // only known at instantiation time.
                 if query::is_this_type(self.ctx.types.as_type_database(), type_arg)
                     || crate::query_boundaries::common::contains_this_type(
                         self.ctx.types.as_type_database(),
@@ -351,22 +359,10 @@ impl<'a> CheckerState<'a> {
                                     )
                                 {
                                     if cond_false == TypeId::NEVER {
-                                        // Determine if this conditional is "Extract-like":
-                                        // the extends type can serve as a proxy for the result.
-                                        //
-                                        // Extract-like cases (check extends type vs constraint):
-                                        // - `T extends C ? T : never` (true == check, classic Extract)
-                                        // - `C extends X<infer P> ? P : never` (true is bare type param,
-                                        //   opaque — no structural guarantee, e.g. GetProps<C>)
-                                        //
-                                        // Non-Extract cases (defer to instantiation):
-                                        // - `S extends object ? { [K in keyof S]: S[K] } : never`
-                                        //   (true branch structurally derived from check type)
-                                        // - `T[K] extends Function ? K : never` where K is the
-                                        //   index of the check type (key-filtering pattern like
-                                        //   FunctionPropertyNames<T>). The result K is always a
-                                        //   subtype of keyof T, but the extends type (Function)
-                                        //   is not a proxy for this relationship. Defer.
+                                        // Extract-like (`T extends C ? T : never`, false == never):
+                                        // extends type is a proxy for the result; check it against
+                                        // the constraint. Key-filtering and structured true branches
+                                        // are non-Extract and must defer to instantiation.
                                         let cond_true_is_bare_param = query::is_bare_type_parameter(
                                             self.ctx.types.as_type_database(),
                                             cond_true,
@@ -1039,17 +1035,39 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if is_bare_type_param && base_constraint_type.is_none() {
-                        // Bare `Infer` type parameter — base_constraint_of_type returns
-                        // the type unchanged for Infer types, so base_constraint_type is
-                        // None. Check if the infer variable has an implicit constraint
-                        // from its structural position (e.g., template literal → string,
-                        // rest element → array). If so, skip TS2344 — tsc defers these
-                        // checks to conditional type evaluation.
+                        // Bare `Infer` — base_constraint_of_type returns the type
+                        // unchanged, so base_constraint_type is None. Skip when the
+                        // infer var has a hidden structural or positional constraint.
                         let has_implicit_constraint =
                             type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
                                 self.has_hidden_conditional_infer_constraint_local(arg_idx)
                             });
                         if has_implicit_constraint {
+                            continue;
+                        }
+                        // Positional constraint: `infer R` in `Result<any, infer R>` where
+                        // `Rest extends string` gives R an implicit `string` constraint.
+                        if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                            && let Some(positional_constraint) =
+                                self.hidden_conditional_infer_constraint_type(arg_idx)
+                        {
+                            let constraint_resolved = self.resolve_lazy_type(constraint);
+                            let inst_constraint = self.instantiate_constraint_with_type_args(
+                                constraint_resolved,
+                                type_params,
+                                &type_args,
+                            );
+                            if inst_constraint == TypeId::UNKNOWN
+                                || inst_constraint == TypeId::ANY
+                                || self.is_assignable_to(positional_constraint, inst_constraint)
+                            {
+                                continue;
+                            }
+                            self.error_type_constraint_not_satisfied(
+                                type_arg,
+                                inst_constraint,
+                                arg_idx,
+                            );
                             continue;
                         }
                         if let Some(&arg_idx) = type_args_list.nodes.get(i)
@@ -1073,23 +1091,18 @@ impl<'a> CheckerState<'a> {
                         // Bare type parameter — check its base constraint instead of
                         // eagerly validating the unresolved type parameter itself.
                         if base == TypeId::UNKNOWN {
-                            // Base constraint is UNKNOWN. This can mean either:
-                            // (a) The type param is truly unconstrained (no `extends`)
-                            // (b) The constraint wasn't resolved (cross-arena,
-                            //     function type params, mapped type keys, etc.)
-                            //
-                            // For case (a), tsc reports TS2344 when the required
-                            // constraint is non-trivial. For case (b), we must
-                            // skip to avoid false positives.
-                            //
-                            // Detect case (b) by checking if the type arg's AST
-                            // source has an explicit constraint or is inside a
-                            // mapped type body (implicit constraint).
+                            // UNKNOWN base: either truly unconstrained or unresolved
+                            // (cross-arena, mapped key, function type param, or infer
+                            // var synthesized from a constrained positional slot).
+                            // Check for hidden/positional constraints before emitting.
                             let has_hidden_constraint =
                                 type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
                                     self.is_inside_mapped_type(arg_idx)
                                         || self
                                             .has_hidden_conditional_infer_constraint_local(arg_idx)
+                                        || self
+                                            .hidden_conditional_infer_constraint_type(arg_idx)
+                                            .is_some()
                                 });
                             if has_hidden_constraint {
                                 if let Some(&arg_idx) = type_args_list.nodes.get(i)

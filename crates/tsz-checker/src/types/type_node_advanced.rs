@@ -6,6 +6,9 @@
 //! - Type queries (typeof X)
 //! - Mapped types ({ [P in K]: T })
 
+mod enum_indexed_access;
+mod indexed_access_fast_path;
+
 use super::type_node::TypeNodeChecker;
 use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
@@ -90,6 +93,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let factory = self.ctx.types.factory();
 
         if let Some(indexed_access) = self.ctx.arena.get_indexed_access_type(node) {
+            if let Some(fast_result) = self.try_fast_alias_union_literal_index_access(
+                indexed_access.object_type,
+                indexed_access.index_type,
+            ) {
+                return fast_result;
+            }
+
             let object_type = self.check(indexed_access.object_type);
             let index_type = self.check(indexed_access.index_type);
 
@@ -529,9 +539,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let evaluated = evaluated_result.result;
                 if evaluated != TypeId::ERROR
                     && evaluated != indexed_type
-                    && self.is_full_enum_member_union(evaluated)
+                    && let Some(parent_enum_type) =
+                        self.full_enum_member_union_parent_type(evaluated)
                 {
-                    return evaluated;
+                    return parent_enum_type;
                 }
             }
 
@@ -539,59 +550,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else {
             TypeId::ERROR
         }
-    }
-
-    fn is_full_enum_member_union(&self, type_id: TypeId) -> bool {
-        let Some(list_id) = crate::query_boundaries::common::union_list_id(self.ctx.types, type_id)
-        else {
-            return false;
-        };
-        let members = self.ctx.types.type_list(list_id);
-        if members.is_empty() {
-            return false;
-        }
-
-        let mut parent = tsz_binder::SymbolId::NONE;
-        for &member_type in members.iter() {
-            let Some((def_id, _)) =
-                crate::query_boundaries::common::enum_components(self.ctx.types, member_type)
-            else {
-                return false;
-            };
-            let Some(member_sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-                return false;
-            };
-            let Some(member_symbol) = self.ctx.binder.symbols.get(member_sym_id) else {
-                return false;
-            };
-            if !member_symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-                || member_symbol.parent.is_none()
-            {
-                return false;
-            }
-            if parent.is_none() {
-                parent = member_symbol.parent;
-            } else if parent != member_symbol.parent {
-                return false;
-            }
-        }
-
-        let Some(parent_symbol) = self.ctx.binder.symbols.get(parent) else {
-            return false;
-        };
-        let Some(exports) = parent_symbol.exports.as_ref() else {
-            return false;
-        };
-        let enum_member_count = exports
-            .iter()
-            .filter(|(_, sym_id)| {
-                self.ctx.binder.symbols.get(**sym_id).is_some_and(|symbol| {
-                    symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-                })
-            })
-            .count();
-
-        enum_member_count == members.len()
     }
 
     /// Check if a type is a union containing Application (generic instantiation) members.
@@ -1430,6 +1388,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let assertion_expr = self.ctx.arena.skip_parenthesized(decl.initializer);
+        let initializer_is_const_assertion = self
+            .ctx
+            .arena
+            .get(assertion_expr)
+            .and_then(|node| self.ctx.arena.get_type_assertion(node))
+            .and_then(|assertion| self.ctx.arena.get(assertion.type_node))
+            .is_some_and(|type_node| type_node.kind == SyntaxKind::ConstKeyword as u16);
         let initializer = self
             .ctx
             .arena
@@ -1445,12 +1411,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_property_assignment(element_node)?;
                 if self.property_name_text(prop.name).as_deref() == Some(property_name.as_str()) {
-                    return self.literal_type_from_const_member_initializer(prop.initializer);
+                    let member_type =
+                        self.literal_type_from_const_member_initializer(prop.initializer)?;
+                    return Some(if initializer_is_const_assertion {
+                        member_type
+                    } else {
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            member_type,
+                        )
+                    });
                 }
             } else if element_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_shorthand_property(element_node)?;
                 if self.property_name_text(prop.name).as_deref() == Some(property_name.as_str()) {
-                    return self.literal_type_from_const_member_initializer(prop.name);
+                    let member_type = self.literal_type_from_const_member_initializer(prop.name)?;
+                    return Some(if initializer_is_const_assertion {
+                        member_type
+                    } else {
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            member_type,
+                        )
+                    });
                 }
             }
         }

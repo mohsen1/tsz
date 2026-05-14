@@ -8,14 +8,10 @@ with `TSZ_PERF_COUNTERS=1`).
 Default mode prints a one-page snapshot, including which
 `CheckerCreationReason` accounts for the largest share of
 `with_parent_cache_constructed`. That number is the lever the
-`PERFORMANCE_PLAN.md` §7 T2.2 migration order is trying to move; the
-checked-in attribution runs under `docs/plan/perf-runs/` are the canonical
-input.
+performance roadmap is trying to move. Checked-in attribution runs were
+removed from the repo; pass a fresh JSON artifact with `--json`.
 
 Usage:
-  # Default summary on the most recent checked-in attribution run.
-  python3 scripts/perf/query-perf-counters.py
-
   # Point at a specific JSON file (e.g. a fresh post-PR re-measurement).
   python3 scripts/perf/query-perf-counters.py --json /tmp/post-fix-pc.json
 
@@ -24,13 +20,12 @@ Usage:
 
   # Compare two runs (e.g. before vs. after a PR).
   python3 scripts/perf/query-perf-counters.py \\
-      --json    docs/plan/perf-runs/raw/2026-05-11-monorepo-006-pc.json \\
-      --baseline docs/plan/perf-runs/raw/2026-05-10-monorepo-006-pc.json
+      --json /tmp/post-fix-pc.json \\
+      --baseline /tmp/baseline-pc.json
 
 The tool is intentionally read-only. It never invokes `tsz` or the bench
 script — that's the job of `scripts/bench/scale-cliff/run-cliff.sh` (in
-timing mode) or a direct attribution-mode invocation per
-`docs/plan/perf-runs/2026-05-11-attribution-lock-wait.md` reproducer.
+timing mode) or a direct attribution-mode invocation recorded in the PR body.
 """
 
 import argparse
@@ -41,14 +36,6 @@ from pathlib import Path
 from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_JSON = (
-    REPO_ROOT
-    / "docs"
-    / "plan"
-    / "perf-runs"
-    / "raw"
-    / "2026-05-11-monorepo-006-pc.json"
-)
 
 
 def load(path: Path) -> dict:
@@ -116,6 +103,19 @@ def print_summary(snap: dict) -> None:
         for row in miss_causes:
             pct = 100.0 * row["count"] / total_miss_causes if total_miss_causes else 0.0
             print(f"    {row['name']:<24} {fmt_int(row['count']):>8} {pct:>6.1f}%")
+    decl_residues = snap.get("delegate_declaration_file_miss_residues")
+    if decl_residues:
+        total_decl_residues = sum(row["count"] for row in decl_residues)
+        print(
+            f"  declaration_file_miss_residues rows={fmt_int(len(decl_residues))} "
+            f"total={fmt_int(total_decl_residues)}"
+        )
+        for row in decl_residues[:20]:
+            file_name = row.get("target_file") or "<unknown>"
+            print(
+                f"    {row['name']:<36} {row['kind']:<11} "
+                f"{fmt_int(row['count']):>5}  {file_name}"
+            )
     print()
     print("checker:")
     sc = checker["state_constructed"]
@@ -271,8 +271,8 @@ def main() -> int:
     parser.add_argument(
         "--json",
         type=Path,
-        default=DEFAULT_JSON,
-        help=f"path to perf-counter JSON (default: {DEFAULT_JSON.relative_to(REPO_ROOT)})",
+        required=True,
+        help="path to perf-counter JSON",
     )
     parser.add_argument(
         "--baseline",

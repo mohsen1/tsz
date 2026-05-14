@@ -910,6 +910,22 @@ fn types_are_comparable_for_assertion_inner(
             .any(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
     }
 
+    // For intersection source S1 & S2 & ... & Sn: any member comparable to target suffices.
+    // For intersection target T1 & T2 & ... & Tn: source must be comparable to every member
+    // (tsc's eachTypeRelatedToType via comparableRelation).
+    if let Some(TypeData::Intersection(list_id)) = db.lookup(source) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| types_are_comparable_for_assertion_inner(db, m, target, depth + 1));
+    }
+    if let Some(TypeData::Intersection(list_id)) = db.lookup(target) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .all(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
+    }
+
     // Enum comparability: unwrap to member type union, matching
     // `types_are_comparable_inner` behavior.
     if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(source) {
@@ -1317,6 +1333,9 @@ fn types_have_common_properties_relaxed(
                 {
                     return true;
                 }
+                if are_distinct_literal_values(db, *source_ty, *target_ty) {
+                    return false;
+                }
                 types_are_comparable_for_assertion_inner(db, *source_ty, *target_ty, depth + 1)
             });
             if !any_comparable {
@@ -1344,6 +1363,16 @@ fn types_have_common_properties_relaxed(
     }
 
     found_common
+}
+
+fn are_distinct_literal_values(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    let Some(TypeData::Literal(source_lit)) = db.lookup(source) else {
+        return false;
+    };
+    let Some(TypeData::Literal(target_lit)) = db.lookup(target) else {
+        return false;
+    };
+    source_lit != target_lit
 }
 
 fn types_are_comparable_inner(
@@ -1614,8 +1643,9 @@ fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -
         return other == TypeId::SYMBOL
             || matches!(db.lookup(other), Some(TypeData::UniqueSymbol(_)));
     }
-    // Two literals of the same primitive kind are comparable (e.g. "foo" ~ "baz",  1 ~ 2).
-    // In tsc, comparability checks the "base constraint" — both widen to the same primitive.
+    // Two literals of the same primitive kind are broadly comparable. Assertion
+    // property overlap applies an additional value-level guard for shared
+    // discriminant/phantom properties before reaching this helper.
     if let Some(TypeData::Literal(lit_a)) = db.lookup(base) {
         if let Some(TypeData::Literal(lit_b)) = db.lookup(other) {
             return std::mem::discriminant(&lit_a) == std::mem::discriminant(&lit_b);
@@ -2691,6 +2721,63 @@ mod tests {
             super::instance_type_from_symbol_has_instance(&db, constructor),
             None,
             "asserts predicates must not be used for instanceof narrowing"
+        );
+    }
+
+    /// Two distinct string literals remain broadly primitive-comparable. The
+    /// stricter value-level rule is applied by assertion property overlap, not
+    /// by this shared primitive helper.
+    #[test]
+    fn distinct_string_literals_are_primitive_comparable() {
+        let db = TypeInterner::new();
+        let lit_draft = db.literal_string("draft");
+        let lit_published = db.literal_string("published");
+        assert!(
+            is_primitive_comparable(&db, lit_draft, lit_published),
+            "\"draft\" must remain primitive-comparable to \"published\""
+        );
+        assert!(
+            is_primitive_comparable(&db, lit_published, lit_draft),
+            "\"published\" must remain primitive-comparable to \"draft\""
+        );
+    }
+
+    /// Two identical string literals must be primitive-comparable (same value).
+    #[test]
+    fn same_string_literal_is_comparable() {
+        let db = TypeInterner::new();
+        let lit_a = db.literal_string("draft");
+        let lit_b = db.literal_string("draft");
+        assert!(
+            is_primitive_comparable(&db, lit_a, lit_b),
+            "\"draft\" must be primitive-comparable to \"draft\""
+        );
+    }
+
+    /// A string literal must be primitive-comparable to its base primitive.
+    #[test]
+    fn string_literal_comparable_to_string_primitive() {
+        let db = TypeInterner::new();
+        let lit = db.literal_string("hello");
+        assert!(
+            is_primitive_comparable(&db, lit, TypeId::STRING),
+            "\"hello\" must be primitive-comparable to `string`"
+        );
+        assert!(
+            is_primitive_comparable(&db, TypeId::STRING, lit),
+            "`string` must be primitive-comparable to \"hello\""
+        );
+    }
+
+    /// Two distinct number literals remain broadly primitive-comparable.
+    #[test]
+    fn distinct_number_literals_are_primitive_comparable() {
+        let db = TypeInterner::new();
+        let lit_200 = db.literal_number(200.0);
+        let lit_404 = db.literal_number(404.0);
+        assert!(
+            is_primitive_comparable(&db, lit_200, lit_404),
+            "200 must remain primitive-comparable to 404"
         );
     }
 

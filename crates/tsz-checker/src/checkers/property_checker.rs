@@ -13,8 +13,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-mod super_accessor;
-
 impl<'a> CheckerState<'a> {
     fn report_computed_this_property_missing(&mut self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
@@ -188,10 +186,6 @@ impl<'a> CheckerState<'a> {
                     .borrow_mut()
                     .insert(member_sym_id);
             }
-        }
-
-        if self.super_accessor_error(object_expr, property_name, error_node, class_idx, is_static) {
-            return false;
         }
 
         let in_static_context = self.is_in_static_class_member_context(error_node);
@@ -901,26 +895,29 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
         object_type: tsz_solver::TypeId,
     ) -> bool {
-        if self.ctx.enclosing_class.is_some() {
-            return false;
-        }
-
-        let source_type = self
+        let Some(members) = self
             .ctx
             .types
             .get_display_alias(object_type)
-            .unwrap_or(object_type);
-        let Some(members) = crate::query_boundaries::property_access::intersection_members(
-            self.ctx.types,
-            source_type,
-        ) else {
+            .and_then(|alias| {
+                crate::query_boundaries::property_access::intersection_members(
+                    self.ctx.types,
+                    alias,
+                )
+            })
+            .or_else(|| {
+                crate::query_boundaries::property_access::intersection_members(
+                    self.ctx.types,
+                    object_type,
+                )
+            })
+        else {
             return false;
         };
         if members.len() < 2 {
             return false;
         }
 
-        let is_static = self.is_constructor_type(object_type);
         let mut has_private = false;
         let mut has_other = false;
         let mut first_declaring_class: Option<NodeIndex> = None;
@@ -932,7 +929,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            match self.find_member_access_info(class_idx, property_name, is_static) {
+            // Always use instance (non-static) lookup: this check applies to
+            // intersections of class instance types, never constructor types.
+            match self.find_member_access_info(class_idx, property_name, false) {
                 Some(access_info) if access_info.level == MemberAccessLevel::Private => {
                     has_private = true;
                     if let Some(first_decl) = first_declaring_class {
@@ -1498,6 +1497,130 @@ mod tests {
         assert!(
             !diagnostics.iter().any(|(code, _)| *code == 2341),
             "private/public intersection should not report direct private access, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn intersection_private_public_conflict_generic_class_outside_class() {
+        // Verify that the check works for generic Application types outside the class.
+        let diagnostics = crate::test_utils::check_source_code_messages(
+            r#"
+            class Container<T> {
+                private value: T | null = null;
+            }
+            declare var c: Container<string> & { value: string };
+            c.value;
+        "#,
+        );
+        assert!(
+            diagnostics.iter().any(|(code, message)| {
+                *code == 2339 && message.contains("does not exist on type 'never'")
+            }),
+            "generic class private/public intersection outside class should report TS2339, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn intersection_private_public_conflict_inside_class_method_errors() {
+        // When `this` is narrowed via a type predicate to an intersection that
+        // has a private property from the class AND a public property with the
+        // same name, the intersection reduces to `never` even inside the class.
+        let diagnostics = crate::test_utils::check_source_code_messages(
+            r#"
+            class Container<T> {
+                constructor(private value: T | null) {}
+
+                hasValue(): this is Container<T> & { value: T } {
+                    return this.value !== null;
+                }
+
+                getValue(): T | null {
+                    if (this.hasValue()) {
+                        return this.value;
+                    }
+                    return null;
+                }
+            }
+        "#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|(code, message)| {
+                *code == 2339 && message.contains("does not exist on type 'never'")
+            }),
+            "narrowed this-intersection with private/public conflict should report TS2339, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn intersection_private_public_conflict_inside_class_different_type_param_name() {
+        // Same structural rule, different type-parameter spelling — proves the fix
+        // is not keyed to a specific identifier name.
+        let diagnostics = crate::test_utils::check_source_code_messages(
+            r#"
+            class Box<U> {
+                constructor(private item: U | null) {}
+
+                filled(): this is Box<U> & { item: U } {
+                    return this.item !== null;
+                }
+
+                unwrap(): U | null {
+                    if (this.filled()) {
+                        return this.item;
+                    }
+                    return null;
+                }
+            }
+        "#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|(code, message)| {
+                *code == 2339 && message.contains("does not exist on type 'never'")
+            }),
+            "narrowed this-intersection (Box/item) should report TS2339, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn intersection_same_private_from_same_class_inside_method_no_error() {
+        // When both sides of an intersection have the SAME private property
+        // from the same declaring class, there is no conflict and no error.
+        let diagnostics = crate::test_utils::check_source_code_messages(
+            r#"
+            class A {
+                private x: number = 0;
+                method() {
+                    const self: A & A = this as any;
+                    self.x;
+                }
+            }
+        "#,
+        );
+
+        assert!(
+            !diagnostics.iter().any(|(code, _)| *code == 2339),
+            "same-class private intersection should not produce TS2339, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn normal_private_access_inside_class_no_error() {
+        // Removing the enclosing_class guard must not break ordinary private
+        // property access from within the declaring class.
+        let diagnostics = crate::test_utils::check_source_code_messages(
+            r#"
+            class Simple {
+                private x: number = 0;
+                getX() { return this.x; }
+            }
+        "#,
+        );
+
+        assert!(
+            diagnostics.is_empty(),
+            "direct private access inside class should produce no diagnostics, got: {diagnostics:?}"
         );
     }
 

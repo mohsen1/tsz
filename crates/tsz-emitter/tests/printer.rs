@@ -1040,6 +1040,134 @@ fn static_field_class_expression_in_parameter_default_uses_es5_comma_alias() {
 }
 
 #[test]
+fn legacy_decorated_anonymous_default_class_static_field_sets_default_name() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare function dec<T>(target: T): T;\n@dec\nexport default class {\n    static y = 1;\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::ES2015,
+        legacy_decorators: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __setFunctionName ="),
+        "Lowered static field on anonymous decorated default class must request __setFunctionName.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a;"),
+        "The class value alias should be hoisted before the default class assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let default_1 = _a = class"),
+        "Anonymous decorated default class should assign both the export binding and function-name alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_a, \"default\");")
+            && output.contains("default_1.y = 1;")
+            && output.contains("default_1 = __decorate([")
+            && output.contains("export default default_1;"),
+        "Static initialization, decoration, and default export should follow tsc's statement order.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__setFunctionName(_a, \"default_1\")"),
+        "The runtime function name is the default export name, not the synthetic binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn legacy_constructor_param_decorator_static_self_reference_uses_alias() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare const IFoo: any;\nclass BulkEditPreviewProvider {\n    static readonly Schema = 'vscode-bulkeditpreview';\n    static emptyPreview = { scheme: BulkEditPreviewProvider.Schema };\n    constructor(@IFoo private readonly _modeService: IFoo) { }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2018,
+        legacy_decorators: true,
+        no_emit_helpers: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var BulkEditPreviewProvider_1;"),
+        "Constructor parameter decorators that reassign the class need a stable alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "let BulkEditPreviewProvider = BulkEditPreviewProvider_1 = class BulkEditPreviewProvider"
+        ),
+        "The class expression should initialize both the public binding and the stable alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "BulkEditPreviewProvider.emptyPreview = { scheme: BulkEditPreviewProvider_1.Schema };"
+        ),
+        "Static self-references must read from the pre-decoration class alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("BulkEditPreviewProvider = BulkEditPreviewProvider_1 = __decorate(["),
+        "The class decorator assignment must keep the alias tracking the decorated class value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn legacy_late_property_decorator_recovers_onto_following_method() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var decorator: any;\nclass Foo {\n    private prop @decorator\n    foo() {\n        return 0;\n    }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ESNext,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        use_define_for_class_fields: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("prop;"),
+        "The malformed property should still emit as a field.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("], Foo.prototype, \"foo\", null);"),
+        "The late decorator should recover onto the following method.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:type\", Function)"),
+        "Recovered method decorator should still emit metadata.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_exported_object_binding_non_identifier_property_uses_destructuring_path() {
     let source = r#"declare const obj: any;
 export let { "foo": bar } = obj;
@@ -2236,6 +2364,129 @@ fn es5_var_destructuring_reassigning_rhs_uses_temp() {
     );
 }
 
+#[test]
+fn legacy_member_decorator_private_name_uses_native_static_block_scope() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var decorator: any;\nclass C1 {\n    #x;\n    @decorator((x: C1) => x.#x)\n    y() {}\n}\nclass C2 {\n    #x;\n    y(@decorator((x: C2) => x.#x) p) {}\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ESNext,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        use_define_for_class_fields: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("static {\n        __decorate([\n            decorator((x) => x.#x),"),
+        "Decorators that reference a private name must emit inside a class static block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static {\n        __decorate([\n            __param(0, decorator((x) => x.#x)),"
+        ),
+        "Parameter decorators that reference a private name must emit inside a class static block.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("}\n__decorate([\n    decorator((x) => x.#x),"),
+        "Private-name decorator calls must not be emitted after the class body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn legacy_member_decorator_private_name_uses_lowered_private_scope() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var decorator: any;\nclass C1 {\n    #x;\n    @decorator((x: C1) => x.#x)\n    y() {}\n}\nclass C2 {\n    #x;\n    y(@decorator((x: C2) => x.#x) p) {}\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        use_define_for_class_fields: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __classPrivateFieldGet ="),
+        "Lowered private-name decorator expressions must request __classPrivateFieldGet.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_x = new WeakMap();\n(() => {\n    __decorate(["),
+        "Lowered decorator calls must run after WeakMap initialization while private lowering state is live.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("decorator((x) => __classPrivateFieldGet(x, _C1_x, \"f\")),"),
+        "Member decorator private access should lower through __classPrivateFieldGet.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__param(0, decorator((x) => __classPrivateFieldGet(x, _C2_x, \"f\"))),"),
+        "Parameter decorator private access should lower through __classPrivateFieldGet.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("x.)"),
+        "Private-name lowering must not leave an empty property access.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn legacy_decorator_trailing_comments_move_to_lowered_calls() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare function y(...args: any[]): any;\ntype T = number;\n@y(1 as T, () => C) // class decorator comment\nclass C<T> {\n    @y(null as T) // method decorator comment\n    method(@y x, y) {} // method comment\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        legacy_decorators: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("method(x, y) { } // method comment"),
+        "The method's own trailing comment should remain on the method.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("y(null) // method decorator comment\n    ,"),
+        "The erased method decorator's trailing comment should move to the lowered decorator expression.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("y(1, () => C) // class decorator comment"),
+        "The erased class decorator's trailing comment should move to the lowered class decorator expression.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class C {\n    //"),
+        "Decorator comments must not leak into the class body after decorator tokens are erased.\nOutput:\n{output}"
+    );
+}
+
 /// Regression: classes inside a namespace IIFE were missing
 /// `__metadata("design:type", T)` calls under `--emitDecoratorMetadata`.
 /// The namespace transformer instantiated an `ES5ClassTransformer` but
@@ -2266,6 +2517,46 @@ fn namespace_es5_class_emits_decorator_metadata() {
     assert!(
         output.contains("__metadata(\"design:type\", Leg)"),
         "Decorator metadata for the property type must emit inside the namespace IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn legacy_accessor_decorator_metadata_uses_accessor_pair_types() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare var dec: any;\nclass A {\n    @dec get x() { return 0; }\n    set x(value: number) { }\n}\nclass E {\n    @dec get x() { return 0; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __metadata ="),
+        "Decorated accessors with metadata enabled must request the __metadata helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__metadata(\"design:type\", Number),\n    __metadata(\"design:paramtypes\", [Number])"
+        ),
+        "Accessor pairs should serialize the setter parameter type for design:type and design:paramtypes.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__metadata(\"design:type\", Object),\n    __metadata(\"design:paramtypes\", [])"
+        ),
+        "Getter-only accessors without an explicit type should use Object and an empty paramtypes array.\nOutput:\n{output}"
     );
 }
 

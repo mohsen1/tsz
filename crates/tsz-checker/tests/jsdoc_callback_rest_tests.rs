@@ -1,10 +1,6 @@
 //! Tests for JSDoc @callback rest parameter and @typedef nested property handling.
 
-use crate::test_utils::check_js_source_diagnostics;
-
-fn diagnostic_codes(diagnostics: &[crate::diagnostics::Diagnostic]) -> Vec<u32> {
-    diagnostics.iter().map(|d| d.code).collect()
-}
+use crate::test_utils::{check_js_source_diagnostics, diagnostic_codes};
 
 /// @callback with @param {...string} should create a rest parameter accepting
 /// variable string arguments. No TS2554 should be emitted for extra arguments.

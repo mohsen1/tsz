@@ -1,7 +1,6 @@
 //! Cross-file symbol resolution: resolving symbols across multiple files,
 //! delegating type resolution to child checkers, tracking cross-file targets,
 //! and cross-file interface declaration merging.
-
 use crate::state::CheckerState;
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -12,52 +11,10 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
+
 thread_local! {
     static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// Typed identifier for the cross-file query bucket a cache lookup or write
-/// targets. Replaces the four `u8` constants that used to live here, matching
-/// the API shape proposed in `docs/plan/PERFORMANCE_PLAN.md` §7 ("Typed
-/// Cross-File Queries"):
-///
-/// > pub enum CrossFileQueryKind {
-/// >     SymbolType,
-/// >     ClassInstanceType,
-/// >     InterfaceType,
-/// >     InterfaceMemberSimpleType,
-/// > }
-///
-/// The discriminant values are the historical `u8` numbers already stored in
-/// `DefinitionStore` cache keys, so the enum remains `#[repr(u8)]`-compatible
-/// with the cache key layout via `as u8`.
-///
-/// Adding a new bucket: add the variant, give it a fresh `u8` discriminant,
-/// and ensure it doesn't collide with existing ones (the storage layer keys
-/// caches by `(u8, file_idx, primary, secondary, args_hash)` so
-/// re-purposing a discriminant would silently corrupt unrelated cache
-/// entries).
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(u8)]
-// Variant names mirror PERFORMANCE_PLAN.md §7 verbatim; the shared "Type"
-// suffix is part of the plan's API contract and must stay.
-#[allow(clippy::enum_variant_names)]
-pub(crate) enum CrossFileQueryKind {
-    InterfaceType = 1,
-    ClassInstanceType = 2,
-    InterfaceMemberSimpleType = 3,
-    SymbolType = 4,
-}
-
-impl CrossFileQueryKind {
-    /// Discriminant value used as the first component of
-    /// `DefinitionStore::resolved_cross_file_queries` cache keys. Stable —
-    /// changing this for an existing variant would invalidate every cached
-    /// entry under that discriminant.
-    #[inline]
-    pub(crate) const fn as_storage_kind(self) -> u8 {
-        self as u8
-    }
 }
 
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
@@ -153,6 +110,9 @@ impl<'a> CheckerState<'a> {
         let Some(name) = name else {
             return TypeId::UNKNOWN;
         };
+        if name == "BuiltinIteratorReturn" {
+            return self.builtin_iterator_return_intrinsic_type();
+        }
         if let Some(&type_id) = self.ctx.type_parameter_scope.get(&name) {
             return type_id;
         }
@@ -701,14 +661,24 @@ impl<'a> CheckerState<'a> {
 
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
-                && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
+                && let Some((cached_type, cached_params)) =
+                    self.ctx.lib_delegation_cache.get(&sym_id).cloned()
             {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_lib
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 self.ctx.symbol_types.insert(sym_id, cached_type);
-                return Some((cached_type, Vec::new()));
+                let cached_params = if cached_params.is_empty()
+                    || !self
+                        .get_cross_file_symbol(sym_id)
+                        .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+                {
+                    Vec::new()
+                } else {
+                    cached_params
+                };
+                return Some((cached_type, cached_params));
             }
 
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
@@ -810,7 +780,9 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
-                    self.ctx.lib_delegation_cache.insert(sym_id, direct_type);
+                    self.ctx
+                        .lib_delegation_cache
+                        .insert(sym_id, (direct_type, direct_params.clone()));
                 }
                 return Some((direct_type, direct_params));
             }
@@ -847,13 +819,15 @@ impl<'a> CheckerState<'a> {
             } else {
                 delegate_arena
             };
-            let miss_target_is_declaration_file = miss_target_arena
-                .and_then(|arena| arena.source_files.first())
-                .is_some_and(|source_file| source_file.is_declaration_file);
-            tsz_common::perf_counters::record_cross_arena_symbol_miss(
+            let miss_target_source_file =
+                miss_target_arena.and_then(|arena| arena.source_files.first());
+            let miss_kind = self.cross_arena_symbol_miss_kind(sym_id);
+            self.record_cross_arena_symbol_miss_residue(
+                sym_id,
                 miss_source,
-                self.cross_arena_symbol_miss_kind(sym_id),
-                miss_target_is_declaration_file,
+                miss_kind,
+                miss_target_source_file.is_some_and(|source_file| source_file.is_declaration_file),
+                miss_target_source_file.map(|source_file| source_file.file_name.as_str()),
             );
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
@@ -1038,10 +1012,7 @@ impl<'a> CheckerState<'a> {
             let child_namespace_names: rustc_hash::FxHashMap<TypeId, String> =
                 std::mem::take(&mut checker.ctx.namespace_module_names);
 
-            let child_lib_delegation_cache: Vec<(SymbolId, TypeId)> =
-                std::mem::take(&mut checker.ctx.lib_delegation_cache)
-                    .into_iter()
-                    .collect();
+            let child_lib_delegation_cache = std::mem::take(&mut checker.ctx.lib_delegation_cache);
 
             // Propagate lib type resolution cache from child to parent.
             // Without this, child contexts that resolve lib types (Array, Promise, etc.)
@@ -1080,8 +1051,11 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_module_names
                 .extend(child_namespace_names);
-            for (name, type_id) in child_lib_delegation_cache {
-                self.ctx.lib_delegation_cache.entry(name).or_insert(type_id);
+            for (name, cache_value) in child_lib_delegation_cache {
+                self.ctx
+                    .lib_delegation_cache
+                    .entry(name)
+                    .or_insert(cache_value);
             }
             for (name, type_id) in child_lib_type_cache {
                 self.ctx
@@ -1101,7 +1075,9 @@ impl<'a> CheckerState<'a> {
             // Cache the result for lib delegations by SymbolId.
             // This prevents redundant child checker creation for the same lib symbol.
             if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
-                self.ctx.lib_delegation_cache.insert(sym_id, result);
+                self.ctx
+                    .lib_delegation_cache
+                    .insert(sym_id, (result, result_params.clone()));
             }
 
             // Write through to the canonical cross-file symbol-type cache so
@@ -1986,7 +1962,6 @@ impl<'a> CheckerState<'a> {
         derived_type
     }
 }
-
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
 mod cross_file_query_kind_tests;

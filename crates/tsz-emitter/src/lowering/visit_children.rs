@@ -199,12 +199,13 @@ impl<'a> LoweringPass<'a> {
                                 .is_some_and(|n| n.kind == SyntaxKind::AsyncKeyword as u16)
                         })
                     });
-                    if is_async_method && self.ctx.needs_async_lowering && method.body.is_some() {
+                    if is_async_method
+                        && method.body.is_some()
+                        && ((method.asterisk_token && self.ctx.needs_es2018_lowering)
+                            || (!method.asterisk_token && self.ctx.needs_async_lowering))
+                    {
                         if method.asterisk_token {
                             // Async generator method: needs __asyncGenerator + __await
-                            if self.ctx.target_es5 {
-                                self.mark_async_helpers();
-                            }
                             self.mark_async_generator_helpers();
                         } else {
                             // Non-generator async method: needs __awaiter
@@ -317,6 +318,18 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 if let Some(accessor) = self.arena.get_accessor(node) {
+                    if self.ctx.options.legacy_decorators
+                        && self.ctx.options.emit_decorator_metadata
+                        && accessor.modifiers.as_ref().is_some_and(|m| {
+                            m.nodes.iter().any(|&mod_idx| {
+                                self.arena
+                                    .get(mod_idx)
+                                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                            })
+                        })
+                    {
+                        self.transforms.helpers_mut().metadata = true;
+                    }
                     if let Some(mods) = &accessor.modifiers {
                         for &mod_idx in &mods.nodes {
                             self.visit(mod_idx);
@@ -368,8 +381,9 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class_data) = self.arena.get_class(node) {
                     // TC39 (non-legacy) decorator detection for class expressions
-                    let target_supports_native_decorators =
-                        self.ctx.options.target == tsz_common::ScriptTarget::ESNext;
+                    let target_supports_native_decorators = self.ctx.options.target
+                        == tsz_common::ScriptTarget::ESNext
+                        && self.ctx.options.use_define_for_class_fields;
                     let has_tc39_decorators = !self.ctx.options.legacy_decorators
                         && !target_supports_native_decorators
                         && self.class_has_decorators(class_data);

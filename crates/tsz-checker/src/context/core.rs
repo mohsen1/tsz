@@ -104,7 +104,6 @@ impl<'a> CheckerContext<'a> {
     /// `cross_file_symbol_targets` overlay for dynamically-discovered mappings.
     /// Returns `None` if the symbol has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
-        // Check shared base map first (covers all pre-computed entries, no RefCell cost)
         if let Some(&idx) = self
             .global_symbol_file_index
             .as_ref()
@@ -112,6 +111,11 @@ impl<'a> CheckerContext<'a> {
         {
             return Some(idx);
         }
+        self.resolve_dynamic_symbol_file_index(sym_id)
+    }
+
+    /// Resolve only dynamically-discovered `SymbolId` ownership.
+    pub fn resolve_dynamic_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
         self.cross_file_symbol_targets.borrow().get(sym_id)
     }
 

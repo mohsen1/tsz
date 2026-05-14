@@ -269,6 +269,9 @@ impl<'a> Printer<'a> {
             // so the export assignment observes the initialized value.
         } else if self.in_system_execute_body {
             self.emit_for_initializer_strip_var(loop_stmt.initializer);
+        } else if self.emit_async_generator_shadow_for_initializer(loop_stmt.initializer) {
+            // Rewritten from `var x = y` to `x = y`; the declaration is hoisted
+            // at the top of the generated async generator body.
         } else {
             self.emit(loop_stmt.initializer);
         }
@@ -307,8 +310,15 @@ impl<'a> Printer<'a> {
         self.write("for (");
         // In System modules, `var` declarations are hoisted to the module scope,
         // so `for (var key in ...)` becomes `for (key in ...)`.
-        if self.in_system_execute_body {
+        if self.ctx.target_es5
+            && self.emit_for_in_missing_destructuring_initializer_es5(for_in_of.initializer)
+        {
+            // The recovery path emitted the initializer.
+        } else if self.in_system_execute_body {
             self.emit_for_initializer_strip_var(for_in_of.initializer);
+        } else if self.emit_async_generator_shadow_for_in_of_initializer(for_in_of.initializer) {
+            // Rewritten from `var x in y` to `x in y`; the declaration is hoisted
+            // at the top of the generated async generator body.
         } else {
             self.emit(for_in_of.initializer);
         }
@@ -324,6 +334,50 @@ impl<'a> Printer<'a> {
         } else {
             self.emit_loop_body_with_deferred_exports(for_in_of.statement, &initializer_exports);
         }
+    }
+
+    fn emit_for_in_missing_destructuring_initializer_es5(
+        &mut self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return false;
+        }
+
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return false;
+        };
+
+        let mut pattern_decls = Vec::new();
+        for &decl_idx in &decl_list.declarations.nodes {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+            if !self.is_binding_pattern(decl.name) || decl.initializer.is_some() {
+                return false;
+            }
+            pattern_decls.push(decl.name);
+        }
+
+        if pattern_decls.is_empty() {
+            return false;
+        }
+
+        self.write("var ");
+        let mut first = true;
+        for pattern_idx in pattern_decls {
+            let Some(pattern_node) = self.arena.get(pattern_idx) else {
+                continue;
+            };
+            self.emit_es5_destructuring_pattern_direct(pattern_node, "(void 0)", &mut first);
+        }
+        true
     }
 
     pub(in crate::emitter) fn emit_for_of_statement(&mut self, node: &Node) {
@@ -367,6 +421,9 @@ impl<'a> Printer<'a> {
         self.write("(");
         if self.in_system_execute_body {
             self.emit_for_initializer_strip_var(for_in_of.initializer);
+        } else if self.emit_async_generator_shadow_for_in_of_initializer(for_in_of.initializer) {
+            // Rewritten from `var x of y` to `x of y`; the declaration is hoisted
+            // at the top of the generated async generator body.
         } else {
             self.emit(for_in_of.initializer);
         }

@@ -1250,6 +1250,35 @@ fn test_destructuring_variable_declaration_groups_typed_bindings() {
 }
 
 #[test]
+fn test_string_literal_tuple_binding_preserves_alias_and_return_union() {
+    let output = emit_dts(
+        r#"
+type RexOrRaptor = "t-rex" | "raptor";
+let [im, a, dinosaur]: ["I'm", "a", RexOrRaptor] = ["I'm", "a", "t-rex"];
+
+function rawr(dino: RexOrRaptor) {
+    if (dino === "t-rex") {
+        return "ROAAAAR!";
+    }
+    if (dino === "raptor") {
+        return "yip yip!";
+    }
+    throw "Unexpected " + dino;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare let im: \"I'm\", a: \"a\", dinosaur: RexOrRaptor;"),
+        "Expected tuple destructuring to preserve the alias from the source tuple annotation: {output}"
+    );
+    assert!(
+        output.contains("declare function rawr(dino: RexOrRaptor): \"ROAAAAR!\" | \"yip yip!\";"),
+        "Expected string literal returns from guarded branches to emit as a union: {output}"
+    );
+}
+
+#[test]
 fn test_destructured_parameter_with_defaulted_property_uses_multiline_object_type() {
     let output = emit_dts("const k = ({ x: z = 'y' }) => {};");
     assert!(

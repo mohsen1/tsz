@@ -38,6 +38,10 @@ name = "generic_return_fingerprint_tests"
 path = "tests/generic_return_fingerprint_tests.rs"
 
 [[test]]
+name = "generic_conflicting_argument_type_display_tests"
+path = "tests/generic_conflicting_argument_type_display_tests.rs"
+
+[[test]]
 name = "generator_annotation_mismatch_display_tests"
 path = "tests/generator_annotation_mismatch_display_tests.rs"
 
@@ -64,6 +68,10 @@ path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 [[test]]
 name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
+
+[[test]]
+name = "array_subclass_inheritance_tests"
+path = "tests/array_subclass_inheritance_tests.rs"
 
 [[test]]
 name = "tuple_rest_array_canonicalization_tests"
@@ -152,6 +160,10 @@ path = "tests/ts1238_tests.rs"
 [[test]]
 name = "ts1240_tests"
 path = "tests/ts1240_tests.rs"
+
+[[test]]
+name = "ts1240_accessor_decorator_tests"
+path = "tests/ts1240_accessor_decorator_tests.rs"
 
 [[test]]
 name = "ts2802_downlevel_iteration_tests"
@@ -246,6 +258,10 @@ name = "readonly_tuple_source_display_tests"
 path = "tests/readonly_tuple_source_display_tests.rs"
 
 [[test]]
+name = "module_augmentation_isolation_tests"
+path = "tests/module_augmentation_isolation_tests.rs"
+
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 
@@ -302,12 +318,20 @@ name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
 [[test]]
+name = "conditional_extends_readonly_identity_tests"
+path = "tests/conditional_extends_readonly_identity_tests.rs"
+
+[[test]]
 name = "ts2322_property_decl_annotation_tests"
 path = "tests/ts2322_property_decl_annotation_tests.rs"
 
 [[test]]
 name = "ts2322_literal_source_display_tests"
 path = "tests/ts2322_literal_source_display_tests.rs"
+
+[[test]]
+name = "ts2322_destructuring_obj_literal_tests"
+path = "tests/ts2322_destructuring_obj_literal_tests.rs"
 
 [[test]]
 name = "union_target_literal_primitive_mismatch_tests"
@@ -324,6 +348,10 @@ path = "tests/ts2322_pair_disambiguation_widening_tests.rs"
 [[test]]
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
+
+[[test]]
+name = "rest_tuple_conditional_arg_tests"
+path = "tests/rest_tuple_conditional_arg_tests.rs"
 
 [[test]]
 name = "ts1210_class_arguments_tests"
@@ -368,6 +396,10 @@ path = "tests/ts2353_omit_pick_excess_property_tests.rs"
 [[test]]
 name = "ts2353_mapped_template_literal_key_tests"
 path = "tests/ts2353_mapped_template_literal_key_tests.rs"
+
+[[test]]
+name = "ts2353_generic_constraint_excess_property_tests"
+path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
 
 [[test]]
 name = "ts2677_intersection_predicate_tests"
@@ -444,6 +476,10 @@ path = "tests/commonjs_module_export_alias_tests.rs"
 [[test]]
 name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
+
+[[test]]
+name = "recursive_conditional_mapped_infer_tests"
+path = "tests/recursive_conditional_mapped_infer_tests.rs"
 
 [[test]]
 name = "in_chain_narrows_unconstrained_type_param_tests"
@@ -592,6 +628,10 @@ path = "tests/ts2344_generic_ref_scoped_param_concrete_constraint.rs"
 [[test]]
 name = "mapped_type_errors_conformance_tests"
 path = "tests/mapped_type_errors_conformance_tests.rs"
+
+[[test]]
+name = "homomorphic_mapped_union_distribution_tests"
+path = "tests/homomorphic_mapped_union_distribution_tests.rs"
 
 [[test]]
 name = "ts2344_self_referential_interface_constraint"
@@ -758,6 +798,10 @@ name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
 [[test]]
+name = "ts2490_unique_symbol_iterator_tests"
+path = "tests/ts2490_unique_symbol_iterator_tests.rs"
+
+[[test]]
 name = "ts2506_cross_file_cycle_tests"
 path = "tests/ts2506_cross_file_cycle_tests.rs"
 
@@ -838,6 +882,10 @@ name = "destructuring_rest_omit_unspreadable_tests"
 path = "tests/destructuring_rest_omit_unspreadable_tests.rs"
 
 [[test]]
+name = "destructuring_rest_computed_key_omit_tests"
+path = "tests/destructuring_rest_computed_key_omit_tests.rs"
+
+[[test]]
 name = "super_keyword_speculation_survival_tests"
 path = "tests/super_keyword_speculation_survival_tests.rs"
 
@@ -898,6 +946,10 @@ name = "indexed_access_resolved_union_property_tests"
 path = "tests/indexed_access_resolved_union_property_tests.rs"
 
 [[test]]
+name = "indexed_access_unconstrained_param_tests"
+path = "tests/indexed_access_unconstrained_param_tests.rs"
+
+[[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"
 path = "tests/js_exports_surface_fallback_for_named_imports_tests.rs"
 
@@ -912,6 +964,10 @@ path = "tests/jsx_pragma_boundary_tests.rs"
 [[test]]
 name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
+
+[[test]]
+name = "unique_symbol_discriminant_narrowing_tests"
+path = "tests/unique_symbol_discriminant_narrowing_tests.rs"
 
 [[test]]
 name = "mixin_base_no_member_no_ts2416_tests"
@@ -960,6 +1016,10 @@ path = "tests/template_literal_bigint_placeholder_tests.rs"
 [[test]]
 name = "template_literal_empty_placeholder_tests"
 path = "tests/template_literal_empty_placeholder_tests.rs"
+
+[[test]]
+name = "template_literal_recursive_replace_tests"
+path = "tests/template_literal_recursive_replace_tests.rs"
 
 [[test]]
 name = "object_element_access_diagnostics_tests"
@@ -1030,6 +1090,10 @@ name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 
 [[test]]
+name = "class_implements_index_signature_tests"
+path = "tests/class_implements_index_signature_tests.rs"
+
+[[test]]
 name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 
@@ -1048,6 +1112,46 @@ path = "tests/source_file_index_signatures_rewrite_tests.rs"
 [[test]]
 name = "recursive_type_references_tests"
 path = "tests/recursive_type_references_tests.rs"
+
+[[test]]
+name = "template_literal_record_key_tests"
+path = "tests/template_literal_record_key_tests.rs"
+
+[[test]]
+name = "tuple_union_contextual_typing_tests"
+path = "tests/tuple_union_contextual_typing_tests.rs"
+
+[[test]]
+name = "string_iterable_overload_matching_tests"
+path = "tests/string_iterable_overload_matching_tests.rs"
+
+[[test]]
+name = "abstract_method_overload_ts2416_tests"
+path = "tests/abstract_method_overload_ts2416_tests.rs"
+
+[[test]]
+name = "abstract_parameter_property_impl_tests"
+path = "tests/abstract_parameter_property_impl_tests.rs"
+
+[[test]]
+name = "self_module_augmentation_isolation_tests"
+path = "tests/self_module_augmentation_isolation_tests.rs"
+
+[[test]]
+name = "simple_local_interface_fastpath_tests"
+path = "tests/simple_local_interface_fastpath_tests.rs"
+
+[[test]]
+name = "mapped_type_numeric_literal_key_tests"
+path = "tests/mapped_type_numeric_literal_key_tests.rs"
+
+[[test]]
+name = "ts2344_infer_positional_constraint_tests"
+path = "tests/ts2344_infer_positional_constraint_tests.rs"
+
+[[test]]
+name = "nested_infer_extends_scope_tests"
+path = "tests/nested_infer_extends_scope_tests.rs"
 
 [lints]
 workspace = true

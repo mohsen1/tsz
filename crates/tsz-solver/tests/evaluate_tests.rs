@@ -3447,6 +3447,7 @@ fn test_conditional_infer_template_literal_from_string_input() {
     }));
 
     // T extends `${infer R}` ? R : never, with T = string.
+    // tsc: primitive `string` does NOT extend a template literal pattern → never.
     let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
     let cond = ConditionalType {
         check_type: t_param,
@@ -3463,7 +3464,7 @@ fn test_conditional_infer_template_literal_from_string_input() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, TypeId::NEVER);
 }
 
 #[test]
@@ -3660,6 +3661,155 @@ fn test_conditional_infer_template_literal_with_constrained_infer_distributive()
         interner.literal_string("2"),
     ]);
     assert_eq!(result, expected);
+}
+
+/// Primitive string does NOT match a template literal infer pattern.
+///
+/// tsc rule: when `check_type` is the primitive string, the false branch is taken.
+/// Only concrete string literals and template literal source types can match.
+#[test]
+fn test_conditional_primitive_string_does_not_match_template_infer_pattern() {
+    let interner = TypeInterner::new();
+
+    // Infer variable name R (test: rule holds regardless of name choice)
+    let infer_name_r = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name_r,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // `string extends \`${infer R}\` ? true : false` — non-distributive direct check
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: extends_template,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let result = evaluate_type(&interner, cond_type);
+
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "primitive string should NOT match template literal pattern"
+    );
+}
+
+/// Same rule with infer var named X — proves the rule is structural, not name-dependent.
+#[test]
+fn test_conditional_primitive_string_does_not_match_template_infer_pattern_any_name() {
+    let interner = TypeInterner::new();
+
+    let infer_name_x = interner.intern_string("X");
+    let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name_x,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_x)]);
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: extends_template,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, TypeId::BOOLEAN_FALSE);
+}
+
+/// Primitive string against a template with a text prefix — regression guard.
+/// Verifies that primitive string stays false for prefixed templates (pre-existing behavior).
+#[test]
+fn test_conditional_primitive_string_prefixed_template_stays_false() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let prefix = interner.intern_string("prefix_");
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(infer_r),
+    ]);
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: extends_template,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, TypeId::BOOLEAN_FALSE);
+}
+
+/// String literal "hello" against a template infer pattern — should still yield "hello".
+/// String literals continue to match template patterns correctly.
+#[test]
+fn test_conditional_string_literal_still_matches_template_infer_pattern() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let cond = ConditionalType {
+        check_type: interner.literal_string("hello"),
+        extends_type: extends_template,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, interner.literal_string("hello"));
+}
+
+/// Template literal source (string-filled) against a template infer pattern — should yield string.
+/// Template literal source types continue to match template patterns correctly.
+#[test]
+fn test_conditional_template_literal_source_still_matches_template_infer_pattern() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let source_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let cond = ConditionalType {
+        check_type: source_template,
+        extends_type: extends_template,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -11717,7 +11867,10 @@ fn test_keyof_both_index_signatures() {
 
 #[test]
 fn test_keyof_numeric_literal_keys() {
-    // keyof { 0: string, 1: number } = "0" | "1"
+    // keyof { 0: string, 1: number } = 0 | 1 (numeric literals, matching tsc).
+    // `PropertyInfo::new` defaults to `is_string_named: false`, which models
+    // properties declared with a bare numeric name (`{ 0: ... }` rather than
+    // `{ "0": ... }`).
     let interner = TypeInterner::new();
 
     let obj = interner.object(vec![
@@ -11726,8 +11879,8 @@ fn test_keyof_numeric_literal_keys() {
     ]);
 
     let result = evaluate_keyof(&interner, obj);
-    let key_0 = interner.literal_string("0");
-    let key_1 = interner.literal_string("1");
+    let key_0 = interner.literal_number(0.0);
+    let key_1 = interner.literal_number(1.0);
     let expected = interner.union(vec![key_0, key_1]);
     assert_eq!(result, expected);
 }
@@ -19365,9 +19518,11 @@ fn test_array_covariance_non_array() {
 // ReturnType, Parameters, and ConstructorParameters Utility Type Edge Cases
 // =============================================================================
 
-/// Test `ReturnType`<T> with a generic function: <T>(x: T) => T
-/// TypeScript's `ReturnType` extracts the return type, which for generic functions
-/// is the type parameter T itself (unsubstituted).
+/// Test `ReturnType<T>` with a generic function: `<U>(x: U) => U`
+/// When the return-only infer pattern matches a generic function, free type
+/// parameters must be instantiated to their upper bounds before binding the
+/// infer variable. An unconstrained `U` erases to `unknown`, so the result is
+/// `unknown` (not the raw `TypeParameter(U)`).
 #[test]
 fn test_return_type_generic_function() {
     let interner = TypeInterner::new();
@@ -19434,8 +19589,7 @@ fn test_return_type_generic_function() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // Expected: U (the type parameter) for ReturnType of <U>(x: U) => U
-    assert_eq!(result, u_param);
+    assert_eq!(result, TypeId::UNKNOWN);
 }
 
 /// Test `ReturnType`<T> with an overloaded function (Callable type with multiple signatures).
@@ -41453,6 +41607,78 @@ fn test_nested_conditional_template_literal_infer() {
     assert_eq!(result, expected);
 }
 
+#[test]
+fn test_recursive_template_literal_application_with_string_intrinsics() {
+    use crate::StringIntrinsicKind;
+    use crate::def::DefKind;
+    use crate::relations::subtype::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    let camel_def = DefId(6312);
+    let camel_base = interner.intern(TypeData::Lazy(camel_def));
+
+    let s_name = interner.intern_string("S");
+    let s_param_info = TypeParamInfo {
+        name: s_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let s_param = interner.intern(TypeData::TypeParameter(s_param_info));
+
+    let l_name = interner.intern_string("L");
+    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: l_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let r_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: r_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(infer_l),
+        TemplateSpan::Text(interner.intern_string("_")),
+        TemplateSpan::Type(infer_r),
+    ]);
+    let lower_l = interner.string_intrinsic(StringIntrinsicKind::Lowercase, infer_l);
+    let cap_r = interner.string_intrinsic(StringIntrinsicKind::Capitalize, infer_r);
+    let recursive = interner.application(camel_base, vec![cap_r]);
+    let true_type = interner.template_literal(vec![
+        TemplateSpan::Type(lower_l),
+        TemplateSpan::Type(recursive),
+    ]);
+    let false_type = interner.string_intrinsic(StringIntrinsicKind::Lowercase, s_param);
+    let body = interner.conditional(ConditionalType {
+        check_type: s_param,
+        extends_type: pattern,
+        true_type,
+        false_type,
+        is_distributive: true,
+    });
+
+    env.insert_def_with_params(camel_def, body, vec![s_param_info]);
+    env.insert_def_kind(camel_def, DefKind::TypeAlias);
+
+    let input = interner.literal_string("hello_world");
+    let app = interner.application(camel_base, vec![input]);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(
+        result,
+        interner.literal_string("helloworld"),
+        "got {:?}",
+        interner.lookup(result)
+    );
+}
+
 /// Test template literal in conditional extends clause
 /// `prefix${string}` extends `prefix${infer R}` ? R : never
 #[test]
@@ -42945,5 +43171,101 @@ fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
         interner.get_display_alias(inner_app),
         Some(outer_app),
         "Fresh intermediate applications should still carry the forward alias"
+    );
+}
+
+/// Tests for distributive conditional instantiation over union type parameters.
+///
+/// Structural rule: when a distributive conditional `K extends K ? K : never`
+/// is instantiated with K=1|2, the `TypeInstantiator` distributes K over the
+/// union members, producing a union of evaluated conditionals.
+#[test]
+fn test_distributive_conditional_over_union_evaluates_correctly() {
+    let interner = TypeInterner::new();
+
+    let k_name = interner.intern_string("K");
+
+    let k_param = interner.type_param(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let union_1_2 = interner.union(vec![lit1, lit2]);
+
+    // Conditional: K extends K ? K : never  (distributive, trivially true)
+    let k_extends_k = interner.conditional(ConditionalType {
+        check_type: k_param,
+        extends_type: k_param,
+        true_type: k_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    // Instantiate with {K → 1|2} — should distribute and produce 1|2
+    let k_type_params = vec![TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }];
+    let k_args = vec![union_1_2];
+
+    let result = instantiate_generic(&interner, k_extends_k, &k_type_params, &k_args);
+    let evaluated = evaluate_type(&interner, result);
+
+    // Each union member passes `K extends K`, so the evaluated result is the original union
+    assert!(
+        matches!(interner.lookup(evaluated), Some(TypeData::Union(_))),
+        "Expected union from distributive K extends K ? K : never with K=1|2, got: {:?}",
+        interner.lookup(evaluated)
+    );
+}
+
+/// Tests with renamed type parameter (X instead of K) to prove the fix
+/// is structural, not dependent on parameter name spelling.
+#[test]
+fn test_distributive_conditional_renamed_param_evaluates_correctly() {
+    let interner = TypeInterner::new();
+
+    let x_name = interner.intern_string("X");
+    let x_param = interner.type_param(TypeParamInfo {
+        name: x_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let union_ab = interner.union(vec![lit_a, lit_b]);
+
+    // Conditional: X extends X ? X : never  (distributive)
+    let x_extends_x = interner.conditional(ConditionalType {
+        check_type: x_param,
+        extends_type: x_param,
+        true_type: x_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    let x_type_params = vec![TypeParamInfo {
+        name: x_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }];
+    let x_args = vec![union_ab];
+
+    let result = instantiate_generic(&interner, x_extends_x, &x_type_params, &x_args);
+    let evaluated = evaluate_type(&interner, result);
+
+    assert!(
+        matches!(interner.lookup(evaluated), Some(TypeData::Union(_))),
+        "Expected union from distributive X extends X ? X : never with X='a'|'b', got: {:?}",
+        interner.lookup(evaluated)
     );
 }

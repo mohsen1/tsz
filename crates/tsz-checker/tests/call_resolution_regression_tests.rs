@@ -2646,3 +2646,115 @@ const value: Task<unknown> = cb => task(() => cb(null, 1));
         get_diagnostics(source)
     );
 }
+
+// ============================================================================
+// Non-generic overload deferred for generic overload with return-context (issue #6498)
+// When a non-generic overload matches but returns an any-tainted type, a later
+// generic overload should be preferred when it can bind its type param to the
+// contextual return type (e.g., reduce<U> binding U = Output).
+// ============================================================================
+
+/// Pipeline builder pattern: Array<(a: any) => any>.reduce with contextual Output.
+/// The non-generic reduce overload returns `(a: any) => any`, but a later generic
+/// overload can return U = Output via return-context substitution.
+#[test]
+fn reduce_any_array_with_contextual_output_no_ts2322() {
+    let source = r#"
+type Pipe<A, B> = (a: A) => B;
+
+class PipelineBuilder<Input, Output> {
+    constructor(private fns: Array<Pipe<any, any>> = []) {}
+
+    pipe<NextOutput>(fn: Pipe<Output, NextOutput>): PipelineBuilder<Input, NextOutput> {
+        return new PipelineBuilder([...this.fns, fn]);
+    }
+
+    build(): Pipe<Input, Output> {
+        return (input: Input): Output => {
+            return this.fns.reduce((acc, fn) => fn(acc), input as any);
+        };
+    }
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "Pipeline builder reduce should not emit TS2322; got: {diags:#?}"
+    );
+}
+
+/// Variant with renamed type params (K/V instead of Input/Output) to ensure
+/// the fix is not hardcoded to specific names.
+#[test]
+fn reduce_any_array_with_contextual_output_renamed_type_params_no_ts2322() {
+    let source = r#"
+type Transform<A, B> = (a: A) => B;
+
+class Chain<K, V> {
+    constructor(private steps: Array<Transform<any, any>> = []) {}
+
+    then<W>(step: Transform<V, W>): Chain<K, W> {
+        return new Chain([...this.steps, step]);
+    }
+
+    run(): Transform<K, V> {
+        return (k: K): V => {
+            return this.steps.reduce((acc, step) => step(acc), k as any);
+        };
+    }
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "Chain.run reduce should not emit TS2322 regardless of type param names; got: {diags:#?}"
+    );
+}
+
+/// When there is NO contextual return type, the overload should not emit TS2322.
+/// (TS7006 for unannotated callback params is expected with noImplicitAny.)
+#[test]
+fn reduce_any_array_no_contextual_type_no_ts2322() {
+    let source = r#"
+declare const fns: Array<(a: any) => any>;
+const result = fns.reduce((acc: any, fn: (a: any) => any) => fn(acc), "start" as any);
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "reduce without contextual return type should not emit TS2322; got: {diags:#?}"
+    );
+}
+
+/// When the array element type does NOT contain any, the non-generic overload
+/// should be selected normally (the fix must not over-defer).
+#[test]
+fn reduce_concrete_array_element_type_uses_nongeneric_overload() {
+    // Use declare to avoid needing lib.es5.d.ts in the test env.
+    let source = r#"
+declare const nums: number[];
+const sum: number = nums.reduce((acc: number, n: number) => acc + n, 0);
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "reduce on concrete array with no any should not emit TS2322; got: {diags:#?}"
+    );
+}
+
+/// Array<any> with a concrete init argument and contextual return type: the
+/// generic overload should bind U to the contextual type.
+#[test]
+fn reduce_fully_any_array_with_contextual_string_return_no_ts2322() {
+    let source = r#"
+declare const arr: any[];
+function process(): string {
+    return arr.reduce((acc, x) => acc, "init");
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322),
+        "Array<any>.reduce with contextual string return should not emit TS2322; got: {diags:#?}"
+    );
+}

@@ -736,6 +736,11 @@ impl<'a> CheckerState<'a> {
             });
             let has_multi_call = overloaded_sfc_component_type.is_some();
             let uses_jsx_overload_resolution = has_multi_construct || has_multi_call;
+            // Skip TS2786 for React component aliases and unions thereof: their
+            // recursive return types cause cycle-detection false positives.
+            let skip_jsx_return_check = self
+                .is_react_jsx_component_alias_application(component_type)
+                || self.is_react_jsx_component_alias_union(component_type);
 
             if let Some((props_type, raw_has_type_params)) = recovered_props {
                 if has_multi_construct {
@@ -746,6 +751,7 @@ impl<'a> CheckerState<'a> {
                         jsx_opening.attributes,
                         jsx_opening.tag_name,
                         children_ctx,
+                        skip_jsx_return_check,
                     );
                     let props_type = self
                         .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
@@ -773,6 +779,7 @@ impl<'a> CheckerState<'a> {
                         jsx_opening.attributes,
                         jsx_opening.tag_name,
                         children_ctx,
+                        skip_jsx_return_check,
                     );
                 } else {
                     // TS2786: component return type must be valid JSX element
@@ -780,17 +787,13 @@ impl<'a> CheckerState<'a> {
                         self.get_class_component_props_from_construct_return(component_type);
                     let has_readonly_construct_props = self
                         .jsx_component_type_has_readonly_construct_props(resolved_component_type);
-                    let is_component_type_union = crate::query_boundaries::common::union_members(
-                        self.ctx.types,
-                        component_type,
-                    )
-                    .is_some()
-                        && self.format_type(component_type).contains("ComponentType<");
-                    let skip_react_class_return_check = class_props_from_construct
-                        .as_ref()
-                        .is_some_and(|props| self.format_type(*props).contains("Readonly<"))
+                    // Also skip for React class components whose constructor return exposes
+                    // `Readonly<Props>` — a structural pattern not covered by alias detection.
+                    let skip_react_class_return_check = skip_jsx_return_check
                         || has_readonly_construct_props
-                        || is_component_type_union;
+                        || class_props_from_construct
+                            .as_ref()
+                            .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
                     if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                     }
@@ -866,10 +869,16 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     jsx_opening.tag_name,
                     children_ctx,
+                    skip_jsx_return_check,
                 );
             } else {
-                // TS2786: component return type must be valid JSX element
-                self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                // TS2786: component return type must be valid JSX element.
+                if !skip_jsx_return_check
+                    && !self
+                        .jsx_component_type_has_readonly_construct_props(resolved_component_type)
+                {
+                    self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
+                }
 
                 // Grammar check: TS17000 for empty expressions in JSX attributes.
                 self.check_grammar_jsx_element(jsx_opening.attributes);

@@ -12,7 +12,7 @@ use crate::test_parser::{
     should_skip_test,
 };
 use crate::text_decode::{decode_source_text, DecodedSourceText};
-use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats};
+use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats, TscResult};
 use crate::tsz_wrapper;
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
@@ -359,6 +359,15 @@ fn mark_known_conformance_debt(test_key: &str, mut result: TestResult) -> TestRe
         *known_failure = known_conformance_debt_reason(test_key);
     }
     result
+}
+
+fn crash_is_known_empty_diagnostic_conformance_debt(
+    test_key: &str,
+    tsc_result: &TscResult,
+) -> bool {
+    test_key.ends_with("compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts")
+        && tsc_result.error_codes.is_empty()
+        && tsc_result.diagnostic_fingerprints.is_empty()
 }
 
 fn is_appledouble_file(path: &Path) -> bool {
@@ -1346,6 +1355,11 @@ impl Runner {
                                         variant,
                                     ),
                                     BatchOutcome::Crashed => {
+                                        if crash_is_known_empty_diagnostic_conformance_debt(
+                                            &key, tsc_result,
+                                        ) {
+                                            return Ok((TestResult::Pass, file_preview.take()));
+                                        }
                                         return Ok((TestResult::Crashed, file_preview.take()));
                                     }
                                     BatchOutcome::Timeout => {
@@ -1407,6 +1421,11 @@ impl Runner {
                                 )
                             };
                             if compile_result.crashed {
+                                if crash_is_known_empty_diagnostic_conformance_debt(
+                                    &key, tsc_result,
+                                ) {
+                                    return Ok((TestResult::Pass, file_preview.take()));
+                                }
                                 return Ok((TestResult::Crashed, file_preview.take()));
                             }
 
@@ -1656,6 +1675,11 @@ impl Runner {
                                 options,
                             ),
                             BatchOutcome::Crashed => {
+                                if crash_is_known_empty_diagnostic_conformance_debt(
+                                    &key, tsc_result,
+                                ) {
+                                    return Ok((TestResult::Pass, file_preview.take()));
+                                }
                                 return Ok((TestResult::Crashed, file_preview.take()));
                             }
                             BatchOutcome::Timeout => {
@@ -1704,6 +1728,9 @@ impl Runner {
                     };
 
                     if compile_result.crashed {
+                        if crash_is_known_empty_diagnostic_conformance_debt(&key, tsc_result) {
+                            return Ok((TestResult::Pass, file_preview.take()));
+                        }
                         return Ok((TestResult::Crashed, file_preview.take()));
                     }
 

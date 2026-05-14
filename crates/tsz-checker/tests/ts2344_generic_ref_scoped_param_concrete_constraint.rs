@@ -11,6 +11,7 @@
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::diagnostic_code_messages;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -32,12 +33,7 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
 
     checker.check_source_file(root);
 
-    checker
-        .ctx
-        .diagnostics
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(checker.ctx.diagnostics)
 }
 
 #[test]

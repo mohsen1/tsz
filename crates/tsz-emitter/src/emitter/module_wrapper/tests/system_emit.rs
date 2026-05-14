@@ -307,6 +307,81 @@ fn system_exported_legacy_decorated_class_exports_decorator_assignment() {
 }
 
 #[test]
+fn system_default_legacy_decorated_class_decorates_before_export() {
+    let source = "declare var dec: any;\n@dec\nexport default class Foo {}\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            legacy_decorators: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let class_pos = output
+        .find("Foo = class Foo")
+        .expect("System output should assign the default class to Foo");
+    let decorate_pos = output
+        .find("Foo = __decorate([")
+        .expect("System output should preserve the legacy class decorator assignment");
+    let export_pos = output
+        .find("exports_1(\"default\", Foo);")
+        .expect("System output should export the decorated default class value");
+    assert!(
+        class_pos < decorate_pos && decorate_pos < export_pos,
+        "System default class decorators should run before the default export.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_exported_legacy_decorated_class_aliases_static_self_references() {
+    let source = "declare var Something: any;\n@Something({ v: () => Testing123 })\nexport class Testing123 {\n    static prop0: string;\n    static prop1 = Testing123.prop0;\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            legacy_decorators: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var Testing123_1, Testing123;"),
+        "System wrapper should hoist the decorated class self-reference alias.\nOutput:\n{output}"
+    );
+    let class_pos = output
+        .find("Testing123 = Testing123_1 = class Testing123")
+        .expect("System output should capture the decorated class value in the alias");
+    let export_pos = output
+        .find("exports_1(\"Testing123\", Testing123);")
+        .expect("System output should preserve the pre-decorator live export");
+    let static_pos = output
+        .find("Testing123.prop1 = Testing123_1.prop0;")
+        .expect("System output should rewrite static self-references to the alias");
+    let decorate_pos = output
+        .find("exports_1(\"Testing123\", Testing123 = Testing123_1 = __decorate([")
+        .expect("System output should export the decorated aliased reassignment");
+    assert!(
+        class_pos < export_pos && export_pos < static_pos && static_pos < decorate_pos,
+        "System decorated class export ordering should match tsc.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_nested_legacy_decorated_class_emits_decorate_helper() {
     let source = "declare var dec: any;\nexport function make() {\n    @dec\n    class Nested {}\n    return Nested;\n}\n";
 

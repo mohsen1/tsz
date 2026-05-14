@@ -347,7 +347,10 @@ impl<'a> FlowAnalyzer<'a> {
                         // Non-predicate member: only allowed if it returns exclusively `false`
                         // or `never`. A member returning `boolean` (or any truthy type) makes
                         // the overall union guard unsound.
-                        if !callable_returns_only_false_or_never(self.interner, member) {
+                        if !super::narrowing_helpers::callable_returns_only_false_or_never(
+                            self.interner,
+                            member,
+                        ) {
                             has_non_predicate_boolean = true;
                         }
                     }
@@ -1213,10 +1216,13 @@ impl<'a> FlowAnalyzer<'a> {
         let idx = self.skip_parenthesized(idx);
         let node = self.arena.get(idx)?;
 
-        if node.kind == SyntaxKind::Identifier as u16
-            && let Some((_sym_id, initializer)) = self.const_condition_initializer(idx)
-        {
-            return self.literal_type_from_node(initializer);
+        if node.kind == SyntaxKind::Identifier as u16 {
+            if let Some((_sym_id, initializer)) = self.const_condition_initializer(idx) {
+                return self.literal_type_from_node(initializer);
+            }
+            if let Some(ty) = self.unique_symbol_const_identifier_type(idx) {
+                return Some(ty);
+            }
         }
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.arena.get_access_expr(node)
@@ -1467,43 +1473,10 @@ impl<'a> FlowAnalyzer<'a> {
         idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
     ) -> Option<TypeId> {
-        // Only process identifiers
         self.arena.get_identifier(node)?;
-
-        // Resolve to a symbol
         let sym_id = self.binder.resolve_identifier(self.arena, idx)?;
-        let symbol = self.binder.get_symbol(sym_id)?;
-
-        // Must be a block-scoped variable (const/let)
-        if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
-            return None;
-        }
-
-        // Must be const — mutable let variables should not be treated as narrowing literals
-        let mut decl_id = symbol.value_declaration;
-        if decl_id.is_none() {
-            return None;
-        }
-
-        // Binder symbols can point at the identifier node for the declaration name
-        // (e.g. destructuring aliases). Normalize to the enclosing VARIABLE_DECLARATION.
-        if let Some(decl_node_check) = self.arena.get(decl_id)
-            && decl_node_check.kind == SyntaxKind::Identifier as u16
-            && let Some(ext) = self.arena.get_extended(decl_id)
-            && ext.parent.is_some()
-            && let Some(parent_node) = self.arena.get(ext.parent)
-            && parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
-        {
-            decl_id = ext.parent;
-        }
-
-        if !self.arena.is_const_variable_declaration(decl_id) {
-            return None;
-        }
-
-        // Get the VariableDeclaration AST node
-        let decl_node = self.arena.get(decl_id)?;
-        let decl_data = self.arena.get_variable_declaration(decl_node)?;
+        let decl_data =
+            super::narrowing_helpers::block_scoped_const_var_decl(self.arena, self.binder, sym_id)?;
 
         // Recognize primitive-annotated consts so equality narrowing of
         // `unknown`/`any` against a typed const reaches `is_narrowing_literal`.
@@ -1802,9 +1775,11 @@ impl<'a> FlowAnalyzer<'a> {
         // flow-inferred node_types. This can incorrectly narrow unrelated targets
         // (e.g., `e === Ns.Enum.Member` while narrowing `Ns`).
         //
-        // Keep two safe identifier cases:
+        // Keep safe identifier cases:
         // 1) enum members,
-        // 2) const aliases with literal initializers.
+        // 2) const aliases with literal initializers,
+        // 3) `unique symbol`-annotated const bindings, whose value is a
+        //    declaration-bound singleton type the binder fixes per-symbol.
         if node.kind == SyntaxKind::Identifier as u16 {
             if self.is_global_undefined_identifier(idx) {
                 return Some(TypeId::UNDEFINED);
@@ -1821,10 +1796,24 @@ impl<'a> FlowAnalyzer<'a> {
                 return self.literal_type_from_node(initializer);
             }
 
+            if let Some(ty) = self.unique_symbol_const_identifier_type(idx) {
+                return Some(ty);
+            }
+
             return None;
         }
 
         self.literal_type_from_node(idx)
+    }
+
+    fn unique_symbol_const_identifier_type(&self, idx: NodeIndex) -> Option<TypeId> {
+        let sym_id = self.reference_symbol(idx)?;
+        super::narrowing_helpers::unique_symbol_const_decl_type(
+            self.arena,
+            self.binder,
+            self.interner,
+            sym_id,
+        )
     }
 
     /// Try to extract a discriminant guard for an aliased condition.
@@ -1975,19 +1964,5 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((path, is_optional, lit));
         }
         None
-    }
-}
-
-/// Returns true if the callable type's return type is exclusively `false` or `never`.
-///
-/// Used to validate non-predicate members in a union of callables: TSC permits a union
-/// to act as a type guard only when non-predicate members can never return a truthy value.
-fn callable_returns_only_false_or_never(
-    interner: &dyn tsz_solver::QueryDatabase,
-    callable_type: TypeId,
-) -> bool {
-    match flow_query::function_return_type(interner, callable_type) {
-        Some(rt) => flow_query::is_only_false_or_never(interner, rt),
-        None => false,
     }
 }

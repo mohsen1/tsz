@@ -1,8 +1,8 @@
 //! Lazy type resolution and type environment population.
 
 use crate::query_boundaries::common::{
-    collect_type_queries, contains_lazy_or_recursive, enum_def_id, get_type_query_symbol_ref,
-    lazy_def_id,
+    collect_type_queries, contains_lazy_or_recursive, enum_def_id, fill_application_defaults,
+    get_type_query_symbol_ref, lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
@@ -797,6 +797,28 @@ impl<'a> CheckerState<'a> {
             query::classify_for_property_access_resolution(self.ctx.types, type_id);
         let result = match classification {
             query::PropertyAccessResolutionKind::Lazy(def_id) => {
+                // A bare reference to a generic type whose parameters all have
+                // defaults is still an instantiation in type position. Property
+                // access must see the instantiated body, not the raw alias body,
+                // or nested member signatures can leak unsubstituted parameters
+                // (for example `Chainable<Config = {}>["option"]` retaining
+                // `keyof Config` in its conditional key parameter).
+                if let Some(type_params) = self.ctx.get_def_type_params(def_id)
+                    && !type_params.is_empty()
+                    && type_params.iter().all(|p| p.default.is_some())
+                    && let Some(default_args) =
+                        fill_application_defaults(self.ctx.types, &[], &type_params)
+                {
+                    let app = self.ctx.types.application(type_id, default_args);
+                    let evaluated = self.evaluate_application_type(app);
+                    if evaluated != type_id && evaluated != app {
+                        let resolved =
+                            self.resolve_type_for_property_access_inner(evaluated, visited);
+                        self.ctx.leave_recursion();
+                        return resolved;
+                    }
+                }
+
                 // First consult the type environment. Cross-file interface and
                 // alias references commonly register their structural body there
                 // even when the current binder cannot re-compute the symbol.

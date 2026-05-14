@@ -11,21 +11,17 @@
 //! carve-outs in `jsdoc_annotated_expression_display`.
 
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_js_source_code_messages_with_options;
 
 fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source(
+    check_js_source_code_messages_with_options(
         source,
         "test.js",
         CheckerOptions {
-            allow_js: true,
-            check_js: true,
             no_implicit_any: false,
             ..CheckerOptions::default()
         },
     )
-    .into_iter()
-    .map(|d| (d.code, d.message_text))
-    .collect()
 }
 
 /// `class A { /** @type {boolean} */ #foo = 3 }` must emit

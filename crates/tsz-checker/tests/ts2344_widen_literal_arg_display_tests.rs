@@ -11,13 +11,8 @@
 //!
 //! Conformance test: `intrinsicTypes.ts`.
 
-use tsz_checker::context::CheckerOptions;
-
 fn compile_diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 #[test]

@@ -21,6 +21,10 @@ pub(crate) fn array_type(db: &dyn QueryDatabase, element: TypeId) -> TypeId {
     db.array(element)
 }
 
+pub(crate) fn empty_object_type(db: &dyn QueryDatabase) -> TypeId {
+    db.object(Vec::new())
+}
+
 pub(crate) fn tuple_type(
     db: &dyn QueryDatabase,
     elements: Vec<tsz_solver::TupleElement>,

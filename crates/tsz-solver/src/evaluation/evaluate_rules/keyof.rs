@@ -87,7 +87,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(SymbolRef(symbol_ref))
     }
 
-    fn unique_symbol_ref_from_symbol_named_atom(&self, name: Atom) -> Option<SymbolRef> {
+    pub(super) fn unique_symbol_ref_from_symbol_named_atom(&self, name: Atom) -> Option<SymbolRef> {
         self.unique_symbol_ref_from_synthetic_atom(name)
             .or_else(|| {
                 let name_text = self.interner().resolve_atom_ref(name);
@@ -102,7 +102,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             return TypeId::SYMBOL;
         }
-        self.interner().literal_string_atom(prop.name)
+        // `keyof { 1: ... }` yields the *numeric* literal `1`, not `"1"`.
+        // The bare-numeric-name vs string-quoted distinction is the same
+        // structural rule that drives mapped-type key substitution.
+        crate::utils::literal_key_for_property_name(
+            self.interner(),
+            prop.name,
+            prop.is_string_named,
+        )
     }
 
     fn synthetic_property_key_to_key_type(

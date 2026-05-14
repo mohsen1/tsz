@@ -236,6 +236,20 @@ impl<'a> Printer<'a> {
             self.write("accessor ");
         }
 
+        if suppress_modifiers
+            && self.ctx.options.legacy_decorators
+            && let Some(ref modifiers) = class.modifiers
+        {
+            for &mod_idx in &modifiers.nodes {
+                let Some(mod_node) = self.arena.get(mod_idx) else {
+                    continue;
+                };
+                if mod_node.kind == syntax_kind_ext::DECORATOR {
+                    self.skip_comments_for_erased_node(mod_node);
+                }
+            }
+        }
+
         // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
@@ -256,6 +270,11 @@ impl<'a> Printer<'a> {
                         || (self.ctx.options.legacy_decorators
                             && mod_node.kind == syntax_kind_ext::DECORATOR)
                     {
+                        if self.ctx.options.legacy_decorators
+                            && mod_node.kind == syntax_kind_ext::DECORATOR
+                        {
+                            self.skip_comments_for_erased_node(mod_node);
+                        }
                         continue;
                     }
                     if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
@@ -279,6 +298,43 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+
+        let default_export_set_function_name_temp = if self.ctx.options.legacy_decorators
+            && class.name.is_none()
+            && assignment_prefix.as_ref().is_some_and(|(_, binding_name)| {
+                self.anonymous_default_export_name
+                    .as_deref()
+                    .is_some_and(|default_name| default_name == binding_name)
+            })
+            && !self.collect_class_decorators(&class.modifiers).is_empty()
+            && target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member_node| {
+                    member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self
+                            .arena
+                            .get_property_decl(member_node)
+                            .is_some_and(|prop| {
+                                self.arena.is_static(&prop.modifiers)
+                                    && !self
+                                        .arena
+                                        .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                                    && !self
+                                        .arena
+                                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                                    && !prop.initializer.is_none()
+                                    && self.class_property_initializer_has_equals(member_node, prop)
+                            })
+                })
+            }) {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+
         if let Some((keyword, binding_name)) = assignment_prefix.as_ref() {
             if !keyword.is_empty() {
                 self.write(keyword);
@@ -286,15 +342,16 @@ impl<'a> Printer<'a> {
             }
             self.write(binding_name);
             self.write(" = ");
+            if let Some(temp) = default_export_set_function_name_temp.as_ref() {
+                self.write(temp);
+                self.write(" = ");
+            }
         }
 
         // Collect `accessor` fields to lower using one of two strategies:
         // - ES2022+ (except ESNext): emit native private storage + getter/setter.
         // - < ES2022: emit WeakMap-backed getter/setter pairs.
         let auto_accessor_target = self.ctx.options.target;
-        let target_needs_field_lowering = (self.ctx.options.target as u32)
-            < (tsz_common::ScriptTarget::ES2022 as u32)
-            || !self.ctx.options.use_define_for_class_fields;
         let has_order_sensitive_instance_field_initializer = target_needs_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
                 let Some(member_node) = self.arena.get(member_idx) else {
@@ -1817,6 +1874,13 @@ impl<'a> Printer<'a> {
         let mut emitted_any_member = false;
         let target_supports_native_fields =
             (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
+        let target_supports_native_private_names =
+            (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
+        let has_legacy_private_name_member_decorators = self.ctx.options.legacy_decorators
+            && !class_name.is_empty()
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.legacy_member_decorator_needs_private_name_scope(member_idx)
+            });
         if self.ctx.options.use_define_for_class_fields && target_supports_native_fields {
             // Find the constructor and collect its parameter properties
             for &member_idx in &class.members.nodes {
@@ -2426,6 +2490,21 @@ impl<'a> Printer<'a> {
                     self.write(";");
                     self.write_line();
                 }
+                if target_supports_native_private_names
+                    && has_legacy_private_name_member_decorators
+                    && self.legacy_member_decorator_needs_private_name_scope(member_idx)
+                {
+                    self.write("static {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_legacy_member_decorator_calls_requiring_private_name_scope(
+                        &class_name,
+                        &[member_idx],
+                    );
+                    self.decrease_indent();
+                    self.write("}");
+                    self.write_line();
+                }
             }
         }
         self.scoped_class_expression_self_alias = prev_scoped_class_expression_self_alias;
@@ -2916,6 +2995,13 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
         } else if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
+            if let Some(temp) = default_export_set_function_name_temp.as_ref() {
+                self.write_helper("__setFunctionName");
+                self.write("(");
+                self.write(temp);
+                self.write(", \"default\");");
+                self.write_line();
+            }
             // If lowered static elements need a stable class value, emit
             // `_a = ClassName;` so `this` and class-name references can use it.
             if !emit_private_inits_before_static_elements
@@ -3350,6 +3436,22 @@ impl<'a> Printer<'a> {
                 self.decrease_indent();
             }
 
+            if !target_supports_native_private_names && has_legacy_private_name_member_decorators {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write("(() => {");
+                self.write_line();
+                self.increase_indent();
+                self.emit_legacy_member_decorator_calls_requiring_private_name_scope(
+                    &class_name,
+                    &class.members.nodes,
+                );
+                self.decrease_indent();
+                self.write("})()");
+                self.decrease_indent();
+            }
+
             // Close the comma expression with the temp var, unless the static field
             // comma expr path will handle the closing.
             if !needs_static_comma_expr && let Some(ref temp) = class_expr_temp {
@@ -3505,6 +3607,24 @@ impl<'a> Printer<'a> {
             }
 
             self.write(";");
+        }
+
+        if !needs_private_comma_expr
+            && !target_supports_native_private_names
+            && has_legacy_private_name_member_decorators
+        {
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+            self.write("(() => {");
+            self.write_line();
+            self.increase_indent();
+            self.emit_legacy_member_decorator_calls_requiring_private_name_scope(
+                &class_name,
+                &class.members.nodes,
+            );
+            self.decrease_indent();
+            self.write("})();");
         }
 
         // Emit static private field value initializations after class body:

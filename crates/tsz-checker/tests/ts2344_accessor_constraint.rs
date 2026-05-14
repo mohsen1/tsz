@@ -7,13 +7,8 @@
 //! did not handle `GET_ACCESSOR/SET_ACCESSOR` members, so constraint violations in
 //! accessor parameter types were silently ignored.
 
-use tsz_checker::context::CheckerOptions;
-
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source(source, "test.ts", CheckerOptions::default())
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(source)
 }
 
 /// Interface setter parameter with unsatisfied type constraint must emit TS2344.

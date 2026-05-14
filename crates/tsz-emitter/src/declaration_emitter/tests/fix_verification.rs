@@ -1613,6 +1613,135 @@ const result = getInterfaceFromString({ type: "two" }, "three");
 }
 
 #[test]
+fn fix_generic_call_identity_callback_uses_type_parameter_constraint() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo<T extends "foo">(f: (x: T) => T) {
+    return f;
+}
+
+function bar<T extends "foo" | "bar">(f: (x: T) => T) {
+    return f;
+}
+
+let f = foo(x => x);
+let fResult = f("foo");
+
+let g = foo((x => x));
+let gResult = g("foo");
+
+let h = bar(x => x);
+let hResult = h("foo");
+hResult = h("bar");
+"#,
+    );
+
+    for expected in [
+        r#"declare let f: (x: "foo") => "foo";"#,
+        r#"declare let fResult: "foo";"#,
+        r#"declare let g: (x: "foo") => "foo";"#,
+        r#"declare let gResult: "foo";"#,
+        r#"declare let h: (x: "foo" | "bar") => "foo" | "bar";"#,
+        r#"declare let hResult: "foo" | "bar";"#,
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected constrained identity callback inference to emit `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
+fn fix_generic_call_identity_callback_skips_explicit_recursive_type_arguments() {
+    let output = emit_dts(
+        r#"
+export type Key<U> = keyof U;
+export type Value<K extends Key<U>, U> = U[K];
+export const updateIfChanged = <T>(t: T) => {
+    const reduce = <U>(u: U, update: (u: U) => T) => {
+        const set = (newU: U) => Object.is(u, newU) ? t : update(newU);
+        return Object.assign(
+            <K extends Key<U>>(key: K) =>
+                reduce<Value<K, U>>(u[key as keyof U] as Value<K, U>, (v: Value<K, U>) => {
+                    return update(Object.assign(Array.isArray(u) ? [] : {}, u, { [key]: v }));
+                }),
+            { map: (updater: (u: U) => U) => set(updater(u)), set });
+    };
+    return reduce<T>(t, (t: T) => t);
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const updateIfChanged"),
+        "recursive explicit generic calls should not crash declaration emit: {output}"
+    );
+}
+
+#[test]
+fn fix_local_overloaded_call_uses_matching_literal_signature_return() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Base {
+    x: string;
+    y: number;
+}
+interface HelloOrWorld extends Base {
+    p1: boolean;
+}
+interface JustHello extends Base {
+    p2: boolean;
+}
+interface JustWorld extends Base {
+    p3: boolean;
+}
+
+let hello: "hello";
+let world: "world";
+let helloOrWorld: "hello" | "world";
+
+function f(p: "hello"): JustHello;
+function f(p: "hello" | "world"): HelloOrWorld;
+function f(p: "world"): JustWorld;
+function f(p: string): Base;
+function f(...args: any[]): any {
+    return undefined;
+}
+
+let fResult1 = f(hello);
+let fResult2 = f(world);
+let fResult3 = f(helloOrWorld);
+
+function g(p: string): Base;
+function g(p: "hello"): JustHello;
+function g(p: "hello" | "world"): HelloOrWorld;
+function g(p: "world"): JustWorld;
+function g(...args: any[]): any {
+    return undefined;
+}
+
+let gResult1 = g(hello);
+let gResult2 = g(world);
+let gResult3 = g(helloOrWorld);
+"#,
+    );
+
+    for expected in [
+        "declare let fResult1: JustHello;",
+        "declare let fResult2: JustWorld;",
+        "declare let fResult3: HelloOrWorld;",
+        "declare let gResult1: JustHello;",
+        "declare let gResult2: JustWorld;",
+        "declare let gResult3: Base;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected overload call return `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"

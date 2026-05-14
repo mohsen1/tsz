@@ -744,8 +744,14 @@ impl<'a> Printer<'a> {
         };
 
         if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-            self.write("export ");
-            self.emit_import_equals_declaration_inner(clause_node, false);
+            if self.ctx.options.resolved_node_module_to_esm
+                && self.import_equals_declaration_is_external(clause_node)
+            {
+                self.emit_import_equals_declaration_inner(clause_node, true);
+            } else {
+                self.write("export ");
+                self.emit_import_equals_declaration_inner(clause_node, false);
+            }
             self.write_semicolon();
             return;
         }

@@ -422,11 +422,35 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if let Some(index_alias) = self.scoped_static_super_index_alias.as_ref().cloned()
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.write(&index_alias);
+            self.write("(");
+            self.emit(access.name_or_argument);
+            self.write(")");
+            if self.scoped_static_super_index_value_access {
+                self.write(".value");
+            }
+            return;
+        }
+
         if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
             && let Some(base_node) = self.arena.get(access.expression)
             && base_node.kind == SyntaxKind::SuperKeyword as u16
         {
             if self.scoped_static_super_direct_access {
+                if let Some(index_alias) = self.scoped_static_super_index_alias.as_ref().cloned() {
+                    self.write(&index_alias);
+                    self.write("(");
+                    self.emit(access.name_or_argument);
+                    self.write(")");
+                    if self.scoped_static_super_index_value_access {
+                        self.write(".value");
+                    }
+                    return;
+                }
                 self.write(&base_alias);
                 self.write("[");
                 self.emit(access.name_or_argument);

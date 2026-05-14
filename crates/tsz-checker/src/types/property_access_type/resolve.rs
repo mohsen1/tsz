@@ -2567,12 +2567,12 @@ impl<'a> CheckerState<'a> {
                             return TypeId::ERROR;
                         }
 
-                        if self.known_declared_receiver_has_property(
+                        if let Some(type_id) = self.declared_receiver_property_type(
                             access.expression,
                             display_object_type,
                             property_name,
                         ) {
-                            return TypeId::ANY;
+                            return type_id;
                         }
 
                         if enum_instance_like_access {
@@ -2822,6 +2822,23 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|s| s.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) != 0);
         if !member_has_value_semantics {
             return None;
+        }
+        if resolved_flags & symbol_flags::CONST_ENUM != 0
+            && resolved_flags & symbol_flags::VALUE_MODULE != 0
+            && !self
+                .ctx
+                .binder
+                .get_symbol(member_sym_id)
+                .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER))
+        {
+            let display_type = self
+                .ctx
+                .enum_namespace_types
+                .get(&resolved_sym_id)
+                .copied()
+                .unwrap_or(TypeId::ANY);
+            self.error_property_not_exist_at(property_name, display_type, name_or_argument);
+            return Some(TypeId::ERROR);
         }
 
         // For merged symbols (e.g., namespace + interface), verify that the VALUE

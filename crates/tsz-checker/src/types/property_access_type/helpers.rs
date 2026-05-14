@@ -178,25 +178,20 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "Array")
     }
 
-    pub(crate) fn known_declared_receiver_has_property(
+    pub(crate) fn declared_receiver_property_type(
         &mut self,
         expression: NodeIndex,
         _display_object_type: TypeId,
         property_name: &str,
-    ) -> bool {
-        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(expression) else {
-            return false;
-        };
-        let Some(declarations) = self
+    ) -> Option<TypeId> {
+        let sym_id = self.resolve_identifier_symbol_without_tracking(expression)?;
+        let declarations = self
             .ctx
             .binder
             .get_symbol(sym_id)
-            .map(|symbol| symbol.declarations.clone())
-        else {
-            return false;
-        };
+            .map(|symbol| symbol.declarations.clone())?;
         if declarations.len() != 1 {
-            return false;
+            return None;
         }
 
         for decl_idx in declarations {
@@ -229,6 +224,29 @@ impl<'a> CheckerState<'a> {
             };
             let declared_type = self.get_type_from_type_node(type_annotation);
             let declared_type = self.evaluate_application_type(declared_type);
+            if self.is_in_indexed_access_annotation_context(expression)
+                && crate::query_boundaries::state::checking::is_type_parameter_like(
+                    self.ctx.types,
+                    declared_type,
+                )
+                && self
+                    .type_parameter_constraint_has_explicit_property(declared_type, property_name)
+            {
+                if let Some(constraint) =
+                    crate::query_boundaries::state::checking::type_parameter_constraint(
+                        self.ctx.types,
+                        declared_type,
+                    )
+                {
+                    let constraint = self.evaluate_type_with_env(constraint);
+                    if let PropertyAccessResult::Success { type_id, .. } =
+                        self.resolve_property_access_with_env(constraint, property_name)
+                    {
+                        return Some(type_id);
+                    }
+                }
+                continue;
+            }
             if matches!(
                 declared_type,
                 TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
@@ -242,26 +260,60 @@ impl<'a> CheckerState<'a> {
                     type_annotation,
                     property_name,
                 ) {
-                    return true;
+                    return Some(TypeId::ANY);
                 }
                 continue;
             }
             let declared_type = self.resolve_type_for_property_access(declared_type);
             if declared_type != TypeId::NEVER
-                && let PropertyAccessResult::Success { .. } =
+                && let PropertyAccessResult::Success { type_id, .. } =
                     self.resolve_property_access_with_env(declared_type, property_name)
             {
-                return true;
+                return Some(type_id);
             }
 
             if self.type_reference_class_declares_public_instance_member(
                 type_annotation,
                 property_name,
             ) {
-                return true;
+                return Some(TypeId::ANY);
             }
         }
 
+        None
+    }
+
+    fn is_in_indexed_access_annotation_context(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node)
+                    && var_decl.type_annotation.is_some()
+                    && self
+                        .node_text(var_decl.type_annotation)
+                        .is_some_and(|text| text.contains("['"))
+                {
+                    return true;
+                }
+                return false;
+            }
+            if parent_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                || parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            {
+                return false;
+            }
+            current = parent;
+        }
         false
     }
 

@@ -5,8 +5,8 @@
 
 use crate::TypeDatabase;
 use crate::types::{
-    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, ObjectShape,
-    ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId,
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
+    ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId,
 };
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -17,7 +17,7 @@ use tsz_common::interner::Atom;
 /// references with their bound values from the bindings map.
 pub(crate) struct InferSubstitutor<'a> {
     interner: &'a dyn TypeDatabase,
-    bindings: &'a FxHashMap<Atom, TypeId>,
+    bindings: FxHashMap<Atom, TypeId>,
     visiting: FxHashMap<TypeId, TypeId>,
 }
 
@@ -26,7 +26,7 @@ impl<'a> InferSubstitutor<'a> {
     pub fn new(interner: &'a dyn TypeDatabase, bindings: &'a FxHashMap<Atom, TypeId>) -> Self {
         InferSubstitutor {
             interner,
-            bindings,
+            bindings: bindings.clone(),
             visiting: FxHashMap::default(),
         }
     }
@@ -64,6 +64,19 @@ impl<'a> InferSubstitutor<'a> {
                     let substituted = self.substitute(element.type_id);
                     if substituted != element.type_id {
                         changed = true;
+                    }
+                    // When a rest element is substituted with a concrete Tuple (or
+                    // ReadonlyType wrapping one), flatten its elements into the parent
+                    // tuple — matching the same invariant enforced by instantiate.rs.
+                    if element.rest {
+                        let inner =
+                            crate::type_queries::data::unwrap_readonly(self.interner, substituted);
+                        if let Some(TypeData::Tuple(inner_list)) = self.interner.lookup(inner) {
+                            new_elements
+                                .extend(self.interner.tuple_list(inner_list).iter().copied());
+                            changed = true;
+                            continue;
+                        }
                     }
                     new_elements.push(TupleElement {
                         type_id: substituted,
@@ -234,6 +247,41 @@ impl<'a> InferSubstitutor<'a> {
                     })
                 }
             }
+            TypeData::Mapped(mapped_id) => {
+                // Every TypeId reachable from the mapped type must be visited so
+                // that infer variables captured by an outer conditional flow into
+                // the constraint (the `in` clause), the key remapping (`as`), the
+                // and value template. Without
+                // this arm, patterns like
+                //     P extends `${infer K}.${infer R}` ? { [X in K]: F<T[K], R> } : ...
+                // leave `K` and `R` unbound inside the mapped type after the outer
+                // match succeeds, which makes `evaluate_mapped` defer and collapse
+                // the outer object level.
+                let mapped = self.interner.get_mapped(mapped_id);
+                let constraint = self.substitute(mapped.constraint);
+                let (name_type, template) =
+                    self.with_shadowed_binding(mapped.type_param.name, |substitutor| {
+                        (
+                            mapped.name_type.map(|n| substitutor.substitute(n)),
+                            substitutor.substitute(mapped.template),
+                        )
+                    });
+                let unchanged = constraint == mapped.constraint
+                    && name_type == mapped.name_type
+                    && template == mapped.template;
+                if unchanged {
+                    type_id
+                } else {
+                    self.interner.mapped(MappedType {
+                        type_param: mapped.type_param,
+                        constraint,
+                        name_type,
+                        template,
+                        readonly_modifier: mapped.readonly_modifier,
+                        optional_modifier: mapped.optional_modifier,
+                    })
+                }
+            }
             TypeData::IndexAccess(obj, idx) => {
                 let new_obj = self.substitute(obj);
                 let new_idx = self.substitute(idx);
@@ -265,6 +313,14 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 } else {
                     self.interner.no_infer(new_inner)
+                }
+            }
+            TypeData::StringIntrinsic { kind, type_arg } => {
+                let new_type_arg = self.substitute(type_arg);
+                if new_type_arg == type_arg {
+                    type_id
+                } else {
+                    self.interner.string_intrinsic(kind, new_type_arg)
                 }
             }
             TypeData::TemplateLiteral(spans) => {
@@ -504,6 +560,21 @@ impl<'a> InferSubstitutor<'a> {
         };
 
         self.visiting.insert(type_id, result);
+        result
+    }
+
+    fn with_shadowed_binding<T>(&mut self, name: Atom, f: impl FnOnce(&mut Self) -> T) -> T {
+        let masked = self.bindings.remove(&name);
+        // `visiting` entries are only valid for the current binding environment.
+        // The mapped binder shadows an outer infer binding with the same name in
+        // `name_type` and `template`, so cached substitutions from the constraint
+        // must not leak across this scope boundary.
+        let outer_visiting = std::mem::take(&mut self.visiting);
+        let result = f(self);
+        self.visiting = outer_visiting;
+        if let Some(masked) = masked {
+            self.bindings.insert(name, masked);
+        }
         result
     }
 }

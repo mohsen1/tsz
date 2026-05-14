@@ -1935,6 +1935,41 @@ fn readonly_type_wraps() {
     }
 }
 
+#[test]
+fn readonly_type_is_idempotent() {
+    // The const-assertion visitor recurses into a Tuple/Array arm (which
+    // wraps in ReadonlyType) and then re-wraps from the ReadonlyType arm.
+    // Without collapsing, the result is `ReadonlyType(ReadonlyType(...))`,
+    // which renders as "readonly readonly [...]" and breaks subtype paths
+    // that peel exactly one readonly layer.
+    let i = TypeInterner::new();
+    let inner = i.tuple(vec![]);
+    let once = i.readonly_type(inner);
+    let twice = i.readonly_type(once);
+    assert_eq!(twice, once, "readonly_type must be idempotent");
+
+    match i.lookup(twice) {
+        Some(TypeData::ReadonlyType(wrapped)) => {
+            assert_eq!(wrapped, inner);
+            assert!(
+                !matches!(i.lookup(wrapped), Some(TypeData::ReadonlyType(_))),
+                "ReadonlyType wrapper must not be nested",
+            );
+        }
+        _ => panic!("Expected ReadonlyType"),
+    }
+
+    let thrice = i.readonly_type(twice);
+    assert_eq!(thrice, once);
+
+    // Mirror the const-assertion composition: wrapping the output of
+    // readonly_tuple / readonly_array must not produce a nested wrapper.
+    let ro_tuple = i.readonly_tuple(vec![]);
+    assert_eq!(i.readonly_type(ro_tuple), ro_tuple);
+    let ro_array = i.readonly_array(TypeId::NUMBER);
+    assert_eq!(i.readonly_type(ro_array), ro_array);
+}
+
 // =========================================================================
 // 37. INFER TYPE
 // =========================================================================

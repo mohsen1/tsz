@@ -873,6 +873,29 @@ impl<'a> Printer<'a> {
         self.emit_unemitted_comments_between_impl(from_pos, to_pos, true)
     }
 
+    pub(in crate::emitter) fn skip_recovered_empty_statement_skipped_token_comments(
+        &mut self,
+        node: &Node,
+    ) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        let Some(slice) = text.get(start..end) else {
+            return;
+        };
+        if !slice.as_bytes().contains(&b'\\') {
+            return;
+        }
+
+        while self.comment_emit_idx < self.all_comments.len()
+            && self.all_comments[self.comment_emit_idx].end <= node.end
+        {
+            self.comment_emit_idx += 1;
+        }
+    }
+
     fn emit_unemitted_comments_between_impl(
         &mut self,
         from_pos: u32,
@@ -1076,7 +1099,8 @@ impl<'a> Printer<'a> {
                     self.arena
                         .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                         || (func.body.is_none()
-                            && !self.has_recovered_declaration_trailing_comma(node))
+                            && !self.has_recovered_declaration_trailing_comma(node)
+                            && !self.has_recovered_anonymous_function_arrow(node, func.name))
                 } else {
                     false
                 }
@@ -1295,6 +1319,12 @@ impl<'a> Printer<'a> {
                 if is_external && self.in_namespace_iife {
                     return true;
                 }
+                // In Node ESM emit, `import x = require("...")` is not erased.
+                // TypeScript lowers it to a per-file `createRequire` binding and
+                // rewrites each alias to `const x = __require("...")`.
+                if is_external && self.ctx.options.resolved_node_module_to_esm {
+                    return false;
+                }
                 if is_es_module_output && is_external {
                     return true;
                 }
@@ -1409,6 +1439,40 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    pub(super) fn has_recovered_anonymous_function_arrow(
+        &self,
+        node: &Node,
+        name: NodeIndex,
+    ) -> bool {
+        if name.is_some()
+            && self
+                .arena
+                .get(name)
+                .and_then(|name_node| self.arena.get_identifier(name_node))
+                .is_some_and(|ident| !ident.escaped_text.is_empty())
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        let Some(slice) = text.get(start..end) else {
+            return false;
+        };
+        let trimmed = slice.trim_start();
+        let Some(after_function) = trimmed.strip_prefix("function") else {
+            return false;
+        };
+        if after_function.trim_start().starts_with("=>") {
+            return true;
+        }
+
+        text.get(end..)
+            .is_some_and(|tail| tail.trim_start().starts_with("=>"))
     }
 
     /// Check if a `declare;` expression statement is an artifact of the parser not

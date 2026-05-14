@@ -102,6 +102,186 @@ pub(super) fn indexed_access_object_alias_application_exceeds_depth(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn is_numeric_index_on_parameters_utility(
+        &self,
+        object_type_node: NodeIndex,
+        index_type: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type).is_some()
+            && self.node_text(object_type_node).is_some_and(|text| {
+                let text = text.trim();
+                text.starts_with("Parameters<") || text.starts_with("ConstructorParameters<")
+            })
+    }
+
+    pub(super) fn index_constraint_keyof_matches_mapped_constraint(
+        &mut self,
+        index_constraint: Option<TypeId>,
+        mapped_constraint: TypeId,
+        keyof: TypeId,
+    ) -> bool {
+        let Some(index_constraint) = index_constraint else {
+            return false;
+        };
+        let index_constraint_eval = self.evaluate_type_with_env(index_constraint);
+        [index_constraint, index_constraint_eval]
+            .into_iter()
+            .filter_map(|candidate| {
+                crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+            })
+            .any(|index_operand| {
+                crate::query_boundaries::state::checking::keyof_target(
+                    self.ctx.types,
+                    mapped_constraint,
+                )
+                .is_some_and(|constraint_operand| {
+                    same_object_key_space(self.ctx.types, index_operand, constraint_operand)
+                }) || crate::query_boundaries::state::checking::keyof_target(self.ctx.types, keyof)
+                    .is_some_and(|keyof_operand| {
+                        same_object_key_space(self.ctx.types, index_operand, keyof_operand)
+                    })
+            })
+    }
+
+    pub(super) fn indexed_access_literal_property_exists_in_alias_union(
+        &self,
+        object_node_idx: NodeIndex,
+        index_node_idx: NodeIndex,
+    ) -> bool {
+        let Some(property_name) = self.type_index_string_literal(index_node_idx) else {
+            return false;
+        };
+        self.alias_body_for_non_generic_type_reference_from_node(object_node_idx)
+            .is_some_and(|body_idx| {
+                self.alias_union_members_have_property(body_idx, &property_name)
+            })
+    }
+
+    fn type_index_string_literal(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(node_idx)?;
+        if let Some(literal) = self.ctx.arena.get_literal(node) {
+            return Some(literal.text.to_string());
+        }
+        if let Some(literal_type) = self.ctx.arena.get_literal_type(node) {
+            let literal_node = self.ctx.arena.get(literal_type.literal)?;
+            let literal = self.ctx.arena.get_literal(literal_node)?;
+            return Some(literal.text.to_string());
+        }
+        None
+    }
+
+    fn alias_union_members_have_property(
+        &self,
+        object_node_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(object_node) = self.ctx.arena.get(object_node_idx) else {
+            return false;
+        };
+
+        if object_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(object_node)
+        {
+            return self.alias_union_members_have_property(wrapped.type_node, property_name);
+        }
+
+        if object_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return self
+                .alias_body_for_non_generic_type_reference(object_node)
+                .is_some_and(|body_idx| {
+                    self.alias_union_members_have_property(body_idx, property_name)
+                });
+        }
+
+        if object_node.kind == syntax_kind_ext::UNION_TYPE {
+            let Some(composite) = self.ctx.arena.get_composite_type(object_node) else {
+                return false;
+            };
+            return !composite.types.nodes.is_empty()
+                && composite.types.nodes.iter().all(|&member_idx| {
+                    self.alias_union_members_have_property(member_idx, property_name)
+                });
+        }
+
+        if object_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            return self.type_literal_has_declared_property(object_node, property_name);
+        }
+
+        false
+    }
+
+    fn alias_body_for_non_generic_type_reference(
+        &self,
+        object_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let type_ref = self.ctx.arena.get_type_ref(object_node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+
+        let raw_sym_id = self.resolve_type_symbol_for_lowering(type_ref.type_name)?;
+        let sym_id = tsz_binder::SymbolId(raw_sym_id);
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+            || symbol.declarations.len() != 1
+        {
+            return None;
+        }
+
+        let decl_node = self.ctx.arena.get(symbol.declarations[0])?;
+        let type_alias = self.ctx.arena.get_type_alias(decl_node)?;
+        if type_alias
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty())
+        {
+            return None;
+        }
+        Some(type_alias.type_node)
+    }
+
+    fn alias_body_for_non_generic_type_reference_from_node(
+        &self,
+        mut node_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        loop {
+            let object_node = self.ctx.arena.get(node_idx)?;
+            if object_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+                node_idx = self.ctx.arena.get_wrapped_type(object_node)?.type_node;
+                continue;
+            }
+            return self.alias_body_for_non_generic_type_reference(object_node);
+        }
+    }
+
+    fn type_literal_has_declared_property(
+        &self,
+        type_literal_node: &tsz_parser::parser::node::Node,
+        property_name: &str,
+    ) -> bool {
+        let Some(type_literal) = self.ctx.arena.get_type_literal(type_literal_node) else {
+            return false;
+        };
+        type_literal.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            let Some(signature) = self.ctx.arena.get_signature(member_node) else {
+                return false;
+            };
+            crate::types_domain::queries::core::get_literal_property_name(
+                self.ctx.arena,
+                signature.name,
+            )
+            .as_deref()
+                == Some(property_name)
+        })
+    }
+
     pub(super) fn type_literal_keyof_from_node(
         &mut self,
         type_node_idx: NodeIndex,

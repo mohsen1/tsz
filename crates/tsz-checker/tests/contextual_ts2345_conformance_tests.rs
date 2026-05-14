@@ -1,9 +1,4 @@
-use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::check_source_strict;
-
-fn diagnostic_codes(diags: &[Diagnostic]) -> Vec<u32> {
-    diags.iter().map(|diag| diag.code).collect()
-}
+use tsz_checker::test_utils::{check_source_strict, diagnostic_codes};
 
 fn assert_no_diagnostic_code(source: &str, code: u32) {
     let diags = check_source_strict(source);

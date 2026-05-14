@@ -347,14 +347,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // Elide empty, non-exported, non-declare inner namespaces nested
-        // inside another non-ambient namespace.
-        // tsc emits nothing for `namespace A { }` in that position: the body
-        // has no declarations to contribute to the type surface. Used by
-        // declFileWithInternalModuleNameConflicts*
-        // where an empty inner `namespace A { }` exists only for source-level
-        // name resolution, and may collide textually with an outer `A` used
-        // in exported heritage clauses.
+        // Elide non-exported, non-declare inner namespaces nested inside a
+        // non-ambient namespace unless they contribute to the exported type
+        // surface. tsc omits these hidden source-level namespaces from .d.ts
+        // output, even when they contain declarations.
         //
         // Keep the namespace when:
         //   - it's exported
@@ -366,10 +362,17 @@ impl<'a> DeclarationEmitter<'a> {
         if !is_exported
             && !self.arena.is_declare(&module.modifiers)
             && self.inside_non_ambient_namespace
-            && self.is_module_body_effectively_empty(module.body)
-            && !self.is_empty_namespace_referenced_by_export_import_alias(module_idx)
         {
-            return;
+            if self.is_module_body_effectively_empty(module.body)
+                && !self.is_empty_namespace_referenced_by_export_import_alias(module_idx)
+            {
+                return;
+            }
+            let referenced_by_export_surface = self.is_ns_member_used_by_exports(module_idx)
+                || self.is_empty_namespace_referenced_by_export_import_alias(module_idx);
+            if !referenced_by_export_surface {
+                return;
+            }
         }
 
         self.write_indent();
@@ -484,6 +487,7 @@ impl<'a> DeclarationEmitter<'a> {
                 || (prev_inside_declare_namespace && !prev_inside_non_ambient_namespace);
             if is_ambient_ns {
                 self.public_api_scope_depth += 1;
+                self.inside_non_ambient_namespace = false;
             } else {
                 self.inside_non_ambient_namespace = true;
             }
@@ -978,13 +982,26 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(export) = self.arena.get_export_decl(stmt_node)
                 && let Some(clause_node) = self.arena.get(export.export_clause)
                 && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                && self.import_equals_references_namespace(
+            {
+                if self.import_equals_references_namespace(
                     export.export_clause,
                     module_symbol,
                     module_name,
-                )
-            {
-                return true;
+                ) {
+                    return true;
+                }
+                if let Some(import) = self.arena.get_import_decl(clause_node)
+                    && let Some(alias_name) =
+                        self.get_identifier_text(self.get_rightmost_name(import.module_specifier))
+                    && self.statements_contain_import_alias_to_namespace(
+                        statements,
+                        &alias_name,
+                        module_symbol,
+                        module_name,
+                    )
+                {
+                    return true;
+                }
             }
 
             if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
@@ -994,6 +1011,28 @@ impl<'a> DeclarationEmitter<'a> {
                     module_symbol,
                     module_name,
                 )
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn statements_contain_import_alias_to_namespace(
+        &self,
+        statements: &NodeList,
+        alias_name: &str,
+        module_symbol: Option<tsz_binder::SymbolId>,
+        module_name: Option<&str>,
+    ) -> bool {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import) = self.arena.get_import_decl(stmt_node)
+                && self.get_identifier_text(import.import_clause).as_deref() == Some(alias_name)
+                && self.import_equals_references_namespace(stmt_idx, module_symbol, module_name)
             {
                 return true;
             }
@@ -1483,6 +1522,10 @@ impl<'a> DeclarationEmitter<'a> {
                     let before_type = self.writer.len();
                     if let Some(rescued) = self.rescued_asserts_parameter_type_text(param_idx) {
                         self.write(&rescued);
+                    } else if let Some(type_text) =
+                        self.preferred_annotation_name_text(param.type_annotation)
+                    {
+                        self.write(&type_text);
                     } else if self.normalize_string_literal_type_quotes
                         && let Some(type_text) =
                             self.emit_type_node_text_normalized(param.type_annotation)
@@ -1984,12 +2027,7 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 elem.name
             };
-            let name_node = self.arena.get(prop_name_idx)?;
-            if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            let ident = self.arena.get_identifier(name_node)?;
-            let mut member_text = ident.escaped_text.to_string();
+            let mut member_text = self.binding_pattern_member_name_text(prop_name_idx)?;
             if elem.initializer.is_some() {
                 member_text.push_str("?: ");
             } else {
@@ -2026,6 +2064,26 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|member| format!("{member_indent}{member}"))
             .collect();
         Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
+    }
+
+    fn binding_pattern_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            return self
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.to_string());
+        }
+
+        let property_name = self.destructuring_property_lookup_text(name_idx)?;
+        if Self::is_simple_identifier_text(&property_name) || property_name.parse::<f64>().is_ok() {
+            Some(property_name)
+        } else {
+            Some(format!(
+                "\"{}\"",
+                property_name.replace('\\', "\\\\").replace('"', "\\\"")
+            ))
+        }
     }
 
     fn type_text_from_initializer(&self, initializer: NodeIndex) -> Option<String> {
@@ -2583,22 +2641,26 @@ impl<'a> DeclarationEmitter<'a> {
                         // In non-ambient namespaces, non-exported declarations
                         // are only emitted in .d.ts if they are referenced by
                         // exported members (via used_symbols). Namespace
-                        // declarations are normally visible, but an empty
-                        // non-exported inner namespace is elided by
-                        // `emit_module_declaration_with_export` (it has no
-                        // members to contribute and no reason to appear in
-                        // the type surface); matching that elision here
-                        // prevents the elided decl from triggering a false
+                        // declarations are only emitted when they are
+                        // referenced by the exported API surface or by an
+                        // exported import alias. Matching that elision here
+                        // prevents hidden namespaces from triggering a false
                         // mixed-export scope-marker.
                         if non_ambient {
-                            let counts_as_non_exported =
-                                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                                    self.arena.get_module(stmt_node).is_none_or(|m| {
-                                        !self.is_module_body_effectively_empty(m.body)
-                                    })
-                                } else {
-                                    self.is_ns_member_used_by_exports(stmt_idx)
-                                };
+                            let counts_as_non_exported = if stmt_node.kind
+                                == syntax_kind_ext::MODULE_DECLARATION
+                            {
+                                self.arena.get_module(stmt_node).is_none_or(|m| {
+                                    !self.is_module_body_effectively_empty(m.body)
+                                        && (self.is_ns_member_used_by_exports(stmt_idx)
+                                            || self
+                                                .is_empty_namespace_referenced_by_export_import_alias(
+                                                    stmt_idx,
+                                                ))
+                                })
+                            } else {
+                                self.is_ns_member_used_by_exports(stmt_idx)
+                            };
                             if counts_as_non_exported {
                                 has_non_exported = true;
                             }

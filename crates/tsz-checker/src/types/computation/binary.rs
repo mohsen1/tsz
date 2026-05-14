@@ -1544,6 +1544,12 @@ impl<'a> CheckerState<'a> {
                     let result = match non_nullish {
                         None => right_type,
                         Some(non_nullish) => {
+                            // Apply tsc's NonNullable<D> approximation: when D is an
+                            // unconstrained type parameter, `(D | undefined) ?? X`
+                            // yields `(D & {}) | X` rather than `D | X`.  This matches
+                            // what the solver does for `??` in BinaryOpEvaluator.
+                            let non_nullish = evaluator
+                                .apply_non_nullable_approximation(evaluated_left, non_nullish);
                             if non_nullish == right_type
                                 || self.is_subtype_of(right_type, non_nullish)
                             {

@@ -566,26 +566,18 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Apply `this` type substitution to a method call's return type.
-    ///
-    /// When a method returns `this`, the return type should be the type of the receiver.
-    /// For `obj.method()` where method returns `this`, we substitute `ThisType` with typeof obj.
     pub(crate) fn apply_this_substitution_to_call_return(
         &mut self,
         return_type: tsz_solver::TypeId,
         call_expression: tsz_parser::parser::NodeIndex,
     ) -> tsz_solver::TypeId {
+        use crate::query_boundaries::common::substitute_this_type_at_return_position;
         use tsz_solver::TypeId;
 
-        // Fast path: intrinsic types can't contain ThisType
         if return_type.is_intrinsic() {
             return return_type;
         }
 
-        // Try to extract the receiver from the call expression.
-        // The call_expression parameter is actually the callee expression (call.expression),
-        // which for method calls is a PropertyAccessExpression.
-        // For `obj.method()`, this is `obj.method`, whose `.expression` is `obj`.
         let node = match self.ctx.arena.get(call_expression) {
             Some(n) => n,
             None => return return_type,
@@ -597,7 +589,7 @@ impl<'a> CheckerState<'a> {
                 && !self.is_this_in_nested_function_inside_class(call_expression)
                 && !self.is_this_in_static_class_member(call_expression)
             {
-                return crate::query_boundaries::common::substitute_this_type_at_return_position(
+                return substitute_this_type_at_return_position(
                     self.ctx.types,
                     return_type,
                     self.ctx.types.this_type(),
@@ -605,7 +597,7 @@ impl<'a> CheckerState<'a> {
             }
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                return crate::query_boundaries::common::substitute_this_type_at_return_position(
+                return substitute_this_type_at_return_position(
                     self.ctx.types,
                     return_type,
                     receiver_type,
@@ -614,12 +606,23 @@ impl<'a> CheckerState<'a> {
             if let Some(receiver_sym) = self.resolve_identifier_symbol(access.expression) {
                 let receiver_type = self.get_type_of_symbol(receiver_sym);
                 if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                    return crate::query_boundaries::common::substitute_this_type_at_return_position(
+                    return substitute_this_type_at_return_position(
                         self.ctx.types,
                         return_type,
                         receiver_type,
                     );
                 }
+            }
+        }
+
+        if let Some(callee_sym) = self.resolve_identifier_symbol(call_expression) {
+            let receiver_type = self.get_type_of_symbol(callee_sym);
+            if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
+                return substitute_this_type_at_return_position(
+                    self.ctx.types,
+                    return_type,
+                    receiver_type,
+                );
             }
         }
 

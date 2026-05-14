@@ -6,31 +6,33 @@
 - `docs/plan/ROADMAP.md` is the single living roadmap. Before starting
   conformance, emit, performance, architecture, LSP/WASM, Sound Mode, or DRY
   cleanup work, read it and keep your work aligned with it.
-- Update `docs/plan/ROADMAP.md` in the same PR when your work changes roadmap
-  status, metrics, sequencing, risks, active priorities, or invalidates a plan
-  assumption. Do not create new roadmap files under `docs/plan/`; update the
-  living roadmap instead.
-- To avoid duplicate work, roadmap-adjacent implementation should be visible
-  before coding starts: inspect open GitHub issues, draft PRs, and `WIP`
-  labels/titles for overlapping work. If no existing issue covers the task,
-  create or update a GitHub issue for the scope, mark it `WIP`, create a
-  branch, then open a draft PR with the GitHub label `WIP`. Use a title like
-  `[WIP] <scope>: <intent>`.
+- Do **not** update `docs/plan/ROADMAP.md` for routine status, small fixes,
+  ordinary cleanup, or PR bookkeeping. That creates avoidable conflicts across
+  parallel PRs. Keep those details in draft PR bodies, PR comments, issues, or
+  review comments.
+- Update `docs/plan/ROADMAP.md` only when the work changes durable direction:
+  public metrics, release gates, track sequencing, accepted architecture,
+  active priorities, or a roadmap assumption that future agents would otherwise
+  rely on incorrectly. Do not create new roadmap files under `docs/plan/`;
+  update the living roadmap instead when a roadmap change is truly warranted.
+- To avoid duplicate work, roadmap-adjacent implementation must be visible
+  before coding starts: inspect open draft PRs, open PRs, recent merged PRs,
+  and relevant GitHub issues for overlapping work. A GitHub issue is optional;
+  a draft PR with a clear title/body is enough to claim active work.
 - Do not add `[codex]` to PR titles. PR titles should follow the repository
   convention, e.g. `fix(checker): ...`, `chore(lsp-tests): ...`, or `[WIP]
   <scope>: <intent>` while the work is still WIP.
-- While working, keep the GitHub issue current with new facts, root-cause
-  discoveries, and scope changes. Other agents use those issue updates and
-  WIP PRs to decide whether their task duplicates active work.
+- While working, keep the draft PR current with new facts, root-cause
+  discoveries, scope changes, and coordination notes. Other agents use draft
+  PRs, PR comments, and review comments to decide whether their task duplicates
+  active work.
 - Never merge WIP branches. A branch is WIP if its PR is draft, has the `WIP`
   label, has a `[WIP]` title prefix, or the PR/branch description says it is
   WIP. Remove the label/prefix and mark the PR ready only after implementation,
-  verification, and roadmap status updates are complete.
+  verification, and any justified roadmap update are complete.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
-  emit, fourslash, and WASM.
-- Do not babysit CI. Push the draft PR, note the run URL if useful, switch to
-  non-overlapping work, and come back later to inspect status or failures.
+  emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
 - Keep DRY slices small and behavior-preserving unless explicitly fixing a bug.
   Let CI perform compile, lint, unit, conformance, emit, and fourslash verification.
 
@@ -172,12 +174,24 @@ For each change ask:
 - Prefer dedicated files per major checker/solver concern.
 - Avoid growth of monolith modules; split before crossing maintainability threshold.
 
-## 19.5) Testing
-- **Use `cargo nextest run` instead of `cargo test`** for all unit/integration test runs.
-- `cargo nextest run` provides better parallelism, output, and failure reporting.
-- Wrap full-suite runs with `scripts/safe-run.sh`: `scripts/safe-run.sh cargo nextest run`
-- Filtered runs: `cargo nextest run -E 'test(pattern)'` or `cargo nextest run -- pattern`
-- Single crate: `cargo nextest run -p tsz_checker`
+## 19.5) Testing and CI
+- **Never run full conformance, fourslash, or emit suites locally.** Those are
+  CI's job. Local pre-commit is formatting-only.
+- Prefer **not** having the full TypeScript submodule checked out locally
+  unless you actually need its sources for a specific investigation. CI has it.
+- Run local commands only when they answer a specific debugging question or
+  provide fast targeted feedback. Prefer narrow filters and stop once the
+  result informs the fix.
+- Open a draft PR early. Draft CI runs lint, dist-fast build, and unit tests.
+  When the PR is marked ready for review, CI runs conformance, emit, fourslash,
+  WASM, and snapshot gates.
+- **Never sit waiting for CI.** Push the draft PR, note the run URL if useful,
+  then switch to non-overlapping work. Come back later to inspect status.
+- **Use `cargo nextest run` instead of `cargo test`** for unit/integration runs.
+  Better parallelism, output, and failure reporting.
+  - Filtered runs: `cargo nextest run -E 'test(pattern)'` or `cargo nextest run -- pattern`
+  - Single crate: `cargo nextest run -p tsz_checker`
+  - Wrap full-suite runs with `scripts/safe-run.sh` (see §20.75).
 
 ## 19.6) Lint Hygiene For Doc Comments
 
@@ -196,248 +210,104 @@ into hard errors. Both bite often enough to keep in mind upfront:
   surface — `clippy::print_stdout` is allowed today but `clippy::dbg_macro`
   is denied; if you add a temporary `dbg!`, remove it before committing.
 - Run `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-  locally before pushing. The pre-commit hook runs this; CI runs it too.
+  locally before pushing when the change needs lint feedback. CI runs it too.
 
-## 20) Skills (Operational)
-Available skills and triggers:
-- `architecture-guardrails`: detect forbidden architecture patterns.
-- `bench-gatekeeper`: benchmark vs baseline.
-- `rust-test-runner`: run Rust tests via Docker wrapper.
-- `sync-and-merge-assistant`: safe sync/merge workflow.
-- `worker-assignment-orchestrator`: assign high-impact tasks.
-- `skill-creator`: create/update skills.
-- `skill-installer`: install curated/repo skills.
+## 19.7) Tracing And Debug Instrumentation
 
-Skill usage rules:
-- If user names a skill or task clearly matches it, use that skill this turn.
-- Read `SKILL.md` minimally; load only needed referenced files.
-- Reuse scripts/assets/templates from skill directories when available.
-- If blocked/missing, state issue briefly and proceed with best fallback.
+The repo has real tracing infrastructure. Use it for internal diagnostics;
+do not add ad-hoc print debugging.
+
+- **Use `tracing`, not `printf`-style debugging.** For Rust internals, prefer
+  `tracing::trace!`, `debug!`, `info!`, `warn!`, `error!`, `trace_span!`, and
+  `debug_span!` with structured fields:
+  ```rust
+  tracing::trace!(type_id = type_id.0, symbol = symbol_id.0, "resolved type");
+  ```
+- **Keep stdout for intentional user output only.** `println!` / `print!` are
+  acceptable for tsc-compatible CLI output, help/version text, protocol output,
+  and explicit tool reports. They are not acceptable as temporary compiler
+  instrumentation. Shell scripts may still use `printf` for their own
+  user-facing output.
+- **Use the existing subscriber knobs.** `tsz`, `tsz-lsp`, and `tsz-server`
+  initialize tracing through `tsz_cli::tracing_config::init_tracing()`. Run with
+  `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -p tsz-cli -- file.ts`, or narrow
+  filters such as `TSZ_LOG="tsz_checker=debug,tsz_solver::narrowing=trace"`.
+  Use `TSZ_LOG_FORMAT=json` for machine-readable traces and
+  `TSZ_LOG=tsz::query_json=trace TSZ_LOG_FORMAT=json` for solver query events.
+- **Avoid eager formatting in hot paths.** Put raw ids and small scalars in
+  tracing fields. For type display in solver traces, use lazy helpers such as
+  `TypeDisplay` and `RelationDisplay`; guard genuinely expensive trace-only
+  work with `tracing::enabled!`.
+- **If trace/debug output is missing, rebuild appropriately before adding
+  prints.** Release-like profiles may compile low-level tracing out for
+  performance; use `cargo run`, `cargo build`, or another debug/dev profile
+  when investigating `trace!` / `debug!` instrumentation.
+- **Tests that assert instrumentation should capture tracing, not stdout.** Use
+  existing test tracing helpers where available instead of printing diagnostics
+  and eyeballing `cargo nextest` output.
+
+## 20) Repo-Local Skills
+
+No repo-local `SKILL.md` files are currently checked in. Do not list or rely on
+TSZ-specific skills here unless their implementation is committed in the repo.
+Runtime-provided global skills may exist outside this checkout; do not document
+them as TSZ repo skills.
+
+## 20.1) Agent Identity & Collaboration
+
+- **Pick an AgentName.** If you don't have one, derive one from the machine
+  you're running on (CPU + RAM + model — e.g. `m3-max-64g-opus47`). Keep it
+  stable across the session.
+- **Sign your work.** Every PR body and GitHub issue you create or comment on
+  must include your AgentName so humans (and other agents) can tell who did it.
+- **Shared GitHub identity.** All agents push as the same GitHub user
+  (`mohsen1`). Assume sibling agents are operating concurrently under the same
+  account — check draft PRs, open PRs, recent merged PRs, and relevant issues
+  before starting work, and address other agents by their AgentName when
+  relevant.
+- **Use `gh` for GitHub operations.** The GitHub CLI is available in this
+  workspace and should be preferred over connector/integration tools for
+  inspecting PRs/issues, creating or updating PRs, and checking CI status.
+- **Stacked PRs for dependent work.** If your new PR depends on another PR
+  that should land first, open it as a stacked PR (base = the dependency
+  branch, not `main`). When the dependency merges, GitHub automatically
+  rebases the base to `main`. Do not wait for the dependency to merge before
+  starting; do not duplicate its changes into your branch.
+
+## 20.2) Opportunistic Improvements
+
+- If you spot a mistake while browsing code, fix it. If the fix is genuinely
+  unrelated to your current PR, file a GitHub issue instead (with your
+  AgentName in the body).
+- If you spot a refactor that would improve the code, apply it **only if its
+  blast radius fits inside your current PR**. Otherwise file an issue.
+- Don't bundle a sprawling refactor into a narrow bug-fix PR — that defeats
+  reviewability and breaks the stacked-PR model.
 
 ## 20.25) Conformance Maintenance
 
-Conformance is currently at 100%. There is no session picker or conformance
-campaign loop. Treat conformance work as maintenance:
+Conformance is at 100%. The daily mode is **regression prevention**, not
+recovery. There is no session picker, campaign loop, or random-pick script.
 
-- Do not create random-pick or session orchestration scripts.
-- Preserve 100% conformance when changing checker, solver, parser, binder,
-  emitter, transforms, compiler diagnostics, conformance harness code,
-  TypeScript baselines, or conformance snapshot files.
-- Use targeted local runs only for debugging. Let ready-for-review CI run the
-  full conformance suite.
-- Every behavior-changing fix still needs an owning-crate unit test.
-
-## 20.26) Conformance Commit Gate — every commit must defend the delta
-
-The project has already reached 99% once. The reason it does not stay
-there is not lack of isolated fixes; it is unreviewed net-negative
-snapshot churn. Every commit that can affect conformance must make the
-conformance delta explicit before it is committed.
-
-This gate applies to every commit touching checker, solver, parser,
-binder, emitter, transforms, compiler diagnostics, conformance harness
-code, TypeScript baselines, or conformance snapshot files.
-
-### Required before each conformance-relevant commit
-
-1. Refresh or inspect the conformance snapshot for the exact tree being
-   committed. Use targeted runs while developing, but commit-time notes
-   must be based on the committed snapshot files when they change.
-2. Compare against `main` and record:
-   - total passed before/after and net pass delta,
-   - new failing tests,
-   - newly fixed tests,
-   - tests that still fail but changed expected/actual code sets,
-   - category deltas for false positives, all-missing, wrong-code,
-     fingerprint-only, and close-to-passing.
-3. If the commit is net-negative, stop. Do not commit it unless the user
-   explicitly requested the regression and the commit/PR message names
-   every new failure with a rationale.
-4. Never hide regressions inside "refresh snapshots", "integrate batch",
-   or "update baselines" commits. Snapshot-only commits still need the
-   same before/after failure-set report.
-5. A fixed test plus a new failing test is not automatically acceptable.
-   Net-zero swaps must explain why the new failure is expected and why
-   the fixed failure is a higher-priority root-cause move.
-
-### Required commit/PR wording
-
-Every conformance-relevant commit message or PR body must include a
-short conformance block:
-
-```text
-Conformance:
-- passed: <before> -> <after> (<delta>)
-- fixed: <count> (<test names or "none">)
-- new failures: <count> (<test names or "none">)
-- changed failures: <count> (<summary or "none">)
-- category delta: false_positive <delta>, all_missing <delta>, wrong_code <delta>, fingerprint_only <delta>, close_to_passing <delta>
-```
-
-If any line is unknown, do not commit yet. Generate or inspect the data
-first.
-
-### Work campaigns, not leaf churn
-
-Conformance commits should move a root-cause bucket:
-
-- diagnostic-count parity,
-- type-display/fingerprint parity,
-- TS2339 false positives,
-- TS7006 contextual typing leakage,
-- TS2322/TS2345/TS2430 relation-boundary inconsistencies,
-- parser recovery,
-- module-resolution parity.
-
-Close-to-passing leaf tests are useful only when they validate one of
-those root-cause moves. A `+0` conformance commit is suspect unless it
-reduces a tracked bucket or removes technical debt that is blocking one
-of these campaigns.
-
-### Quick reference
-```bash
-# Inspect current conformance snapshot:
-python3 scripts/conformance/query-conformance.py --dashboard
-
-# Verify a specific test:
-./scripts/conformance/conformance.sh run --filter "<name>" --verbose
-
-# Unit tests for the crates you changed:
-cargo nextest run --package tsz-checker --lib
-cargo nextest run --package tsz-solver --lib
-
-# Full conformance (heavy — use the safe-run wrapper):
-scripts/safe-run.sh ./scripts/conformance/conformance.sh run
-
-# Refresh offline snapshot after a batch of fixes:
-scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
-
-# Push and open a PR (never push to main):
-git push -u origin <your-branch>
-```
-
-## 20.5) Conformance Analysis Tools
-
-### CRITICAL: Avoid re-running the full conformance suite
-- The full conformance suite takes **minutes** to run. Do NOT run it for research, planning, or analysis.
-- **All analysis can be done offline** from pre-computed snapshot files. Use the query tools below.
-- Only run the full suite (`./scripts/conformance/conformance.sh run` or `snapshot`) when you need to **verify code changes** you've made.
-
-### KPI Dashboard (primary daily signal)
-```bash
-# This replaces overall conformance % as the primary signal
-python3 scripts/conformance/query-conformance.py --dashboard
-```
-The dashboard shows:
-1. **Big3 wrong-code count** (TS2322+TS2339+TS2345 missing/extra breakdown)
-2. **Crash count** (tests where we emit 0 but tsc expects diagnostics)
-3. **Node lane pass rate** (NodeModulesSearch, jsFileCompilation, node, declarationEmit)
-4. **Close-to-passing** (fingerprint-only, diff=1, diff=2)
-5. **Failure categories** (false positives, all-missing, wrong-code, fingerprint-only)
-6. **Campaign impact** (Tier 1 and Tier 2 campaign test counts)
-
-### Offline analysis (preferred — zero cost, instant)
-Two snapshot files contain everything needed for analysis:
-- **`scripts/conformance/conformance-snapshot.json`** — high-level aggregates (summary, areas, top failures, quick wins).
-- **`scripts/conformance/conformance-detail.json`** — per-test failure data (expected/actual/missing/extra codes for every failing test, ~400KB).
-
-### Preferred strategy: fingerprint parity first, then wrong-code campaigns
-- **Fingerprint parity is the #1 lever.** 617 tests (73.6%) already emit the right codes but wrong message/position/count.
-- Start with the **KPI dashboard**, then check fingerprint-only failures:
+- Preserve 100% when changing checker, solver, parser, binder, emitter,
+  transforms, compiler diagnostics, conformance harness code, TypeScript
+  baselines, or conformance snapshot files.
+- Every behavior-changing fix needs an owning-crate unit test.
+- **Do not run the full conformance suite locally** (see §19.5). Let
+  ready-for-review CI run it.
+- For local debugging only, use a narrow filter:
   ```bash
-  python3 scripts/conformance/query-conformance.py --dashboard
-  python3 scripts/conformance/query-conformance.py --fingerprint-only
-  python3 scripts/conformance/query-conformance.py --fingerprint-only --code TS2322
-  python3 scripts/conformance/query-conformance.py --campaign type-display-parity
-  python3 scripts/conformance/query-conformance.py --campaign diagnostic-count
-  python3 scripts/conformance/query-conformance.py --campaign big3
-  python3 scripts/conformance/query-conformance.py --campaign narrowing-flow
+  ./scripts/conformance/conformance.sh run --filter "<name>" --verbose
   ```
-- **Fingerprint campaigns (Tier 1)**: Fix type printer display, diagnostic emission counts, or position anchoring.
-  One good printer fix can flip 50+ tests. Target >1.0 tests per commit.
-- **Wrong-code campaigns (Tier 2)**: Find invariants that fix BOTH missing AND extra diagnostics.
-  Fix in Solver or boundary helpers, not checker-local heuristics.
-- Do **not** pick work solely from one-extra/one-missing/close lists. Those are Tier 3 tools.
-
-**Query tool** (`python3 scripts/conformance/query-conformance.py`):
-```bash
-# KPI dashboard (primary daily signal)
-python3 scripts/conformance/query-conformance.py --dashboard
-
-# Overview: what to work on next
-python3 scripts/conformance/query-conformance.py
-
-# Recommended root-cause campaigns
-python3 scripts/conformance/query-conformance.py --campaigns
-
-# Deep-dive one campaign
-python3 scripts/conformance/query-conformance.py --campaign big3
-
-# Tests fixable by adding 1 missing code (Tier 3 only)
-python3 scripts/conformance/query-conformance.py --one-missing
-
-# Tests fixable by removing 1 extra code (Tier 3 only)
-python3 scripts/conformance/query-conformance.py --one-extra
-
-# False positive breakdown (expected 0, we emit errors)
-python3 scripts/conformance/query-conformance.py --false-positives
-
-# Deep-dive a specific error code (shows would-pass, also-needs, extras)
-python3 scripts/conformance/query-conformance.py --code TS2454
-
-# List tests where a code is falsely emitted
-python3 scripts/conformance/query-conformance.py --extra-code TS7053
-
-# Tests closest to passing (diff <= N)
-python3 scripts/conformance/query-conformance.py --close 2
-
-# Export paths for piping into conformance runner
-python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
-```
-
-**Reading snapshot JSON directly** (for custom queries):
-```python
-import json
-with open('scripts/conformance/conformance-snapshot.json') as f:
-    snap = json.load(f)
-# Keys: summary, areas_by_pass_rate, top_failures, not_implemented_codes,
-#        partial_codes, one_missing_zero_extra, one_extra_zero_missing,
-#        false_positive_codes, top_missing_codes, top_extra_codes, categories
-```
-
-**Reading detail JSON directly** (for per-test queries):
-```python
-import json
-with open('scripts/conformance/conformance-detail.json') as f:
-    detail = json.load(f)
-# detail["failures"][test_path] = {"e": [...], "a": [...], "m": [...], "x": [...]}
-# e=expected, a=actual, m=missing, x=extra
-# PASS tests are not in the failures dict (implicit pass).
-```
-
-### TSC cache for research (what does tsc expect?)
-- `scripts/conformance/tsc-cache-full.json` contains tsc's expected diagnostics for every test.
-- Each entry has `error_codes`, `diagnostic_fingerprints` (code, file, line, column, message_key).
-- Use Python/jq to query the cache for tests expecting a specific error code without running anything:
-  ```python
-  python3 -c "
-  import json
-  with open('scripts/conformance/tsc-cache-full.json') as f:
-      cache = json.load(f)
-  for key, val in sorted(cache.items()):
-      if CODE in val.get('error_codes', []):
-          print(key)
-  "
-  ```
-
-### Targeted testing (after code changes)
-- `./scripts/conformance/conformance.sh run --filter "pattern"` — run only tests matching a filename pattern (fast, seconds).
-- `./scripts/conformance/conformance.sh run --filter "pattern" --verbose` — see expected vs actual diagnostics for failures.
-- Use `--max N` to limit test count for quick smoke tests.
-
-### Full suite (use sparingly — only to verify changes)
-- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run` — run all conformance tests (error-code level).
-- `scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot` — run + analyze + save all snapshot files. Run this after a batch of changes to update the offline data.
+- If you suspect a regression, the per-test detail is in
+  `scripts/conformance/conformance-detail.json` (read it offline; don't
+  re-run to inspect). Snapshot aggregates are in
+  `scripts/conformance/conformance-snapshot.json`. The
+  `python3 scripts/conformance/query-conformance.py --dashboard` command
+  surfaces the standard KPIs (big3, crashes, fingerprint-only, etc.).
+- If you do introduce a regression, fix it in the same PR or revert. Do not
+  hide regressions inside "refresh snapshots" / "integrate batch" /
+  "update baselines" commits — those must still be net-zero or net-positive.
 
 ## 20.75) Memory-Guarded Execution (`scripts/safe-run.sh`)
 - **All long-running or memory-intensive commands MUST be wrapped with `scripts/safe-run.sh`.**
@@ -459,6 +329,41 @@ scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
 # Debug memory usage
 scripts/safe-run.sh --verbose -- cargo build
 ```
+
+## 20.8) Disk-Space And Worktree Hygiene
+- **Do not burn tokens or terminal output on broad disk archaeology.** Avoid
+  `du -sh *`, recursive `du`, or giant sorted size dumps unless a targeted
+  cleanup needs exact ownership. Start with compact checks:
+  ```bash
+  df -h .
+  scripts/setup/disk-worktree-guard.sh
+  ```
+- Before creating a new worktree, check reusable worktrees first:
+  ```bash
+  scripts/setup/disk-worktree-guard.sh
+  git worktree list
+  ```
+- New worktrees must be created adjacent to this checkout, as sister
+  directories under the parent of `tsz`, not nested inside the repo. Example:
+  `git worktree add ../tsz-<short-scope> <branch>`.
+- Prefer reusing an existing sister worktree that has been inactive for at
+  least 4 hours. The guard script prints compact reuse candidates and excludes
+  build/cache directories from its activity check.
+- If disk is nearly full, do not destroy useful caches first. Run the
+  cache-preserving cleanup path:
+  ```bash
+  scripts/setup/disk-worktree-guard.sh --auto-prune
+  scripts/setup/clean.sh --quiet
+  ```
+  This prunes old Cargo incremental directories and normal debris while keeping
+  `.target`, `.target-bench`, `target` artifacts, and the checked-in tsc cache
+  unless `--full` is explicitly chosen.
+- Use `scripts/setup/clean.sh --full` only as a deliberate last resort after
+  confirming the repo/worktree is not being used for an active build.
+- When a run fails immediately after a main merge or branch switch, rule out a
+  stale binary before assuming a source regression. Prefer harnesses that
+  already rebuild stale binaries, such as `scripts/emit/run.sh`; otherwise
+  rebuild the narrow binary once and rerun the focused command.
 
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.
@@ -491,8 +396,7 @@ scripts/safe-run.sh --verbose -- cargo build
 - This ensures `pre-commit` checks run locally before commits.
 - If hooks are not installed, local lint guardrails can be bypassed accidentally.
 
-
-## 24) Critical: Work Philosophy
+## 24.5) Critical: Work Philosophy
 - Prioritize **architectural integrity** over quick fixes.
 - When in doubt, choose the path that preserves the clean separation of concerns and long-term maintainability, even if it requires more upfront work.
 - Avoid patching symptoms in the checker; instead, invest in the solver and boundary helpers to keep the architecture sound.
@@ -608,3 +512,94 @@ Before opening a PR, verify each item:
 This directive supersedes any prior pattern in the codebase. Existing
 hardcoded checks discovered during review should be flagged for
 follow-up, not used as precedent for new ones.
+
+## 26) GENERALIZATION GATE - the reported repro is an example, not the scope
+
+When fixing a bug, conformance miss, or benchmark regression, treat the
+reported input as one witness for a broader rule. A PR that only matches
+the reported file, benchmark shape, library alias, or spelling is a
+stopgap, not a complete fix.
+
+Before writing code, identify the semantic operation that is wrong or too
+slow:
+
+- assignability/subtyping/compatibility decision,
+- `keyof` or indexed-access key-space check,
+- mapped/conditional/template/infer evaluation,
+- property/index lookup or object-shape projection,
+- narrowing/control-flow fact,
+- symbol resolution/binding,
+- diagnostic display policy,
+- emit transform policy.
+
+Then write the rule in structural terms:
+
+> "When *<structural condition over syntax, symbols, and/or TypeId>*, tsc
+> <does X>; this change makes tsz <do X> too."
+
+If the rule only mentions a single test name, benchmark name, alias name,
+type-parameter name, property spelling, or rendered diagnostic string, it
+is not general enough. Restate it until the owner layer and equivalent
+cases are clear.
+
+### Required before implementation
+
+1. List at least three adjacent cases that should share the same behavior.
+   Vary names and shapes: inline vs alias, generic vs concrete, builtin vs
+   user-defined, direct vs nested, union/intersection/mapped wrappers when
+   relevant.
+2. Decide the owning layer from the rule. Type semantics belong in solver
+   or query-boundary helpers; checker code should orchestrate and choose
+   diagnostic locations.
+3. Prefer one shared query/helper over two local branches that recognize
+   similar facts in different places. If checker validation and type
+   construction both need the same fact, expose that fact once.
+4. If a narrow fallback or fast path is necessary, name the semantic
+   invariant that makes it safe and document what unsupported shapes fall
+   back to the normal path.
+
+### Test matrix for non-trivial fixes
+
+Every non-trivial behavior or performance fix should include focused
+coverage for:
+
+1. The reported repro.
+2. At least two equivalent shapes that prove the rule, not the spelling.
+3. A renamed type-parameter/mapped-variable case when binders are involved.
+4. An alias/wrapper/nesting case when aliases or lazy refs are involved.
+5. A negative or fallback case proving unsupported shapes are not silently
+   accepted.
+
+If the matrix is intentionally smaller, the PR body must say why the
+change is a narrow stopgap and what follow-up would make it fundamental.
+
+### Performance fixes
+
+Performance PRs must fix the expensive operation, not only the benchmark
+fixture that exposed it.
+
+- Profile or otherwise identify the repeated operation and its expected
+  complexity.
+- State the intended complexity improvement, for example "avoid lowering
+  every union member just to answer a literal property-exists query."
+- Benchmark the reported case, but also add or run a smaller equivalent
+  fixture that would regress if the implementation only matched the
+  benchmark's exact syntax.
+- Fast paths must be keyed by structural invariants, not fixture names.
+  They must preserve correctness by falling back when the invariant cannot
+  be proven.
+- If caching is introduced, state the cache key, invalidation assumptions,
+  and cycle/fuel behavior.
+
+### PR body requirements
+
+PRs for fixes must include:
+
+- the structural rule being implemented,
+- the owner layer and why the logic belongs there,
+- the adjacent-case test matrix,
+- known unsupported shapes or fallback behavior,
+- performance numbers when the PR is performance-motivated.
+
+A PR body that says only "fixes <test>" or "makes <benchmark> pass" is not
+enough unless the PR is explicitly marked as a narrow stopgap.

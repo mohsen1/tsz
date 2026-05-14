@@ -305,8 +305,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .extend_from_slice(markers);
     }
 
+    /// Returns true if the first argument came from a type assertion (e.g. `1 as 1`).
+    /// Non-fresh literals from assertions are preserved rather than widened.
+    pub(crate) fn is_first_arg_type_annotated(&self) -> bool {
+        self.arg_source_is_type_annotation
+            .first()
+            .copied()
+            .unwrap_or(false)
+    }
+
     pub const fn set_force_bivariant_callbacks(&mut self, enabled: bool) {
         self.force_bivariant_callbacks = enabled;
+    }
+
+    /// Check whether a call argument satisfies the declared constraint of a
+    /// generic type-parameter parameter position, without firing
+    /// fresh-object-literal excess property checking against the constraint
+    /// shape (#6135).
+    ///
+    /// For `f<T extends C>(p: T)` tsc validates the *inferred* T against C;
+    /// extra properties on a fresh object-literal argument become part of T,
+    /// not excess relative to C.
+    pub(crate) fn arg_satisfies_type_parameter_constraint(
+        &mut self,
+        arg_type: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let non_fresh = crate::relations::freshness::widen_freshness(self.interner, arg_type);
+        self.checker.is_assignable_to(non_fresh, constraint)
     }
 
     pub(crate) fn is_function_union_compat(

@@ -15,6 +15,22 @@ fn simultaneous_word_replacement_does_not_rewrite_inserted_import_paths() {
 }
 
 #[test]
+fn string_literal_union_is_preferred_when_solver_widens_to_string() {
+    assert!(DeclarationEmitter::string_literal_union_widens_to_string(
+        "\"ROAAAAR!\" | \"yip yip!\"",
+        "string",
+    ));
+    assert!(!DeclarationEmitter::string_literal_union_widens_to_string(
+        "\"ROAAAAR!\"",
+        "string",
+    ));
+    assert!(!DeclarationEmitter::string_literal_union_widens_to_string(
+        "\"ROAAAAR!\" | number",
+        "string",
+    ));
+}
+
+#[test]
 fn simultaneous_word_replacement_does_not_chain_type_parameter_substitutions() {
     let rewritten = DeclarationEmitter::replace_whole_words_in_text(
         "T | U",

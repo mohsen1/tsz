@@ -6,7 +6,10 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::{check_source, check_source_with_libs, load_default_lib_files};
+use tsz_checker::test_utils::{
+    HasDiagnosticCode, check_source, check_source_with_libs, diagnostic_codes,
+    load_default_lib_files,
+};
 
 #[derive(Debug)]
 struct Diag {
@@ -14,17 +17,7 @@ struct Diag {
     message_text: String,
 }
 
-trait HasDiagnosticCode {
-    fn diagnostic_code(&self) -> u32;
-}
-
 impl HasDiagnosticCode for Diag {
-    fn diagnostic_code(&self) -> u32 {
-        self.code
-    }
-}
-
-impl HasDiagnosticCode for Diagnostic {
     fn diagnostic_code(&self) -> u32 {
         self.code
     }
@@ -57,10 +50,6 @@ fn check_js(source: &str) -> Vec<Diag> {
 
 fn check_js_with_libs(source: &str) -> Vec<Diag> {
     check_js_internal(source, true)
-}
-
-fn diagnostic_codes<T: HasDiagnosticCode>(diagnostics: &[T]) -> Vec<u32> {
-    diagnostics.iter().map(|d| d.diagnostic_code()).collect()
 }
 
 #[test]

@@ -7,7 +7,7 @@
 //! - Contextual sensitivity analysis (`is_contextually_sensitive`)
 
 use super::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::operations::iterators::get_iterator_info;
+use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
 use crate::types::{
     IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
 };
@@ -430,7 +430,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.interner.as_type_database(),
                     constraint,
                 )
-                && !self.checker.is_assignable_to(*arg_type, constraint)
+                && !self.arg_satisfies_type_parameter_constraint(*arg_type, constraint)
                 && !self.is_function_union_compat(*arg_type, constraint)
             {
                 // Use the type parameter itself (e.g., `T`) in the error message,
@@ -668,7 +668,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && self
                         .extract_iterable_yield_type(effective_param_type)
                         .is_some_and(|yield_type| {
-                            self.checker.is_assignable_to(TypeId::STRING, yield_type)
+                            !target_has_non_iterable_property_shape(
+                                self.interner,
+                                effective_param_type,
+                                |t| self.checker.evaluate_type(t),
+                            ) && self.checker.is_assignable_to(TypeId::STRING, yield_type)
                         }));
             if !assignable {
                 return Some(CallResult::ArgumentTypeMismatch {
@@ -1007,7 +1011,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         match self.interner.lookup(rest_param_type) {
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                let (rest_min, rest_max) = self.tuple_length_bounds(&elements);
+                let evaluated = self.evaluate_tuple_rest_elements(&elements);
+                let elements_ref: &[TupleElement] = evaluated.as_deref().unwrap_or(&elements);
+                let (rest_min, rest_max) = self.tuple_length_bounds(elements_ref);
                 let min = required + rest_min;
                 let max = rest_max.map(|max| required + max);
                 (min, max)
@@ -1109,7 +1115,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                self.tuple_rest_element_type(&elements, offset, rest_arg_count)
+                let evaluated = self.evaluate_tuple_rest_elements(&elements);
+                let elements_ref: &[TupleElement] = evaluated.as_deref().unwrap_or(&elements);
+                self.tuple_rest_element_type(elements_ref, offset, rest_arg_count)
             }
             Some(TypeData::Union(members)) => {
                 let mut member_types = Vec::new();
@@ -1120,8 +1128,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         Some(TypeData::Array(elem)) => member_types.push(elem),
                         Some(TypeData::Tuple(elements)) => {
                             let elements = self.interner.tuple_list(elements);
+                            let evaluated = self.evaluate_tuple_rest_elements(&elements);
+                            let elements_ref: &[TupleElement] =
+                                evaluated.as_deref().unwrap_or(&elements);
                             if let Some(ty) =
-                                self.tuple_rest_element_type(&elements, offset, rest_arg_count)
+                                self.tuple_rest_element_type(elements_ref, offset, rest_arg_count)
                             {
                                 member_types.push(ty);
                             }
@@ -1285,6 +1296,55 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Maximum iterations for type unwrapping loops to prevent infinite loops.
     const MAX_UNWRAP_ITERATIONS: usize = 1000;
+
+    /// Evaluate rest element types within a tuple, replacing Application/Conditional/Lazy
+    /// rest elements with their concrete evaluated forms.
+    ///
+    /// When a rest parameter has the form `...args: [label: K, ...Args<E, K>]` and `K` has
+    /// been instantiated, the spread element `Args<E, K>` (an Application) may evaluate to
+    /// a concrete tuple like `[data: T]`. Returning the evaluated form lets both arity
+    /// bounds (`tuple_length_bounds`) and element-type extraction (`tuple_rest_element_type`)
+    /// see the real structure instead of an opaque Application.
+    ///
+    /// Returns `Some(new_vec)` only when at least one rest element changed; otherwise
+    /// returns `None` so callers can skip allocation.
+    fn evaluate_tuple_rest_elements(
+        &mut self,
+        elements: &[TupleElement],
+    ) -> Option<Vec<TupleElement>> {
+        let mut output: Option<Vec<TupleElement>> = None;
+        for (i, elem) in elements.iter().enumerate() {
+            let new_id = if elem.rest
+                && !elem.type_id.is_intrinsic()
+                && matches!(
+                    self.interner.lookup(elem.type_id),
+                    Some(TypeData::Application(_) | TypeData::Conditional(_) | TypeData::Lazy(_))
+                ) {
+                let evaled = self.checker.evaluate_type(elem.type_id);
+                (evaled != elem.type_id).then_some(evaled)
+            } else {
+                None
+            };
+
+            match (new_id, output.as_mut()) {
+                (Some(tid), Some(out)) => out.push(TupleElement {
+                    type_id: tid,
+                    ..*elem
+                }),
+                (None, Some(out)) => out.push(*elem),
+                (Some(tid), None) => {
+                    let mut out = elements[..i].to_vec();
+                    out.push(TupleElement {
+                        type_id: tid,
+                        ..*elem
+                    });
+                    output = Some(out);
+                }
+                (None, None) => {}
+            }
+        }
+        output
+    }
 
     /// Evaluate a rest parameter type to resolve Application/Mapped types to their
     /// concrete Array/Tuple form. This is needed because after generic instantiation,

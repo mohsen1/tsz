@@ -6,6 +6,7 @@
 //! - `class` — type parameter scope, function implementation, class member analysis
 //! - `core` — modifier, member access, and general query methods
 //! - `lib` — library type resolution, namespace/alias utilities
+//! - `lib_namespace_direct` — narrow direct lowering for namespace-qualified libs
 //! - `lib_prime` — supplementary lib type resolution helpers
 //! - `lib_resolution` — lib interface heritage resolution
 //! - `type_only` — type-only symbol detection
@@ -18,6 +19,7 @@ pub(crate) mod lib;
 pub(crate) mod lib_augmentations;
 pub(crate) mod lib_decls;
 mod lib_name_text;
+pub(crate) mod lib_namespace_direct;
 pub(crate) mod lib_prime;
 pub(crate) mod lib_resolution;
 pub(crate) mod lib_scoped_heritage;

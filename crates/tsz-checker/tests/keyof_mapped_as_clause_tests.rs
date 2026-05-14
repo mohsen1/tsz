@@ -174,3 +174,211 @@ const x: OnlyA = { a: { name: "a" } };
         "Expected no TS2322 for filtered mapped type with as-clause, got: {codes:?}"
     );
 }
+
+// =============================================================================
+// `keyof T` over a source with both literal properties AND an index signature
+// (issue #6814). `interner.union` collapses `"foo" | string | number` into
+// `string | number` for subtype reasons, but mapped iteration must enumerate
+// each named property and each index signature separately so per-key
+// as-clause filters drop the index step without dropping named properties.
+// =============================================================================
+
+#[test]
+fn remove_index_signature_preserves_named_property() {
+    // Canonical RemoveIndexSignature pattern: filter out `string`/`number`
+    // index keys via `string extends K ? never`. The named property `foo`
+    // must survive because `string extends "foo"` is `false`.
+    let code = r#"
+type RemoveIndexSignature<T> = {
+  [K in keyof T as string extends K
+    ? never
+    : number extends K
+      ? never
+      : K]: T[K]
+};
+interface Foo {
+  [key: string]: any;
+  foo(): void;
+}
+type Cleaned = RemoveIndexSignature<Foo>;
+declare const cleaned: Cleaned;
+cleaned.foo();
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected named property `foo` to survive index-signature filter, got: {codes:?}"
+    );
+}
+
+#[test]
+fn remove_index_signature_different_type_param_names() {
+    // Renaming the iteration variable (`P` instead of `K`) and the source
+    // type parameter (`X` instead of `T`) must not change the result.
+    // Proves the fix is structural, not name-dependent.
+    let code = r#"
+type Strip<X> = {
+  [P in keyof X as string extends P ? never : P]: X[P]
+};
+interface Bar {
+  [k: string]: unknown;
+  bar(): number;
+  baz: string;
+}
+declare const stripped: Strip<Bar>;
+stripped.bar();
+const s: string = stripped.baz;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected named props bar/baz to survive (different type-param names), got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected baz to keep its `string` type, got: {codes:?}"
+    );
+}
+
+#[test]
+fn strip_number_index_signature_preserves_named() {
+    // Same pattern with the numeric index signature instead of string.
+    let code = r#"
+type StripNum<T> = {
+  [K in keyof T as number extends K ? never : K]: T[K]
+};
+interface Baz {
+  [n: number]: any;
+  named: string;
+}
+declare const sb: StripNum<Baz>;
+const v: string = sb.named;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected named property to survive number-index filter, got: {codes:?}"
+    );
+}
+
+#[test]
+fn key_remap_with_template_literal_keeps_named_keys() {
+    // Renaming via template literal (`as `${P}_${K & string}``) requires the
+    // literal key `alpha` to be visible to the substitution; if the literal is
+    // collapsed into `string`, the resulting prefixed key would be `${P}_string`
+    // (deferred) instead of the concrete `x_alpha`.
+    let code = r#"
+type Prefix<T, P extends string> = {
+  [K in keyof T as string extends K ? never : `${P}_${K & string}`]: T[K]
+};
+interface Q {
+  [k: string]: any;
+  alpha: number;
+  beta: boolean;
+}
+declare const px: Prefix<Q, "x">;
+const a: number = px.x_alpha;
+const b: boolean = px.x_beta;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected x_alpha / x_beta to be present after prefix-rename, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected x_alpha / x_beta value types to match, got: {codes:?}"
+    );
+}
+
+#[test]
+fn key_remap_with_required_modifier_over_indexed_source() {
+    // Combine the as-clause filter with the `-?` (required) modifier. The
+    // named property must be present and required.
+    let code = r#"
+interface Src {
+  [k: string]: unknown;
+  named?: string;
+}
+type ReqStrip<T> = {
+  [K in keyof T as string extends K ? never : K]-?: T[K]
+};
+declare const rs: ReqStrip<Src>;
+const v: unknown = rs.named;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected `named` to survive strip + required, got: {codes:?}"
+    );
+}
+
+#[test]
+fn pure_literal_source_unchanged_no_regression() {
+    // Source has NO index signature: existing path must remain untouched.
+    // The fix is gated on `literal keys + index signature` so this should
+    // exercise the unchanged behavior.
+    let code = r#"
+type Strip<T> = {
+  [K in keyof T as string extends K ? never : K]: T[K]
+};
+interface NoIdx { foo: number; bar: string; }
+declare const s: Strip<NoIdx>;
+const f: number = s.foo;
+const b: string = s.bar;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected pure-literal source to keep its props, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected pure-literal source to keep its types, got: {codes:?}"
+    );
+}
+
+#[test]
+fn pure_index_source_collapses_to_empty() {
+    // Source has only an index signature, no named keys. After filtering the
+    // index out, the resulting type has no properties — accessing one is an
+    // error. Verifies the negative case.
+    let code = r#"
+type Strip<T> = {
+  [K in keyof T as string extends K ? never : K]: T[K]
+};
+interface OnlyIdx { [k: string]: any; }
+declare const oi: Strip<OnlyIdx>;
+const v = oi.anything;
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        codes.contains(&2339),
+        "Expected TS2339 when accessing a property on a stripped index-only object, got: {codes:?}"
+    );
+}
+
+#[test]
+fn identity_mapped_over_indexed_source_keeps_named_and_index() {
+    // No `as` clause: both the named property AND arbitrary index access
+    // must work (identity mapped should round-trip the source shape).
+    let code = r#"
+type Id<T> = { [K in keyof T]: T[K] };
+interface IxSrc {
+  [k: string]: any;
+  named: string;
+}
+declare const ix: Id<IxSrc>;
+const n: string = ix.named;
+const a: any = ix["arbitrary"];
+    "#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected identity mapped to preserve named + index, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected identity mapped to keep value types, got: {codes:?}"
+    );
+}

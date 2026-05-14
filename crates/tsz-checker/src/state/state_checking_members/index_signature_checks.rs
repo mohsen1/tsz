@@ -675,11 +675,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let name = self.get_member_name_text(sig.name).unwrap_or_default();
-                let prop_type = if sig.type_annotation.is_some() {
+                let base_type = if sig.type_annotation.is_some() {
                     self.get_type_from_type_node(sig.type_annotation)
                 } else {
                     self.get_type_of_node(member_idx)
                 };
+                let prop_type = self.index_sig_optional_type(base_type, sig.question_token);
                 (name, sig.name, prop_type, false)
             } else if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
                 let Some(sig) = self.ctx.arena.get_signature(member_node) else {
@@ -699,13 +700,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let name = self.get_member_name_text(prop.name).unwrap_or_default();
-                let prop_type = if let Some(declared_type) =
+                let base_type = if let Some(declared_type) =
                     self.effective_class_property_declared_type(member_idx, prop)
                 {
                     declared_type
                 } else {
                     self.get_type_of_node(member_idx)
                 };
+                let prop_type = self.index_sig_optional_type(base_type, prop.question_token);
                 (name, prop.name, prop_type, is_static)
             } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
                 let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
@@ -1216,7 +1218,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let prop_type = prop.type_id;
+            let prop_type = self.index_sig_optional_type(prop.type_id, prop.optional);
             if self.type_contains_error(prop_type) {
                 continue;
             }

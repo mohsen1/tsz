@@ -541,7 +541,11 @@ impl<'a> CheckerState<'a> {
             };
             if node.kind == syntax_kind_ext::INFER_TYPE {
                 result.push(idx);
-                continue; // Don't recurse into infer's children
+                // Nested `infer Y` inside the constraint is in the same scope.
+                if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
+                    stack.push(infer_data.type_parameter);
+                }
+                continue;
             }
             // Push children based on node type
             self.push_type_node_children(idx, node, &mut stack);
@@ -600,6 +604,10 @@ impl<'a> CheckerState<'a> {
         // Type operator (keyof, readonly, unique)
         if let Some(type_op) = self.ctx.arena.get_type_operator(node) {
             stack.push(type_op.type_node);
+            return;
+        }
+        if let Some(tp) = self.ctx.arena.get_type_parameter(node) {
+            stack.extend_from_slice(&[tp.constraint, tp.default]);
         }
     }
 
@@ -654,6 +662,13 @@ impl<'a> CheckerState<'a> {
         let Some(data) = self.ctx.arena.get_indexed_access_type(node) else {
             return;
         };
+
+        if self.indexed_access_literal_property_exists_in_alias_union(
+            data.object_type,
+            data.index_type,
+        ) {
+            return;
+        }
 
         let object_type = self.get_type_from_type_node(data.object_type);
         let index_type = self.get_type_from_type_node(data.index_type);
@@ -930,6 +945,13 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
             }
+            if self.index_constraint_keyof_matches_mapped_constraint(
+                index_constraint,
+                mapped_constraint,
+                keyof,
+            ) {
+                return;
+            }
 
             keyof
         } else {
@@ -1117,6 +1139,9 @@ impl<'a> CheckerState<'a> {
                 index_type_for_check,
                 object_type_for_check,
             ) {
+                return;
+            }
+            if self.is_numeric_index_on_parameters_utility(data.object_type, index_type_for_check) {
                 return;
             }
             if self.canonical_numeric_string_literal_valid_for_object(
