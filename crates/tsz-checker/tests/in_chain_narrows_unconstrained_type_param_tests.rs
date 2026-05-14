@@ -18,6 +18,128 @@
 
 use tsz_checker::diagnostics as crate_diag;
 
+#[test]
+fn in_operator_narrows_mapped_union_member_property_type() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type ReplaceKeys<U, T, Y> = {
+  [K in keyof U]: K extends T
+    ? K extends keyof Y
+      ? Y[K]
+      : never
+    : U[K]
+};
+
+interface NodeA { type: 'A'; name: string }
+interface NodeB { type: 'B'; id: number }
+
+type Nodes = NodeA | NodeB;
+type Replaced = ReplaceKeys<Nodes, 'name', { name: number }>;
+
+declare const r: Replaced;
+
+if ('name' in r) {
+  const name: number = r.name;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected mapped-union `in` narrowing to preserve `name: number`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_narrows_renamed_mapped_union_member_property_type() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Rewrite<UnionType, SelectedKey, Overrides> = {
+  [Field in keyof UnionType]: Field extends SelectedKey
+    ? Field extends keyof Overrides
+      ? Overrides[Field]
+      : never
+    : UnionType[Field]
+};
+
+type Left = { kind: 'left'; label: string };
+type Right = { kind: 'right'; count: number };
+
+type Rewritten = Rewrite<Left | Right, 'label', { label: boolean }>;
+
+declare const item: Rewritten;
+
+if ('label' in item) {
+  const label: boolean = item.label;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected renamed mapped-union `in` narrowing to preserve `label: boolean`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_false_branch_excludes_required_mapped_union_property() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type ReplaceKeys<U, T, Y> = {
+  [K in keyof U]: K extends T
+    ? K extends keyof Y
+      ? Y[K]
+      : never
+    : U[K]
+};
+
+interface NodeA { type: 'A'; name: string }
+interface NodeB { type: 'B'; id: number }
+
+type Replaced = ReplaceKeys<NodeA | NodeB, 'name', { name: number }>;
+
+declare const r: Replaced;
+
+if ('name' in r) {
+  const name: number = r.name;
+} else {
+  const id: number = r.id;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected mapped-union `in` false branch to exclude the required property member, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_does_not_distribute_direct_concrete_keyof_union_mapped_type() {
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(
+        r#"
+type Left = { left: string };
+type Right = { right: number };
+
+type Direct = { [Key in keyof (Left | Right)]: boolean };
+
+declare const direct: Direct;
+
+if ('left' in direct) {
+  const left: boolean = direct.left;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic.code == 2322
+            && diagnostic
+                .message_text
+                .contains("Type 'unknown' is not assignable")),
+        "Expected direct concrete `keyof` union mapped type to narrow `left` as unknown, got {diagnostics:#?}"
+    );
+}
+
 fn in_rhs_assignability_diagnostic_count(diagnostics: &[crate_diag::Diagnostic]) -> usize {
     diagnostics
         .iter()

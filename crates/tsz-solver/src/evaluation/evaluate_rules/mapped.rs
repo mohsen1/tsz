@@ -199,6 +199,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().mapped(*mapped);
         }
 
+        if let Some(distributed) = self.try_distribute_mapped_over_union_source(mapped) {
+            return distributed;
+        }
+
         // Issue #6814: `interner.union` collapses `"foo" | string | number`
         // into `string | number`, so the eager-eval path below loses literal
         // keys that an `as` clause must filter per-iteration. Rescue them when
@@ -952,6 +956,49 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         self.try_evaluate_mapped_over_array_like(mapped, resolved)
+    }
+
+    fn try_distribute_mapped_over_union_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        // Direct `{ [K in keyof (A | B)]: ... }` uses the mapped
+        // parameter's own declared constraint. Only distribute when a
+        // homomorphic alias instantiation has replaced the effective source.
+        if mapped.type_param.constraint == Some(mapped.constraint) {
+            return None;
+        }
+
+        let source = self.extract_source_from_keyof(mapped.constraint)?;
+        let resolved_source = self.evaluate(source);
+        let Some(TypeData::Union(list_id)) = self.interner().lookup(resolved_source) else {
+            return None;
+        };
+
+        let members: Vec<TypeId> = self.interner().type_list(list_id).to_vec();
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut results = Vec::with_capacity(members.len());
+        for member in members {
+            let member_keyof = self.interner().keyof(member);
+            let mut memo = FxHashMap::default();
+            let member_template =
+                self.substitute_exact_type(mapped.template, source, member, &mut memo);
+            let member_name_type = mapped.name_type.map(|name_type| {
+                let mut memo = FxHashMap::default();
+                self.substitute_exact_type(name_type, source, member, &mut memo)
+            });
+            let member_mapped = MappedType {
+                type_param: mapped.type_param,
+                constraint: member_keyof,
+                name_type: member_name_type,
+                template: member_template,
+                readonly_modifier: mapped.readonly_modifier,
+                optional_modifier: mapped.optional_modifier,
+            };
+            results.push(self.evaluate_mapped(&member_mapped));
+        }
+
+        Some(self.interner().union(results))
     }
 
     /// Try to evaluate a mapped type over a single array/tuple-like type.
