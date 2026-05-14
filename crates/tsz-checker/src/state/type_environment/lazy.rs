@@ -1373,14 +1373,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.register_symbol_file_target(sym_id, file_idx);
         }
 
-        // Fast path: if the shared DefinitionStore already holds a concrete body
-        // for this DefId, use it directly instead of calling get_type_of_symbol.
-        //
-        // Two symbols from different binders can share the same raw SymbolId.
-        // When symbol_types[raw_sym_id] holds a same-file symbol's type from
-        // build_type_environment, get_type_of_symbol(raw_sym_id) returns that
-        // cached type for an unrelated cross-file DefId that happens to share
-        // the ID — overwriting the correct body in type_env.
+        // Fast path: prefer the DefinitionStore's concrete body over
+        // get_type_of_symbol. Two binders can assign the same raw SymbolId to
+        // different symbols, so get_type_of_symbol(raw_sym_id) can return a
+        // same-file symbol's cached type for an unrelated cross-file DefId.
         if let Some(body) = self.ctx.definition_store.get_body(def_id)
             && body != TypeId::ERROR
             && body != TypeId::ANY

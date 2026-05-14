@@ -827,7 +827,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // which is reliable even when register_symbol_file_target was not called.
         // Fall back to cross_file_symbol_targets (for symbols registered via the
         // import-alias path), then to get_symbol_from_any_context.
-        // (def_file_id already computed above)
         let symbol = def_file_id
             .and_then(|fid| self.ctx.get_binder_for_file(fid as usize))
             .and_then(|binder| binder.get_symbol(sym_id))

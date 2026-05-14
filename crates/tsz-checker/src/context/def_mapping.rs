@@ -181,46 +181,8 @@ impl<'a> CheckerContext<'a> {
 
         // ---- Step 4: create new DefId ----
         let name = self.types.intern_string(&symbol.escaped_name);
-
-        // Determine DefKind from symbol flags.
-        // CLASS is checked before INTERFACE because declaration merging can give
-        // a symbol both flags (e.g., `class Component<P,S>` + interface augmentation).
-        // A class-with-interface-merge is semantically still a class.
-        let kind = if symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
-            tsz_solver::def::DefKind::TypeAlias
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
-            tsz_solver::def::DefKind::Class
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
-            tsz_solver::def::DefKind::Interface
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::ENUM) {
-            tsz_solver::def::DefKind::Enum
-        } else if symbol.has_any_flags(
-            tsz_binder::symbol_flags::NAMESPACE_MODULE | tsz_binder::symbol_flags::VALUE_MODULE,
-        ) {
-            tsz_solver::def::DefKind::Namespace
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION) {
-            tsz_solver::def::DefKind::Function
-        } else if symbol.has_any_flags(
-            tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
-                | tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE,
-        ) {
-            tsz_solver::def::DefKind::Variable
-        } else {
-            // Default to TypeAlias for remaining symbols (type parameters, etc.)
-            tsz_solver::def::DefKind::TypeAlias
-        };
-
-        // Create a placeholder DefinitionInfo - body will be set lazily.
-        // Prefer binder-owned stable declaration spans over raw NodeIndex-based
-        // reconstruction so fallback identity does not treat syntax handles as
-        // semantic coordinates.
-        let span = symbol.first_declaration_span.or_else(|| {
-            if symbol.value_declaration.is_some() {
-                symbol.value_declaration_span
-            } else {
-                None
-            }
-        });
+        let kind = Self::def_kind_for_symbol(symbol);
+        let span = Self::definition_span_for_symbol(symbol);
 
         let info = DefinitionInfo {
             kind,
@@ -309,7 +271,7 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Prefers the binder-owned declaration span over a value-declaration span so
     /// fallback identity does not treat raw syntax handles as semantic coordinates.
-    fn definition_span_for_symbol(symbol: &tsz_binder::Symbol) -> Option<tsz_common::Span> {
+    fn definition_span_for_symbol(symbol: &tsz_binder::Symbol) -> Option<(u32, u32)> {
         symbol.first_declaration_span.or_else(|| {
             symbol
                 .value_declaration
@@ -499,35 +461,8 @@ impl<'a> CheckerContext<'a> {
         }
 
         let name = self.types.intern_string(&symbol.escaped_name);
-        let kind = if symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
-            tsz_solver::def::DefKind::TypeAlias
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
-            tsz_solver::def::DefKind::Class
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
-            tsz_solver::def::DefKind::Interface
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::ENUM) {
-            tsz_solver::def::DefKind::Enum
-        } else if symbol.has_any_flags(
-            tsz_binder::symbol_flags::NAMESPACE_MODULE | tsz_binder::symbol_flags::VALUE_MODULE,
-        ) {
-            tsz_solver::def::DefKind::Namespace
-        } else if symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION) {
-            tsz_solver::def::DefKind::Function
-        } else if symbol.has_any_flags(
-            tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
-                | tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE,
-        ) {
-            tsz_solver::def::DefKind::Variable
-        } else {
-            tsz_solver::def::DefKind::TypeAlias
-        };
-        let span = symbol.first_declaration_span.or_else(|| {
-            if symbol.value_declaration.is_some() {
-                symbol.value_declaration_span
-            } else {
-                None
-            }
-        });
+        let kind = Self::def_kind_for_symbol(symbol);
+        let span = Self::definition_span_for_symbol(symbol);
 
         let info = DefinitionInfo {
             kind,
