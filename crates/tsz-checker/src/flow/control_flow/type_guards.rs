@@ -1080,6 +1080,9 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> Option<TypePredicate> {
         let expr = self.find_inferable_predicate_body_expression(body_idx)?;
         let expr = self.skip_parens_and_assertions(expr);
+        let expr = self
+            .inferable_predicate_alias_initializer(expr)
+            .unwrap_or(expr);
 
         if let Some(predicate) = self.try_infer_logical_or_type_predicate(expr, params_list, params)
         {
@@ -1089,8 +1092,70 @@ impl<'a> FlowAnalyzer<'a> {
         {
             return Some(predicate);
         }
+        if let Some(predicate) =
+            self.try_infer_type_parameter_strict_null_inequality(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
 
         self.try_infer_type_predicate_from_guard_expression(expr, params_list, params)
+    }
+
+    fn inferable_predicate_alias_initializer(&self, expr: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let (_sym, initializer) = self.const_condition_initializer(expr)?;
+        Some(self.skip_parens_and_assertions(initializer))
+    }
+
+    fn try_infer_type_parameter_strict_null_inequality(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(expr_node)?;
+        if bin.operator_token != SyntaxKind::ExclamationEqualsEqualsToken as u16 {
+            return None;
+        }
+        let target = self.get_comparison_target(expr)?;
+        if self.nullish_comparison(bin.left, bin.right, target) != Some(TypeId::NULL) {
+            return None;
+        }
+
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(target, params_list, params)?;
+        let param_type = params.get(param_idx)?.type_id;
+        if !crate::query_boundaries::common::is_type_parameter_like(self.interner, param_type) {
+            return None;
+        }
+
+        let empty_object = crate::query_boundaries::flow_analysis::empty_object_type(self.interner);
+        let object_or_undefined = crate::query_boundaries::flow_analysis::union_types(
+            self.interner,
+            vec![empty_object, TypeId::UNDEFINED],
+        );
+        let narrowed = crate::query_boundaries::flow_analysis::intersection_types(
+            self.interner,
+            vec![param_type, object_or_undefined],
+        );
+        if narrowed == param_type || matches!(narrowed, TypeId::NEVER | TypeId::ERROR | TypeId::ANY)
+        {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
     }
 
     fn try_infer_type_predicate_from_guard_expression(
