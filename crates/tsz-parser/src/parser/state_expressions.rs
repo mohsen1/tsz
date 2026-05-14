@@ -3,8 +3,8 @@ use tsz_common::diagnostics::diagnostic_codes;
 /// Parser state - expression parsing methods
 use super::state::{
     CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_FIELD_INITIALIZER,
-    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, CONTEXT_FLAG_STATIC_BLOCK,
-    ParserState,
+    CONTEXT_FLAG_FUNCTION_BODY, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE,
+    CONTEXT_FLAG_STATIC_BLOCK, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -1088,6 +1088,7 @@ impl ParserState {
         // Clear STATIC_BLOCK before body — the body is a new scope where
         // 'await' is a valid identifier (unless the function is async).
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         // Parse body (block or expression)
         // Push a new label scope for arrow function bodies
@@ -1885,7 +1886,8 @@ impl ParserState {
                 } else if !self.in_async_context()
                     && has_following_expression
                     && !self.in_parameter_default_context()
-                    && next_token != SyntaxKind::OpenParenToken
+                    && (next_token != SyntaxKind::OpenParenToken
+                        || !self.in_function_body_context())
                 {
                     // Parse as await expression - the checker will emit TS1308
                     // (not TS1359 from the parser) to match TSC behavior

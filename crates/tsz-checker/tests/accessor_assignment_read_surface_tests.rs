@@ -81,3 +81,49 @@ const v: string = c.value;
         "ordinary writable properties should still narrow to the assigned value"
     );
 }
+
+#[test]
+fn private_getter_without_setter_remains_readonly() {
+    let source = r#"
+class Container {
+  get #value(): string {
+    return "";
+  }
+
+  update() {
+    this.#value = "next";
+  }
+}
+"#;
+    let codes = check_source_strict_codes(source);
+    assert!(
+        codes.contains(&2540),
+        "private getter-only accessors must reject writes with TS2540; got {codes:?}"
+    );
+}
+
+#[test]
+fn private_getter_with_setter_accepts_write() {
+    let source = r#"
+class Container {
+  #stored = "";
+
+  get #value(): string {
+    return this.#stored;
+  }
+
+  set #value(next: string) {
+    this.#stored = next;
+  }
+
+  update() {
+    this.#value = "next";
+  }
+}
+"#;
+    let codes = check_source_strict_codes(source);
+    assert!(
+        !codes.contains(&2540),
+        "private getter/setter pairs must remain writable; got {codes:?}"
+    );
+}
