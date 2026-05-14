@@ -1371,6 +1371,20 @@ target is now the two remaining concrete rows:
 `union_or_intersection=1` and `array_or_tuple=1`. Decision record:
 [`perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md`](perf-runs/2026-05-14-simple-object-primitive-literal-type-refs.md).
 
+**2026-05-14 simple-object residual annotation admission:** the next slice
+admits recursively simple union/intersection, array, and tuple annotations when
+every child annotation is already accepted by the same local shortcut guard.
+This keeps arbitrary type references and resolver-dependent shapes on fallback.
+On regenerated monorepo-006, diagnostics stay at `10,198`,
+`checker.compute_type_of_symbol_interface_simple_object_fastpath_hits` moves
+from `24,760` to `24,762`, `success` moves from `24,760` to `24,762`, and
+`reject_non_primitive_annotation` drops from `2` to `0`. The measured
+annotation-kind residue is now exhausted; the remaining shortcut rejects are
+declaration/provenance guards (`reject_out_of_arena_decl=6`,
+`reject_missing_interface_decl=7`). No timing claim is made from this
+attribution-mode run. Decision record:
+[`perf-runs/2026-05-14-simple-object-residual-annotations.md`](perf-runs/2026-05-14-simple-object-residual-annotations.md).
+
 **2026-05-13 alias-body outcome instrumentation follow-up:** before admitting
 any more aliases, add `direct_actual_lib_alias_body_outcomes` to the perf
 counter JSON/text dump and wire it at every return point in the actual-lib

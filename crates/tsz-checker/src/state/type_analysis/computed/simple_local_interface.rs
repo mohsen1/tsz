@@ -203,6 +203,40 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if node.kind == syntax_kind_ext::UNION_TYPE
+            || node.kind == syntax_kind_ext::INTERSECTION_TYPE
+        {
+            return self
+                .ctx
+                .arena
+                .get_composite_type(node)
+                .is_some_and(|composite| {
+                    composite
+                        .types
+                        .nodes
+                        .iter()
+                        .copied()
+                        .all(|member| self.is_simple_local_interface_fastpath_type(member))
+                });
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_TYPE {
+            return self.ctx.arena.get_array_type(node).is_some_and(|array| {
+                self.is_simple_local_interface_fastpath_type(array.element_type)
+            });
+        }
+
+        if node.kind == syntax_kind_ext::TUPLE_TYPE {
+            return self.ctx.arena.get_tuple_type(node).is_some_and(|tuple| {
+                tuple
+                    .elements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .all(|element| self.is_simple_local_interface_fastpath_type(element))
+            });
+        }
+
         self.is_simple_local_interface_primitive_type_reference(node)
     }
 
