@@ -324,11 +324,13 @@ pub struct NarrowingCache {
     /// Built once per (union, property) pair, then O(1) lookup per case clause.
     /// Without this, each case clause iterates ALL union members (O(N) per case = O(N²) total).
     pub discriminant_index: RefCell<DiscriminantIndex>,
-    /// Cache for applying a semantic guard to an input type.
+    /// Cache for applying a semantic predicate guard to an input type.
     ///
-    /// Keyed by input `TypeId`, guard payload, branch sense, compiler option
-    /// bits, and resolver generation so lazy alias changes cannot reuse stale
-    /// predicate results.
+    /// Keyed by input `TypeId`, predicate payload, branch sense, compiler
+    /// option bits, and resolver generation so lazy alias changes cannot reuse
+    /// stale predicate results. Other guard kinds keep their existing dynamic
+    /// paths because their results depend on structural lookups that are already
+    /// cached at narrower query boundaries.
     pub(crate) narrow_type_cache: RefCell<FxHashMap<NarrowTypeCacheKey, TypeId>>,
 }
 
@@ -1933,6 +1935,10 @@ impl<'a> NarrowingContext<'a> {
     }
 
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: GuardSense) -> TypeId {
+        if !matches!(guard, TypeGuard::Predicate { .. }) {
+            return self.narrow_type_uncached(source_type, guard, sense);
+        }
+
         let key = NarrowTypeCacheKey {
             source_type,
             guard: guard.clone(),

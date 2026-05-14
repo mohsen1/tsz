@@ -188,6 +188,20 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
     );
     assert_eq!(cache.narrow_type_cache.borrow().len(), 1);
 
+    assert_eq!(
+        ctx.narrow_type(
+            TypeId::UNKNOWN,
+            &TypeGuard::Typeof(TypeofKind::String),
+            GuardSense::Positive
+        ),
+        TypeId::STRING
+    );
+    assert_eq!(
+        cache.narrow_type_cache.borrow().len(),
+        1,
+        "non-predicate guards keep their existing dynamic narrowing path"
+    );
+
     let number_predicate = TypeGuard::Predicate {
         type_id: Some(TypeId::NUMBER),
         asserts: false,
