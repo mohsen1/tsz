@@ -996,7 +996,13 @@ impl<'a> Printer<'a> {
                     .get_class(stmt_node)
                     .and_then(|class| self.get_identifier_text_opt(class.name))
                     .and_then(|name| deferred_named_exports.get(&name).cloned());
-                self.emit_top_level_using_class_assignment(stmt_node, stmt_idx, export_name, false)
+                self.emit_top_level_using_class_assignment(
+                    stmt_node,
+                    stmt_idx,
+                    export_name,
+                    false,
+                    false,
+                )
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 let export_name = self
@@ -1036,6 +1042,7 @@ impl<'a> Printer<'a> {
                                 export.export_clause,
                                 Some(export_name),
                                 !export.is_default_export,
+                                false,
                             )
                         } else {
                             false
