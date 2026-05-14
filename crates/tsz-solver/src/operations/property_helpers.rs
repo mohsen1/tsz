@@ -1292,6 +1292,75 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.resolve_apparent_property(IntrinsicKind::Symbol, TypeId::SYMBOL, prop_name, prop_atom)
     }
 
+    /// Property access on `ReadonlyType(inner)`: routes array/tuple inners through `ReadonlyArray<T>` so mutating methods are absent.
+    pub(crate) fn resolve_readonly_type_property(
+        &self,
+        readonly_type: TypeId,
+        inner: TypeId,
+        prop_name: &str,
+        prop_atom: Option<Atom>,
+    ) -> PropertyAccessResult {
+        let inner_data = self.interner().lookup(inner);
+        let element_type = match inner_data {
+            Some(TypeData::Array(elem)) => Some(elem),
+            Some(TypeData::Tuple(_)) => Some(self.array_element_type(inner)),
+            _ => None,
+        };
+
+        let Some(elem) = element_type else {
+            return self.resolve_property_access_inner(inner, prop_name, prop_atom);
+        };
+
+        let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+
+        if prop_name == "length" {
+            if let Some(length_type) = self.compute_tuple_length_type(inner) {
+                return PropertyAccessResult::simple(length_type);
+            }
+            return PropertyAccessResult::simple(TypeId::NUMBER);
+        }
+
+        if prop_name == "toLocaleString" {
+            return self.method_result(TypeId::STRING);
+        }
+
+        if let Some(TypeData::Tuple(elements_id)) = inner_data
+            && let Some(index_text) = crate::utils::canonicalize_numeric_name(prop_name)
+            && let Ok(index) = index_text.parse::<usize>()
+        {
+            let elements = self.interner().tuple_list(elements_id);
+            if let Some(element_type) = self.tuple_fixed_element_type(&elements, index) {
+                return PropertyAccessResult::simple(element_type);
+            }
+        }
+
+        use crate::objects::index_signatures::IndexSignatureResolver;
+        if IndexSignatureResolver::new(self.interner()).is_numeric_index_name(prop_name) {
+            let element_or_undefined = self.element_type_with_undefined(elem);
+            return PropertyAccessResult::from_index(element_or_undefined);
+        }
+
+        let readonly_array_base =
+            crate::relations::subtype::TypeResolver::get_readonly_array_base_type(self.db);
+
+        if let Some(readonly_base) = readonly_array_base {
+            let app_type = self.interner().application(readonly_base, vec![elem]);
+            let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
+            if result.is_success() {
+                return result;
+            }
+            if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                return result;
+            }
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: readonly_type,
+                property_name: prop_atom,
+            };
+        }
+
+        self.resolve_property_access_inner(inner, prop_name, Some(prop_atom))
+    }
+
     /// Resolve properties on array type.
     ///
     /// Uses the Array<T> interface from lib.d.ts to resolve array methods.

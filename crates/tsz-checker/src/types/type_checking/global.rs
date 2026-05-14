@@ -281,6 +281,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Register ReadonlyArray<T> so property access on `readonly T[]` resolves
+        // against it (missing mutating methods) instead of the mutable Array interface.
+        // Type params are not stored — resolution uses the interface's own params via
+        // Application substitution, unlike Array<T> which stores params for inference.
+        let readonly_array_type = self.resolve_lib_type_by_name("ReadonlyArray");
+        if let Some(ty) = readonly_array_type {
+            self.ctx.types.register_readonly_array_base_type(ty);
+        }
+
         // If the user has augmented the Array interface (e.g.,
         // `interface Array<T> extends IFoo<T> {}`), re-resolve using
         // resolve_lib_type_by_name which processes global augmentation heritage
@@ -418,6 +427,9 @@ impl<'a> CheckerState<'a> {
             if let Some(ty) = array_instance_type {
                 env.set_array_base_type(ty, array_type_params);
             }
+            if let Some(ty) = readonly_array_type {
+                env.set_readonly_array_base_type(ty);
+            }
 
             // 3. Register DefId mappings for non-generic boxed types in the env too.
             // When user code writes `a: Function`, the type annotation creates a
@@ -463,6 +475,9 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(ty) = array_instance_type {
                 env.set_array_base_type(ty, array_type_params_for_flow);
+            }
+            if let Some(ty) = readonly_array_type {
+                env.set_readonly_array_base_type(ty);
             }
         }
     }
