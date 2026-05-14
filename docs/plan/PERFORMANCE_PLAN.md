@@ -1510,24 +1510,43 @@ Claim: [`claims/perf-actual-lib-value-interfaces-main-2026-05-13.md`](claims/per
 
 ### PR 7A: ~~T2.1.B sequential session-reuse~~ — done
 
-Behind `TSZ_FILE_SESSION_REUSE` flag. `CheckerContext::switch_to_file`
-in `crates/tsz-checker/src/context/file_session_reset.rs` clears
-file-local state at the boundary while preserving the shared
-`QueryCache` and program-stable caches. Byte-identical diagnostics
-to the default per-file construction path.
+`CheckerContext::switch_to_file` in
+`crates/tsz-checker/src/context/file_session_reset.rs` clears file-local state
+at the boundary while preserving the shared `QueryCache` and
+program-stable caches. The sequential no-emit path now enables this reuse by
+default; `TSZ_DISABLE_FILE_SESSION_REUSE=1` is the explicit opt-out.
 
 ### PR 7B: ~~T2.1.C parallel session-reuse~~ — done
 
 #5842 (merged at `ee20f50f0e`) extends the same boundary to the
 rayon-chunked parallel driver path. The same reset semantics now
-apply when each worker thread reuses its `CheckerState` across
-files in a chunk.
+apply when each worker thread reuses its `CheckerState` across files in a
+chunk. Parallel chunk reuse remains explicit opt-in via
+`TSZ_FILE_SESSION_REUSE=1`.
+
+**2026-05-14 sequential default-on follow-up:** current-main monorepo-006 A/B
+runs with and without `TSZ_DISABLE_FILE_SESSION_REUSE=1` keep diagnostics
+stable at `10,198` and deterministically collapse checker construction from
+`state_constructed=5,251` to `2` with `file_session_resets=5,249` (and
+`checker.with_parent_cache_constructed` remains `0` in both modes). Timing is
+runner-noisy and mixed across A/B pairs, so this is a counter/constructor
+improvement slice rather than a stable timing claim. Decision record:
+[`perf-runs/2026-05-14-sequential-file-session-reuse-default.md`](perf-runs/2026-05-14-sequential-file-session-reuse-default.md).
+Claim:
+[`claims/perf-sequential-file-session-reuse-default-2026-05-14.md`](claims/perf-sequential-file-session-reuse-default-2026-05-14.md).
 
 ### PR 7C: `WorkerContext` / future T2.1.D session-lease / typed-query
 
 Goal: replace the **hottest** child-checker path with an explicit
 session lease or typed query — the dominant `CheckerCreationReason`
 from the post-#5863 attribution run.
+
+**2026-05-14 status refresh:** current-main monorepo-006 attribution now
+reports `checker.with_parent_cache_constructed=0` and all
+`with_parent_cache_by_reason` buckets at `0`, so there is no remaining hot
+child-checker reason to replace in this lane. Future T2.1.D work should be
+re-scoped only if a nonzero `by_reason` hotspot reappears under refreshed
+fixtures.
 
 Done when:
 

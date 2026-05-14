@@ -99,9 +99,23 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+#[cfg(test)]
+fn file_session_reuse_test_override() -> Option<bool> {
+    FILE_SESSION_REUSE_TEST_OVERRIDE.with(std::cell::Cell::get)
+}
+
 fn file_session_reuse_requested() -> bool {
     #[cfg(test)]
-    if let Some(enabled) = FILE_SESSION_REUSE_TEST_OVERRIDE.with(std::cell::Cell::get) {
+    if let Some(enabled) = file_session_reuse_test_override() {
+        return enabled;
+    }
+
+    std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_none()
+}
+
+fn parallel_file_session_reuse_requested() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = file_session_reuse_test_override() {
         return enabled;
     }
 
@@ -1460,13 +1474,14 @@ pub(super) fn collect_diagnostics(
             // diagnostics.
             let use_sequential_checking =
                 work_items.len() <= 32 || has_large_wildcard_barrel(program, &work_items);
-            // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): when the
-            // `TSZ_FILE_SESSION_REUSE` env var is set, the sequential
-            // path constructs one `CheckerState` and re-targets it
-            // across files via `CheckerContext::switch_to_file`
-            // instead of constructing one per file. Gated on the
-            // sequential branch because the parallel branch needs
-            // per-thread state, which the reuse path doesn't model.
+            // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): by default,
+            // the sequential no-emit path constructs one `CheckerState`
+            // and re-targets it across files via
+            // `CheckerContext::switch_to_file` instead of constructing
+            // one per file. `TSZ_DISABLE_FILE_SESSION_REUSE=1` opts out.
+            // Gated on the sequential branch because the parallel branch
+            // needs per-thread state, which the sequential reuse path
+            // doesn't model.
             // `extract_type_cache=true` (set when `--emit` or
             // `--declaration` is on) consumes the `CheckerState` per
             // file via `extract_cache(self)`. The reuse path holds
@@ -1497,7 +1512,7 @@ pub(super) fn collect_diagnostics(
                 )
             } else if !use_sequential_checking
                 && !extract_type_cache
-                && file_session_reuse_requested()
+                && parallel_file_session_reuse_requested()
             {
                 tsz::parallel::ensure_rayon_global_pool();
                 check_files_in_parallel_chunks_with_reuse(
@@ -2736,9 +2751,9 @@ pub(super) fn check_file_for_parallel<'a>(
 /// - The actual `check_source_file` work and diagnostic
 ///   post-processing (via `run_check_on_existing_checker`)
 ///
-/// Caller's contract: gated on `TSZ_FILE_SESSION_REUSE=1` env var.
-/// The flag-off default goes through `check_file_for_parallel` per
-/// file unchanged.
+/// Caller's contract: enabled by default for sequential no-emit runs;
+/// `TSZ_DISABLE_FILE_SESSION_REUSE=1` opts out. The flag-off path
+/// goes through `check_file_for_parallel` per file unchanged.
 ///
 /// **Correctness gate**: this path must produce byte-identical
 /// diagnostics to the flag-off path under any conformance fixture,
