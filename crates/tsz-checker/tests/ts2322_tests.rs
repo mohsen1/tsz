@@ -6524,6 +6524,61 @@ class Driver {
 }
 
 #[test]
+fn imported_mapped_alias_application_assigns_to_index_signature() {
+    let type_utils = r#"
+export type DrainOuterGeneric<T> = [T] extends [unknown] ? T : never;
+export type ShallowRecord<K extends keyof any, T> = DrainOuterGeneric<{
+  [P in K]: T
+}>;
+"#;
+    let object_utils = r#"
+import type { ShallowRecord } from './type-utils';
+
+declare const value: ShallowRecord<string, unknown>;
+const record: Record<string, unknown> = value;
+
+declare function isReadonlyArray(value: unknown): value is readonly unknown[];
+declare function isObject(value: unknown): value is ShallowRecord<string, unknown>;
+declare function compareObjects(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): boolean;
+
+export function compare(left: unknown, right: unknown): boolean {
+  if (isReadonlyArray(left) && isReadonlyArray(right)) {
+    return true;
+  } else if (isObject(left) && isObject(right)) {
+    return compareObjects(left, right);
+  }
+  return false;
+}
+"#;
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[
+            ("./type-utils.ts", type_utils),
+            ("./object-utils.ts", object_utils),
+        ],
+        "./object-utils.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected imported mapped alias application to assign to string index signature; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        ),
+        "expected predicate-narrowed imported mapped alias application to pass to string index signature parameter; got: {diags:#?}"
+    );
+}
+
+#[test]
 fn imported_array_item_type_from_const_array_preserves_literals() {
     let type_utils_padding: String = (0..140)
         .map(|idx| format!("export type PaddingAlias{idx} = {{ value: {idx} }};\n"))

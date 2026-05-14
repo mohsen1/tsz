@@ -1733,6 +1733,45 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    fn record_application_index_value(&self, type_id: TypeId) -> Option<TypeId> {
+        let (base, args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
+        if args.len() == 2
+            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
+            && self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.escaped_name.as_str() == "Record")
+        {
+            Some(args[1])
+        } else {
+            None
+        }
+    }
+
+    fn shallow_record_value_assignable_to_index(
+        &mut self,
+        source: TypeId,
+        index_value: TypeId,
+    ) -> bool {
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source)
+        else {
+            return false;
+        };
+        if args.len() != 2 {
+            return false;
+        }
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return false;
+        };
+        let is_shallow_record = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.escaped_name.as_str() == "ShallowRecord");
+        is_shallow_record && self.is_assignable_to(args[1], index_value)
+    }
+
     pub(super) fn evaluate_type_for_assignability_inner(&mut self, type_id: TypeId) -> TypeId {
         if let Some(evaluated) = self.evaluate_lazy_alias_for_assignability(type_id) {
             return evaluated;
@@ -2361,6 +2400,12 @@ impl<'a> CheckerState<'a> {
 
         source = self.normalize_index_access_for_assignability(source, 0);
         target = self.normalize_index_access_for_assignability(target, 0);
+
+        if let Some(index_value) = self.record_application_index_value(target)
+            && self.shallow_record_value_assignable_to_index(source, index_value)
+        {
+            return true;
+        }
 
         let source_eval = self.evaluate_type_for_assignability(source);
         let target_eval = self.evaluate_type_for_assignability(target);

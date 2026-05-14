@@ -382,6 +382,30 @@ impl<'a> NarrowingContext<'a> {
         self
     }
 
+    fn application_base_name_is_core(&self, base: TypeId, expected: &str) -> bool {
+        match self.db.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver
+                .and_then(|resolver| resolver.get_def_name(def_id))
+                .is_some_and(|name| self.db.resolve_atom_ref(name).as_ref() == expected),
+            Some(TypeData::UnresolvedTypeName(name)) => {
+                self.db.resolve_atom_ref(name).as_ref() == expected
+            }
+            _ => self
+                .db
+                .get_display_alias(base)
+                .is_some_and(|alias| self.application_base_name_is_core(alias, expected)),
+        }
+    }
+
+    fn is_application_named(&self, type_id: TypeId, expected: &str) -> bool {
+        let Some(TypeData::Application(app_id)) = self.db.lookup(type_id) else {
+            return false;
+        };
+        let app = self.db.type_application(app_id);
+        self.application_base_name_is_core(app.base, expected)
+    }
+
     /// Resolve a type to its structural representation.
     ///
     /// Unwraps:
@@ -2064,6 +2088,12 @@ impl<'a> NarrowingContext<'a> {
                                 // For unions: filter members, fall back to
                                 // intersection if nothing matches.
                                 let narrowed = self.narrow_to_type(source_type, *target_type);
+                                if narrowed != *target_type
+                                    && self.is_array_like(narrowed)
+                                    && self.is_application_named(*target_type, "ShallowRecord")
+                                {
+                                    return *target_type;
+                                }
                                 if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
                                     self.db.intersection2(source_type, *target_type)
                                 } else if !crate::visitors::visitor_predicates::is_empty_object_type(
@@ -2152,6 +2182,11 @@ impl<'a> NarrowingContext<'a> {
                                 // intersection to preserve the target's structure.
                                 let narrowed = self.narrow_to_type(source_type, *target_type);
                                 if narrowed == source_type && narrowed != *target_type {
+                                    if self.is_array_like(source_type)
+                                        && self.is_application_named(*target_type, "ShallowRecord")
+                                    {
+                                        return *target_type;
+                                    }
                                     if self.is_subtype_for_narrowing(source_type, *target_type) {
                                         return source_type;
                                     }
