@@ -32,6 +32,12 @@ mod value_references;
 
 pub(super) type SolverTypeId = tsz_solver::TypeId;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UsageAnalyzerSourceFlags {
+    pub source_is_js_file: bool,
+    pub source_is_declaration_file: bool,
+}
+
 /// Tracks how a symbol is used - as a type, a value, or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UsageKind {
@@ -98,6 +104,8 @@ pub struct UsageAnalyzer<'a> {
     current_file_path: Option<String>,
     /// Whether the current source file is JavaScript.
     source_is_js_file: bool,
+    /// Whether the current source file is already a declaration file.
+    source_is_declaration_file: bool,
     /// Set of symbols from other modules that need imports
     foreign_symbols: FxHashSet<SymbolId>,
     /// Context flag: true when we're in a value position (expression, typeof)
@@ -116,7 +124,7 @@ impl<'a> UsageAnalyzer<'a> {
         current_arena: Arc<NodeArena>,
         current_file_path: Option<String>,
         import_name_map: &'a FxHashMap<String, SymbolId>,
-        source_is_js_file: bool,
+        source_flags: UsageAnalyzerSourceFlags,
     ) -> Self {
         Self {
             arena,
@@ -131,7 +139,8 @@ impl<'a> UsageAnalyzer<'a> {
             memoizing_types: FxHashSet::default(),
             current_arena,
             current_file_path,
-            source_is_js_file,
+            source_is_js_file: source_flags.source_is_js_file,
+            source_is_declaration_file: source_flags.source_is_declaration_file,
             foreign_symbols: FxHashSet::default(),
             in_value_pos: false,
             current_ambient_module_specifier: None,
@@ -324,7 +333,9 @@ impl<'a> UsageAnalyzer<'a> {
                     for &stmt_idx in &stmts.nodes {
                         if self.is_ambient_module_body_name(module.name) {
                             self.analyze_ambient_module_member_statement(stmt_idx);
-                        } else {
+                        } else if self.source_is_declaration_file
+                            || self.namespace_statement_contributes_public_surface(stmt_idx)
+                        {
                             self.analyze_statement(stmt_idx);
                         }
                     }
@@ -335,6 +346,74 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         self.current_ambient_module_specifier = previous_ambient_module_specifier;
+    }
+
+    fn namespace_statement_contributes_public_surface(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            || stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            || stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+        {
+            return true;
+        }
+        self.statement_has_export_modifier(stmt_node)
+    }
+
+    fn statement_has_export_modifier(&self, stmt_node: &tsz_parser::parser::node::Node) -> bool {
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.arena.get_function(stmt_node).is_some_and(|func| {
+                    self.arena
+                        .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.arena.get_class(stmt_node).is_some_and(|class| {
+                    self.arena
+                        .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(stmt_node).is_some_and(|iface| {
+                    self.arena
+                        .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(stmt_node).is_some_and(|alias| {
+                    self.arena
+                        .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(stmt_node).is_some_and(|enum_data| {
+                    self.arena
+                        .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.arena.get_variable(stmt_node).is_some_and(|var_stmt| {
+                    self.arena
+                        .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.arena.get_module(stmt_node).is_some_and(|module| {
+                    self.arena
+                        .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .arena
+                .get_import_decl(stmt_node)
+                .is_some_and(|import_decl| {
+                    self.arena
+                        .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+                }),
+            _ => false,
+        }
     }
 
     fn analyze_import_equals_declaration(&mut self, import_idx: NodeIndex) {
@@ -1174,7 +1253,11 @@ impl<'a> UsageAnalyzer<'a> {
         // dependencies.  `analyze_local_import_equals_dependency` is
         // safe to call unconditionally — it only marks symbols whose
         // declarations are ImportEqualsDeclaration nodes.
-        if decl.type_annotation.is_none() && decl.initializer.is_some() && has_inferred_type {
+        if decl.type_annotation.is_none()
+            && decl.initializer.is_some()
+            && has_inferred_type
+            && !initializer_is_call_expression
+        {
             let callee = self.unwrap_export_default_expression(decl.initializer);
             self.analyze_local_import_equals_dependency(callee);
             if callee != decl.initializer {
