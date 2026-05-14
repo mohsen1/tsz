@@ -101,6 +101,12 @@ pub(crate) struct JsClassLikePrototypeMembers {
     pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
 }
 
+#[derive(Default)]
+pub(crate) struct JsClassStaticMembers {
+    pub(crate) members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
+    pub(crate) consumed_stmts: FxHashSet<NodeIndex>,
+}
+
 #[derive(Clone)]
 pub(crate) struct JsClassDefinePropertyAccessor {
     pub(crate) property_name: String,
@@ -136,6 +142,7 @@ pub(in crate::declaration_emitter) struct JsDefinedPropertyDecl {
     pub(in crate::declaration_emitter) name: String,
     pub(in crate::declaration_emitter) type_text: String,
     pub(in crate::declaration_emitter) readonly: bool,
+    pub(in crate::declaration_emitter) value: NodeIndex,
 }
 
 #[derive(Clone)]
@@ -211,6 +218,7 @@ mod late_bound_function_analysis;
 mod literal_initializers;
 mod local_asserted_type_alias;
 mod portability_check;
+mod portability_export_paths;
 mod portability_resolve;
 mod returned_function_initializer;
 mod synthetic_dependencies;
@@ -241,6 +249,7 @@ mod type_inference_truncation_expansion;
 mod type_inference_type_annotations;
 mod type_inference_type_nodes;
 mod type_param_rewrite;
+mod type_predicate_text;
 mod type_printing;
 mod type_printing_paths;
 mod unexported_alias_literal;

@@ -299,7 +299,7 @@ impl<'a> Printer<'a> {
         let prev_block_using_env = self.block_using_env.take();
         let block_using_names: Option<(String, String, String, bool)> = if block_using_lowered {
             let using_async = self.block_has_await_using(&block.statements);
-            let (env_name, error_name, result_name) = self.next_disposable_env_names();
+            let (env_name, error_name, result_name) = self.disposable_env_names_for_node(idx);
             let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
 
             // Block-level using: tsc uses `const` for the __addDisposableResource calls

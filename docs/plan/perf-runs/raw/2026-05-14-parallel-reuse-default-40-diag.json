@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "mode": "timing",
+  "tsz": {
+    "version": "0.1.9",
+    "commit": null,
+    "profile": "release"
+  },
+  "fixture": {
+    "name": null,
+    "repo": null,
+    "ref": null,
+    "actual_commit": null,
+    "path": null,
+    "local_override": false
+  },
+  "command_line": [
+    "/private/tmp/tsz-perf-next2-target/release/tsz",
+    "--project",
+    "/private/tmp/tsz-perf-fixtures/reuse-parallel-40/tsconfig.json",
+    "--diagnostics-json",
+    "docs/plan/perf-runs/raw/2026-05-14-parallel-reuse-default-40-diag.json",
+    "--perf-counters-json",
+    "docs/plan/perf-runs/raw/2026-05-14-parallel-reuse-default-40-pc.json"
+  ],
+  "phases_ms": {
+    "config_discovery": 0.0,
+    "source_discovery": 0.0,
+    "module_resolution": 0.0,
+    "io_read": 2.0899579999999998,
+    "load_libs": 15.738665999999998,
+    "parse_bind": 33.428708,
+    "check": 11.161459,
+    "emit": 0.00020800000000000001,
+    "total": 66.274584
+  },
+  "counts": {
+    "files": 91,
+    "root_files": 40,
+    "lib_files": 51,
+    "source_bytes": 0,
+    "diagnostics": 40
+  },
+  "rss_peak_bytes": 235192320
+}
