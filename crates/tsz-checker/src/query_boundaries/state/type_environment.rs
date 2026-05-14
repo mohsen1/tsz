@@ -264,6 +264,15 @@ pub(crate) fn classify_body_for_arg_preservation(
     tsz_solver::type_queries::classify_body_for_arg_preservation(db, body_type)
 }
 
+/// Returns `true` if the generic body type contains structural type operations
+/// that require type arguments to be in concrete (expanded) form.
+///
+/// Delegates to the solver's structural analysis. See `body_arg_requires_concrete_form`
+/// in the solver for the full contract.
+pub(crate) fn body_arg_requires_concrete_form(db: &dyn TypeDatabase, body_type: TypeId) -> bool {
+    tsz_solver::type_queries::body_arg_requires_concrete_form(db, body_type)
+}
+
 /// Check if a type is a primitive (string, number, boolean, bigint, etc.).
 pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::is_primitive_type(db, type_id)
