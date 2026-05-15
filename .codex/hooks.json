@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Reminder: commit and sync with main when work is done.'"
+          }
+        ],
+        "matcher": "compact"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git pull --rebase origin main 2>/dev/null; cat \"$CLAUDE_PROJECT_DIR/AGENTS.md\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | grep -q '\\.rs$' && cargo fmt --quiet || exit 0"
+          }
+        ],
+        "matcher": "Edit|Write"
+      }
+    ]
+  }
+}
