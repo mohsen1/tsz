@@ -33,6 +33,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         let property_name = self.property_name_text(property_name_node)?;
         let base_type = self.value_type_for_type_query_member_base(base)?;
+        let evaluated_base =
+            crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+                self.ctx.types,
+                &*self.ctx,
+                base_type,
+                std::iter::empty(),
+                false,
+                self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+            )
+            .result;
+        let base_type = if evaluated_base != TypeId::ERROR {
+            evaluated_base
+        } else {
+            base_type
+        };
         match crate::query_boundaries::property_access::resolve_property_access(
             self.ctx.types,
             base_type,

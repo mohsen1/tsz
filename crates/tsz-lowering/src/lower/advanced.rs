@@ -783,6 +783,13 @@ impl<'a> TypeLowering<'a> {
             if let Some(override_fn) = &self.type_query_override
                 && let Some(resolved) = override_fn(data.expr_name)
             {
+                if let Some(args) = &data.type_arguments
+                    && !args.nodes.is_empty()
+                {
+                    let type_args: Vec<TypeId> =
+                        args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
+                    return self.interner.application(resolved, type_args);
+                }
                 return resolved;
             }
             // Create a symbol reference from the expression name

@@ -1,3 +1,5 @@
+mod constructor_temp_estimation;
+mod constructor_using_region;
 mod decorators;
 mod emit_declaration;
 mod emit_es6;

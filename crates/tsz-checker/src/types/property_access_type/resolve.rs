@@ -1724,7 +1724,8 @@ impl<'a> CheckerState<'a> {
             let mut result =
                 self.resolve_property_access_with_env(object_type_for_access, property_name);
             let direct_class_this_receiver = self.is_this_expression(access.expression)
-                && self.ctx.enclosing_class.is_some()
+                && (self.ctx.enclosing_class.is_some()
+                    || self.nearest_enclosing_class(access.expression).is_some())
                 && !self.is_this_in_nested_function_inside_class(idx)
                 && !self.is_this_in_static_class_member(idx);
             if matches!(result, PropertyAccessResult::PropertyNotFound { .. })
@@ -1781,6 +1782,7 @@ impl<'a> CheckerState<'a> {
                     write_type,
                     from_index_signature,
                 } => {
+                    let mut used_class_chain_method_type = false;
                     if property_name == "exports"
                         && prop_type == TypeId::ANY
                         && self.is_js_file()
@@ -1792,6 +1794,22 @@ impl<'a> CheckerState<'a> {
                         )
                     {
                         return self.current_file_commonjs_module_exports_namespace_type();
+                    }
+
+                    // Recover inherited methods from the class chain when early
+                    // initializer checking runs before `ctx.enclosing_class` is active.
+                    if direct_class_this_receiver
+                        && self.ctx.enclosing_class.is_none()
+                        && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
+                    {
+                        let summary = self.summarize_class_chain(class_idx);
+                        if summary.member_kind(property_name, false, true)
+                            == Some(ClassMemberKind::MethodLike)
+                            && let Some(member_info) = summary.lookup(property_name, false, true)
+                        {
+                            prop_type = member_info.type_id;
+                            used_class_chain_method_type = true;
+                        }
                     }
 
                     // A bare type-parameter receiver can fall back to `any` here
@@ -1829,7 +1847,8 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
-                    if direct_class_this_receiver
+                    if !used_class_chain_method_type
+                        && direct_class_this_receiver
                         && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                             self.ctx.types,
                             object_type_for_access,
@@ -1885,7 +1904,7 @@ impl<'a> CheckerState<'a> {
                             prop_type,
                             this_substitution_target,
                         );
-                    } else {
+                    } else if !used_class_chain_method_type {
                         // When a method returns `this` on an intersection member,
                         // the solver's object visitor eagerly binds `this` to the
                         // structural (flattened) object — so `contains_this_type`

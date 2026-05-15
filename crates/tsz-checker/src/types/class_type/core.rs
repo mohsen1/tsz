@@ -460,6 +460,43 @@ impl<'a> CheckerState<'a> {
                             single_quoted_name: false,
                         });
                     }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                            continue;
+                        };
+                        if self.has_static_modifier(&accessor.modifiers) {
+                            continue;
+                        }
+                        let Some(name) = self.get_property_name(accessor.name) else {
+                            continue;
+                        };
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        let accessor_type = if k == syntax_kind_ext::GET_ACCESSOR
+                            && accessor.type_annotation.is_some()
+                        {
+                            self.get_type_from_type_node(accessor.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                        prescan_props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id: accessor_type,
+                            write_type: accessor_type,
+                            optional: false,
+                            readonly: k == syntax_kind_ext::GET_ACCESSOR,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: self
+                                .get_member_visibility(&accessor.modifiers, accessor.name),
+                            parent_id: current_sym,
+                            declaration_order,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                        });
+                    }
                     k if k == syntax_kind_ext::CONSTRUCTOR => {
                         let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
                             continue;
