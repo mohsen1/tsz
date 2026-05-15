@@ -621,6 +621,16 @@ impl<'a> CheckerContext<'a> {
         let def_id = self.get_lib_def_id(sym_id);
         self.insert_def_type_params(def_id, params.clone());
         self.register_def_auto_params_in_envs(def_id, body, params);
+
+        if let Some(symbol) = self.binder.get_symbol(sym_id) {
+            let canonical_def_id = self.get_canonical_lib_def_id(&symbol.escaped_name, sym_id);
+            if canonical_def_id != def_id {
+                let canonical_params = self.get_def_type_params(def_id).unwrap_or_default();
+                self.insert_def_type_params(canonical_def_id, canonical_params.clone());
+                self.register_def_auto_params_in_envs(canonical_def_id, body, canonical_params);
+            }
+        }
+
         def_id
     }
 
@@ -685,6 +695,7 @@ impl<'a> CheckerContext<'a> {
     /// Register a non-generic definition body in **both** type environments.
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
         self.definition_store.set_body(def_id, body);
+        self.clear_type_evaluation_caches_for_def(def_id);
         self.with_envs_for_register("insert_def", |env| {
             env.insert_def(def_id, body);
         });
@@ -701,6 +712,7 @@ impl<'a> CheckerContext<'a> {
         self.definition_store.set_body(def_id, body);
         self.definition_store
             .set_type_params(def_id, params.clone());
+        self.clear_type_evaluation_caches_for_def(def_id);
         let declared_variances = tsz_solver::TypeResolver::get_type_param_variance(self, def_id);
         self.with_envs_for_register("insert_def_with_params", |env| {
             env.insert_def_with_params(def_id, body, params.clone());
