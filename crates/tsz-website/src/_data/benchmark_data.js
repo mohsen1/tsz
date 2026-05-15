@@ -166,6 +166,56 @@ function normalizedDiagnosticSubsystems(compatibility) {
   return diagnosticSubsystemsFromDeltas(deltas).slice(0, 8);
 }
 
+function diagnosticCodesFromDeltas(deltas) {
+  const codes = [];
+  const seen = new Set();
+  for (const line of deltas) {
+    for (const match of String(line || "").matchAll(/\bTS\d{4,5}\b/g)) {
+      const code = match[0];
+      if (seen.has(code)) continue;
+      seen.add(code);
+      codes.push(code);
+      if (codes.length >= 8) return codes;
+    }
+  }
+  return codes;
+}
+
+function normalizedKnownBlockers(compatibility, diagnosticSubsystems) {
+  const existing = Array.isArray(compatibility?.known_blockers) ? compatibility.known_blockers : [];
+  if (existing.length) {
+    return existing.map(String).filter(Boolean).slice(0, 8);
+  }
+
+  const blockers = [];
+  const add = (blocker) => {
+    if (blocker && !blockers.includes(blocker) && blockers.length < 8) blockers.push(blocker);
+  };
+  const exitClass = String(compatibility?.exit_class || "");
+  const phase = String(compatibility?.phase || "");
+
+  if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "fixture invalid") add("reference fixture invalid");
+  if (exitClass === "runner error") add("benchmark runner error");
+  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (phase && phase !== "check") add(`${phase} phase blocker`);
+
+  for (const group of diagnosticSubsystems) {
+    add(String(group?.subsystem || ""));
+  }
+
+  const deltas = Array.isArray(compatibility?.diagnostic_deltas)
+    ? compatibility.diagnostic_deltas
+    : compatibility?.diagnostic_deltas
+      ? [compatibility.diagnostic_deltas]
+      : [];
+  if (!blockers.length && diagnosticCodesFromDeltas(deltas).length) {
+    add("unclassified diagnostic mismatch");
+  }
+
+  return blockers;
+}
+
 const TINY_BENCHMARK_MAX_LINES = 200;
 
 const EXPECTED_PROJECT_BENCHMARKS = [
@@ -318,6 +368,9 @@ function compatibilityRowFor(definition, allResults) {
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
+    emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
+    dtsStatus: compatibility.dts_status || "not in scope (noEmit project check)",
+    knownBlockers: normalizedKnownBlockers(compatibility, diagnosticSubsystems),
     exitCodes: compatibility.exit_codes && typeof compatibility.exit_codes === "object"
       ? {
           tsc: Array.isArray(compatibility.exit_codes.tsc) ? compatibility.exit_codes.tsc.slice(0, 8) : [],
@@ -1678,13 +1731,23 @@ export function getProjectCompatibilityDashboard() {
     const reductionCandidates = Array.isArray(row.reductionCandidates)
       ? row.reductionCandidates.filter(Boolean).slice(0, 5)
       : [];
+    const knownBlockers = Array.isArray(row.knownBlockers)
+      ? row.knownBlockers.filter(Boolean).slice(0, 8)
+      : [];
     const parts = [
       `phase: ${row.phase || "unknown"}`,
       `owner: ${row.family || "not classified"}`,
       row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
+      row.emitStatus ? `emit: ${row.emitStatus}` : "",
+      row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
       ...measurementParts(row),
       ...exitCodeParts(row),
     ].filter(Boolean);
+    const blockerHtml = row.className === "green" || !knownBlockers.length
+      ? ""
+      : `<div class="compat-blockers">
+          ${knownBlockers.map((blocker) => `<span>${escapeHtml(blocker)}</span>`).join("")}
+        </div>`;
     const queueHtml = row.className === "green" || (!diagnosticCodes.length && !reductionCandidates.length)
       ? ""
       : `<div class="compat-queue">
@@ -1706,7 +1769,7 @@ export function getProjectCompatibilityDashboard() {
           ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
           : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
         </div>`;
-    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${subsystemHtml}${queueHtml}${deltaHtml}`;
+    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${deltaHtml}`;
   };
 
   return `<section class="compat-dashboard">
