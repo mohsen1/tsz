@@ -769,6 +769,25 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         self.evaluate_type_param(param_info)
     }
 
+    fn visit_this_type(&mut self) -> Self::Output {
+        let concrete_this = self
+            .evaluator
+            .resolver()
+            .resolve_this_type(self.evaluator.interner())?;
+        if concrete_this == self.object_type {
+            Some(
+                self.evaluator
+                    .interner()
+                    .index_access(self.object_type, self.index_type),
+            )
+        } else {
+            Some(
+                self.evaluator
+                    .recurse_index_access(concrete_this, self.index_type),
+            )
+        }
+    }
+
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
         Some(
             self.evaluator
