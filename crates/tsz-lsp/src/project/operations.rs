@@ -1280,6 +1280,7 @@ impl Project {
     ) -> Result<WorkspaceEdit, String> {
         self.touch_file(file_name);
         let start = Instant::now();
+        let mut scope_stats = ScopeCacheStats::default();
 
         // Step 1: Normalize the new name
         let normalized_name = {
@@ -1318,7 +1319,7 @@ impl Project {
                     file.root(),
                     node_idx,
                     &mut file.scope_cache,
-                    None,
+                    Some(&mut scope_stats),
                 )
                 .ok_or_else(|| "Could not find symbol to rename".to_string())?;
             let symbol = file
@@ -1349,11 +1350,11 @@ impl Project {
                 &local_name,
                 normalized_name,
                 start,
+                scope_stats,
             );
         }
 
         // Step 5: Otherwise, use standard rename logic (imports/exports)
-        let scope_stats = ScopeCacheStats::default();
         let result = (|| {
             let (import_targets, export_names, source_file_name) = {
                 let file = self
@@ -1627,6 +1628,7 @@ impl Project {
         local_name: &str,
         new_name: String,
         start: Instant,
+        scope_stats: ScopeCacheStats,
     ) -> Result<WorkspaceEdit, String> {
         let mut workspace_edit = WorkspaceEdit::default();
 
@@ -1682,11 +1684,8 @@ impl Project {
         // Deduplicate the workspace edit in case multiple symbols produced edits for the same location
         Self::dedup_workspace_edit(&mut workspace_edit);
 
-        self.performance.record(
-            ProjectRequestKind::Rename,
-            start.elapsed(),
-            ScopeCacheStats::default(),
-        );
+        self.performance
+            .record(ProjectRequestKind::Rename, start.elapsed(), scope_stats);
 
         Ok(workspace_edit)
     }

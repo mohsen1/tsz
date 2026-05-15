@@ -1142,6 +1142,32 @@ fn test_hover_function_returning_void() {
 }
 
 #[test]
+fn test_hover_overloaded_function_uses_signature_display() {
+    let source = r#"function makeLabel(value: string): { kind: "name"; value: string };
+function makeLabel(value: number): { kind: "id"; value: number };
+function makeLabel(value: string | number) {
+  return typeof value === "string"
+    ? { kind: "name", value }
+    : { kind: "id", value };
+}
+
+const named = makeLabel("compiler");"#;
+    let info =
+        get_hover_at(source, 8, 14).expect("Should find hover for overloaded function reference");
+    assert!(
+        info.display_string
+            .contains("function makeLabel(value: string): { kind: \"name\"; value: string }"),
+        "Should show the first overload signature with object return type, got: {}",
+        info.display_string
+    );
+    assert!(
+        !info.display_string.contains("function makeLabel{"),
+        "Should not concatenate the function name with raw overload object display, got: {}",
+        info.display_string
+    );
+}
+
+#[test]
 fn test_hover_abstract_class() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}";
     let info = get_hover_at(source, 0, 15).expect("Should find hover for abstract class");
