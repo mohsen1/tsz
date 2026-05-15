@@ -2185,6 +2185,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let actual_is_object_literal = arg_idx.is_some_and(|arg_idx| {
+                self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                    node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                })
+            });
+            if actual_is_object_literal
+                && common::type_is_conditional_type_result_with_unresolved_inference(
+                    self.ctx.types,
+                    expected,
+                )
+            {
+                continue;
+            }
+
             let is_assignable = self.is_assignable_to_with_env(actual, expected)
                 || self.is_assignable_via_contextual_signatures(actual, expected);
 

@@ -9,6 +9,7 @@ mod inferred_predicate_returns;
 mod js_class_static;
 mod js_commonjs_constructor;
 mod js_emit;
+mod js_return_type_fallback;
 mod preamble;
 mod setup;
 

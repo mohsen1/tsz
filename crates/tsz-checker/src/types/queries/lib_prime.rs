@@ -63,7 +63,8 @@ impl<'a> CheckerState<'a> {
             )
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
         };
 
         let lazy_type_params_resolver =
@@ -76,6 +77,7 @@ impl<'a> CheckerState<'a> {
             &def_id_resolver,
             &no_value_resolver,
         )
+        .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
 
