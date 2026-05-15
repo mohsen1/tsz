@@ -43,6 +43,8 @@ jobs:
       should_run: ${{ steps.gate.outputs.should_run }}
     steps:
       - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -56,7 +58,16 @@ jobs:
             fi
           fi
 
-          # Concurrency group handles all coalescing - no debounce or explicit run checks needed
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
+            echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
+            should_run=false
+          fi
+
+          # Concurrency group prevents overlapping benchmark runs; the freshness
+          # check above prevents queued obsolete main SHAs from consuming the
+          # benchmark runner after newer merges land.
 
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
 
