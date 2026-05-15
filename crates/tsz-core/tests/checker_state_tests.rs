@@ -15755,7 +15755,8 @@ const ctor2: DefaultCtor = AnotherClass;
 /// TS Unsoundness #40: Distributivity Disabling via [T] extends [U]
 /// Tests the `is_distributive` flag parsing and lowering through conditional types.
 /// Verifies that naked type parameters are marked distributive while tuple-wrapped are not.
-/// Note: This test verifies the lowering behavior via the solver's `lower_tests.rs`,
+/// Note: This test verifies the lowering behavior via the solver's
+/// `evaluate_tests.rs`,
 /// and checks that the thin checker properly handles conditional type declarations.
 #[test]
 fn test_distributivity_conditional_type_declarations() {
