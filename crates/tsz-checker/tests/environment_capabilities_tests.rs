@@ -1191,7 +1191,7 @@ fn test_deprecation_diagnostic_code_mapping() {
 fn test_capability_diagnostic_new_variants_code_mapping() {
     use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
-    // New variants added in phase 2
+    // New variants added while expanding capability diagnostics
     assert_eq!(
         CapabilityDiagnostic::TopLevelAwaitUnsupported.code(),
         1378,
