@@ -72,6 +72,7 @@ impl<'a> CheckerState<'a> {
         display_target: &str,
         preferred_target_display: Option<&str>,
         merged_attrs_display: Option<&str>,
+        concrete_spread_outcome: Option<&crate::query_boundaries::assignability::RelationOutcome>,
     ) -> bool {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -88,24 +89,34 @@ impl<'a> CheckerState<'a> {
                 spread_source_type,
             );
 
+        let built_concrete_spread_outcome;
+        let concrete_spread_outcome = if let Some(outcome) = concrete_spread_outcome {
+            Some(outcome)
+        } else if !spread_has_type_params {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (prepared_spread, prepared_props) =
+                self.prepare_assignability_inputs(spread_type, props_type);
+            let request = RelationRequest::assign(prepared_spread, prepared_props);
+            built_concrete_spread_outcome = self.execute_relation_request(&request);
+            Some(&built_concrete_spread_outcome)
+        } else {
+            None
+        };
+
         // For concrete spread types, whole-type assignability is the fast path and
         // also prevents false positives from imprecise per-property extraction.
         // For generic spreads, the relation can be too optimistic; keep them on the
         // normalized JSX spread path below so we can classify TS2322 vs TS2741 from
         // the apparent/object shape first.
-        if !spread_has_type_params && self.is_assignable_to(spread_type, props_type) {
+        if concrete_spread_outcome.is_some_and(|outcome| outcome.related) {
             return false;
         }
 
         // TS2559: When the spread type has no properties in common with the target
         // props type (a "weak type" violation), tsc emits TS2559 instead of proceeding
         // with per-property TS2322 checks.
-        if !spread_has_type_params {
-            let analysis = self.analyze_assignability_failure(spread_type, props_type);
-            if matches!(
-                &analysis.failure_reason,
-                Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
-            ) {
+        if let Some(outcome) = concrete_spread_outcome {
+            if outcome.weak_union_violation {
                 let resolved_spread = self.evaluate_type_with_env(spread_type);
                 let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
                 let has_jsx_managed_prop = crate::query_boundaries::common::object_shape_for_type(

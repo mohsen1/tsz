@@ -3,6 +3,7 @@
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::assignability::RelationOutcome;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
@@ -435,7 +436,8 @@ impl<'a> CheckerState<'a> {
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
 
-        let mut spread_entries: Vec<(TypeId, TypeId, NodeIndex, usize)> = Vec::new();
+        let mut spread_entries: Vec<(TypeId, TypeId, NodeIndex, usize, Option<RelationOutcome>)> =
+            Vec::new();
 
         let attr_nodes = &attrs.properties.nodes;
         let any_spread_present = attr_nodes.iter().any(|&attr_idx| {
@@ -1159,12 +1161,26 @@ impl<'a> CheckerState<'a> {
                 // where `props: T`), we can't enumerate the properties it provides.
                 // Mark spread_covers_all so missing-required-property checks (TS2741)
                 // don't fire — the generic spread could provide any property.
-                if crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    spread_type,
-                ) {
+                let spread_has_type_parameters =
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        spread_type,
+                    );
+                let concrete_spread_outcome = if !spread_has_type_parameters && !skip_prop_checks {
+                    use crate::query_boundaries::assignability::RelationRequest;
+                    let (prepared_spread, prepared_props) =
+                        self.prepare_assignability_inputs(spread_type, props_type);
+                    let request = RelationRequest::assign(prepared_spread, prepared_props);
+                    Some(self.execute_relation_request(&request))
+                } else {
+                    None
+                };
+                if spread_has_type_parameters {
                     spread_covers_all = true;
-                } else if !skip_prop_checks && self.is_assignable_to(spread_type, props_type) {
+                } else if concrete_spread_outcome
+                    .as_ref()
+                    .is_some_and(|outcome| outcome.related)
+                {
                     // The solver reports the spread is structurally assignable to the
                     // whole props type, so all required members are satisfied — including
                     // ones inherited from Object.prototype (toString, valueOf, …) that
@@ -1198,6 +1214,7 @@ impl<'a> CheckerState<'a> {
                         display_spread_type,
                         spread_expr_idx,
                         attr_i,
+                        concrete_spread_outcome,
                     ));
                 }
             }
@@ -1229,9 +1246,12 @@ impl<'a> CheckerState<'a> {
                 );
             let mut earlier_spread_props: rustc_hash::FxHashSet<String> =
                 rustc_hash::FxHashSet::default();
-            for (i, &(spread_type, raw_spread_type, _spread_expr_idx, spread_pos)) in
+            for (i, (spread_type, raw_spread_type, _spread_expr_idx, spread_pos, outcome)) in
                 spread_entries.iter().enumerate()
             {
+                let spread_type = *spread_type;
+                let raw_spread_type = *raw_spread_type;
+                let spread_pos = *spread_pos;
                 // Only later explicit attributes override the current spread.
                 let mut overridden: rustc_hash::FxHashSet<&str> = explicit_attr_entries
                     .iter()
@@ -1324,6 +1344,7 @@ impl<'a> CheckerState<'a> {
                     &display_target,
                     preferred_target_display,
                     merged_attrs_display.as_deref(),
+                    outcome.as_ref(),
                 );
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
 
@@ -1532,7 +1553,7 @@ impl<'a> CheckerState<'a> {
         let spread_satisfies_type_param = props_is_type_param
             && spread_entries
                 .iter()
-                .any(|&(spread_type, _, _, _)| self.is_assignable_to(spread_type, props_type));
+                .any(|(spread_type, _, _, _, _)| self.is_assignable_to(*spread_type, props_type));
         let reported_type_param_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
