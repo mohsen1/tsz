@@ -1187,22 +1187,11 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         self.write(&self.print_type_id(return_type_id));
                     }
-                } else if func.body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(func.body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if func.body.is_some() && self.body_returns_void(func.body) {
-                    self.write(": void");
+                } else {
+                    self.emit_js_body_return_annotation(func.body);
                 }
-            } else if func.body.is_some()
-                && let Some(type_text) = self.function_body_preferred_return_type_text(func.body)
-            {
-                self.write(": ");
-                self.write(&type_text);
-            } else if func.body.is_some() && self.body_returns_void(func.body) {
-                self.write(": void");
+            } else {
+                self.emit_js_body_return_annotation(func.body);
             }
 
             self.write(";");
@@ -1297,21 +1286,11 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));
                 }
-            } else if func.body.is_some()
-                && let Some(type_text) = self.function_body_preferred_return_type_text(func.body)
-            {
-                self.write(": ");
-                self.write(&type_text);
-            } else if func.body.is_some() && self.body_returns_void(func.body) {
-                self.write(": void");
+            } else {
+                self.emit_js_body_return_annotation(func.body);
             }
-        } else if func.body.is_some()
-            && let Some(type_text) = self.function_body_preferred_return_type_text(func.body)
-        {
-            self.write(": ");
-            self.write(&type_text);
-        } else if func.body.is_some() && self.body_returns_void(func.body) {
-            self.write(": void");
+        } else {
+            self.emit_js_body_return_annotation(func.body);
         }
 
         self.write(";");
@@ -1601,21 +1580,11 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));
                 }
-            } else if func.body.is_some()
-                && let Some(type_text) = self.function_body_preferred_return_type_text(func.body)
-            {
-                self.write(": ");
-                self.write(&type_text);
-            } else if func.body.is_some() && self.body_returns_void(func.body) {
-                self.write(": void");
+            } else {
+                self.emit_js_body_return_annotation(func.body);
             }
-        } else if func.body.is_some()
-            && let Some(type_text) = self.function_body_preferred_return_type_text(func.body)
-        {
-            self.write(": ");
-            self.write(&type_text);
-        } else if func.body.is_some() && self.body_returns_void(func.body) {
-            self.write(": void");
+        } else {
+            self.emit_js_body_return_annotation(func.body);
         }
     }
 
@@ -3219,21 +3188,11 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));
                 }
-            } else if func.body.is_some()
-                && let Some(type_text) = self.function_body_preferred_return_type_text(func.body)
-            {
-                self.write(": ");
-                self.write(&type_text);
-            } else if func.body.is_some() && self.body_returns_void(func.body) {
-                self.write(": void");
+            } else {
+                self.emit_js_body_return_annotation(func.body);
             }
-        } else if func.body.is_some()
-            && let Some(type_text) = self.function_body_preferred_return_type_text(func.body)
-        {
-            self.write(": ");
-            self.write(&type_text);
-        } else if func.body.is_some() && self.body_returns_void(func.body) {
-            self.write(": void");
+        } else {
+            self.emit_js_body_return_annotation(func.body);
         }
 
         self.write(";");
