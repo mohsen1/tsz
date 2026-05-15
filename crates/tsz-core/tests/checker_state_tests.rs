@@ -15631,7 +15631,8 @@ const reducer = createReducer(0, {
 /// TS Unsoundness #41: Key Remapping with `as never`
 /// In mapped types, remapping a key to `never` removes that key from the result.
 /// This is the mechanism behind the `Omit` utility type.
-/// Note: Full instantiation of generic mapped types is tested in `solver/evaluate_tests.rs`.
+/// Note: Full instantiation of generic mapped types is tested in
+/// `crates/tsz-solver/tests/evaluate_tests.rs`.
 // TODO: Fix TS2304 for mapped type parameters (P, K) -- binder scope gap.
 #[test]
 fn test_key_remapping_syntax_parsing() {
@@ -15800,7 +15801,8 @@ declare const y: NonDistributive<string>;
 
 /// TS Unsoundness #40: Conditional type parsing with concrete extends checks
 /// Tests that conditional types with concrete types parse correctly.
-/// Note: Conditional type evaluation during type alias assignment is tested in `solver/evaluate_tests.rs`.
+/// Note: Conditional type evaluation during type alias assignment is tested in
+/// `crates/tsz-solver/tests/evaluate_tests.rs`.
 #[test]
 fn test_conditional_type_concrete_extends() {
     // Test that conditional types parse and bind correctly with concrete extends checks
@@ -15848,7 +15850,8 @@ declare const t: TupleCheck;
 
 /// TS Unsoundness #40: Tuple-wrapped conditional types for non-distribution
 /// Tests the [T] extends [U] pattern used to disable distributivity.
-/// The `is_distributive` flag detection is verified in `solver/lower_tests.rs`.
+/// The `is_distributive` flag detection is verified in
+/// `crates/tsz-solver/tests/evaluate_tests.rs`.
 #[test]
 fn test_tuple_wrapped_conditional_pattern() {
     // Test the [T] extends [U] pattern used to disable distributivity
