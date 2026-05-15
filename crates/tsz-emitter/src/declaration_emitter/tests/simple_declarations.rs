@@ -3548,6 +3548,51 @@ exports.K = class K {
 }
 
 #[test]
+fn test_js_commonjs_class_expression_method_body_survives_non_callable_cache() {
+    let source = r#"
+exports.K = class K {
+    values() {
+        return new K();
+    }
+};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let method_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::METHOD_DECLARATION)
+                .then_some(NodeIndex(idx as u32))
+                .filter(|&method_idx| {
+                    parser
+                        .arena
+                        .get(method_idx)
+                        .and_then(|node| parser.arena.get_method_decl(node))
+                        .and_then(|method| parser.arena.get_identifier_text(method.name))
+                        == Some("values")
+                })
+        })
+        .expect("missing values method");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(method_idx.0, TypeId::UNKNOWN);
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("values(): K;"),
+        "Expected CommonJS class expression method return type to fall back to body inference: {output}"
+    );
+}
+
+#[test]
 fn test_object_literal_computed_numeric_names_prefer_syntax_shape() {
     let output = emit_dts(
         r#"
