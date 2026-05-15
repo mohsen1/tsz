@@ -226,14 +226,17 @@ pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
+    if let Some(cached) = db.contains_infer_types_cached(type_id) {
+        return cached;
+    }
     // Fast path: leaf types (Literal, Object, Function, etc.) that don't
     // contain nested types can't contain Infer. Only composite types
     // (Union, Intersection, Application, etc.) need traversal.
-    match db.lookup(type_id) {
-        Some(TypeData::Infer(_)) => return true,
+    let result = match db.lookup(type_id) {
+        Some(TypeData::Infer(_)) => true,
         Some(TypeData::TypeParameter(tp)) => {
             let name = db.resolve_atom_ref(tp.name);
-            return name.starts_with("__infer_") || name.starts_with("__infer_src_");
+            name.starts_with("__infer_") || name.starts_with("__infer_src_")
         }
         Some(
             TypeData::Literal(_)
@@ -244,17 +247,18 @@ pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             | TypeData::ModuleNamespace(_)
             | TypeData::BoundParameter(_)
             | TypeData::Recursive(_),
-        ) => return false,
-        _ => {}
-    }
-    contains_type_matching(db, type_id, |key| match key {
-        TypeData::Infer(_) => true,
-        TypeData::TypeParameter(tp) => {
-            let name = db.resolve_atom_ref(tp.name);
-            name.starts_with("__infer_") || name.starts_with("__infer_src_")
-        }
-        _ => false,
-    })
+        ) => false,
+        _ => contains_type_matching(db, type_id, |key| match key {
+            TypeData::Infer(_) => true,
+            TypeData::TypeParameter(tp) => {
+                let name = db.resolve_atom_ref(tp.name);
+                name.starts_with("__infer_") || name.starts_with("__infer_src_")
+            }
+            _ => false,
+        }),
+    };
+    db.set_contains_infer_types_cache(type_id, result);
+    result
 }
 
 /// Check if a type contains any unresolved `TypeQuery` references.
@@ -267,8 +271,11 @@ pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
-    match db.lookup(type_id) {
-        Some(TypeData::TypeQuery(_)) => return true,
+    if let Some(cached) = db.contains_type_query_cached(type_id) {
+        return cached;
+    }
+    let result = match db.lookup(type_id) {
+        Some(TypeData::TypeQuery(_)) => true,
         Some(
             TypeData::Literal(_)
             | TypeData::Intrinsic(_)
@@ -278,10 +285,11 @@ pub fn contains_type_query_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             | TypeData::ModuleNamespace(_)
             | TypeData::BoundParameter(_)
             | TypeData::Recursive(_),
-        ) => return false,
-        _ => {}
-    }
-    contains_type_matching(db, type_id, |key| matches!(key, TypeData::TypeQuery(_)))
+        ) => false,
+        _ => contains_type_matching(db, type_id, |key| matches!(key, TypeData::TypeQuery(_))),
+    };
+    db.set_contains_type_query_cache(type_id, result);
+    result
 }
 
 /// Check if a type contains unresolved type parameters other than tsz's internal
