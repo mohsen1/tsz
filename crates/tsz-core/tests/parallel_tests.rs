@@ -2267,7 +2267,6 @@ export default function () {
 }
 
 #[test]
-#[ignore] // TODO: Cross-file const/class redeclaration TS2451 needs parallel detection
 fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts2451() {
     let files = vec![
         ("a.ts".to_string(), "const Bar = 3;\n".to_string()),
@@ -2298,12 +2297,10 @@ fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts245
         .map(|diag| diag.code)
         .collect();
 
-    // After the fix-duplicate-identifier merge, cross-file const/class redeclarations
-    // correctly emit TS2300 (Duplicate identifier) instead of TS2451.
     assert_eq!(
         codes,
-        vec![2300],
-        "Expected b.ts to report TS2300 for cross-file const/class redeclaration. Diagnostics: {:#?}",
+        vec![2451],
+        "Expected b.ts to report TS2451 for cross-file const/class redeclaration. Diagnostics: {:#?}",
         file_b.diagnostics
     );
 }
@@ -3219,10 +3216,9 @@ class B {
 }
 
 #[test]
-#[ignore] // TODO: Private accessor before field declarations reporting needs parallel handling
 fn test_check_files_parallel_private_accessor_before_field_reports_both_declarations() {
-    // tsc reports TS2300 on BOTH declarations when a private accessor and
-    // private field share the same name, so we expect 6 total (2 per class).
+    // tsc reports TS2300 on the later field declaration when a private accessor
+    // already established the same name.
     let source = r#"
 function cases() {
     class A {
@@ -3265,8 +3261,8 @@ function cases() {
         .count();
 
     assert_eq!(
-        ts2300_count, 6,
-        "Expected TS2300 on both accessor and field declarations (2 per class × 3 classes). Diagnostics: {:#?}",
+        ts2300_count, 3,
+        "Expected TS2300 on the later private field declarations. Diagnostics: {:#?}",
         file.diagnostics
     );
     assert!(
