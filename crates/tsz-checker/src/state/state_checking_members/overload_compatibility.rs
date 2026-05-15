@@ -45,6 +45,20 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn has_rest_parameter_for_overload_compatibility(&self, type_id: tsz_solver::TypeId) -> bool {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+        {
+            return shape.params.iter().any(|param| param.rest);
+        }
+
+        crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            .is_some_and(|sigs| {
+                sigs.first()
+                    .is_some_and(|sig| sig.params.iter().any(|param| param.rest))
+            })
+    }
+
     fn jsdoc_overload_tag_span(
         &self,
         comment: &tsz_common::comments::CommentRange,
@@ -854,6 +868,7 @@ impl<'a> CheckerState<'a> {
             self.required_parameter_count_for_overload_compatibility(impl_type),
             self.required_parameter_count_for_overload_compatibility(overload_type),
         ) && impl_required > overload_required
+            && !self.has_rest_parameter_for_overload_compatibility(overload_type)
         {
             return false;
         }
