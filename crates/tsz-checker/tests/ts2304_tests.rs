@@ -191,6 +191,73 @@ fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
     );
 }
 
+#[test]
+fn test_ts2661_emitted_for_exporting_lib_global_type() {
+    let diagnostics = check_with_lib("export type { RegExp };");
+
+    let ts2661_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2661 && d.message_text.contains("'RegExp'"))
+        .collect();
+
+    assert!(
+        !ts2661_errors.is_empty(),
+        "Expected TS2661 when exporting a standard-library global type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2661_emitted_for_type_only_export_specifier_of_lib_global() {
+    let diagnostics = check_with_lib("export { type RegExp };");
+
+    let ts2661_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2661 && d.message_text.contains("'RegExp'"))
+        .collect();
+
+    assert!(
+        !ts2661_errors.is_empty(),
+        "Expected TS2661 when exporting a standard-library global through a type-only specifier, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_type_only_export_specifier_still_reports_missing_name() {
+    let diagnostics = check_with_lib("export { type Missing };");
+
+    let ts2304_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains("'Missing'"))
+        .collect();
+
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 for missing type-only export specifier, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_type_only_export_of_local_declarations_is_allowed() {
+    let diagnostics = check_with_lib(
+        r#"
+type Local = string;
+interface Box {}
+export type { Local };
+export { type Box };
+"#,
+    );
+
+    let export_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2661 || d.code == 2304)
+        .collect();
+
+    assert!(
+        export_errors.is_empty(),
+        "Expected local type-only exports to be accepted, got: {diagnostics:?}"
+    );
+}
+
 // TODO: mapped type key parameter 'Current' used in HandlersFrom<R> is not resolved in
 // scope, causing a false TS2304. Blocked on binder mapped type param fix.
 #[test]
