@@ -22,6 +22,13 @@ use tsz_solver::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_actual_lib_name_to_def_id_for_lowering(
+        &self,
+        type_name: &str,
+    ) -> Option<tsz_solver::DefId> {
+        self.ctx.actual_lib_def_id_for_bare_name(type_name)
+    }
+
     pub(crate) fn lib_name_has_local_augmentation(&self, name: &str) -> bool {
         self.ctx
             .binder
@@ -38,7 +45,7 @@ impl<'a> CheckerState<'a> {
         // Array is merged across lib.es5/lib.es2015.iterable/etc.; cross-checker
         // shared TypeIds expose property-order races to the type printer
         // (e.g. mappedTypeWithAsClauseAndLateBoundProperty).
-        if name == "Array" {
+        if name == "Array" || name.starts_with("Intl.") {
             return true;
         }
         self.lib_name_has_local_augmentation(name)
@@ -137,7 +144,8 @@ impl<'a> CheckerState<'a> {
                     )
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 };
 
                 let lazy_type_params_resolver =
@@ -150,6 +158,7 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &no_value_resolver,
                 )
+                .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
                 let lowering = if self.ctx.all_binders.is_some()

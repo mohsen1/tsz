@@ -1743,6 +1743,13 @@ impl<'a> CheckerState<'a> {
                 elaborated = true;
                 continue;
             }
+            if self.object_literal_numeric_members_assign_to_mapped_target(
+                unwrapped_prop_value_idx,
+                target_prop_type,
+            ) {
+                elaborated = true;
+                continue;
+            }
 
             // Skip if types are unresolved
             if source_prop_type == TypeId::ERROR
@@ -1942,6 +1949,100 @@ impl<'a> CheckerState<'a> {
         }
 
         elaborated
+    }
+
+    fn object_literal_numeric_members_assign_to_mapped_target(
+        &mut self,
+        object_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        if !self.type_has_mapped_alias_surface(target_type, 0) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(object_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(node).cloned() else {
+            return false;
+        };
+        if obj.elements.nodes.is_empty() {
+            return false;
+        }
+
+        let mut saw_numeric_member = false;
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        return false;
+                    };
+                    (prop.name, prop.initializer)
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
+                        return false;
+                    };
+                    (prop.name, prop.name)
+                }
+                _ => return false,
+            };
+
+            let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
+                return false;
+            };
+            if !tsz_solver::utils::is_numeric_literal_name(&prop_name) {
+                return false;
+            }
+            saw_numeric_member = true;
+
+            let Some((target_member_type, _)) =
+                self.object_literal_target_property_type(target_type, prop_name_idx, &prop_name)
+            else {
+                return false;
+            };
+            if target_member_type == TypeId::ERROR || target_member_type == TypeId::ANY {
+                continue;
+            }
+
+            let source_member_type = self.get_type_of_node(prop_value_idx);
+            if source_member_type == TypeId::ERROR || source_member_type == TypeId::ANY {
+                continue;
+            }
+            if !self.is_assignable_to(source_member_type, target_member_type) {
+                return false;
+            }
+        }
+
+        saw_numeric_member
+    }
+
+    fn type_has_mapped_alias_surface(&mut self, target_type: TypeId, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        if query_common::mapped_type_id(self.ctx.types, target_type).is_some() {
+            return true;
+        }
+        if let Some(members) = query_common::union_members(self.ctx.types, target_type) {
+            return members
+                .iter()
+                .copied()
+                .filter(|&member| member != TypeId::NULL && member != TypeId::UNDEFINED)
+                .any(|member| self.type_has_mapped_alias_surface(member, depth + 1));
+        }
+        if let Some((base, _args)) = query_common::application_info(self.ctx.types, target_type)
+            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
+        {
+            let (body_type, _type_params) = self.type_reference_symbol_type_with_params(sym_id);
+            return self.type_has_mapped_alias_surface(body_type, depth + 1);
+        }
+        false
     }
 
     fn target_has_never_indexed_access_surface(&self, target_type: TypeId) -> bool {
