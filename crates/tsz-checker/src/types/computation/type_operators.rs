@@ -4,7 +4,7 @@
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::TypeId;
+use tsz_solver::{SymbolRef, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Get type from a union type node (A | B).
@@ -123,8 +123,13 @@ impl<'a> CheckerState<'a> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                // unique is handled differently - it's a type modifier for symbols
-                // For now, just return the inner type
+                if inner_type == TypeId::SYMBOL {
+                    return self.ctx.types.unique_symbol(synthetic_unique_symbol_ref(
+                        &self.ctx.file_name,
+                        node.pos,
+                        node.end,
+                    ));
+                }
                 return inner_type;
             }
 
@@ -300,4 +305,17 @@ impl<'a> CheckerState<'a> {
         self.get_class_decl_for_display_type(type_id)
             .map(|(class_idx, _)| self.get_class_name_from_decl(class_idx))
     }
+}
+
+fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
+    let mut hash = 0x811c_9dc5u32;
+    for byte in file_name.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    for value in [pos, end] {
+        hash ^= value;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    SymbolRef(hash | 0x8000_0000)
 }
