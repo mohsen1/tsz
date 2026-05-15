@@ -138,13 +138,20 @@ impl<'a> CheckerState<'a> {
     /// signatures like `T extends { [key: string]: (...args: any) => void }`.
     pub(super) fn indexed_access_resolves_to_callable(&mut self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
-        let Some((object, _index)) = query::index_access_components(db, type_id) else {
+        let Some((object, index)) = query::index_access_components(db, type_id) else {
             return false;
         };
-        if let Some(_mapped_id) = query::mapped_type_id(db, object)
-            && self.mapped_template_resolves_to_callable_through_constraint(object)
-        {
-            return true;
+        if let Some(mapped_id) = query::mapped_type_id(db, object) {
+            let mapped = db.mapped_type(mapped_id);
+            if mapped.name_type.is_some()
+                && query::contains_type_parameters(db, index)
+                && crate::query_boundaries::common::is_template_literal_type(self.ctx.types, index)
+            {
+                return false;
+            }
+            if self.mapped_template_resolves_to_callable_through_constraint(object) {
+                return true;
+            }
         }
         // Resolve the object type's constraint chain to find a mapped type
         let object_constraint = if query::is_bare_type_parameter(db, object) {
@@ -181,6 +188,49 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    pub(super) fn invalid_remapped_mapped_template_index_access(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some((object, index)) = query::index_access_components(db, type_id) else {
+            return false;
+        };
+        let object_for_check = self.evaluate_type_for_assignability(object);
+        let mapped_id = query::mapped_type_id(db, object)
+            .or_else(|| query::mapped_type_id(db, object_for_check));
+        let Some(mapped_id) = mapped_id else {
+            return false;
+        };
+        let mapped = db.mapped_type(mapped_id);
+        mapped.name_type.is_some()
+            && query::contains_type_parameters(db, index)
+            && crate::query_boundaries::common::is_template_literal_type(self.ctx.types, index)
+    }
+
+    pub(super) fn emit_invalid_remapped_mapped_template_index_constraint_error(
+        &mut self,
+        type_arg: TypeId,
+        constraint: TypeId,
+        arg_idx: Option<tsz_parser::parser::NodeIndex>,
+    ) -> bool {
+        let constraint_resolved = self.resolve_lazy_type(constraint);
+        let constraint_evaluated = self.evaluate_type_for_assignability(constraint_resolved);
+        let db = self.ctx.types.as_type_database();
+        let constraint_is_callable = query::is_callable_type(db, constraint_resolved)
+            || query::is_callable_type(db, constraint_evaluated)
+            || self.is_function_constraint(constraint)
+            || self.is_function_constraint(constraint_resolved);
+        if !constraint_is_callable || !self.invalid_remapped_mapped_template_index_access(type_arg)
+        {
+            return false;
+        }
+        if let Some(arg_idx) = arg_idx {
+            self.error_type_constraint_not_satisfied(type_arg, constraint_resolved, arg_idx);
+        }
+        true
     }
 
     pub(super) fn mapped_template_resolves_to_callable_through_constraint(
