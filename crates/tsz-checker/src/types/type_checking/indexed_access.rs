@@ -10,8 +10,9 @@ use tsz_solver::TypeId;
 mod indexed_access_helpers;
 
 use indexed_access_helpers::{
-    has_nonpublic_property, indexed_access_object_alias_application_exceeds_depth,
-    is_broad_index_type, same_object_key_space, same_type_param_name,
+    indexed_access_object_alias_application_exceeds_depth, is_broad_index_type,
+    remapped_mapped_type_template_index_should_report_ts2536, same_object_key_space,
+    same_type_param_name,
 };
 
 impl<'a> CheckerState<'a> {
@@ -1013,6 +1014,25 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        if remapped_mapped_type_template_index_should_report_ts2536(
+            self.ctx.types,
+            object_type_for_check,
+            index_type,
+            index_type_for_check,
+        ) {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
         // First check: raw index type against keyof.
         // This handles cases where keyof includes type parameters from mapped types
         // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.
@@ -1944,57 +1964,5 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    /// TS4105: Emit "Private or protected member '{name}' cannot be accessed on
-    /// a type parameter." for each type-parameter portion of `object_type` whose
-    /// constraint has a non-public property with the given `name`.
-    ///
-    /// For union object types (e.g. `(T | B)["a"]`), each member is checked
-    /// individually. Only actual `TypeParameter` nodes trigger the diagnostic —
-    /// concrete class types are skipped (tsc only reports TS4105 on type params).
-    fn check_ts4105_private_on_type_parameter(
-        &mut self,
-        error_node: NodeIndex,
-        object_type: TypeId,
-        property_name: &str,
-    ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
-        // Collect the type parameters to inspect: either the object type itself
-        // (if it's a type parameter) or the type-parameter members of a union.
-        let mut type_params_to_check: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
-
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
-            type_params_to_check.push(object_type);
-        } else if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
-        {
-            for &member in &members {
-                if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member) {
-                    type_params_to_check.push(member);
-                }
-            }
-        }
-
-        let mut emitted = false;
-        for &tp in &type_params_to_check {
-            if let Some(constraint) =
-                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, tp)
-                && has_nonpublic_property(self.ctx.types, constraint, property_name)
-                && !emitted
-            {
-                let message = format_message(
-                        diagnostic_messages::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
-                        &[property_name],
-                    );
-                self.error_at_node(
-                        error_node,
-                        &message,
-                        diagnostic_codes::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
-                    );
-                emitted = true;
-            }
-        }
     }
 }
