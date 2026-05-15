@@ -529,6 +529,15 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+        ) && let Some(merged_result) =
+            self.resolve_actual_lib_namespace_merged_property(resolved_object_type, prop_name)
+        {
+            return merged_result;
+        }
+
         // If property not found and the type is a Mapped type (e.g. { [P in Keys]: T }),
         // the solver's NoopResolver can't resolve Lazy(DefId) constraints (type alias refs).
         // Evaluate the mapped type via the solver's TypeEvaluator with full resolver
@@ -548,6 +557,49 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn resolve_actual_lib_namespace_merged_property(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
+        let sym_id =
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, object_type)?;
+        if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+            return None;
+        }
+
+        let export_name = {
+            let lib_binders = self.get_lib_binders();
+            let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+            symbol.escaped_name.clone()
+        };
+
+        // `Intl` interfaces are namespace exports split across multiple lib files.
+        // If a stale single-file shape misses a property, re-query the namespace
+        // export's merged direct-lib type before reporting TS2339.
+        let namespace = "Intl";
+        let export_sym_id = self.resolve_lib_namespace_export_symbol(namespace, &export_name)?;
+        if export_sym_id != sym_id {
+            return None;
+        }
+
+        let cache_name = format!("{namespace}.{export_name}");
+        self.ctx.lib_type_resolution_cache.remove(&cache_name);
+        let merged_type = self.resolve_lib_interface_type_by_symbol(&cache_name, export_sym_id)?;
+        if merged_type == object_type {
+            return None;
+        }
+
+        let merged_result = self.resolve_property_access_via_boundary(merged_type, prop_name);
+        match merged_result {
+            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                ..
+            } => Some(merged_result),
+            _ => None,
+        }
     }
 
     /// Pre-resolve a mapped type's constraint through the checker's `TypeEnvironment`.

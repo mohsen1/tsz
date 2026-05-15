@@ -123,6 +123,66 @@ const s: Symbol = {} as Symbol;
 }
 
 #[test]
+fn module_local_interface_date_does_not_augment_lib_constructor_return() {
+    // In a module, `interface Date` is local type meaning only. The lib
+    // `DateConstructor` return annotation must keep resolving to lib `Date`,
+    // not the module-local interface.
+    let codes = diagnostic_codes(
+        r#"
+export {};
+interface Date {
+    myCustomMethod(): string;
+}
+const d = new Date();
+const s: string = d.myCustomMethod();
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "module-local interface Date must not augment new Date() result; got: {codes:?}"
+    );
+}
+
+#[test]
+fn module_local_interface_regexp_does_not_augment_lib_constructor_return() {
+    let codes = diagnostic_codes(
+        r#"
+export {};
+interface RegExp {
+    localOnly(): string;
+}
+const r = new RegExp("");
+const s: string = r.localOnly();
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "module-local interface RegExp must not augment new RegExp() result; got: {codes:?}"
+    );
+}
+
+#[test]
+fn declare_global_interface_date_augments_lib_constructor_return() {
+    // The explicit global augmentation form should still merge with lib `Date`.
+    let codes = diagnostic_codes(
+        r#"
+export {};
+declare global {
+    interface Date {
+        myCustomMethod(): string;
+    }
+}
+const d = new Date();
+const s: string = d.myCustomMethod();
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "declare global interface Date should augment new Date() result; got: {codes:?}"
+    );
+}
+
+#[test]
 fn unique_symbol_shadow_does_not_pollute_indexed_access_traversal() {
     // Regression test for issue #4687: a module-local
     // `const Readonly: unique symbol` shadowing lib's `type Readonly<T>`
