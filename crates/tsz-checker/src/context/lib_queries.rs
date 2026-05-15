@@ -6,13 +6,18 @@
 use std::sync::Arc;
 
 use tsz_binder::SymbolId;
-use tsz_solver::DefId;
 
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
-    pub fn actual_lib_def_id_for_bare_name(&self, name: &str) -> Option<DefId> {
+    pub fn actual_lib_def_id_for_bare_name(&self, name: &str) -> Option<tsz_solver::DefId> {
         if name.contains('.') {
+            return None;
+        }
+        // This lib alias is an option-dependent intrinsic: it lowers to
+        // `undefined` under `strictBuiltinIteratorReturn` and `any` otherwise.
+        // Returning a stable lib `DefId` here would bypass that policy.
+        if name == "BuiltinIteratorReturn" {
             return None;
         }
 

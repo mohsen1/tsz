@@ -270,8 +270,8 @@ fn direct_actual_lib_delegation_cache_preserves_type_params() {
         .ctx
         .binder
         .file_locals
-        .get("ArrayIterator")
-        .expect("ArrayIterator should resolve to a lib symbol");
+        .get("IteratorObject")
+        .expect("IteratorObject should resolve to a lib symbol");
     let delegate_arena = state
         .ctx
         .binder
@@ -286,18 +286,22 @@ fn direct_actual_lib_delegation_cache_preserves_type_params() {
             delegate_arena,
             false,
         )
-        .expect("ArrayIterator should lower through the direct lib path");
+        .expect("IteratorObject should lower through the direct lib path");
 
     assert_ne!(ty, TypeId::UNKNOWN);
     assert_ne!(ty, TypeId::ERROR);
-    assert_eq!(params.len(), 1, "ArrayIterator should expose T");
+    assert_eq!(
+        params.len(),
+        3,
+        "IteratorObject should expose T, TReturn, and TNext"
+    );
 
     let (cached_ty, cached_params) = state
         .ctx
         .lib_delegation_cache
-        .get(&sym_id)
+        .symbol_type(sym_id)
         .expect("direct lib path should populate the delegation cache");
-    assert_eq!(*cached_ty, ty);
+    assert_eq!(cached_ty, ty);
     assert_eq!(
         cached_params.len(),
         params.len(),
@@ -397,7 +401,7 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
         assert_ne!(ty, TypeId::UNKNOWN, "{name} must not lower to unknown");
         assert_ne!(ty, TypeId::ERROR, "{name} must not lower to error");
         assert!(
-            state.ctx.lib_delegation_cache.contains_key(&sym_id),
+            state.ctx.lib_delegation_cache.contains_symbol_type(sym_id),
             "{name} should populate the delegation cache",
         );
     }
@@ -439,13 +443,7 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
     state.ctx.set_lib_contexts(lib_contexts);
     state.ctx.set_actual_lib_file_count(lib_files.len());
 
-    for name in [
-        "ArrayIterator",
-        "Iterator",
-        "IteratorObject",
-        "RegExpStringIterator",
-        "StringIterator",
-    ] {
+    for name in ["Iterator", "IteratorObject"] {
         let sym_id = state
             .ctx
             .binder
@@ -483,6 +481,82 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
         assert!(
             !params.is_empty(),
             "{name} should preserve generic type parameters",
+        );
+    }
+}
+
+#[test]
+fn direct_actual_lib_symbol_type_falls_back_for_iterator_wrappers_without_next() {
+    let lib_files = load_lib_files(&[
+        "es2015.iterable.d.ts",
+        "es2020.symbol.wellknown.d.ts",
+        "esnext.iterator.d.ts",
+    ]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    for name in [
+        "ArrayIterator",
+        "MapIterator",
+        "RegExpStringIterator",
+        "SetIterator",
+        "StringIterator",
+    ] {
+        let Some(sym_id) = state.ctx.binder.file_locals.get(name) else {
+            continue;
+        };
+        let symbol = state
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .unwrap_or_else(|| panic!("{name} symbol should exist"))
+            .clone();
+        let delegate_arena = state
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref);
+        assert!(
+            state.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol),
+            "{name} should match the generic actual-lib interface shape",
+        );
+        assert!(
+            state.symbol_has_direct_actual_lib_iterator_object_heritage(sym_id, &symbol),
+            "{name} should inherit from IteratorObject",
+        );
+
+        let result = state.direct_actual_lib_symbol_type(
+            sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            delegate_arena,
+            false,
+        );
+        assert!(
+            result.is_none(),
+            "{name} should fall back when the direct result cannot prove inherited next()"
         );
     }
 }
@@ -616,9 +690,9 @@ fn direct_actual_lib_symbol_type_handles_non_generic_alias_body_query() {
     let (cached_ty, cached_params) = state
         .ctx
         .lib_delegation_cache
-        .get(&sym_id)
+        .symbol_type(sym_id)
         .expect("direct alias path should populate the delegation cache");
-    assert_eq!(*cached_ty, ty);
+    assert_eq!(cached_ty, ty);
     assert!(cached_params.is_empty());
 }
 
@@ -978,9 +1052,9 @@ fn direct_actual_lib_symbol_type_handles_readonly_generic_alias_body_query() {
     let (cached_ty, cached_params) = state
         .ctx
         .lib_delegation_cache
-        .get(&sym_id)
+        .symbol_type(sym_id)
         .expect("direct alias path should populate the delegation cache");
-    assert_eq!(*cached_ty, ty);
+    assert_eq!(cached_ty, ty);
     assert_eq!(
         cached_params.len(),
         params.len(),

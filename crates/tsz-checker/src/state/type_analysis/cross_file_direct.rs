@@ -10,6 +10,7 @@ use tsz_common::perf_counters::{
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
@@ -169,6 +170,62 @@ impl<'a> CheckerState<'a> {
                 .and_then(|node| arena.get_interface(node))
                 .and_then(|interface| interface.type_parameters.as_ref())
                 .is_some_and(|params| !params.nodes.is_empty())
+    }
+
+    fn symbol_has_direct_actual_lib_iterator_object_heritage(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .is_some_and(|arenas| {
+                    arenas.iter().any(|arena| {
+                        Self::direct_actual_lib_interface_has_iterator_object_heritage(
+                            arena.as_ref(),
+                            decl_idx,
+                        )
+                    })
+                })
+        })
+    }
+
+    fn direct_actual_lib_interface_has_iterator_object_heritage(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        if !is_direct_actual_lib_declaration_arena(arena) {
+            return false;
+        }
+        let Some(interface) = arena
+            .get(decl_idx)
+            .and_then(|node| arena.get_interface(node))
+        else {
+            return false;
+        };
+        let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+            return false;
+        };
+        heritage_clauses.nodes.iter().copied().any(|clause_idx| {
+            let Some(clause) = arena
+                .get(clause_idx)
+                .and_then(|node| arena.get_heritage_clause(node))
+            else {
+                return false;
+            };
+            clause.types.nodes.iter().copied().any(|type_idx| {
+                let Some(expr) = arena
+                    .get(type_idx)
+                    .and_then(|node| arena.get_expr_type_args(node))
+                else {
+                    return false;
+                };
+                arena.get_identifier_text(expr.expression) == Some("IteratorObject")
+            })
+        })
     }
 
     fn symbol_declarations_are_direct_actual_lib_only(
@@ -513,6 +570,12 @@ impl<'a> CheckerState<'a> {
                     DirectActualLibIntlInterfaceOutcome::UnknownOrError,
                 );
             }
+            return None;
+        }
+        if has_interface_type_params
+            && self.symbol_has_direct_actual_lib_iterator_object_heritage(sym_id, &symbol)
+            && !common::has_property_by_str(self.ctx.types, direct_type, "next")
+        {
             return None;
         }
         if let Some(outcome) = intl_success_outcome {
