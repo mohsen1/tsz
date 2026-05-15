@@ -22,6 +22,13 @@ use tsz_solver::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_actual_lib_name_to_def_id_for_lowering(
+        &self,
+        type_name: &str,
+    ) -> Option<tsz_solver::DefId> {
+        self.ctx.actual_lib_def_id_for_bare_name(type_name)
+    }
+
     pub(crate) fn lib_name_has_local_augmentation(&self, name: &str) -> bool {
         self.ctx
             .binder
@@ -137,7 +144,8 @@ impl<'a> CheckerState<'a> {
                     )
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 };
 
                 let lazy_type_params_resolver =
