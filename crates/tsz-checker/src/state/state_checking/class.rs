@@ -6,9 +6,9 @@ use crate::flow_analysis::PropertyKey;
 use crate::query_boundaries::class_type as class_query;
 use crate::query_boundaries::definite_assignment::check_constructor_property_use_before_assignment;
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
-use tsz_parser::parser::NodeIndex;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -170,6 +170,8 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::CLASS_NAME_CANNOT_BE,
             );
         }
+
+        self.check_decorators_on_accessor_pairs(&class.members.nodes);
 
         // TS2725: Class name cannot be 'Object' when targeting ES5 and above with module X
         // Applies to non-ES module kinds (CommonJS, AMD, UMD, System) and non-ambient classes.
@@ -941,6 +943,7 @@ impl<'a> CheckerState<'a> {
             true,
             &class_type_param_names,
         );
+        self.check_decorators_on_accessor_pairs(&class.members.nodes);
 
         // Check heritage clauses for primitive type keywords (TS2863/TS2864).
         // Uses the lightweight check to avoid triggering constructor accessibility (TS2675)
@@ -1494,6 +1497,66 @@ impl<'a> CheckerState<'a> {
         let file_name = self.ctx.file_name.clone();
         self.error_global_type_missing_at_position(type_name, file_name.clone(), 0, 0);
         self.error_global_type_missing_at_position(type_name, file_name, 0, 0);
+    }
+
+    fn check_decorators_on_accessor_pairs(&mut self, members: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if !self.ctx.compiler_options.experimental_decorators {
+            return;
+        }
+
+        let mut decorated_accessors: FxHashMap<(bool, String), bool> = FxHashMap::default();
+
+        for &member_idx in members {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::GET_ACCESSOR
+                && node.kind != syntax_kind_ext::SET_ACCESSOR
+            {
+                continue;
+            }
+
+            let Some(accessor) = self.ctx.arena.get_accessor(node) else {
+                continue;
+            };
+            let Some(decorator_idx) = self.first_decorator_in_modifiers(&accessor.modifiers) else {
+                continue;
+            };
+            let Some(property_name) = self.get_property_name_resolved(accessor.name) else {
+                continue;
+            };
+
+            let is_static = self
+                .ctx
+                .arena
+                .has_modifier(&accessor.modifiers, tsz_scanner::SyntaxKind::StaticKeyword);
+            let is_get = node.kind == syntax_kind_ext::GET_ACCESSOR;
+            let key = (is_static, property_name);
+            if let Some(seen_is_get) = decorated_accessors.get(&key) {
+                if *seen_is_get != is_get {
+                    self.error_at_node(
+                        decorator_idx,
+                        diagnostic_messages::DECORATORS_CANNOT_BE_APPLIED_TO_MULTIPLE_GET_SET_ACCESSORS_OF_THE_SAME_NAME,
+                        diagnostic_codes::DECORATORS_CANNOT_BE_APPLIED_TO_MULTIPLE_GET_SET_ACCESSORS_OF_THE_SAME_NAME,
+                    );
+                }
+                continue;
+            }
+
+            decorated_accessors.insert(key, is_get);
+        }
+    }
+
+    fn first_decorator_in_modifiers(&self, modifiers: &Option<NodeList>) -> Option<NodeIndex> {
+        let modifiers = modifiers.as_ref()?;
+        modifiers.nodes.iter().copied().find(|&modifier_idx| {
+            self.ctx
+                .arena
+                .get(modifier_idx)
+                .is_some_and(|modifier| modifier.kind == syntax_kind_ext::DECORATOR)
+        })
     }
 
     /// TS1238: Check that a class decorator expression has a compatible call signature.

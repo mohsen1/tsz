@@ -911,11 +911,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Skip type-only re-exports since they are not runtime symbols
-            if specifier.is_type_only {
-                continue;
-            }
-
             let name_idx = if specifier.property_name.is_some() {
                 specifier.property_name
             } else {
@@ -973,8 +968,9 @@ impl<'a> CheckerState<'a> {
                 && self.file_has_jsdoc_typedef_named(self.ctx.current_file_idx, &name_str);
 
             // Check if the symbol is a local declaration or import.
-            // file_locals includes merged globals from other files, so we must also
-            // verify decl_file_idx matches the current file (or is u32::MAX for single-file).
+            // file_locals includes merged globals from other files and cloned standard-lib
+            // globals, so verify the declaration belongs to this file or is an unstamped
+            // user-file symbol rather than a standard-lib symbol.
             // Inside ambient module declarations, file-level symbols are not local to the
             // module and should emit TS2661.
             let current_file_idx = self.ctx.current_file_idx as u32;
@@ -984,16 +980,19 @@ impl<'a> CheckerState<'a> {
                 // scope chain: walk from the specifier's scope up to the first
                 // Module scope and check its symbol table.
                 self.is_name_in_enclosing_module_scope(&name_str, specifier_idx)
+            } else if has_local_jsdoc_typedef {
+                true
             } else {
                 self.ctx
                     .binder
                     .file_locals
                     .get(&name_str)
-                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                    .is_some_and(|sym| {
-                        sym.decl_file_idx == current_file_idx || sym.decl_file_idx == u32::MAX
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id).map(|sym| (sym_id, sym)))
+                    .is_some_and(|(sym_id, sym)| {
+                        sym.decl_file_idx == current_file_idx
+                            || (sym.decl_file_idx == u32::MAX
+                                && !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
                     })
-                    || has_local_jsdoc_typedef
             };
 
             if is_local

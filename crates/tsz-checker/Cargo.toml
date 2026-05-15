@@ -178,6 +178,10 @@ name = "ts1240_accessor_decorator_tests"
 path = "tests/ts1240_accessor_decorator_tests.rs"
 
 [[test]]
+name = "ts1207_decorated_accessor_tests"
+path = "tests/ts1207_decorated_accessor_tests.rs"
+
+[[test]]
 name = "ts2802_downlevel_iteration_tests"
 path = "tests/ts2802_downlevel_iteration_tests.rs"
 
@@ -1164,6 +1168,10 @@ path = "tests/recursive_type_references_tests.rs"
 [[test]]
 name = "template_literal_record_key_tests"
 path = "tests/template_literal_record_key_tests.rs"
+
+[[test]]
+name = "ts7053_template_mapped_tests"
+path = "tests/ts7053_template_mapped_tests.rs"
 
 [[test]]
 name = "tuple_union_contextual_typing_tests"
