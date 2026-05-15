@@ -120,10 +120,6 @@ fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
     matches!(name, "Iterator")
 }
 
-fn is_direct_actual_intl_interface_candidate_name(name: &str) -> bool {
-    name.ends_with("Info")
-}
-
 impl<'a> CheckerState<'a> {
     fn symbol_is_actual_lib_namespace_export(
         &self,
@@ -404,8 +400,6 @@ impl<'a> CheckerState<'a> {
         let name = symbol.escaped_name.clone();
         let intl_namespace_export =
             self.symbol_is_actual_lib_namespace_export("Intl", &name, sym_id);
-        let intl_candidate =
-            intl_namespace_export || is_direct_actual_intl_interface_candidate_name(&name);
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
@@ -415,7 +409,7 @@ impl<'a> CheckerState<'a> {
             && !proven_value_interface
             && !allow_actual_lib_declaration_proof_bypass(&name)
         {
-            if intl_candidate {
+            if intl_namespace_export {
                 record_direct_actual_lib_intl_interface_outcome(
                     DirectActualLibIntlInterfaceOutcome::ValueInterfaceNotAdmitted,
                 );
@@ -445,7 +439,7 @@ impl<'a> CheckerState<'a> {
             && !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
             && !allow_actual_lib_declaration_proof_bypass(&name)
         {
-            if intl_candidate {
+            if intl_namespace_export {
                 record_direct_actual_lib_intl_interface_outcome(
                     DirectActualLibIntlInterfaceOutcome::DeclarationNotProven,
                 );
@@ -474,11 +468,6 @@ impl<'a> CheckerState<'a> {
                 direct_type
             } else {
                 if !intl_namespace_export {
-                    if intl_candidate {
-                        record_direct_actual_lib_intl_interface_outcome(
-                            DirectActualLibIntlInterfaceOutcome::IntlNameNotAdmitted,
-                        );
-                    }
                     return None;
                 }
                 let Some(namespace_sym_id) =
