@@ -820,6 +820,44 @@ fn test_contains_infer_types() {
 }
 
 #[test]
+fn test_cached_contains_infer_and_type_query_predicates() {
+    let interner = TypeInterner::new();
+
+    let infer_type = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let type_query = interner.type_query(SymbolRef(7));
+    let nested = interner.union(vec![infer_type, type_query]);
+
+    assert!(crate::type_queries::contains_infer_types_db(
+        &interner, nested
+    ));
+    assert!(crate::type_queries::contains_type_query_db(
+        &interner, nested
+    ));
+    assert!(!crate::type_queries::contains_infer_types_db(
+        &interner,
+        TypeId::STRING
+    ));
+    assert!(!crate::type_queries::contains_type_query_db(
+        &interner,
+        TypeId::STRING
+    ));
+
+    // Repeated calls should observe the same stable per-TypeId answer whether
+    // they hit the structural walker or the interner-level predicate cache.
+    assert!(crate::type_queries::contains_infer_types_db(
+        &interner, nested
+    ));
+    assert!(crate::type_queries::contains_type_query_db(
+        &interner, nested
+    ));
+}
+
+#[test]
 fn test_reference_and_namespace_predicates() {
     let interner = TypeInterner::new();
 
