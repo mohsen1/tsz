@@ -965,23 +965,13 @@ impl<'a> CheckerState<'a> {
             // inner DefId→TypeId mappings survive child-checker teardown.
             checker.ctx.ensure_type_env_has_definition_store();
 
-            // Type aliases need their body and declaration parameters from the
-            // same lowering scope; otherwise generic alias applications cannot
-            // substitute the lowered type parameter ids.
-            let symbol_for_result = checker.get_cross_file_symbol(sym_id);
-            let (result, result_params) = if symbol_for_result
-                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
-            {
-                checker.type_reference_symbol_type_with_params(sym_id)
-            } else {
-                let result = checker.get_type_of_symbol(sym_id);
-                let result_params = checker
-                    .ctx
-                    .get_existing_def_id(sym_id)
-                    .and_then(|def_id| checker.ctx.get_def_type_params(def_id))
-                    .unwrap_or_default();
-                (result, result_params)
-            };
+            // Use get_type_of_symbol to ensure proper cycle detection.
+            let result = checker.get_type_of_symbol(sym_id);
+            let result_params = checker
+                .ctx
+                .get_existing_def_id(sym_id)
+                .and_then(|def_id| checker.ctx.get_def_type_params(def_id))
+                .unwrap_or_default();
 
             // Collect child data before dropping (child borrows from self.ctx.types).
 
