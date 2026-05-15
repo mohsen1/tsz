@@ -213,6 +213,14 @@ impl<'a> CheckerState<'a> {
         };
 
         for &member_idx in &iface.members.nodes {
+            if self.interface_member_is_mapped_type(member_idx) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    member_idx,
+                    diagnostic_messages::A_MAPPED_TYPE_MAY_NOT_DECLARE_PROPERTIES_OR_METHODS,
+                    diagnostic_codes::A_MAPPED_TYPE_MAY_NOT_DECLARE_PROPERTIES_OR_METHODS,
+                );
+            }
             self.check_styled_component_inner_component_constraint(member_idx);
             self.check_type_member_for_missing_names(member_idx);
             self.check_type_member_for_parameter_properties(member_idx);
@@ -454,6 +462,13 @@ impl<'a> CheckerState<'a> {
         self.check_variance_annotations(stmt_idx, &iface.type_parameters);
 
         self.pop_type_parameters(type_param_updates);
+    }
+
+    fn interface_member_is_mapped_type(&self, member_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(member_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::MAPPED_TYPE)
     }
 
     /// Check that variance annotations (`in`/`out`) on type parameters match
