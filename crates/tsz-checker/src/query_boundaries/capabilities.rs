@@ -47,6 +47,9 @@ pub enum FeatureGate {
 /// The kind of global name that was not found, determining which diagnostic to emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MissingGlobalKind {
+    /// A known environment global that `tsc` still reports as plain TS2304
+    /// when its declaring lib is absent.
+    PlainGlobalValue,
     /// Core global type (Array, String, etc.) → TS2318
     CoreGlobalType,
     /// Feature-specific global type (Awaited, Disposable, etc.) → TS2318
@@ -192,6 +195,12 @@ impl EnvironmentCapabilities {
     /// when name X is not found?" — replaces the scattered classifier chain in
     /// `report_cannot_find_name_internal`.
     pub fn classify_missing_global(&self, name: &str) -> Option<MissingGlobalKind> {
+        // Some web-platform globals share names with Node built-in modules, but
+        // tsc still reports a missing bare value as ordinary TS2304 when the
+        // declaring DOM/WebWorker lib is not loaded.
+        if is_known_plain_missing_global_value(name) {
+            return Some(MissingGlobalKind::PlainGlobalValue);
+        }
         // Node.js globals
         if is_known_node_global(name) {
             return Some(MissingGlobalKind::NodeGlobal);
@@ -476,6 +485,12 @@ pub(crate) fn is_known_dom_global(name: &str) -> bool {
     )
 }
 
+/// Check if a known environment value should be reported as plain TS2304 when
+/// absent, rather than as a DOM-lib or Node-types suggestion.
+pub(crate) fn is_known_plain_missing_global_value(name: &str) -> bool {
+    matches!(name, "crypto")
+}
+
 /// Check if a name is a known jQuery global that requires @types/jquery (TS2581/TS2592).
 pub(crate) fn is_known_jquery_global(name: &str) -> bool {
     matches!(name, "$" | "jQuery")
@@ -602,6 +617,10 @@ mod tests {
         assert_eq!(
             caps.classify_missing_global("document"),
             Some(MissingGlobalKind::DomGlobal)
+        );
+        assert_eq!(
+            caps.classify_missing_global("crypto"),
+            Some(MissingGlobalKind::PlainGlobalValue)
         );
         assert_eq!(
             caps.classify_missing_global("$"),
