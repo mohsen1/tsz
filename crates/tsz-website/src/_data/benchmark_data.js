@@ -224,6 +224,29 @@ function normalizedLastSuccessfulPhase(compatibility) {
   return null;
 }
 
+const COMPATIBILITY_METADATA_FIELDS = [
+  ["exit_class", "exit class"],
+  ["phase", "phase"],
+  ["last_successful_phase", "last successful phase"],
+  ["diagnostic_status", "diagnostic status"],
+  ["diagnostic_deltas", "diagnostic deltas"],
+  ["diagnostic_subsystems", "diagnostic subsystems"],
+  ["known_blockers", "known blockers"],
+  ["exit_codes", "exit codes"],
+  ["files_reached", "files reached"],
+  ["peak_memory_bytes", "peak memory"],
+  ["emit_status", "emit status"],
+  ["dts_status", "dts status"],
+];
+
+function missingCompatibilityMetadata(row) {
+  const compatibility = row?.compatibility;
+  if (!compatibility || typeof compatibility !== "object") return ["compatibility artifact"];
+  return COMPATIBILITY_METADATA_FIELDS
+    .filter(([field]) => !Object.prototype.hasOwnProperty.call(compatibility, field))
+    .map(([, label]) => label);
+}
+
 const TINY_BENCHMARK_MAX_LINES = 200;
 
 const EXPECTED_PROJECT_BENCHMARKS = [
@@ -368,6 +391,7 @@ function compatibilityRowFor(definition, allResults) {
   const artifactFamily = firstPresent(row?.compatibility?.semantic_owner_family, row?.compatibility?.owner_family);
   const compatibility = row?.compatibility || {};
   const diagnosticSubsystems = normalizedDiagnosticSubsystems(compatibility);
+  const missingMetadata = missingCompatibilityMetadata(row);
   return {
     ...definition,
     family: artifactFamily || definition.family,
@@ -393,6 +417,7 @@ function compatibilityRowFor(definition, allResults) {
     reductionCandidates: Array.isArray(compatibility.reduction_candidates)
       ? compatibility.reduction_candidates.slice(0, 5)
       : [],
+    missingMetadata,
     status: row?.status || "not recorded in latest benchmark artifact",
     url: benchmarkUrl({ name: definition.name }),
   };
@@ -1746,6 +1771,11 @@ export function getProjectCompatibilityDashboard() {
     const parts = [
       `phase: ${row.phase || "unknown"}`,
       row.lastSuccessfulPhase ? `last successful: ${row.lastSuccessfulPhase}` : "",
+      row.missingMetadata?.length
+        ? `artifact missing: ${
+            row.missingMetadata.slice(0, 4).join(", ")
+          }${row.missingMetadata.length > 4 ? "..." : ""}`
+        : "artifact: complete",
       `owner: ${row.family || "not classified"}`,
       row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
       row.emitStatus ? `emit: ${row.emitStatus}` : "",
