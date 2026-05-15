@@ -189,6 +189,44 @@ obj.c = true;
     );
 }
 
+#[test]
+fn test_nested_readonly_survives_prior_receiver_assignment() {
+    let source = r#"
+interface DeepFrozen {
+    readonly a: {
+        readonly b: number;
+    };
+}
+const df: DeepFrozen = { a: { b: 1 } };
+df.a = { b: 2 };
+df.a.b = 3;
+
+type AliasFrozen = {
+    readonly outer: {
+        readonly inner: number;
+    };
+};
+let af: AliasFrozen = { outer: { inner: 1 } };
+af.outer = { inner: 2 };
+af.outer.inner = 3;
+
+interface MutableParent {
+    slot: {
+        readonly leaf: number;
+    };
+}
+let mp: MutableParent = { slot: { leaf: 1 } };
+mp.slot = { leaf: 2 };
+mp.slot.leaf = 3;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 5,
+        "Expected readonly diagnostics for both parent writes and nested child writes, got {ts2540_count}: {diags:?}"
+    );
+}
+
 // =========================================================================
 // Namespace let export should be mutable
 // =========================================================================
