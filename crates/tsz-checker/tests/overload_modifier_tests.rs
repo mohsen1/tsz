@@ -125,6 +125,29 @@ function assert(x: unknown, msg?: string): asserts x is string {
 }
 
 #[test]
+fn ts2394_constructor_rest_overload_accepts_broader_impl_first_param() {
+    let source = r#"
+class RestConstruct {
+  values: number[];
+
+  constructor(...values: number[]);
+  constructor(first: string, ...rest: number[]);
+  constructor(firstOrNum: string | number, ...rest: number[]) {
+    if (typeof firstOrNum === 'string') {
+      this.values = rest;
+    } else {
+      this.values = [firstOrNum, ...rest];
+    }
+  }
+}
+
+const rc1 = new RestConstruct(1, 2, 3);
+const rc2 = new RestConstruct('label', 1, 2, 3);
+"#;
+    assert!(!has_error(source, 2394));
+}
+
+#[test]
 fn ts2394_incompatible_param_types_still_errors() {
     let source = r#"
 function bad(x: string): boolean;
