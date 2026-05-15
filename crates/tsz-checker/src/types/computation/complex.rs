@@ -1321,13 +1321,16 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                 )
             };
-            self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
+            let seeded_literal_constraint_type_arg =
+                self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
             let type_args: Vec<TypeId> = shape
                 .type_params
                 .iter()
                 .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
                 .collect();
-            if self.new_type_args_are_applyable(shape, &type_args, &substitution) {
+            if seeded_literal_constraint_type_arg
+                && self.new_type_args_are_applyable(shape, &type_args, &substitution)
+            {
                 inferred_new_type_args = Some(type_args);
             }
         }
@@ -1429,17 +1432,6 @@ impl<'a> CheckerState<'a> {
         );
         match result {
             CallResult::Success(mut return_type) => {
-                if let Some(shape) = constructor_shape.as_ref()
-                    && let Some(fallback_return) =
-                        self.generic_constructor_nested_constraint_failure_return(shape, &arg_types)
-                {
-                    self.error_at_node(
-                        new_expr.expression,
-                        "No overload matches this call.",
-                        diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
-                    );
-                    return fallback_return;
-                }
                 if is_generic_new {
                     return_type = self.default_current_infer_placeholders_to_unknown(return_type);
                 }

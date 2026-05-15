@@ -9,8 +9,14 @@ impl<'a> CheckerState<'a> {
         shape: &tsz_solver::FunctionShape,
         args: &[tsz_parser::NodeIndex],
     ) -> bool {
+        if args.len() > shape.params.len() {
+            return false;
+        }
         let mut seeded = false;
         for (i, param) in shape.params.iter().enumerate() {
+            if param.rest {
+                continue;
+            }
             let Some(param_info) =
                 crate::query_boundaries::common::type_param_info(self.ctx.types, param.type_id)
             else {
