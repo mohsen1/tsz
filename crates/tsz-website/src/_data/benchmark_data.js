@@ -252,6 +252,13 @@ function compatibilityRowFor(definition, allResults) {
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
+    exitCodes: compatibility.exit_codes && typeof compatibility.exit_codes === "object"
+      ? {
+          tsc: Array.isArray(compatibility.exit_codes.tsc) ? compatibility.exit_codes.tsc.slice(0, 8) : [],
+          tsz: Array.isArray(compatibility.exit_codes.tsz) ? compatibility.exit_codes.tsz.slice(0, 8) : [],
+          tsgo: Array.isArray(compatibility.exit_codes.tsgo) ? compatibility.exit_codes.tsgo.slice(0, 8) : [],
+        }
+      : { tsc: [], tsz: [], tsgo: [] },
     diagnosticCodes: Array.isArray(compatibility.diagnostic_codes) ? compatibility.diagnostic_codes.slice(0, 8) : [],
     reductionCandidates: Array.isArray(compatibility.reduction_candidates)
       ? compatibility.reduction_candidates.slice(0, 5)
@@ -1584,6 +1591,16 @@ export function getProjectCompatibilityDashboard() {
     return parts;
   };
 
+  const exitCodeParts = (row) => {
+    const codes = row.exitCodes || {};
+    return ["tsc", "tsz", "tsgo"]
+      .map((compiler) => {
+        const values = Array.isArray(codes[compiler]) ? codes[compiler].filter((value) => Number.isInteger(Number(value))) : [];
+        return values.length ? `${compiler} exit ${values.join("|")}` : "";
+      })
+      .filter(Boolean);
+  };
+
   const renderRowDetails = (row) => {
     const deltas = diagnosticDeltas(row);
     const diagnosticCodes = Array.isArray(row.diagnosticCodes) ? row.diagnosticCodes.filter(Boolean).slice(0, 8) : [];
@@ -1594,6 +1611,7 @@ export function getProjectCompatibilityDashboard() {
       `phase: ${row.phase || "unknown"}`,
       `owner: ${row.family || "not classified"}`,
       ...measurementParts(row),
+      ...exitCodeParts(row),
     ];
     const queueHtml = row.className === "green" || (!diagnosticCodes.length && !reductionCandidates.length)
       ? ""
