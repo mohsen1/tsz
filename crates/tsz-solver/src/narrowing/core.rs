@@ -38,6 +38,18 @@ impl From<bool> for GuardSense {
 
 type SplitNullishParts = (Option<TypeId>, Option<TypeId>);
 
+/// Cache key for a successful identifier-rooted optional property chain.
+///
+/// The root is semantic (`TypeId`), while the path uses interned property
+/// atoms plus a bit mask for which path segments used `?.`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OptionalPropertyChainKey {
+    pub root_type: TypeId,
+    pub properties: Vec<Atom>,
+    pub optional_mask: u64,
+    pub no_unchecked_indexed_access: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct NarrowTypeCacheKey {
     source_type: TypeId,
@@ -314,6 +326,13 @@ pub struct NarrowingCache {
     /// This skips `split_nullish`, `resolve_type`, `contains_type_params`, and property
     /// lookup on cache hits — eliminating 4+ `RefCell` borrows per repeated access.
     pub optional_chain_cache: RefCell<FxHashMap<(TypeId, Atom), TypeId>>,
+    /// Cache for full optional property chains such as
+    /// `options?.nested?.transport?.backoff?.base`.
+    ///
+    /// This is keyed by semantic root type and atomized path rather than by AST
+    /// node, so repeated textual chains in generated code can reuse the final
+    /// successful read result without re-walking every segment.
+    pub optional_property_chain_cache: RefCell<FxHashMap<OptionalPropertyChainKey, TypeId>>,
     /// Cache for contextual type resolution in object literal property typing.
     /// Maps raw contextual TypeId -> fully resolved TypeId after the
     /// evaluate/resolve/lazy/application chain. Avoids repeating the expensive
@@ -355,6 +374,10 @@ impl NarrowingCache {
                 Default::default(),
             )),
             optional_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                512,
+                Default::default(),
+            )),
+            optional_property_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
                 Default::default(),
             )),
