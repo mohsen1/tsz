@@ -675,7 +675,7 @@ impl<'a> CheckerState<'a> {
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
                 && let Some((cached_type, cached_params)) =
-                    self.ctx.lib_delegation_cache.get(&sym_id).cloned()
+                    self.ctx.lib_delegation_cache.symbol_type(sym_id)
             {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_lib
@@ -795,7 +795,7 @@ impl<'a> CheckerState<'a> {
                 if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
                     self.ctx
                         .lib_delegation_cache
-                        .insert(sym_id, (direct_type, direct_params.clone()));
+                        .insert_symbol_type(sym_id, (direct_type, direct_params.clone()));
                 }
                 return Some((direct_type, direct_params));
             }
@@ -1056,11 +1056,10 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .namespace_module_names
                 .extend(child_namespace_names);
-            for (name, cache_value) in child_lib_delegation_cache {
+            for (name, cache_value) in child_lib_delegation_cache.symbol_types() {
                 self.ctx
                     .lib_delegation_cache
-                    .entry(name)
-                    .or_insert(cache_value);
+                    .entry_or_insert_symbol_type(name, cache_value);
             }
             for (name, type_id) in child_lib_type_cache {
                 self.ctx
@@ -1082,7 +1081,7 @@ impl<'a> CheckerState<'a> {
             if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
                 self.ctx
                     .lib_delegation_cache
-                    .insert(sym_id, (result, result_params.clone()));
+                    .insert_symbol_type(sym_id, (result, result_params.clone()));
             }
 
             // Write through to the canonical cross-file symbol-type cache so
