@@ -92,7 +92,7 @@ declare let v: { [key: boolean]: string };
     );
 }
 
-/// Regression for Devin finding 1: intersection arm in
+/// Regression case 1: intersection arm in
 /// `is_valid_index_sig_param_type` must NOT accept `T & string` and bypass
 /// TS1337 in callers that gate on validity. Covers the `interface` path
 /// (`interface_type.rs:435`) and the type-alias path (`type_alias_checking.rs:690`).
@@ -107,11 +107,11 @@ interface I<T extends string> {
     );
     assert!(
         codes.contains(&1337),
-        "TS1337 expected for `T & string` in interface (Devin finding 1): {codes:?}"
+        "TS1337 expected for `T & string` in interface (finding 1): {codes:?}"
     );
 }
 
-/// Regression for Devin finding 1, `index_signature_checks.rs:100` call site.
+/// Regression case 1, `index_signature_checks.rs:100` call site.
 /// Mirrors the type-alias case but ensures the validity check inside
 /// `index_signature_checks` still routes the generic intersection to TS1337.
 #[test]
@@ -125,7 +125,7 @@ type Bag<T extends string> = {
     );
     assert!(
         codes.contains(&1337),
-        "TS1337 expected for `T & string` in type alias (Devin finding 1): {codes:?}"
+        "TS1337 expected for `T & string` in type alias (finding 1): {codes:?}"
     );
 }
 
@@ -144,7 +144,7 @@ function f<T extends string>(x: { [k: T & string]: any }): void {}
     );
 }
 
-/// Regression for Devin finding 2 (the AST-fallback path in `type_node.rs)`:
+/// Regression case 2 (the AST-fallback path in `type_node.rs)`:
 /// when a type literal containing `[k: T & string]` is reached via the
 /// `TypeNodeChecker`'s `get_type_from_type_literal` (e.g. as the operand of
 /// `keyof` or `readonly[]`), the helper `is_type_param_or_literal_in_index_sig`
@@ -162,7 +162,7 @@ type X<T extends string> = keyof { [k: T & string]: any };
     );
     assert!(
         codes.contains(&1337),
-        "TS1337 expected for `T & string` in keyof type literal (Devin finding 2): {codes:?}"
+        "TS1337 expected for `T & string` in keyof type literal (finding 2): {codes:?}"
     );
     assert!(
         !codes.contains(&1268),
@@ -182,7 +182,7 @@ type X<T extends string> = readonly { [k: T & string]: any }[];
     );
     assert!(
         codes.contains(&1337),
-        "TS1337 expected for `T & string` in readonly[] (Devin finding 2): {codes:?}"
+        "TS1337 expected for `T & string` in readonly[] (finding 2): {codes:?}"
     );
     assert!(
         !codes.contains(&1268),

@@ -1180,7 +1180,7 @@ export { configs };
                 // `Record<string, ...>` lowers to
                 // `Application(UnresolvedTypeName('Record'), ...)`, which is
                 // (correctly) classified as an error type by `is_error_type`
-                // post the Devin-flagged fix on PR #2616, and the
+                // after the prior fix, and the
                 // assignability check is short-circuited — so we'd never
                 // see the TS2322 this test is meant to assert on.
                 r#"

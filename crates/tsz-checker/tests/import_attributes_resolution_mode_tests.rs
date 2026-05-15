@@ -634,7 +634,7 @@ export interface Local extends Req {}
     );
 }
 
-/// Regression for Devin 🔴 on PR #2644: when `has_default_binding` was
+/// Regression case: when `has_default_binding` was
 /// computed from `json_default_only` (which is gated on
 /// `current_file_uses_esm_import_syntax()`), CommonJS files importing a JSON
 /// module by default emitted a spurious TS1192 "no default export" error.
@@ -655,7 +655,7 @@ fn cjs_json_default_import_does_not_emit_ts1192() {
     );
 }
 
-/// Regression for Devin 🟡 on PR #2644: type-only imports in CJS files
+/// Regression case: type-only imports in CJS files
 /// must emit TS2857 ("Import attributes cannot be used with type-only
 /// imports or exports") rather than TS2856 ("Import attributes are not
 /// allowed on statements that compile to CommonJS 'require' calls"),
