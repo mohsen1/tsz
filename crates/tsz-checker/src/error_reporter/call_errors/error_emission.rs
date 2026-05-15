@@ -874,10 +874,17 @@ impl<'a> CheckerState<'a> {
                     all_same = false;
                     break;
                 };
-                let analysis = self.analyze_assignability_failure(*arg_type, *param_type);
+                use crate::query_boundaries::assignability::RelationRequest;
+                let (prepared_arg, prepared_param) =
+                    self.prepare_assignability_inputs(*arg_type, *param_type);
+                let request = RelationRequest::call_arg(prepared_arg, prepared_param);
+                let outcome = self.execute_relation_request(&request);
                 let Some(tsz_solver::SubtypeFailureReason::ExcessProperty {
                     property_name, ..
-                }) = analysis.failure_reason
+                }) = outcome
+                    .failure
+                    .as_ref()
+                    .map(crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason)
                 else {
                     all_same = false;
                     break;
