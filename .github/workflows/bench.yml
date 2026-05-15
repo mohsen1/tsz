@@ -339,6 +339,9 @@ jobs:
           trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
 
           export TSZ="$GITHUB_WORKSPACE/.target-bench/dist/tsz"
+          if [[ '${{ matrix.label }}' == 'projects' ]]; then
+            export NEXTJS_BENCHMARK_ENABLED=1
+          fi
           echo "Using prepared benchmark TSZ binary: $TSZ"
           ./scripts/bench/bench-vs-tsgo.sh \
             --filter '${{ matrix.filter }}' \
