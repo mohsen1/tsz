@@ -1371,12 +1371,6 @@ impl<'a> CheckerState<'a> {
             arg_types.clone()
         };
 
-        if is_generic_new && let Some(shape) = constructor_shape.as_ref() {
-            self.report_direct_constructor_type_param_constraint_mismatches(
-                shape, args, &arg_types,
-            );
-        }
-
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types_for_resolution);
 

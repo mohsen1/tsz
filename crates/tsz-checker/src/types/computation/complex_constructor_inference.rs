@@ -127,44 +127,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn report_direct_constructor_type_param_constraint_mismatches(
-        &mut self,
-        shape: &tsz_solver::FunctionShape,
-        args: &[tsz_parser::NodeIndex],
-        arg_types: &[TypeId],
-    ) {
-        for (i, param) in shape.params.iter().enumerate() {
-            let Some(&arg_idx) = args.get(i) else {
-                continue;
-            };
-            let Some(&actual) = arg_types.get(i) else {
-                continue;
-            };
-            let Some(param_info) =
-                crate::query_boundaries::common::type_param_info(self.ctx.types, param.type_id)
-            else {
-                continue;
-            };
-            let Some(type_param) = shape
-                .type_params
-                .iter()
-                .find(|type_param| type_param.name == param_info.name)
-            else {
-                continue;
-            };
-            let Some(constraint) = type_param.constraint else {
-                continue;
-            };
-            let constraint = self.evaluate_type_with_env(constraint);
-            let actual_for_check =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, actual);
-            if !self.is_assignable_to(actual_for_check, constraint) {
-                let _ =
-                    self.check_argument_assignable_or_report(actual_for_check, constraint, arg_idx);
-            }
-        }
-    }
-
     pub(super) fn generic_constructor_nested_constraint_failure_return(
         &mut self,
         shape: &tsz_solver::FunctionShape,
