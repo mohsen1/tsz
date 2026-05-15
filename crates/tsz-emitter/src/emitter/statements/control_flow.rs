@@ -1192,6 +1192,19 @@ impl<'a> Printer<'a> {
         if let Some(jump) = self.arena.get_jump_data(node)
             && jump.label.is_some()
         {
+            if self.ctx.flags.in_class_static_block
+                && self.function_scope_depth == 0
+                && self.get_identifier_text_idx(jump.label) == "await"
+            {
+                self.map_trailing_semicolon(node);
+                self.write(" ");
+                self.write_semicolon();
+                self.write_line();
+                self.write("await ");
+                self.write_semicolon();
+                self.emit_trailing_comment_after_semicolon(node);
+                return;
+            }
             self.write(" ");
             // Emit inline comments between keyword and label (e.g., `break /*c*/ label`)
             if let Some(label_node) = self.arena.get(jump.label) {
@@ -1208,6 +1221,12 @@ impl<'a> Printer<'a> {
                     .unwrap_or(label_node.end);
                 self.emit_comments_in_range(label_node.end, range_end, true, false);
             }
+        }
+        if self.ctx.flags.in_class_static_block
+            && self.function_scope_depth == 0
+            && self.break_statement_source_has_await_label(node)
+        {
+            self.write(" ");
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();
@@ -1256,14 +1275,50 @@ impl<'a> Printer<'a> {
         None
     }
 
+    fn break_statement_source_has_await_label(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = (node.end as usize).min(text.len());
+        let Some(slice) = text.get(start..end) else {
+            return false;
+        };
+        let Some(rest) = slice.strip_prefix("break") else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        let Some(after_await) = rest.strip_prefix("await") else {
+            return false;
+        };
+        after_await
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+    }
+
     pub(in crate::emitter) fn emit_labeled_statement(&mut self, node: &Node) {
         let Some(labeled) = self.arena.get_labeled_statement(node) else {
             return;
         };
 
-        if self.ctx.emit_await_as_yield && self.get_identifier_text_idx(labeled.label) == "await" {
-            self.write("yield ;");
+        if (self.ctx.emit_await_as_yield
+            || (self.ctx.flags.in_class_static_block && self.function_scope_depth == 0))
+            && self.get_identifier_text_idx(labeled.label) == "await"
+        {
+            if self.ctx.emit_await_as_yield {
+                self.write("yield ;");
+            } else {
+                self.write("await ;");
+            }
             self.write_line();
+            if self.ctx.flags.in_class_static_block
+                && self.function_scope_depth == 0
+                && let Some(label_node) = self.arena.get(labeled.label)
+                && let Some(body_node) = self.arena.get(labeled.statement)
+            {
+                self.skip_comments_in_range(label_node.end, body_node.pos);
+            }
             self.emit(labeled.statement);
             return;
         }

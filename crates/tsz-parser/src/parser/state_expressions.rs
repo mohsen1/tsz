@@ -1871,13 +1871,13 @@ impl ParserState {
                         | SyntaxKind::CloseBraceToken
                 );
 
-                // In static block context with a following expression, but NOT in an async context
-                // (i.e., directly in the static block, not in a nested async function),
-                // emit TS18037 and parse as await expression for correct AST structure
-                if self.in_static_block_context()
-                    && !self.in_async_context()
-                    && has_following_expression
-                {
+                // In static block context, but NOT in an async context (i.e.,
+                // directly in the static block, not in a nested async
+                // function), emit TS18037 and parse as await expression for
+                // correct recovery/emit structure. This includes missing
+                // operands such as `[await]` and `await:`.
+                let static_block_await = self.in_static_block_context() && !self.in_async_context();
+                if static_block_await {
                     self.parse_error_at_current_token(
                         "'await' expression cannot be used inside a class static block.",
                         diagnostic_codes::AWAIT_EXPRESSION_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
@@ -1929,7 +1929,8 @@ impl ParserState {
 
                     // Special case: Don't emit TS1109 for 'await' in computed property names like { [await]: foo }
                     // In this context, 'await' is used as an identifier and CloseBracketToken is expected
-                    let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
+                    let is_computed_property_context =
+                        next_token == SyntaxKind::CloseBracketToken && !static_block_await;
                     // Special case: Don't emit TS1109 for 'await' when followed by colon (labeled statement)
                     // The labeled statement parser will emit TS1109 (Expression expected) in static blocks
                     let is_label_context = next_token == SyntaxKind::ColonToken;

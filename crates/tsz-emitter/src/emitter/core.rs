@@ -1738,8 +1738,11 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 self.write("static ");
                 let prev = self.emitting_function_body_block;
+                let prev_in_class_static_block = self.ctx.flags.in_class_static_block;
                 self.emitting_function_body_block = true;
+                self.ctx.flags.in_class_static_block = true;
                 self.emit_block(node, idx);
+                self.ctx.flags.in_class_static_block = prev_in_class_static_block;
                 self.emitting_function_body_block = prev;
             }
 

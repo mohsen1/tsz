@@ -2558,7 +2558,14 @@ impl ParserState {
                         diagnostic_codes::A_COMMA_EXPRESSION_IS_NOT_ALLOWED_IN_A_COMPUTED_PROPERTY_NAME,
                     );
                 }
-                if bare_static_block_await_name && self.is_token(SyntaxKind::CloseBracketToken) {
+                let parsed_bare_static_block_await = self
+                    .arena
+                    .get(expression)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::AWAIT_EXPRESSION);
+                if bare_static_block_await_name
+                    && self.is_token(SyntaxKind::CloseBracketToken)
+                    && !parsed_bare_static_block_await
+                {
                     self.error_expression_expected();
                 }
                 self.parse_expected(SyntaxKind::CloseBracketToken);

@@ -131,6 +131,65 @@ fn downlevel_define_type_only_computed_property_does_not_allocate_temp() {
     );
 }
 
+#[test]
+fn native_static_block_await_recovery_matches_tsc_shape() {
+    let source = r#"class C {
+    static {
+        ({ [await]: 1 });
+    }
+    static {
+        class D {
+            [await] = 1;
+        }
+    }
+    static {
+        ({ await });
+    }
+    static {
+        await:
+        break await; // illegal label
+    }
+    static {
+        const ff = (await) => { };
+        const fff = await => { };
+    }
+}
+"#;
+    let output = print_with_printer_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("({ [await ]: 1 });"),
+        "Bare computed `await` in an object literal should print as a missing-operand await expression.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("[await ] = 1;"),
+        "Bare computed `await` in a nested class should print as a missing-operand await expression.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("({ await:  });"),
+        "Contextually reserved shorthand `await` should recover as an empty property assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("await ;\n        break ;\n        await ; // illegal label"),
+        "Invalid `await` labels in static blocks should recover as await and break statements.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const ff = (await );\n        { }"),
+        "Parenthesized `await` arrow candidates should emit the recovered empty block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const fff = await ;\n        { }"),
+        "Bare `await` arrow candidates should emit the recovered empty block.\nOutput:\n{output}"
+    );
+}
+
 /// With `useDefineForClassFields: true` and target < ES2022, a typed-only
 /// field (no initializer) must still be materialized as
 /// `Object.defineProperty(this, "name", { value: void 0 })` in the

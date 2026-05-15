@@ -898,6 +898,14 @@ impl<'a> Printer<'a> {
                     .get(prop.name)
                     .expect("property name NodeIndex must be valid in arena"),
             ) {
+                if self.ctx.flags.in_class_static_block
+                    && self.function_scope_depth == 0
+                    && ident.escaped_text == "await"
+                {
+                    self.write_identifier(&ident.escaped_text);
+                    self.write(": ");
+                    return;
+                }
                 let has_import_subst = !self.suppress_commonjs_named_import_substitution
                     && self
                         .commonjs_named_import_substitutions
@@ -986,6 +994,14 @@ impl<'a> Printer<'a> {
         // Note: don't check is_commonjs() — module kind is temporarily None inside export bodies.
         let name_node = self.arena.get(shorthand.name);
         if let Some(ident) = name_node.and_then(|n| self.arena.get_identifier(n)) {
+            if self.ctx.flags.in_class_static_block
+                && self.function_scope_depth == 0
+                && ident.escaped_text == "await"
+            {
+                self.write_identifier(&ident.escaped_text);
+                self.write(": ");
+                return;
+            }
             let has_import_subst = !self.suppress_commonjs_named_import_substitution
                 && self
                     .commonjs_named_import_substitutions
