@@ -43,6 +43,15 @@ fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool 
     diags.iter().any(|d| d.code == code)
 }
 
+fn relation_errors(
+    diags: &[tsz_checker::diagnostics::Diagnostic],
+) -> Vec<&tsz_checker::diagnostics::Diagnostic> {
+    diags
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect()
+}
+
 #[test]
 fn anyof_empty_object_matches_never_index_falsy_pattern() {
     let source = r#"
@@ -78,6 +87,117 @@ const ds1: DS1 = 'helo';
     assert!(
         diags.is_empty(),
         "expected DropString<'hello', 'l'> to evaluate to 'helo', got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn map_type_arguments_stay_instantiated_after_mixed_semantic_operations() {
+    let source = r#"
+const obj = { a: 1, b: 2, c: 3 };
+const keys = Object.keys(obj);
+const _keys: string[] = keys;
+
+const values = Object.values(obj);
+const _values: number[] = values;
+
+const entries = Object.entries(obj);
+const _entries: [string, number][] = entries;
+
+const set = new Set([1, 2, 3]);
+const arr = Array.from(set);
+const _arr: number[] = arr;
+
+const arrayLike = { length: 3, 0: "a", 1: "b", 2: "c" };
+const arr2 = Array.from(arrayLike);
+const _arr2: string[] = arr2;
+
+const map = new Map<string, number>();
+map.set("a", 1);
+const _mapGet: number | undefined = map.get("a");
+
+const numSet = new Set<number>();
+numSet.add(1);
+const _hasOne: boolean = numSet.has(1);
+
+const wm = new WeakMap<object, number>();
+const ws = new WeakSet<object>();
+
+const target = { x: 1 };
+const proxy = new Proxy(target, {
+  get(t, p) { return t[p as keyof typeof t]; }
+});
+const _px: number = proxy.x;
+
+const promises = [Promise.resolve(1), Promise.resolve("a")];
+const all = Promise.all(promises);
+const race = Promise.race(promises);
+
+const mixed: (string | number)[] = [1, "a", 2, "b"];
+const numOnly = mixed.filter((x): x is number => typeof x === "number");
+const _numOnly: number[] = numOnly;
+
+const readonlyArr: readonly number[] = [1, 2, 3];
+const mapped = readonlyArr.map(x => x * 2);
+const _mapped: number[] = mapped;
+
+const name = "World";
+const greeting: `Hello, ${string}` = `Hello, ${name}`;
+
+type Add<A extends number, B extends number> =
+  [A, B] extends [1, 1] ? 2 :
+  [A, B] extends [1, 2] ? 3 :
+  number;
+type Sum = Add<1, 1>;
+const sum: Sum = 2;
+
+const items: unknown[] = ["a", 1, "b", 2];
+const strings = items.filter((x): x is string => typeof x === "string");
+const _strings: string[] = strings;
+
+void wm;
+void ws;
+void all;
+void race;
+void greeting;
+void sum;
+export {};
+"#;
+
+    let diags = check_strict_with_libs(source);
+    let relation_diags = relation_errors(&diags);
+    assert!(
+        relation_diags.is_empty(),
+        "expected Map<string, number> methods to keep instantiated parameters after mixed semantic operations, got: {relation_diags:#?}; all diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn renamed_collection_type_arguments_survive_prior_conditional_and_predicate_work() {
+    let source = r#"
+const values = [1, "two", 3];
+const onlyNumbers = values.filter((value): value is number => typeof value === "number");
+const _onlyNumbers: number[] = onlyNumbers;
+
+type PickResult<T> = T extends { item: infer Item } ? Item : never;
+type Picked = PickResult<{ item: "done" }>;
+const picked: Picked = "done";
+
+const label = "Ready";
+const templated: `${string}!` = `${label}!`;
+
+const lookup = new Map<boolean, Date>();
+lookup.set(true, new Date());
+const _lookupValue: Date | undefined = lookup.get(true);
+
+void templated;
+export {};
+"#;
+
+    let diags = check_strict_with_libs(source);
+    let relation_diags = relation_errors(&diags);
+    assert!(
+        relation_diags.is_empty(),
+        "expected renamed Map<boolean, Date> methods to keep instantiated parameters after prior conditional and predicate work, got: {relation_diags:#?}; all diagnostics: {diags:#?}"
     );
 }
 
