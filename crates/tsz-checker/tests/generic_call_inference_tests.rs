@@ -3297,6 +3297,80 @@ const keep: Pending<Connection> = pool.acquire();
 }
 
 #[test]
+fn generic_constructor_argument_contextualizes_nested_discriminated_object_property() {
+    let source = r#"
+type RefinementCtx = { addIssue(message: string): void };
+interface ZodTypeDef {}
+type ZodTypeAny = ZodType<any, any, any>;
+type input<T extends ZodType<any, any, any>> = T["_input"];
+type output<T extends ZodType<any, any, any>> = T["_output"];
+type ParseReturnType<T> =
+    | { status: "valid"; value: T }
+    | { status: "dirty"; value: T }
+    | { status: "aborted" };
+
+type RefinementEffect<T> = {
+    type: "refinement";
+    refinement: (arg: T, ctx: RefinementCtx) => any;
+};
+type TransformEffect<T> = {
+    type: "transform";
+    transform: (arg: T) => any;
+};
+type PreprocessEffect<T> = {
+    type: "preprocess";
+    transform: (arg: T) => any;
+};
+type Effect<T> = RefinementEffect<T> | TransformEffect<T> | PreprocessEffect<T>;
+
+enum ZodFirstPartyTypeKind {
+    ZodEffects = "ZodEffects",
+}
+
+interface ZodEffectsDef<T extends ZodTypeAny = ZodTypeAny> extends ZodTypeDef {
+    schema: T;
+    typeName: ZodFirstPartyTypeKind.ZodEffects;
+    effect: Effect<any>;
+}
+
+abstract class ZodType<Output, Def extends ZodTypeDef = ZodTypeDef, Input = Output> {
+    _output!: Output;
+    _input!: Input;
+    _def!: Def;
+
+    abstract _parse(): ParseReturnType<Output>;
+
+    constructor(def: Def) {}
+
+    _refinement(refinement: RefinementEffect<Output>["refinement"]): ZodEffects<this> {
+        return new ZodEffects({
+            schema: this,
+            typeName: ZodFirstPartyTypeKind.ZodEffects,
+            effect: { type: "refinement", refinement },
+        });
+    }
+}
+
+class ZodEffects<
+    T extends ZodTypeAny,
+    Output = output<T>,
+    Input = input<T>
+> extends ZodType<Output, ZodEffectsDef<T>, Input> {
+    _parse(): ParseReturnType<Output> {
+        return null as any;
+    }
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Effect<any>") && message.contains("type: string")
+        }),
+        "nested discriminated object literal in a constructor argument should inherit the Effect<any> context. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn conflicting_contextual_instantiation_keeps_enclosing_return_type_param() {
     let source = r#"
 declare function accept<R>(fn: (a: string, b: number) => R): R;

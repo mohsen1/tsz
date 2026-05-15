@@ -115,6 +115,49 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn generic_new_argument_accepts_contextual_parameter(
+        &mut self,
+        arg_idx: NodeIndex,
+        expected: TypeId,
+    ) -> bool {
+        if expected == TypeId::ANY || expected == TypeId::ERROR || expected == TypeId::UNKNOWN {
+            return false;
+        }
+
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if !matches!(
+            arg_node.kind,
+            tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                | tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        ) {
+            return false;
+        }
+
+        let snap = self.ctx.snapshot_diagnostics();
+        let request = TypingRequest::with_contextual_type(expected);
+        let contextual_actual = self.get_type_of_node_with_request(arg_idx, &request);
+        self.ctx.rollback_diagnostics(&snap);
+
+        contextual_actual != TypeId::ANY
+            && contextual_actual != TypeId::ERROR
+            && self.is_assignable_to(contextual_actual, expected)
+    }
+
+    fn recover_new_expression_return_type_after_contextual_argument_match(
+        &mut self,
+        constructor_type: TypeId,
+        fallback_return: TypeId,
+    ) -> TypeId {
+        if fallback_return != TypeId::ERROR {
+            fallback_return
+        } else {
+            self.instance_type_from_constructor_type(constructor_type)
+                .unwrap_or(TypeId::ERROR)
+        }
+    }
+
     ///
     /// This keeps general alias typing unchanged (important for type-position behavior)
     /// while ensuring constructor resolution sees the direct constructable type.
@@ -1729,6 +1772,15 @@ impl<'a> CheckerState<'a> {
                 }
                 if index < args.len() {
                     let arg_idx = args[index];
+                    if is_generic_new
+                        && self.generic_new_argument_accepts_contextual_parameter(arg_idx, expected)
+                    {
+                        return self
+                            .recover_new_expression_return_type_after_contextual_argument_match(
+                                constructor_type,
+                                fallback_return,
+                            );
+                    }
                     // Check if this is a weak union violation or excess property case
                     // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
                     // We should skip the TS2322 error regardless of check_excess_properties flag
