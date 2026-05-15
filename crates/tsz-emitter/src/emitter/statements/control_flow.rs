@@ -866,7 +866,7 @@ impl<'a> Printer<'a> {
         };
 
         self.write("try ");
-        self.emit(try_stmt.try_block);
+        self.emit_try_block_or_recovered_empty(try_stmt.try_block);
 
         if try_stmt.catch_clause.is_some() {
             self.write_line();
@@ -878,6 +878,9 @@ impl<'a> Printer<'a> {
         }
 
         if try_stmt.finally_block.is_some() {
+            if try_stmt.catch_clause.is_some() {
+                self.emit_try_clause_trailing_comments_before_finally(try_stmt.catch_clause, node);
+            }
             self.write_line();
             // Map the `finally` keyword to its source position
             // The keyword is between the catch block end and finally block start
@@ -897,7 +900,101 @@ impl<'a> Printer<'a> {
             self.emit(try_stmt.finally_block);
         } else if try_stmt.catch_clause.is_none() {
             self.write_line();
-            self.write("finally { }");
+            if let Some((comment_pos, comment_end, _comment_has_trailing_newline)) =
+                self.recovered_missing_finally_semicolon_comment(node, try_stmt.try_block)
+            {
+                self.write("finally { ");
+                self.emit_recovered_comment(comment_pos, comment_end);
+                self.write_line();
+                self.write(" } ");
+                self.emit_recovered_comment(comment_pos, comment_end);
+            } else {
+                self.write("finally { }");
+            }
+        }
+    }
+
+    fn emit_try_block_or_recovered_empty(&mut self, block_idx: NodeIndex) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            self.write("{");
+            self.write_line();
+            self.write("}");
+            return;
+        };
+        if block_node.kind == syntax_kind_ext::BLOCK
+            && self
+                .arena
+                .get_block(block_node)
+                .is_some_and(|block| block.statements.nodes.is_empty())
+            && self.find_block_opening_brace_pos(block_node).is_none()
+        {
+            self.write_with_end_marker("{");
+            self.write_line();
+            self.write_with_end_marker("}");
+            return;
+        }
+        self.emit(block_idx);
+    }
+
+    fn emit_try_clause_trailing_comments_before_finally(
+        &mut self,
+        catch_idx: NodeIndex,
+        try_node: &Node,
+    ) {
+        let Some(catch_node) = self.arena.get(catch_idx) else {
+            return;
+        };
+        let Some(catch) = self.arena.get_catch_clause(catch_node) else {
+            return;
+        };
+        let Some(catch_block_node) = self.arena.get(catch.block) else {
+            return;
+        };
+        let token_end = self.find_block_closing_brace_end(catch_block_node);
+        self.emit_trailing_comments_before(token_end, try_node.end);
+    }
+
+    fn recovered_missing_finally_semicolon_comment(
+        &self,
+        try_node: &Node,
+        try_block_idx: NodeIndex,
+    ) -> Option<(u32, u32, bool)> {
+        let try_block_node = self.arena.get(try_block_idx)?;
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let search_start = self.find_block_closing_brace_end(try_block_node) as usize;
+        let mut search_end = (try_node.end as usize).min(bytes.len());
+        if search_end <= search_start {
+            search_end = search_start;
+            while search_end < bytes.len()
+                && bytes[search_end] != b'\n'
+                && bytes[search_end] != b'\r'
+            {
+                search_end += 1;
+            }
+        }
+        let semicolon_pos = self
+            .find_semicolon_pos_in_range(search_start as u32, search_end as u32)
+            .or_else(|| {
+                let mut line_end = search_start;
+                while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r'
+                {
+                    line_end += 1;
+                }
+                self.find_semicolon_pos_in_range(search_start as u32, line_end as u32)
+            })?;
+        let comment = get_trailing_comment_ranges(text, semicolon_pos as usize + 1)
+            .into_iter()
+            .next()?;
+        Some((comment.pos, comment.end, comment.has_trailing_newline))
+    }
+
+    fn emit_recovered_comment(&mut self, comment_pos: u32, comment_end: u32) {
+        if let Some(text) = self.source_text
+            && let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+        {
+            self.write_comment_with_reindent(comment_text, Some(comment_pos));
         }
     }
 
@@ -969,6 +1066,8 @@ impl<'a> Printer<'a> {
             }
             self.emit(catch.variable_declaration);
             self.write(")");
+        } else if self.catch_clause_has_recovered_empty_binding_parens(node, &catch) {
+            self.write(" ()");
         } else if self.ctx.needs_es2019_lowering {
             // ES2019 optional catch binding: generate a unique temp name like tsc does
             // (e.g., _a, _b, _c) instead of a hardcoded name.
@@ -980,6 +1079,41 @@ impl<'a> Printer<'a> {
 
         self.write(" ");
         self.emit(catch.block);
+    }
+
+    fn catch_clause_has_recovered_empty_binding_parens(
+        &self,
+        node: &Node,
+        catch: &tsz_parser::parser::node::CatchClauseData,
+    ) -> bool {
+        if catch.variable_declaration.is_some() {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(block_node) = self.arena.get(catch.block) else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let start = node.pos as usize;
+        let end = (block_node.pos as usize).min(bytes.len());
+        let Some(slice) = bytes.get(start..end) else {
+            return false;
+        };
+        let mut pos = 0;
+        while pos < slice.len() {
+            if slice[pos] != b'(' {
+                pos += 1;
+                continue;
+            }
+            pos += 1;
+            while pos < slice.len() && slice[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            return pos < slice.len() && slice[pos] == b')';
+        }
+        false
     }
 
     /// Check if a catch clause variable declaration has an object rest pattern.
