@@ -280,3 +280,207 @@ const _seven: 7 = r.option;
         "Expected one TS2322 — without satisfies, `7` deep-widens to `number`, got: {ds:?}",
     );
 }
+
+#[test]
+fn satisfies_return_type_inferred_as_constraint_not_literal() {
+    // Issue #6798: the return type of a function returning a satisfies-constrained
+    // const should use the constraint type, not the preserved literal type.
+    // tsc infers { version: number; features: string[] } as the return type.
+    let source = r#"
+function createConfig() {
+  const cfg = {
+    version: 1,
+    features: ["a", "b"]
+  } satisfies { version: number; features: string[] };
+  return cfg;
+}
+
+const cfg = createConfig();
+const version: 1 = cfg.version;
+"#;
+    let ds = ts2322_diags(source);
+    assert_eq!(
+        ds.len(),
+        1,
+        "Expected TS2322 on 'const version: 1 = cfg.version' (return type should be number, not 1), got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_direct_return_inferred_as_constraint() {
+    // Adjacent case: directly returning a satisfies expression.
+    // tsc: return type { version: number }
+    let source = r#"
+function makeConfig() {
+  return { version: 1, name: "x" } satisfies { version: number; name: string };
+}
+const c = makeConfig();
+const v: 1 = c.version;
+const n: "x" = c.name;
+"#;
+    let ds = ts2322_diags(source);
+    assert_eq!(
+        ds.len(),
+        2,
+        "Expected 2 TS2322 (version: number not 1, name: string not 'x'), got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_through_renamed_variables_return_constraint() {
+    // Renaming the binding and properties must not change widening behavior.
+    let source = r#"
+function build() {
+  const result = { count: 5, label: "hello" } satisfies { count: number; label: string };
+  return result;
+}
+const r = build();
+const c: 5 = r.count;
+"#;
+    let ds = ts2322_diags(source);
+    assert_eq!(
+        ds.len(),
+        1,
+        "Expected TS2322 — count should be number (not 5) in return type, got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_return_array_property_widened_in_return_type() {
+    // Array literal properties in satisfies should also be widened in return type.
+    let source = r#"
+function createConfig() {
+  const cfg = {
+    version: 1,
+    features: ["a", "b"]
+  } satisfies { version: number; features: string[] };
+  return cfg;
+}
+
+const cfg = createConfig();
+const f: string[] = cfg.features;
+"#;
+    let ds = diags(source);
+    let ts2322: Vec<_> = ds.iter().filter(|d| d.0 == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 — features should be string[] in return type, got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_return_boolean_property_preserved_as_literal() {
+    // Boolean literal properties against `boolean` context should be PRESERVED (not widened).
+    // tsc preserves `true` because boolean = true | false is a literal union.
+    let source = r#"
+function createConfig() {
+  const cfg = { debug: true } satisfies { debug: boolean };
+  return cfg;
+}
+const cfg = createConfig();
+const d: true = cfg.debug;
+"#;
+    let ds = ts2322_diags(source);
+    assert!(
+        ds.is_empty(),
+        "Expected no TS2322 — boolean literals preserved through satisfies + function return, got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_return_nested_object_widened_in_return_type() {
+    // Nested objects inside satisfies: number literals widen.
+    let source = r#"
+function make() {
+  const cfg = { inner: { value: 42 } } satisfies { inner: { value: number } };
+  return cfg;
+}
+const m = make();
+const v: 42 = m.inner.value;
+"#;
+    let ds = ts2322_diags(source);
+    assert_eq!(
+        ds.len(),
+        1,
+        "Expected TS2322 — nested value: number in return type, got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_with_type_alias_return_widened() {
+    // Type alias for the satisfies constraint should behave the same way.
+    let source = r#"
+type Config = { version: number; name: string };
+function build() {
+  const cfg = { version: 3, name: "foo" } satisfies Config;
+  return cfg;
+}
+const c = build();
+const v: 3 = c.version;
+"#;
+    let ds = ts2322_diags(source);
+    assert_eq!(
+        ds.len(),
+        1,
+        "Expected TS2322 (version: number not 3), got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_preserves_boolean_literal_through_let_variable_return() {
+    // When the satisfies result is assigned to a let variable (not const),
+    // the return type inference should still use widened types for non-boolean literals.
+    let source = r#"
+function f() {
+  let cfg = { count: 7 } satisfies { count: number };
+  return cfg;
+}
+const result = f();
+const n: 7 = result.count;
+"#;
+    let ds = ts2322_diags(source);
+    assert_eq!(
+        ds.len(),
+        1,
+        "Expected TS2322 — count should widen to number in return type even from let binding, got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_unconstrained_extra_property_literal_preserved() {
+    // Properties without a satisfies constraint should still preserve their literal types.
+    // tsc: `extra` property has type "abc" (no constraint to widen against).
+    let source = r#"
+function f() {
+  const cfg = { version: 1, extra: "abc" } satisfies { version: number };
+  return cfg;
+}
+const c = f();
+const e: "abc" = c.extra;
+"#;
+    let ds = ts2322_diags(source);
+    assert!(
+        ds.is_empty(),
+        "Expected no TS2322 — unconstrained property 'extra' preserves literal 'abc', got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_constrained_property_widened_unconstrained_preserved() {
+    // Mixed: constrained properties widen, unconstrained properties preserve.
+    let source = r#"
+function f() {
+  const cfg = { version: 1, tag: "alpha" } satisfies { version: number };
+  return cfg;
+}
+const c = f();
+const tag: "alpha" = c.tag;
+const version: 1 = c.version;
+"#;
+    let ds = ts2322_diags(source);
+    assert_eq!(
+        ds.len(),
+        1,
+        "Expected exactly 1 TS2322 (version widened to number) but tag preserved as 'alpha', got: {ds:?}",
+    );
+}

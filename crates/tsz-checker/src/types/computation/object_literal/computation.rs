@@ -139,20 +139,21 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if self.ctx.in_satisfies_operand {
-            // Fast path: skip the recursive `isLiteralOfContextualType` walk
-            // (and its scratch-set allocation) for property values that the
-            // widener would not transform anyway — functions, plain objects,
-            // the `any` intrinsic, etc. Only literals and unions are
-            // candidates for widening.
+            // Unconstrained properties (not covered by the satisfies type) preserve their
+            // literal types — tsc's `isLiteralOfContextualType` returns false for absent
+            // properties.
+            let Some(ctx_type) = property_context_type else {
+                return false;
+            };
+            // Skip the recursive `isLiteralOfContextualType` walk for values the widener
+            // cannot transform anyway — functions, plain objects, `any`, etc.
             let value_is_widenable =
                 crate::query_boundaries::common::is_literal_type(self.ctx.types, value_type)
                     || crate::query_boundaries::common::is_union_type(self.ctx.types, value_type);
             if !value_is_widenable {
                 return false;
             }
-            let preserves = property_context_type
-                .is_some_and(|ct| self.contextual_type_allows_literal(ct, value_type));
-            return !preserves;
+            return !self.contextual_type_allows_literal(ctx_type, value_type);
         }
         if self.ctx.preserve_literal_types {
             return false;
