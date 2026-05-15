@@ -199,7 +199,13 @@ impl<'a> CheckerState<'a> {
                 // The Application path further down would otherwise defer constraint
                 // checking for any `Application(TypeQuery, args)` whose constraint is
                 // not generic-indexed-access shaped, dropping TS2344 in this case.
-                if self.is_failed_typeof_instantiation_arg(type_arg) {
+                let failed_typeof_instantiation_node = type_args_list
+                    .nodes
+                    .get(i)
+                    .is_some_and(|&arg_idx| self.is_failed_typeof_instantiation_node(arg_idx));
+                if failed_typeof_instantiation_node
+                    || self.is_failed_typeof_instantiation_arg(type_arg)
+                {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
                     if let Some(&arg_idx) = type_args_list.nodes.get(i) {
                         self.error_type_constraint_not_satisfied(
