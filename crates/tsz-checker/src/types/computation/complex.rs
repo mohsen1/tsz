@@ -1139,14 +1139,15 @@ impl<'a> CheckerState<'a> {
                             &shape.type_params,
                         );
                     }
+                    let seeded_literal_constraint_type_arg =
+                        self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
                     let type_args: Vec<TypeId> = shape
                         .type_params
                         .iter()
                         .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
                         .collect();
-                    if type_args
-                        .iter()
-                        .any(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ANY)
+                    if seeded_literal_constraint_type_arg
+                        && self.new_type_args_are_applyable(shape, &type_args, &substitution)
                     {
                         inferred_new_type_args = Some(type_args);
                     }
@@ -1489,6 +1490,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+        if let Some(type_args) = &inferred_new_type_args {
+            constructor_type =
+                self.apply_type_argument_ids_to_constructor_type(constructor_type, type_args);
         }
 
         tracing::debug!(
