@@ -820,7 +820,7 @@ pub enum TypeData {
     ///
     /// ## Migration
     ///
-    /// Eventually all `Ref(SymbolRef)` usages will be replaced with `Lazy(DefId)`.
+    /// `Ref(SymbolRef)` remains available as a compatibility path in legacy helpers.
     Lazy(DefId),
 
     /// Recursive type reference using De Bruijn index.
