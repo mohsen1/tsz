@@ -259,6 +259,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
                 candidate_arenas.push(symbol_arena.as_ref());
             }
+            for lib_ctx in self.ctx.lib_contexts.iter() {
+                if let Some(arenas) = lib_ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+                }
+                if let Some(symbol_arena) = lib_ctx.binder.symbol_arenas.get(&sym_id) {
+                    candidate_arenas.push(symbol_arena.as_ref());
+                }
+            }
             candidate_arenas.push(self.ctx.arena);
 
             for arena in candidate_arenas {
@@ -753,7 +761,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use tsz_binder::symbol_flags;
 
         if let Ok(env) = self.ctx.type_env.try_borrow()
-            && env.get_def(def_id).is_some()
+            && let Some(existing) = env.get_def(def_id)
+            && existing != TypeId::UNKNOWN
+            && existing != TypeId::ERROR
+            && crate::query_boundaries::common::lazy_def_id(self.ctx.types, existing)
+                != Some(def_id)
         {
             return;
         }
@@ -769,23 +781,39 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 drop(env);
                 // Body not registered for this DefId — register it now
                 if let Some(&type_id) = self.ctx.symbol_types.get(&sym_id) {
-                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                    if type_params.is_empty() {
-                        self.ctx.register_def_in_envs(def_id, type_id);
+                    if type_id == TypeId::UNKNOWN
+                        || type_id == TypeId::ERROR
+                        || crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+                            == Some(def_id)
+                    {
+                        // A placeholder/self-lazy wrapper is not the alias body.
                     } else {
-                        self.ctx
-                            .register_def_with_params_in_envs(def_id, type_id, type_params);
-                    }
-                    // Register symbol mapping in both envs
-                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                        env.register_def_symbol_mapping(def_id, sym_id);
-                    }
-                    if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-                        env.register_def_symbol_mapping(def_id, sym_id);
+                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                        if type_params.is_empty() {
+                            self.ctx.register_def_in_envs(def_id, type_id);
+                        } else {
+                            self.ctx
+                                .register_def_with_params_in_envs(def_id, type_id, type_params);
+                        }
+                        // Register symbol mapping in both envs
+                        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                            env.register_def_symbol_mapping(def_id, sym_id);
+                        }
+                        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+                            env.register_def_symbol_mapping(def_id, sym_id);
+                        }
+                        return;
                     }
                 }
             }
-            return;
+            if self.ctx.symbol_types.get(&sym_id).is_some_and(|type_id| {
+                *type_id != TypeId::UNKNOWN
+                    && *type_id != TypeId::ERROR
+                    && crate::query_boundaries::common::lazy_def_id(self.ctx.types, *type_id)
+                        != Some(def_id)
+            }) {
+                return;
+            }
         }
 
         let symbol = self.get_symbol_from_any_context(sym_id);
@@ -1178,12 +1206,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use tsz_parser::parser::syntax_kind_ext;
 
         if let Some(name) = self.entity_name_text(node_idx)
+            && !name.contains('.')
+            && self.ctx.type_parameter_scope.contains_key(&name)
+        {
+            return None;
+        }
+
+        if let Some(name) = self.entity_name_text(node_idx)
             && let Some(sym_id) = self.resolve_entity_name_text_symbol(&name)
         {
             let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
-            let def_id = self
-                .ctx
-                .get_or_create_def_id_for_symbol_name(sym_id, expected_name);
+            let def_id = if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || self.ctx.symbol_is_from_lib(sym_id)
+            {
+                self.ctx.get_canonical_lib_def_id(expected_name, sym_id)
+            } else {
+                self.ctx
+                    .get_or_create_def_id_for_symbol_name(sym_id, expected_name)
+            };
             self.ensure_type_alias_resolved(sym_id, def_id);
             return Some(def_id);
         }
@@ -1192,8 +1232,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let sym_id = tsz_binder::SymbolId(sym_id);
             let def_id = if let Some(name) = self.entity_name_text(node_idx) {
                 let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
-                self.ctx
-                    .get_or_create_def_id_for_symbol_name(sym_id, expected_name)
+                if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    || self.ctx.symbol_is_from_lib(sym_id)
+                {
+                    self.ctx.get_canonical_lib_def_id(expected_name, sym_id)
+                } else {
+                    self.ctx
+                        .get_or_create_def_id_for_symbol_name(sym_id, expected_name)
+                }
             } else {
                 self.ensure_def_id_with_alias(sym_id)
             };

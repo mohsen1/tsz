@@ -11,8 +11,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let sym_id_raw = self.resolve_type_symbol(node_idx)?;
         let sym_id = tsz_binder::SymbolId(sym_id_raw);
         let def_id = if let Some(ident) = self.ctx.arena.get_identifier_at(node_idx) {
-            self.ctx
-                .get_or_create_def_id_for_symbol_name(sym_id, ident.escaped_text.as_str())
+            if self
+                .ctx
+                .type_parameter_scope
+                .contains_key(ident.escaped_text.as_str())
+            {
+                return None;
+            }
+            if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || self.ctx.symbol_is_from_lib(sym_id)
+            {
+                self.ctx
+                    .get_canonical_lib_def_id(ident.escaped_text.as_str(), sym_id)
+            } else {
+                self.ctx
+                    .get_or_create_def_id_for_symbol_name(sym_id, ident.escaped_text.as_str())
+            }
         } else {
             self.ensure_def_id_with_alias(sym_id)
         };
@@ -69,6 +83,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
         let name_def_id_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+            if !type_name.contains('.') && self.ctx.type_parameter_scope.contains_key(type_name) {
+                return None;
+            }
+
             let expected_name = type_name.rsplit('.').next().unwrap_or(type_name);
 
             if !type_name.contains('.')
