@@ -883,7 +883,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 // If target has a numeric index signature, numeric-named properties are allowed
                 if has_number_index {
                     let name_str = self.interner.resolve_atom(prop_info.name);
-                    if name_str.parse::<f64>().is_ok() {
+                    if crate::utils::is_numeric_literal_name(name_str.as_ref()) {
                         continue;
                     }
                 }
@@ -969,7 +969,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 // If target has a numeric index signature, numeric-named properties are allowed
                 if has_number_index {
                     let name_str = self.interner.resolve_atom(prop_info.name);
-                    if name_str.parse::<f64>().is_ok() {
+                    if crate::utils::is_numeric_literal_name(name_str.as_ref()) {
                         continue;
                     }
                 }

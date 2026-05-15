@@ -925,7 +925,6 @@ pub(crate) fn classify_object_properties(
                 matching_props.push(source_prop.clone());
             }
         } else if !target_index_signature_accepts_property(db, target, source_prop)
-            && !classification.target_has_index_signature
             && !classification.target_is_empty_object
             && !classification.target_is_global_object_or_function
             && !classification.target_is_type_parameter
