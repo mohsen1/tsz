@@ -3,6 +3,7 @@
 //! Extracted from the `property` module to keep files focused and under
 //! the 2000-line checker file limit.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
@@ -478,7 +479,8 @@ impl<'a> CheckerState<'a> {
 
         // Get the type of the object being accessed and normalize it through
         // solver-backed evaluation before property/read-only checks.
-        let obj_type = self.get_type_of_node(access.expression);
+        let obj_type =
+            self.get_readonly_assignment_receiver_type(target_idx, access.expression, &prop_name);
         let mut readonly_check_type = self.evaluate_type_for_assignability(obj_type);
         // If evaluation produced a deferred Mapped type (e.g., from Omit/Pick),
         // resolve it through the checker's TypeEnvironment to get concrete
@@ -590,6 +592,24 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn get_readonly_assignment_receiver_type(
+        &mut self,
+        target_idx: NodeIndex,
+        receiver_idx: NodeIndex,
+        prop_name: &str,
+    ) -> TypeId {
+        let receiver_no_flow_type =
+            self.get_type_of_node_with_request(receiver_idx, &TypingRequest::for_write_context());
+        let (receiver_type, _) = self.write_receiver_type_for_property_access(
+            target_idx,
+            receiver_idx,
+            Some(prop_name),
+            receiver_no_flow_type,
+            false,
+        );
+        receiver_type
     }
 
     /// Check if an element access on a generic type parameter would be an unsafe write.
