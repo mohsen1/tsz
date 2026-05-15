@@ -1,5 +1,6 @@
 //! Call-result handling helpers shared by call expression computation.
 
+use crate::checkers_domain::call_checker::CallRelationEvidence;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
@@ -22,9 +23,22 @@ pub(super) struct CallResultContext<'a> {
     pub(super) is_super_call: bool,
     pub(super) is_optional_chain: bool,
     pub(super) allow_contextual_mismatch_deferral: bool,
+    pub(super) relation_evidence: &'a [CallRelationEvidence],
 }
 
 impl<'a> CheckerState<'a> {
+    fn relation_evidence_for_pair<'e>(
+        relation_evidence: &'e [CallRelationEvidence],
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<&'e crate::query_boundaries::assignability::RelationOutcome> {
+        relation_evidence
+            .iter()
+            .rev()
+            .find(|evidence| evidence.source == source && evidence.target == target)
+            .map(|evidence| &evidence.outcome)
+    }
+
     fn is_generic_indexed_access_surface(&self, type_id: TypeId) -> bool {
         self.generic_indexed_access_surface_inner(type_id)
             || self
@@ -833,6 +847,7 @@ impl<'a> CheckerState<'a> {
             is_super_call,
             is_optional_chain,
             allow_contextual_mismatch_deferral,
+            relation_evidence,
             ..
         } = context;
         match result {
@@ -1320,6 +1335,17 @@ impl<'a> CheckerState<'a> {
                                 reported_actual,
                                 reported_expected,
                                 arg_idx,
+                            );
+                        } else if let Some(outcome) = Self::relation_evidence_for_pair(
+                            relation_evidence,
+                            reported_actual,
+                            reported_expected,
+                        ) {
+                            let _ = self.report_argument_assignability_with_outcome(
+                                reported_actual,
+                                reported_expected,
+                                arg_idx,
+                                outcome.clone(),
                             );
                         } else {
                             let _ = self.check_argument_assignable_or_report(
