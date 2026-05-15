@@ -170,6 +170,10 @@ path = "tests/jsx_cjs_runtime_collision_tests.rs"
 name = "async_arrow_default_param_3758_tests"
 path = "tests/async_arrow_default_param_3758_tests.rs"
 
+[[test]]
+name = "arrow_parameter_prologue_tests"
+path = "tests/arrow_parameter_prologue_tests.rs"
+
 [lints]
 workspace = true
 
