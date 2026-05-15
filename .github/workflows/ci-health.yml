@@ -27,8 +27,34 @@ jobs:
 
           repo="${{ github.repository }}"
 
-          # Fetch runners (paginated)
-          runners=$(gh api "repos/${repo}/actions/runners" --paginate --jq '.runners[]' 2>/dev/null)
+          # Fetch runners (paginated). This endpoint requires repository
+          # administration visibility; scheduled GITHUB_TOKEN probes may lack it.
+          runner_api_error="${RUNNER_TEMP:-/tmp}/runner-api-error.log"
+          runner_api_status=0
+          runners=$(
+            gh api "repos/${repo}/actions/runners" --paginate --jq '.runners[]' \
+              2>"${runner_api_error}"
+          ) || runner_api_status=$?
+
+          if [[ "${runner_api_status}" -ne 0 ]]; then
+            error_summary=$(tr '\n' ' ' < "${runner_api_error}" | sed 's/[[:space:]]\+/ /g' | cut -c1-240)
+            {
+              echo "## CI Health — $(date -u '+%Y-%m-%d %H:%M UTC')"
+              echo ""
+              echo "| Metric | Value |"
+              echo "|--------|-------|"
+              echo "| Runner API probe | unavailable |"
+              echo ""
+              echo "> ⚠️ Runner pool metrics could not be read with this workflow token."
+              if [[ -n "${error_summary}" ]]; then
+                echo ""
+                echo "> ${error_summary}"
+              fi
+            } >> "${GITHUB_STEP_SUMMARY}"
+
+            echo "::warning::runner pool probe unavailable; skipping runner-health failure"
+            exit 0
+          fi
 
           total=$(echo "$runners" | python3 -c "
           import json,sys
