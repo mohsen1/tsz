@@ -892,3 +892,62 @@ z.spa;
         "Expected class field initializer `this` to resolve to the instance type, got: {relevant:#?}"
     );
 }
+
+#[test]
+fn inherited_generic_method_on_this_uses_subclass_base_arguments_for_callback_context() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "expected default libs to load");
+
+    let diags = check_source_with_libs(
+        r#"
+type ZodTypeDef = {};
+class ZodEffects<T> {}
+
+class ZodType<Output, Def extends ZodTypeDef = ZodTypeDef, Input = Output> {
+  refinement(check: (arg: Output) => any): ZodEffects<this> {
+    return new ZodEffects<this>();
+  }
+}
+
+type ZodStringDef = ZodTypeDef & { tag: "string" };
+type ForwardString = ZodString;
+
+class ZodString extends ZodType<string, ZodStringDef> {
+  protected _regex = (regex: RegExp) =>
+    this.refinement((data) => regex.test(data));
+}
+
+class Box<T> {}
+class Base<Payload> {
+  accept(check: (item: Payload) => any): Box<this> {
+    return new Box<this>();
+  }
+}
+
+class NumberChild extends Base<number> {
+  protected numeric = () => this.accept((value) => value.toFixed());
+}
+
+class Middle<Item> extends Base<Item> {}
+class StringChild extends Middle<string> {
+  protected text = () => this.accept((renamed) => renamed.toUpperCase());
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2345 | 7006))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected inherited generic method on `this` to contextualize callback with subclass base arguments, got: {relevant:#?}"
+    );
+}
