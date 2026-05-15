@@ -1322,6 +1322,21 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn mark_top_level_using_inline_cjs_export(
+        &mut self,
+        export_name: Option<&String>,
+        is_es_module_output: bool,
+    ) {
+        if let Some(export_name) = export_name
+            && !is_es_module_output
+        {
+            self.ctx
+                .module_state
+                .inline_exported_names
+                .insert(export_name.clone());
+        }
+    }
+
     fn rewrite_direct_top_level_using_class_export(
         &self,
         mut emitted: String,
@@ -1702,6 +1717,10 @@ impl<'a> Printer<'a> {
                     self.write(&expr);
                     self.write(";");
                 }
+                self.mark_top_level_using_inline_cjs_export(
+                    export_name.as_ref(),
+                    is_es_module_output,
+                );
                 if let Some(prev) = prev_anon_default_name {
                     self.anonymous_default_export_name = prev;
                 }
@@ -1753,6 +1772,7 @@ impl<'a> Printer<'a> {
                 self.write(&binding_name);
                 self.write_export_binding_end();
             }
+            self.mark_top_level_using_inline_cjs_export(export_name.as_ref(), is_es_module_output);
             if let Some(prev) = prev_anon_default_name {
                 self.anonymous_default_export_name = prev;
             }
@@ -1937,14 +1957,7 @@ impl<'a> Printer<'a> {
                 self.write(";");
             }
         }
-        if let Some(export_name) = export_name.as_ref()
-            && !is_es_module_output
-        {
-            self.ctx
-                .module_state
-                .inline_exported_names
-                .insert(export_name.clone());
-        }
+        self.mark_top_level_using_inline_cjs_export(export_name.as_ref(), is_es_module_output);
         true
     }
 
