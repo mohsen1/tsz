@@ -9,7 +9,7 @@ impl<'a> CheckerState<'a> {
     /// assignability diagnostic can show the inferred element shape rather
     /// than just the identifier's static type.
     ///
-    /// ## Phase 1 step-3: `StableLocation`-based declaration lookup
+    /// ## StableLocation-based declaration lookup
     ///
     /// Declaration *identity* is read from
     /// [`tsz_binder::Symbol::stable_declarations`] (with a fallback to
@@ -17,9 +17,8 @@ impl<'a> CheckerState<'a> {
     /// concrete `NodeIndex` is rehydrated on demand via
     /// [`CheckerContext::node_at_stable_location`][nasl] so the consumer
     /// no longer assumes the arena that produced the symbol's stored
-    /// `NodeIndex` is still resident. This is the third consumer migrated
-    /// under the [global query graph plan][plan] (Phase 1 step 3,
-    /// following PRs #1055 and #1066).
+    /// `NodeIndex` is still resident. This consumes declaration identity
+    /// from stable bindings and rehydrates `NodeIndex` on demand.
     ///
     /// The variable-declaration / array-literal walk is fundamentally
     /// AST-bound and continues to use a live `NodeIndex` locally; the
@@ -27,7 +26,6 @@ impl<'a> CheckerState<'a> {
     /// the symbol's arena-dependent field.
     ///
     /// [nasl]: crate::context::CheckerContext::node_at_stable_location
-    /// [plan]: ../../../../../docs/plan/ROADMAP.md
     pub(in crate::error_reporter) fn identifier_array_object_literal_source_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -43,7 +41,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Phase 1 step-3: identify the variable declaration via its
+        // Identify the variable declaration via its
         // `StableLocation`, not via `symbol.declarations.first()`. Prefer
         // the first entry of `stable_declarations` (mirrors the legacy
         // `declarations.first()` preference order); fall back to
@@ -164,10 +162,10 @@ impl<'a> CheckerState<'a> {
     /// an enum (used for "Type 'true' is not assignable to ..." style
     /// diagnostics).
     ///
-    /// ## Phase 1 step-3: `StableLocation`-based declaration lookup
+    /// ## StableLocation-based declaration lookup
     ///
-    /// See [`Self::identifier_array_object_literal_source_display`] for
-    /// the migration rationale. Same pattern: read `stable_*` for
+    /// See [`Self::identifier_array_object_literal_source_display`] for the
+    /// stable-location rationale. Same pattern: read `stable_*` for
     /// declaration identity, rehydrate `NodeIndex` via
     /// `ctx.node_at_stable_location`, walk the variable-declaration body
     /// against the rehydrated arena.
@@ -192,7 +190,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Phase 1 step-3: identify the primary variable declaration via
+        // Identify the primary variable declaration via
         // its `StableLocation`. Same preference order as
         // `identifier_array_object_literal_source_display` above.
         let stable_loc = match symbol.stable_declarations.first() {
@@ -218,10 +216,10 @@ impl<'a> CheckerState<'a> {
 }
 
 // =============================================================================
-// Phase 1 step-3 regression tests: `StableLocation` rehydration
+// StableLocation rehydration regression tests
 // =============================================================================
 //
-// These tests validate the migration of
+// These tests validate the stable rehydration behavior of
 // `identifier_array_object_literal_source_display` and
 // `identifier_literal_initializer_source_display` away from the
 // arena-dependent `Symbol::declarations[0]: NodeIndex` toward the
@@ -229,7 +227,7 @@ impl<'a> CheckerState<'a> {
 // fields introduced by PR #1055. The critical invariant they lock in is
 // that a `StableLocation` captured from one binder/arena pair can be
 // resolved against a freshly re-parsed arena of the same source — the
-// Phase 5 "bounded arena residency" precondition.
+// bounded arena-residency precondition.
 
 #[cfg(test)]
 mod tests {
@@ -302,12 +300,12 @@ mod tests {
         );
     }
 
-    /// Phase 5 load-bearing scenario: capture a `StableLocation` from one
+    /// Load-bearing scenario: capture a `StableLocation` from one
     /// binder/arena, drop it, re-parse the same source with a fresh
     /// arena, and verify the captured location still resolves correctly
     /// against the new arena. This proves
-    /// `identifier_array_object_literal_source_display` survives Phase 5
-    /// arena eviction-and-rehydrate.
+    /// `identifier_array_object_literal_source_display` survives arena
+    /// eviction-and-rehydrate.
     #[test]
     fn stable_location_round_trips_across_arena_reparse_for_var_decl() {
         let source = "let xs = [{ a: 1 }, { a: 2 }];\nlet other = 1;\n".to_string();

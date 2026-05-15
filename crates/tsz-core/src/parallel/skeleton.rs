@@ -113,7 +113,7 @@ pub struct SkeletonAugmentation {
 /// One entry per `(symbol, module_spec)` pair recorded by the binder in
 /// [`tsz_binder::BinderState::augmentation_target_modules`]. The
 /// [`StableLocation`] points back to the augmenting declaration's AST node so
-/// consumers can rehydrate without retaining the arena (Phase 5).
+/// consumers can rehydrate without retaining the arena.
 ///
 /// This is the minimal data needed to reconstruct the checker's
 /// `global_augmentation_targets_index` (`module_spec -> Vec<(SymbolId, file_idx)>`)
@@ -1149,7 +1149,7 @@ impl SkeletonIndex {
     /// fields). No normalization is applied; this matches the legacy semantics
     /// of `program.declared_modules.contains(spec) || program.shorthand_ambient_modules.contains(spec)`.
     ///
-    /// This is the skeleton-only path for the Phase 5 evict-and-rehydrate
+    /// This is the skeleton-only path for the evict-and-rehydrate
     /// scenario: the consumer can resolve ambient module presence without
     /// retaining the per-file binder/arena state.
     #[must_use]
@@ -1203,7 +1203,7 @@ impl SkeletonIndex {
     /// This is the Phase 2 step 2 skeleton-only path for
     /// `global_module_augmentations_index`: the consumer can rebuild the
     /// merged checker-side index from this accessor alone, without
-    /// iterating per-file binders. Once arenas are evictable (Phase 5),
+    /// iterating per-file binders. Once arenas are evictable,
     /// the augmenting `NodeIndex` is rehydrated on demand from the
     /// `StableLocation` via `CheckerContext::node_at_stable_location`.
     ///
@@ -1229,7 +1229,7 @@ impl SkeletonIndex {
     /// While arenas remain resident (Phase 2-4) the augmenting `NodeIndex` is
     /// rehydrated by scanning the owner file's arena for a node whose
     /// `(pos, end)` matches the stored [`StableLocation`]. Once arenas become
-    /// evictable in Phase 5, downstream consumers can defer the rehydration
+    /// evictable, downstream consumers can defer the rehydration
     /// to `CheckerContext::node_at_stable_location`.
     ///
     /// Spec keys are visited in sorted order; per-spec entries preserve the
@@ -1285,7 +1285,8 @@ impl SkeletonIndex {
     /// - `declared_modules` match exactly
     /// - `shorthand_ambient_modules` match exactly
     /// - `module_export_specifiers` match the keys of `module_exports`
-    ///   (excluding user file names that the legacy path inserts as `module_exports` keys)
+    ///   (excluding user file names that are separately stored as
+    ///   `module_exports` keys)
     ///
     /// This proves the skeleton captures all merge-relevant ambient module topology
     /// without retaining arenas. In release builds, this is a no-op.
@@ -1343,7 +1344,7 @@ impl SkeletonIndex {
     /// This is the Phase 2 step 3 skeleton-only path for
     /// `global_augmentation_targets_index`: the consumer can rebuild the
     /// merged checker-side index from this accessor alone, without iterating
-    /// per-file binders. Once arenas become evictable in Phase 5 the
+    /// per-file binders. Once arenas become evictable the
     /// augmenting AST node can be rehydrated from the [`StableLocation`] via
     /// `CheckerContext::node_at_stable_location`.
     ///
@@ -1517,7 +1518,7 @@ impl SkeletonIndex {
     /// This is the Phase 2 step 4 skeleton-only path for
     /// `global_module_binder_index`: the consumer can rebuild the merged
     /// checker-side index from this accessor alone, without iterating
-    /// per-file binders. Once arenas become evictable in Phase 5 the
+    /// per-file binders. Once arenas become evictable the
     /// per-binder `module_exports` map is no longer needed for this lookup.
     ///
     /// Both the raw module specifier (e.g. `"\"foo\""`) and its de-quoted
@@ -2299,14 +2300,14 @@ mod tests {
 
     #[test]
     fn is_ambient_module_consumer_works_after_legacy_fields_emptied() {
-        // Phase 5 scenario: the consumer must still produce the correct answer
-        // when the legacy MergedProgram fields are evicted/empty. We model this
+        // This scenario verifies the consumer still returns the correct answer
+        // when the legacy MergedProgram fields are empty. We model this
         // by constructing `SkeletonIndex` directly (no MergedProgram involvement)
         // and verifying the consumer-shaped closure (mirroring the CLI driver's
         // `is_ambient_module` closure) returns the right answer.
         let idx = skeleton_index_with_ambient_modules(&["my-lib"], &["*.css"]);
 
-        // Mirror the CLI driver's consumer closure (post-migration shape):
+        // Mirror the CLI driver's consumer closure shape:
         //   |spec| skeleton.is_ambient_module(spec)
         let consumer = |spec: &str| -> bool { idx.is_ambient_module(spec) };
 
@@ -2382,7 +2383,7 @@ mod tests {
     // `build_augmentation_targets_index(...)`.
     //
     // Both let the checker rebuild the merged index from skeleton data alone
-    // — required for Phase 5 (arena eviction).
+    // — required for arena eviction.
     // -------------------------------------------------------------------------
 
     /// Helper: build a skeleton with the given module-augmentation entries.
@@ -2562,7 +2563,7 @@ mod tests {
 
     #[test]
     fn module_augmentations_consumer_works_after_legacy_program_emptied() {
-        // Phase 5 invariant: the checker-side merged map must be reproducible
+        // Invariant: the checker-side merged map must be reproducible
         // from `SkeletonIndex` alone, even if the legacy `MergedProgram`'s
         // per-binder `module_augmentations` field has been emptied.
         //
@@ -2694,7 +2695,7 @@ mod tests {
 
     #[test]
     fn augmentation_targets_consumer_works_after_legacy_program_emptied() {
-        // Phase 5 invariant: the checker-side merged map must be reproducible
+        // Invariant: the checker-side merged map must be reproducible
         // from `SkeletonIndex` alone, even if the legacy `MergedProgram`'s
         // per-binder `augmentation_target_modules` field has been emptied.
         //
@@ -2779,8 +2780,8 @@ mod tests {
     // iterating every binder's `module_exports` map. Phase 2 step 4 moves the
     // build to `SkeletonIndex::module_binders_for(...)` /
     // `build_module_binder_index(...)`, letting the checker rebuild the
-    // merged index from skeleton data alone — required for Phase 5 (arena
-    // eviction).
+    // merged index from skeleton data alone — required for arena
+    // eviction.
     // -------------------------------------------------------------------------
 
     /// Helper: build a skeleton with the given module-export specifier list.
@@ -2848,7 +2849,7 @@ mod tests {
 
     #[test]
     fn module_binders_consumer_works_after_legacy_program_emptied() {
-        // Phase 5 invariant: the checker-side merged map must be reproducible
+        // Invariant: the checker-side merged map must be reproducible
         // from `SkeletonIndex` alone, even if the legacy `MergedProgram`'s
         // per-binder `module_exports` field has been emptied.
         //
@@ -2929,7 +2930,7 @@ mod tests {
     // 6 moves the build to `SkeletonIndex::module_exports_for(...)` /
     // `build_module_exports_index(merged_module_exports)`, letting the checker
     // rebuild the merged index from skeleton data plus the post-merge
-    // `program.module_exports` map alone — required for Phase 5 (arena
+    // `program.module_exports` map alone — required for arena
     // eviction). SymbolIds are resolved at projection time from the post-merge
     // map (which holds globally-remapped IDs), avoiding the pre-merge local-
     // SymbolId trap that regressed PR #1145.
@@ -3119,7 +3120,7 @@ mod tests {
 
     #[test]
     fn module_exports_consumer_works_after_legacy_program_emptied() {
-        // Phase 5 invariant: the checker-side merged map must be reproducible
+        // Invariant: the checker-side merged map must be reproducible
         // from `SkeletonIndex` + `program.module_exports` alone, even if every
         // per-binder `module_exports` field has been emptied (which is the
         // post-eviction state).

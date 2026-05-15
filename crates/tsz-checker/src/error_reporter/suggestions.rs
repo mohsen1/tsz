@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
     /// In that case TypeScript treats unknown member accesses as `any` and does not
     /// surface typo suggestions (TS2551).
     ///
-    /// ## Phase 1 step-2: `StableLocation`-based declaration lookup
+    /// ## StableLocation-based declaration lookup
     ///
     /// This consumer reads [`tsz_binder::Symbol::stable_value_declaration`]
     /// (with a fallback to the first entry of
@@ -77,16 +77,15 @@ impl<'a> CheckerState<'a> {
     /// `symbol.primary_declaration()`. The resulting `StableLocation`
     /// carries `(file_idx, pos, end)` and is rehydrated to a concrete
     /// `NodeIndex` on demand via
-    /// [`CheckerContext::node_at_stable_location`][nasl]. This is the
-    /// first consumer migrated under the
-    /// [global query graph plan][plan] (Phase 1 step 2, following
-    /// PR #1055). Heritage-clause tree walking is still arena-bound and
+    /// [`CheckerContext::node_at_stable_location`][nasl]. This now reads
+    /// declaration identity from stable bindings and
+    /// rehydrates `NodeIndex` as needed. Heritage-clause tree walking is
+    /// still arena-bound and
     /// fundamentally requires a live `NodeIndex`, so the helper returns
     /// one. The load-bearing change is that declaration *identity* no
     /// longer comes from the symbol's arena-dependent `NodeIndex`.
     ///
     /// [nasl]: crate::context::CheckerContext::node_at_stable_location
-    /// [plan]: ../../../../docs/plan/ROADMAP.md
     pub(super) fn class_extends_any_base(&mut self, type_id: TypeId) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
@@ -104,7 +103,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Phase 1 step-2: identify the primary class declaration via its
+        // Identify the primary class declaration via its
         // `StableLocation`, not via `symbol.primary_declaration()`. Prefer
         // `stable_value_declaration` when set; otherwise fall back to the
         // first `stable_declarations` entry — mirroring the existing
@@ -125,9 +124,9 @@ impl<'a> CheckerState<'a> {
         // and collect the candidate `extends` expression node indices. We
         // eagerly collect `expr_idx` values into a small vector so that the
         // arena borrow is released before any `&mut self` calls below
-        // (`get_type_of_node`). A future phase can push this rehydration
-        // further down or replace it entirely with a query-side class
-        // summary.
+        // (`get_type_of_node`). The rehydration can be pushed deeper in a
+        // follow-up refactor if needed; it remains here to keep this consumer
+        // behaviorally stable.
         let extends_expr_indices: smallvec::SmallVec<[NodeIndex; 2]> = {
             let Some((decl_idx, arena)) = self.ctx.node_at_stable_location(stable_loc) else {
                 return false;
@@ -162,9 +161,9 @@ impl<'a> CheckerState<'a> {
 
         // NOTE: `get_type_of_node` still operates against
         // `self.ctx.arena` (the current file's arena). Cross-file
-        // class-extends-any detection was a pre-existing latent
-        // limitation and is out of scope for this Phase 1 step-2
-        // migration. The `StableLocation` rehydration above returns
+        // class-extends-any detection remains a caller-side current-file
+        // constraint. The `StableLocation`
+        // rehydration above returns
         // the same arena whenever the class is in the current file —
         // which is the case for every caller today.
         for expr_idx in extends_expr_indices {
@@ -1023,16 +1022,16 @@ fn get_lib_for_type_property(type_name: &str, prop_name: &str) -> Option<&'stati
 }
 
 // =============================================================================
-// Phase 1 step-2 regression tests: `StableLocation` rehydration
+// StableLocation rehydration regression tests
 // =============================================================================
 //
-// These tests validate the migration of `class_extends_any_base` away from
+// These tests validate the stable rehydration behavior of
 // the arena-dependent `Symbol::primary_declaration(): NodeIndex` toward the
 // file-stable `Symbol::stable_value_declaration` / `stable_declarations`
 // fields introduced by PR #1055. The critical invariant they lock in is
 // that a `StableLocation` captured from one binder/arena pair can be
 // resolved against a freshly re-parsed arena of the same source — the
-// Phase 5 "bounded arena residency" precondition.
+// bounded arena-residency precondition.
 
 #[cfg(test)]
 mod tests {
@@ -1091,7 +1090,7 @@ mod tests {
         assert_eq!(resolved_node.end, stable.end);
     }
 
-    /// The load-bearing Phase 5 scenario: capture a `StableLocation` from
+    /// The load-bearing scenario: capture a `StableLocation` from
     /// one arena, drop it (simulated by a fresh parser), and re-resolve
     /// the same `(pos, end)` against a newly parsed arena. The
     /// rehydrated `NodeIndex` must point at a node with matching span.
