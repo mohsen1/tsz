@@ -1,6 +1,9 @@
 //! Type query member helpers.
 
 use super::type_node::TypeNodeChecker;
+use crate::context::CheckerContext;
+use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -9,6 +12,10 @@ use tsz_solver::TypeId;
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub(crate) fn value_property_type_query(&self, expr_name: NodeIndex) -> Option<TypeId> {
         let expr_name = self.ctx.arena.skip_parenthesized_and_assertions(expr_name);
+        if let Some(imported_type) = self.import_call_typeof_value(expr_name) {
+            return Some(imported_type);
+        }
+
         let node = self.ctx.arena.get(expr_name)?;
         let (base, property_name_node) = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
         {
@@ -94,6 +101,195 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         self.value_property_type_query(expr_name)
+    }
+
+    pub(crate) fn import_call_type_reference(&mut self, type_name: NodeIndex) -> Option<TypeId> {
+        let (sym_id, target_file_idx, remaining_segments) =
+            self.resolve_import_call_member_symbol(type_name)?;
+        let mut resolved = self.with_import_target_checker(target_file_idx, |checker| {
+            checker.type_reference_symbol_type(sym_id)
+        })?;
+        resolved = self.materialize_imported_lazy_body(resolved);
+        resolved = self.resolve_remaining_import_member_segments(resolved, &remaining_segments)?;
+        (resolved != TypeId::ANY && resolved != TypeId::ERROR).then_some(resolved)
+    }
+
+    fn import_call_typeof_value(&self, expr_name: NodeIndex) -> Option<TypeId> {
+        let (sym_id, target_file_idx, remaining_segments) =
+            self.resolve_import_call_member_symbol(expr_name)?;
+        let mut resolved = self.with_import_target_checker(target_file_idx, |checker| {
+            checker.get_type_of_symbol(sym_id)
+        })?;
+        resolved = self.materialize_imported_lazy_body(resolved);
+        resolved = self.resolve_remaining_import_member_segments(resolved, &remaining_segments)?;
+        (resolved != TypeId::ANY && resolved != TypeId::ERROR).then_some(resolved)
+    }
+
+    fn materialize_imported_lazy_body(&self, type_id: TypeId) -> TypeId {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+        let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+            return type_id;
+        };
+        let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+        if params.is_empty() {
+            self.ctx.register_def_in_envs(def_id, body);
+        } else {
+            self.ctx
+                .register_def_with_params_in_envs(def_id, body, params);
+        }
+        body
+    }
+
+    fn resolve_remaining_import_member_segments(
+        &self,
+        mut current_type: TypeId,
+        segments: &[String],
+    ) -> Option<TypeId> {
+        for segment in segments {
+            current_type = match crate::query_boundaries::property_access::resolve_property_access(
+                self.ctx.types,
+                current_type,
+                segment,
+            ) {
+                tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id,
+                    ..
+                }
+                | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(type_id),
+                    ..
+                } if type_id != TypeId::ANY && type_id != TypeId::ERROR => type_id,
+                _ => return None,
+            };
+        }
+        Some(current_type)
+    }
+
+    fn resolve_import_call_member_symbol(
+        &self,
+        type_name: NodeIndex,
+    ) -> Option<(SymbolId, usize, Vec<String>)> {
+        let call_idx = self.find_leftmost_import_call(type_name)?;
+        let (module_name, _) = self.import_call_module_specifier(call_idx)?;
+        let mut segments = self.import_call_member_segments(type_name)?;
+        let first_segment = segments.first()?.clone();
+        let target_file_idx = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, &module_name)
+            .or_else(|| self.ctx.resolve_import_target(&module_name))?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.as_str();
+
+        let sym_id = self
+            .ctx
+            .module_exports_for_module(target_binder, target_file_name)
+            .and_then(|exports| exports.get(&first_segment))
+            .or_else(|| {
+                self.ctx
+                    .module_exports_for_module(target_binder, &module_name)
+                    .and_then(|exports| exports.get(&first_segment))
+            })
+            .or_else(|| target_binder.file_locals.get(&first_segment))?;
+        target_binder.get_symbol(sym_id)?;
+        self.ctx
+            .register_symbol_file_target(sym_id, target_file_idx);
+        segments.remove(0);
+        Some((sym_id, target_file_idx, segments))
+    }
+
+    fn with_import_target_checker<R>(
+        &self,
+        target_file_idx: usize,
+        f: impl for<'child> FnOnce(&mut CheckerState<'child>) -> R,
+    ) -> Option<R> {
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+        let mut checker = CheckerState {
+            ctx: CheckerContext::with_parent_cache(
+                target_arena,
+                target_binder,
+                self.ctx.types,
+                target_file_name,
+                self.ctx.compiler_options.clone(),
+                self.ctx,
+            ),
+        };
+        checker.ctx.copy_cross_file_state_from(self.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::ImportType,
+        );
+        checker.ctx.current_file_idx = target_file_idx;
+        let resolved = f(&mut checker);
+        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        Some(resolved)
+    }
+
+    fn find_leftmost_import_call(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        const MAX_DEPTH: usize = 64;
+        for _ in 0..MAX_DEPTH {
+            let node = self.ctx.arena.get(idx)?;
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let qualified = self.ctx.arena.get_qualified_name(node)?;
+                idx = qualified.left;
+            } else if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                if access.question_dot_token {
+                    return None;
+                }
+                idx = access.expression;
+            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                let call = self.ctx.arena.get_call_expr(node)?;
+                let expr_node = self.ctx.arena.get(call.expression)?;
+                return (expr_node.kind == SyntaxKind::ImportKeyword as u16).then_some(idx);
+            } else {
+                return None;
+            }
+        }
+        None
+    }
+
+    fn import_call_module_specifier(&self, call_idx: NodeIndex) -> Option<(String, NodeIndex)> {
+        let node = self.ctx.arena.get(call_idx)?;
+        let call = self.ctx.arena.get_call_expr(node)?;
+        let args = call.arguments.as_ref()?;
+        let &first_arg = args.nodes.first()?;
+        let literal = self
+            .ctx
+            .arena
+            .get(first_arg)
+            .and_then(|arg| self.ctx.arena.get_literal(arg))?;
+        Some((literal.text.clone(), first_arg))
+    }
+
+    fn import_call_member_segments(&self, mut idx: NodeIndex) -> Option<Vec<String>> {
+        let mut reversed = Vec::new();
+        loop {
+            let node = self.ctx.arena.get(idx)?;
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let qualified = self.ctx.arena.get_qualified_name(node)?;
+                reversed.push(self.property_name_text(qualified.right)?);
+                idx = qualified.left;
+            } else if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                if access.question_dot_token {
+                    return None;
+                }
+                reversed.push(self.property_name_text(access.name_or_argument)?);
+                idx = access.expression;
+            } else if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+                break;
+            } else {
+                return None;
+            }
+        }
+        reversed.reverse();
+        Some(reversed)
     }
 
     fn symbol_is_bare_const_object_literal(&self, sym_id: tsz_binder::SymbolId) -> Option<bool> {

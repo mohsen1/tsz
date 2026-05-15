@@ -1,0 +1,21 @@
+# path|category|max_count|reason
+# Current semantic rewrites over already-emitted JS/DTS. This file is a ratchet:
+# counts may go down as plan/IR/declaration-summary work removes debt; new or
+# increased counts require an explicit category and removal reason.
+crates/tsz-emitter/src/declaration_emitter/core/js_emit.rs|dts-output-surgery|2|JS declaration recovery patches emitted type text; migrate to declaration summary facts
+crates/tsz-emitter/src/declaration_emitter/helpers/computed_declarations.rs|dts-output-surgery|1|computed declaration text patch; migrate to structured declaration node emission
+crates/tsz-emitter/src/declaration_emitter/helpers/jsdoc.rs|dts-output-surgery|1|legacy JSDoc type text normalization; migrate to structured JSDoc parser facts
+crates/tsz-emitter/src/declaration_emitter/helpers/type_inference.rs|dts-output-surgery|1|inferred type text parameter rewrite; migrate to declaration display request facts
+crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_class_expression.rs|dts-output-surgery|2|class-expression declaration shape patch; migrate to structured class-expression declaration plan
+crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_imported_calls.rs|dts-output-surgery|1|imported-call inferred text indentation patch; migrate to structured type display formatting
+crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_object_rewrites.rs|dts-output-surgery|4|object member inferred text rewrites; migrate to declaration summary member facts
+crates/tsz-emitter/src/declaration_emitter/helpers/type_inference_return_normalization.rs|dts-output-surgery|3|return type text normalization rewrites; migrate to structured return declaration display
+crates/tsz-emitter/src/emitter/declarations/class/emit_declaration.rs|class-output-surgery|6|class/decorator emitted string patches; migrate to class/decorator emit plan entries
+crates/tsz-emitter/src/emitter/es5/helpers_async.rs|legacy-es5-output-surgery|3|legacy ES5 async helper text patch; quarantine under legacy target lane
+crates/tsz-emitter/src/emitter/module_emission/exports.rs|module-export-output-surgery|2|CommonJS export folding patches emitted text; migrate to export schedule entries
+crates/tsz-emitter/src/emitter/module_wrapper/system_emit.rs|legacy-module-output-surgery|2|System wrapper emitted string patch; quarantine with deprecated module outputs
+crates/tsz-emitter/src/emitter/module_wrapper/system_legacy_class_decorators.rs|legacy-module-output-surgery|1|System legacy decorator assignment patch; quarantine with deprecated module outputs
+crates/tsz-emitter/src/emitter/source_file/emit.rs|module-export-output-surgery|1|source-file export rewrite patch; migrate to export schedule entries
+crates/tsz-emitter/src/emitter/source_file/top_level_using.rs|resource-region-output-surgery|16|top-level using region rewrites emitted strings; migrate to disposable-region plan
+crates/tsz-emitter/src/emitter/transform_dispatch.rs|module-export-output-surgery|2|directive dispatch patches enum/export output; migrate to export plan entries
+crates/tsz-emitter/src/transforms/ir_printer.rs|ir-output-surgery|1|IR printer patches emitted class wrapper text; migrate to structured IR node/chunk

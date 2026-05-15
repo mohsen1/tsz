@@ -924,7 +924,7 @@ pub(crate) fn classify_object_properties(
             } else {
                 matching_props.push(source_prop.clone());
             }
-        } else if !target_index_signature_accepts_property(db, target, source_prop)
+        } else if !target_index_signature_accepts_source_property(db, target, source_prop)
             && !classification.target_is_empty_object
             && !classification.target_is_global_object_or_function
             && !classification.target_is_type_parameter
@@ -956,7 +956,7 @@ fn shape_has_non_symbol_index_signature(shape: &ObjectShape) -> bool {
         || shape.number_index.is_some()
 }
 
-fn target_index_signature_accepts_property(
+pub(crate) fn target_index_signature_accepts_source_property(
     db: &dyn TypeDatabase,
     target: TypeId,
     source_prop: &PropertyInfo,
@@ -970,15 +970,15 @@ fn target_index_signature_accepts_property(
     }
 
     if let Some(members) = union_members(db, target) {
-        return members
-            .iter()
-            .any(|&member| target_index_signature_accepts_property(db, member, source_prop));
+        return members.iter().any(|&member| {
+            target_index_signature_accepts_source_property(db, member, source_prop)
+        });
     }
 
     if let Some(members) = intersection_members(db, target) {
-        return members
-            .iter()
-            .any(|&member| target_index_signature_accepts_property(db, member, source_prop));
+        return members.iter().any(|&member| {
+            target_index_signature_accepts_source_property(db, member, source_prop)
+        });
     }
 
     false
@@ -999,7 +999,8 @@ fn shape_index_signature_accepts_property(
         .filter(|idx| idx.key_type == TypeId::SYMBOL);
 
     if source_prop.is_symbol_named {
-        return symbol_index.is_some();
+        return symbol_index.is_some()
+            || string_index.is_some_and(|idx| index_signature_key_accepts_symbol(db, idx));
     }
 
     let name = db.resolve_atom_ref(source_prop.name);
@@ -1008,6 +1009,20 @@ fn shape_index_signature_accepts_property(
     }
 
     string_index.is_some()
+}
+
+fn index_signature_key_accepts_symbol(
+    db: &dyn TypeDatabase,
+    index: &tsz_solver::IndexSignature,
+) -> bool {
+    index_signature_key_type_accepts_symbol(db, index.key_type)
+}
+
+pub(crate) fn index_signature_key_type_accepts_symbol(
+    db: &dyn TypeDatabase,
+    key_type: TypeId,
+) -> bool {
+    key_type == TypeId::SYMBOL || tsz_solver::is_subtype_of(db, TypeId::SYMBOL, key_type)
 }
 
 /// Property-name index for assignability failure classification.
@@ -1220,7 +1235,7 @@ pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolv
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::{IndexSignature, TypeInterner};
 
     #[test]
     fn target_property_index_uses_first_atom_match() {
@@ -1247,5 +1262,52 @@ mod tests {
             index.matching_type_by_resolved_name(&db, name),
             Some(TypeId::NUMBER)
         );
+    }
+
+    #[test]
+    fn symbol_named_source_property_is_accepted_by_property_key_index_signature() {
+        let db = TypeInterner::new();
+        let property_key = db.union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL);
+        let target = db.object_with_index(ObjectShape {
+            string_index: Some(IndexSignature {
+                key_type: property_key,
+                value_type: TypeId::STRING,
+                readonly: false,
+                param_name: None,
+            }),
+            ..ObjectShape::default()
+        });
+        let mut source_prop =
+            PropertyInfo::new(db.intern_string("[Symbol.iterator]"), TypeId::STRING);
+        source_prop.is_symbol_named = true;
+        let source = db.object(vec![source_prop]);
+
+        let classification =
+            classify_object_properties(&db, source, target).expect("object classification");
+
+        assert!(classification.excess_properties.is_empty());
+    }
+
+    #[test]
+    fn symbol_named_source_property_is_excess_for_plain_string_index_signature() {
+        let db = TypeInterner::new();
+        let target = db.object_with_index(ObjectShape {
+            string_index: Some(IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: TypeId::STRING,
+                readonly: false,
+                param_name: None,
+            }),
+            ..ObjectShape::default()
+        });
+        let mut source_prop =
+            PropertyInfo::new(db.intern_string("[Symbol.iterator]"), TypeId::STRING);
+        source_prop.is_symbol_named = true;
+        let source = db.object(vec![source_prop]);
+
+        let classification =
+            classify_object_properties(&db, source, target).expect("object classification");
+
+        assert_eq!(classification.excess_properties.len(), 1);
     }
 }

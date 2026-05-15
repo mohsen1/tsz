@@ -197,6 +197,18 @@ impl<'a> CheckerState<'a> {
                             .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
                         })
                 };
+                let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                    let type_query_idx = self.ctx.arena.get_extended(expr_name_idx)?.parent;
+                    let type_query_node = self.ctx.arena.get(type_query_idx)?;
+                    if type_query_node.kind != syntax_kind_ext::TYPE_QUERY {
+                        return None;
+                    }
+                    self.ctx
+                        .node_types
+                        .get(&type_query_idx.0)
+                        .copied()
+                        .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+                };
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -205,7 +217,8 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings)
-                .with_name_def_id_resolver(&name_resolver);
+                .with_name_def_id_resolver(&name_resolver)
+                .with_type_query_override(&type_query_override);
                 let mut type_id = lowering.lower_type(idx);
                 if query::get_application_info(self.ctx.types, type_id).is_none()
                     && let Some(args) = &type_ref.type_arguments
@@ -796,6 +809,18 @@ impl<'a> CheckerState<'a> {
                             .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
                         })
                 };
+                let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                    let type_query_idx = self.ctx.arena.get_extended(expr_name_idx)?.parent;
+                    let type_query_node = self.ctx.arena.get(type_query_idx)?;
+                    if type_query_node.kind != syntax_kind_ext::TYPE_QUERY {
+                        return None;
+                    }
+                    self.ctx
+                        .node_types
+                        .get(&type_query_idx.0)
+                        .copied()
+                        .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+                };
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -805,7 +830,8 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_type_param_bindings(type_param_bindings)
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
-                .with_name_def_id_resolver(&name_resolver);
+                .with_name_def_id_resolver(&name_resolver)
+                .with_type_query_override(&type_query_override);
                 let mut result = lowering.lower_type(idx);
                 if let Some((base, app_args)) = query::get_application_info(self.ctx.types, result)
                     && !is_builtin_array
