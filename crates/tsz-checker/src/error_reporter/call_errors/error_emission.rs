@@ -173,14 +173,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Use relation evidence from the caller when available. Legacy callers
-        // still fall back to failure analysis until their paths build
-        // `RelationRequest`s.
-        let fallback_analysis;
+        // build a boundary request here so TS2345 fallback rendering still goes
+        // through the same relation/failure path.
+        let fallback_outcome;
         let failure_reason = if let Some(reason) = relation_failure {
             Some(reason.to_solver_failure_reason())
         } else {
-            fallback_analysis = self.analyze_assignability_failure(arg_type, param_type);
-            fallback_analysis.failure_reason
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (prepared_arg, prepared_param) =
+                self.prepare_assignability_inputs(arg_type, param_type);
+            let request = RelationRequest::call_arg(prepared_arg, prepared_param);
+            fallback_outcome = self.execute_relation_request(&request);
+            fallback_outcome.failure.as_ref().map(
+                crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason,
+            )
         };
 
         // When the failure reason is NoCommonProperties (weak types with no
