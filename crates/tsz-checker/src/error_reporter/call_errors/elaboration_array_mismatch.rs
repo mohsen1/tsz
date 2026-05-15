@@ -91,16 +91,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let fallback_analysis;
-        let fallback_reason;
+        let fallback_outcome;
         let failure = if let Some(failure) = relation_failure {
             Some(failure)
         } else {
-            fallback_analysis = self.analyze_assignability_failure(source_type, target_type);
-            fallback_reason = fallback_analysis
-                .failure_reason
-                .map(crate::query_boundaries::relation_types::RelationFailure::from_solver_reason);
-            fallback_reason.as_ref()
+            use crate::query_boundaries::assignability::RelationRequest;
+
+            let (prepared_source, prepared_target) =
+                self.prepare_assignability_inputs(source_type, target_type);
+            let request = RelationRequest::assign(prepared_source, prepared_target);
+            fallback_outcome = self.execute_relation_request(&request);
+            fallback_outcome.failure.as_ref()
         };
         #[allow(clippy::match_same_arms)] // explicit TupleElementMismatch arm carries rationale
         match failure {
