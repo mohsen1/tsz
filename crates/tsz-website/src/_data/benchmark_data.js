@@ -216,6 +216,14 @@ function normalizedKnownBlockers(compatibility, diagnosticSubsystems) {
   return blockers;
 }
 
+function normalizedLastSuccessfulPhase(compatibility) {
+  if (compatibility?.last_successful_phase !== undefined && compatibility.last_successful_phase !== "") {
+    return compatibility.last_successful_phase;
+  }
+  if (compatibility?.exit_class === "exit success" && compatibility?.diagnostic_status === "none") return "check";
+  return null;
+}
+
 const TINY_BENCHMARK_MAX_LINES = 200;
 
 const EXPECTED_PROJECT_BENCHMARKS = [
@@ -367,6 +375,7 @@ function compatibilityRowFor(definition, allResults) {
     row,
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
+    lastSuccessfulPhase: normalizedLastSuccessfulPhase(compatibility),
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
     emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
     dtsStatus: compatibility.dts_status || "not in scope (noEmit project check)",
@@ -1736,6 +1745,7 @@ export function getProjectCompatibilityDashboard() {
       : [];
     const parts = [
       `phase: ${row.phase || "unknown"}`,
+      row.lastSuccessfulPhase ? `last successful: ${row.lastSuccessfulPhase}` : "",
       `owner: ${row.family || "not classified"}`,
       row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
       row.emitStatus ? `emit: ${row.emitStatus}` : "",
