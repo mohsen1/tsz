@@ -25434,7 +25434,8 @@ function PlaygroundApp() {
   }
   function ensureLspParser() {
     if (!wasmRef.current || !editorRef.current) return null;
-    const nextCode = codeRef.current;
+    const nextCode = editorRef.current.getValue();
+    codeRef.current = nextCode;
     const options = getCurrentCompilerOptions();
     const state = JSON.stringify({
       code: nextCode,
@@ -25757,7 +25758,9 @@ function PlaygroundApp() {
       suggestOnTriggerCharacters: true
     });
     editorRef.current.onDidChangeModelContent(() => {
-      setCode(editorRef.current.getValue());
+      const nextCode = editorRef.current.getValue();
+      codeRef.current = nextCode;
+      setCode(nextCode);
     });
     tsconfigEditorRef.current.onDidChangeModelContent(() => {
       const nextText = tsconfigEditorRef.current.getValue();
