@@ -1120,6 +1120,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if self.actual_lib_namespace_merged_type_has_property(type_id, prop_name) {
+            return;
+        }
+
         // Suppress error if type is ERROR/ANY or an Error type wrapper.
         // This prevents cascading errors when accessing properties on error types.
         // NOTE: We do NOT suppress for UNKNOWN — accessing properties on unknown should error (TS2339).
@@ -1758,6 +1762,65 @@ impl<'a> CheckerState<'a> {
             };
             self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
         }
+    }
+
+    fn actual_lib_namespace_merged_type_has_property(
+        &mut self,
+        type_id: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        let lazy_def_id = query::lazy_def_id(self.ctx.types, type_id);
+        let sym_id = lazy_def_id
+            .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+            .or_else(|| query::type_shape_symbol(self.ctx.types, type_id));
+
+        let (export_name, require_symbol_match) = if let Some(sym_id) = sym_id {
+            let lib_binders = self.get_lib_binders();
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                return false;
+            };
+            if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+                (symbol.escaped_name.clone(), Some(sym_id))
+            } else if symbol.parent.is_some()
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(symbol.parent)
+            {
+                (symbol.escaped_name.clone(), None)
+            } else {
+                return false;
+            }
+        } else {
+            let Some(def_id) = lazy_def_id else {
+                return false;
+            };
+            let Some(def_info) = self.ctx.definition_store.get(def_id) else {
+                return false;
+            };
+            let name = self.ctx.types.resolve_atom_ref(def_info.name).to_string();
+            if name.is_empty() {
+                return false;
+            }
+            (name, None)
+        };
+
+        let namespace = "Intl";
+        let Some(export_sym_id) = self.resolve_lib_namespace_export_symbol(namespace, &export_name)
+        else {
+            return false;
+        };
+        if require_symbol_match.is_some_and(|sym_id| export_sym_id != sym_id) {
+            return false;
+        }
+
+        let cache_name = format!("{namespace}.{export_name}");
+        self.ctx.lib_type_resolution_cache.remove(&cache_name);
+        let Some(merged_type) =
+            self.resolve_lib_interface_type_by_symbol(&cache_name, export_sym_id)
+        else {
+            return false;
+        };
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        query::raw_property_type(self.ctx.types.as_type_database(), merged_type, prop_atom)
+            .is_some()
     }
 
     /// Report TS2339 with an explicit type display string instead of formatting from TypeId.
