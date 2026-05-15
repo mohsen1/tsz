@@ -1802,8 +1802,8 @@ fn test_solver_imports_go_through_query_boundaries() {
     ];
 
     // Temporary allowances for boundary enforcement tests.
-    // Each entry is (item, list of files using it). Remove entries as the
-    // wrapper and boundary migration complete.
+    // Each entry is (item, list of files using it). This temporary allowance
+    // can be removed once all caller sites use query boundaries.
     const TEMPORARILY_ALLOWED: &[&str] = &[
         // All solver imports now go through query_boundaries — list is empty.
     ];

@@ -2147,13 +2147,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_subtype(source, t_members);
         }
 
-        // =======================================================================
-        // PHASE 3.2: PRIORITIZE DefId (Lazy) OVER SymbolRef (Ref)
-        // =======================================================================
-        // We now check Lazy(DefId) types before Ref(SymbolRef) types to establish
-        // DefId as the primary type identity system. The InheritanceGraph bridge
-        // enables Lazy types to use O(1) nominal subtype checking.
-        // =======================================================================
+        // Check `Lazy(DefId)` against `SymbolRef` paths with DefId as the
+        // priority identity channel. The InheritanceGraph bridge enables
+        // `Lazy` types to use O(1) nominal subtype checking.
 
         if let (Some(s_def), Some(t_def)) = (
             lazy_def_id(self.interner, source),

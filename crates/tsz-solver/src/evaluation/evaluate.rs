@@ -643,9 +643,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         // Task B: Resolve TypeQuery bases to DefId for expansion
-        // This fixes the "Ref(5)<error>" diagnostic issue where generic types
-        // aren't expanded to their underlying function/object types
-        // Note: Ref(SymbolRef) was migrated to Lazy(DefId)
+        // This fixes legacy `Ref(5)<error>`-style generic diagnostics where
+        // generic types aren't expanded to their underlying function/object types.
         //
         // Also: an `Application(UnresolvedTypeName(name), args)` residue from
         // cross-file lowering can now resolve through the merged binder

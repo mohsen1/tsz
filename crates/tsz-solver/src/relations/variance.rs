@@ -25,7 +25,7 @@
 //! calculation for recursive types like `type List<T> = { head: T; tail: List<T> }`.
 //!
 //! Also supports lazy type resolution, recursive variance composition,
-//! and Ref(SymbolRef) type handling.
+//! and SymbolRef compatibility-type handling.
 
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
@@ -665,11 +665,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         }
     }
 
-    /// Resolve Ref(SymbolRef) types to analyze variance (legacy path).
+    /// Resolve legacy `Ref(SymbolRef)` types to analyze variance.
     fn visit_ref(&mut self, symbol_ref: u32) {
         let symbol_ref = SymbolRef(symbol_ref);
 
-        // Try to convert Ref to DefId (migration path)
+        // Try to convert legacy SymbolRef references to DefId (compatibility path)
         if let Some(def_id) = self.computer.resolver.symbol_to_def_id(symbol_ref) {
             // Convert to Lazy and resolve
             if let Some(resolved) = self

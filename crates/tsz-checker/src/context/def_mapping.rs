@@ -17,8 +17,8 @@ impl<'a> CheckerContext<'a> {
     /// If the symbol already has a `DefId`, return it.
     /// Otherwise, create a new `DefId` and store the mapping.
     ///
-    /// This is used during the migration from `SymbolRef` to `DefId`.
-    /// Eventually, all type references will use `DefId` directly.
+    /// This is used for legacy `SymbolRef` interoperability and DefId-based
+    /// workflows.
     ///
     /// ## Lookup strategy
     ///

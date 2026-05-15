@@ -1025,7 +1025,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             .map(tsz_binder::SymbolId)
     }
 
-    /// Get the `DefId` for a `SymbolRef` (Phase 4.2: Ref -> Lazy migration).
+    /// Get the `DefId` for a `SymbolRef` for legacy SymbolRef-to-DefId mapping.
     ///
     /// This enables converting `SymbolRef` to `DefId` by looking up the `symbol_to_def` mapping.
     /// This is the reverse of `def_to_symbol_id`.

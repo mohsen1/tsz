@@ -109,11 +109,10 @@ pub trait TypeResolver {
                 .is_some_and(|(sa, sb)| sa == sb)
     }
 
-    /// Get the `DefId` for a `SymbolRef` (Ref -> Lazy migration).
+    /// Get the `DefId` for a `SymbolRef` (legacy SymbolRef compatibility path).
     ///
-    /// This enables migrating Ref(SymbolRef) types to Lazy(DefId) resolution logic.
-    /// When a `SymbolRef` has a corresponding `DefId`, we should use `resolve_lazy` instead
-    /// of `resolve_ref` for consistent type identity.
+    /// This maps SymbolRef-backed types to `DefId` when available, then uses
+    /// `resolve_lazy` for `DefId` identity.
     ///
     /// Returns None if the `SymbolRef` doesn't have a corresponding `DefId`.
     fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
@@ -440,7 +439,7 @@ pub struct TypeEnvironment {
     declared_variances: FxHashMap<u32, Arc<[Variance]>>,
     /// Maps `DefIds` back to `SymbolIds` for `InheritanceGraph` lookups.
     def_to_symbol: FxHashMap<u32, SymbolId>,
-    /// Maps `SymbolIds` to `DefIds` for Ref -> Lazy migration.
+    /// Maps `SymbolIds` to `DefIds` for legacy SymbolRef compatibility.
     symbol_to_def: FxHashMap<u32, DefId>,
     /// Set of `DefIds` that correspond to numeric enums.
     numeric_enums: FxHashSet<u32>,
