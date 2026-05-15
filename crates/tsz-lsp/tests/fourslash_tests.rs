@@ -3543,7 +3543,7 @@ fn rename_class_across_type_and_value() {
 }
 
 #[test]
-#[ignore = "requires destructuring pattern rename support"]
+#[ignore = "pending: requires destructuring pattern rename support"]
 fn rename_destructured() {
     let mut t = FourslashTest::new(
         "

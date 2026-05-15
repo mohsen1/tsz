@@ -12495,7 +12495,7 @@ Foo;
 }
 
 #[test]
-#[ignore = "cross-enum TS2322 not emitted after solver changes"]
+#[ignore = "pending: cross-enum TS2322 not emitted after solver changes"]
 fn test_numeric_enum_open_and_nominal_assignability() {
     let source = r#"
 enum A { X, Y }

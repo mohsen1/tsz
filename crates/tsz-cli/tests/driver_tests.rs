@@ -8683,7 +8683,7 @@ fn compile_rejects_root_slash_package_import_specifier_under_node16() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
+#[ignore = "pending: module resolution for node-next/nodenext not yet complete"]
 fn compile_resolves_package_imports_prefers_types_condition() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9060,7 +9060,7 @@ export const value = new Namespace.Foo();
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
+#[ignore = "pending: module resolution for node-next/nodenext not yet complete"]
 fn compile_node_next_resolves_js_extension_to_ts() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9096,7 +9096,7 @@ fn compile_node_next_resolves_js_extension_to_ts() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
+#[ignore = "pending: module resolution for node-next/nodenext not yet complete"]
 fn compile_node_next_prefers_mts_for_module_package() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9145,7 +9145,7 @@ fn compile_node_next_prefers_mts_for_module_package() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
+#[ignore = "pending: module resolution for node-next/nodenext not yet complete"]
 fn compile_node_next_prefers_cts_for_commonjs_package() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

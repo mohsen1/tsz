@@ -1329,7 +1329,7 @@ fn test_js_callback_without_return_tag_defaults_to_any() {
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
+#[ignore = "pending: broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
 fn test_js_leading_jsdoc_typedef_before_function_is_emitted() {
     let source = r#"
 /** @typedef {{x: string} | number} SomeType */
@@ -1793,7 +1793,7 @@ export { g };
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
+#[ignore = "pending: broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
 fn test_js_named_exports_preserve_explicit_export_order() {
     let source = r#"
 function require() {}

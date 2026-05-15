@@ -108,7 +108,7 @@ _(  "resize" as "resize", { width: 100, height: 200 });
 /// `TypeEnvironment` to have the relevant interfaces pre-resolved, which is not
 /// guaranteed in the current evaluation path. Tracked for follow-up.
 #[test]
-#[ignore = "inline conditional rest spread not yet supported; named-alias Application case fixed"]
+#[ignore = "pending: inline conditional rest spread not yet supported; named-alias Application case fixed"]
 fn inline_conditional_rest_spread_no_ts2345() {
     let codes = check_source_codes(
         r#"

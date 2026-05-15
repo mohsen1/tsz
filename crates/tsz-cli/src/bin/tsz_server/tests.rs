@@ -5447,7 +5447,7 @@ fn test_references_full_quoted_alias_returns_multiple_symbol_groups() {
 // longer shows up as its own definition span in references-full. Keeping the test as
 // #[ignore] until the LSP resolver is updated to follow EXPORT_VALUE alias symbols through
 // `node_symbols` and re-emit per-specifier definition spans for quoted re-exports.
-#[ignore = "needs LSP follow-through"]
+#[ignore = "pending: needs LSP follow-through"]
 #[test]
 fn test_references_full_quoted_alias_includes_export_alias_side_definition_span() {
     let mut server = make_server();

@@ -2216,7 +2216,7 @@ const c: Child = new Child();
 }
 
 #[test]
-#[ignore = "heritage resolution no longer populates DefinitionInfo.implements; resolved through type pipeline instead"]
+#[ignore = "pending: heritage resolution no longer populates DefinitionInfo.implements; resolved through type pipeline instead"]
 fn test_resolve_heritage_interface_implements() {
     // Verify heritage resolution wires implements for interfaces.
     let source = r#"
