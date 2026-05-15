@@ -12,6 +12,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         lower_bounds: &[TypeId],
         inferred: TypeId,
         has_usable_contra_candidates: bool,
+        has_array_element_candidates: bool,
     ) -> TypeId {
         if lower_bounds.len() <= 1 {
             return inferred;
@@ -73,7 +74,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // should continue to own T. Folding a conflicting callback
                     // return into the direct lower-bound union would mask the
                     // later callback-return assignability error.
-                    if !inferred.is_any_unknown_or_error()
+                    if has_array_element_candidates
+                        && !inferred.is_any_unknown_or_error()
                         && concrete_bounds
                             .iter()
                             .any(|&bound| self.checker.is_assignable_to(bound, inferred))
