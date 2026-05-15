@@ -568,7 +568,9 @@ impl<'a> Printer<'a> {
         let Some(node) = self.arena.get(class_node) else {
             return false;
         };
-        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION
+            && node.kind != syntax_kind_ext::CLASS_EXPRESSION
+        {
             return false;
         }
 
@@ -584,6 +586,17 @@ impl<'a> Printer<'a> {
         emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         emitter.set_expression_mode(true);
         emitter.set_function_name(display_name.to_string());
+        if let Some(class) = self.arena.get_class(node)
+            && class.name.is_none()
+            && !self.collect_class_decorators(&class.modifiers).is_empty()
+        {
+            let anonymous_name = if display_name == "default" {
+                "default_1".to_string()
+            } else {
+                self.next_tc39_anonymous_class_name()
+            };
+            emitter.set_anonymous_class_name(anonymous_name);
+        }
         if self.ctx.options.import_helpers && self.ctx.is_effectively_commonjs() {
             emitter.set_tslib_prefix(true);
             emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
@@ -620,6 +633,19 @@ impl<'a> Printer<'a> {
         self.write(&output);
         self.skip_comments_for_erased_node(node);
         true
+    }
+
+    fn next_tc39_anonymous_class_name(&mut self) -> String {
+        for suffix in 1.. {
+            let candidate = format!("class_{suffix}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+        unreachable!("unbounded class temp suffix search should always find a name")
     }
 
     pub(in crate::emitter) fn es5_computed_auto_accessor_hoisted_decls(

@@ -1201,8 +1201,38 @@ impl<'a> Printer<'a> {
                     .get(member_idx)
                     .is_some_and(|m| m.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
             });
+        let has_static_computed_method_or_accessor = is_class_expression
+            && class.name.is_none()
+            && self.resolve_class_expr_binding_name(_idx).is_some()
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena
+                    .get(member_idx)
+                    .is_some_and(|member| match member.kind {
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                            self.arena.get_method_decl(member).is_some_and(|method| {
+                                self.arena.is_static(&method.modifiers)
+                                    && self.arena.get(method.name).is_some_and(|name| {
+                                        name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                    })
+                            })
+                        }
+                        k if k == syntax_kind_ext::GET_ACCESSOR
+                            || k == syntax_kind_ext::SET_ACCESSOR =>
+                        {
+                            self.arena.get_accessor(member).is_some_and(|accessor| {
+                                self.arena.is_static(&accessor.modifiers)
+                                    && self.arena.get(accessor.name).is_some_and(|name| {
+                                        name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                    })
+                            })
+                        }
+                        _ => false,
+                    })
+            });
         let needs_static_comma_expr = emits_as_class_expression
-            && (has_static_field_comma_expr || has_static_block_comma_expr);
+            && (has_static_field_comma_expr
+                || has_static_block_comma_expr
+                || has_static_computed_method_or_accessor);
         let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
             && self
@@ -2841,6 +2871,8 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        let class_expr_static_comma_had_scheduled_elements =
+            !static_field_inits.is_empty() || !deferred_static_blocks.is_empty();
         if !static_field_inits.is_empty()
             && let Some(temp) = class_expr_static_temp.as_ref()
         {
@@ -3177,6 +3209,28 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let class_expr_static_comma_has_no_scheduled_elements =
+            class_expr_static_temp.is_some() && !class_expr_static_comma_had_scheduled_elements;
+        if class_expr_static_comma_has_no_scheduled_elements
+            && !needs_private_comma_expr
+            && let Some(temp) = class_expr_static_temp.as_ref()
+        {
+            if let Some(name) = class_expr_set_function_name.as_ref() {
+                self.emit_class_expr_set_function_name_comma_item(temp, name);
+            }
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.write(temp);
+            if class_expr_comma_needs_parens {
+                self.write(")");
+            }
+            self.decrease_indent();
+            if assignment_prefix.is_some() {
+                self.write(";");
+            }
+        }
+
         // Emit auto-accessor WeakMap initializations after class body:
         // var _Class_prop_accessor_storage;
         // ...
@@ -3277,7 +3331,7 @@ impl<'a> Printer<'a> {
             // Emit comma-separated inits inline in the expression.
             // The `(_a = ` prefix was already emitted before the `class` keyword.
 
-            if !needs_static_comma_expr
+            if (!needs_static_comma_expr || class_expr_static_comma_has_no_scheduled_elements)
                 && let Some(temp) = class_expr_temp.as_ref()
                 && let Some(name) = class_expr_set_function_name.as_ref()
             {
@@ -3458,7 +3512,9 @@ impl<'a> Printer<'a> {
 
             // Close the comma expression with the temp var, unless the static field
             // comma expr path will handle the closing.
-            if !needs_static_comma_expr && let Some(ref temp) = class_expr_temp {
+            if (!needs_static_comma_expr || class_expr_static_comma_has_no_scheduled_elements)
+                && let Some(ref temp) = class_expr_temp
+            {
                 self.write(",");
                 self.write_line();
                 self.increase_indent();

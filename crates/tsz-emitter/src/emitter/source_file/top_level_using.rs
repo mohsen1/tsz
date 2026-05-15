@@ -855,11 +855,13 @@ impl<'a> Printer<'a> {
         seen_local: &mut FxHashSet<String>,
         export_named_bindings: &mut Vec<String>,
     ) {
-        let (name, is_legacy_decorated_class) = match node.kind {
+        let (name, uses_lowered_default_tracker) = match node.kind {
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 let Some(class) = self.arena.get_class(node) else {
                     return;
                 };
+                let has_class_decorators =
+                    !self.collect_class_decorators(&class.modifiers).is_empty();
                 let name = self.get_identifier_text_opt(class.name).or_else(|| {
                     if is_default_export {
                         Some(
@@ -873,8 +875,9 @@ impl<'a> Printer<'a> {
                 });
                 (
                     name,
-                    self.ctx.options.legacy_decorators
-                        && !self.collect_class_decorators(&class.modifiers).is_empty(),
+                    is_default_export
+                        && has_class_decorators
+                        && !self.ctx.options.target.supports_es2025(),
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
@@ -888,13 +891,13 @@ impl<'a> Printer<'a> {
         let Some(name) = name else {
             return;
         };
-        if seen_local.insert(name.clone()) {
+        let skip_legacy_default_temp = uses_lowered_default_tracker
+            && !self.ctx.options.legacy_decorators
+            && name == "default_1";
+        if !skip_legacy_default_temp && seen_local.insert(name.clone()) {
             local_names.push(name.clone());
         }
-        if is_default_export
-            && is_legacy_decorated_class
-            && !self.ctx.options.target.supports_es2025()
-        {
+        if uses_lowered_default_tracker {
             if seen_local.insert("_default".to_string()) {
                 local_names.push("_default".to_string());
             }
@@ -1176,7 +1179,30 @@ impl<'a> Printer<'a> {
                     self.write(&env_name);
                     self.write(", ");
                     if decl.initializer.is_some() {
-                        self.emit(decl.initializer);
+                        if !self.ctx.target_es5
+                            && !self.ctx.options.legacy_decorators
+                            && !self.ctx.options.target.supports_es2025()
+                            && self.arena.get(decl.initializer).is_some_and(|init_node| {
+                                init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                                    && self.arena.get_class(init_node).is_some_and(|class| {
+                                        !self.collect_class_decorators(&class.modifiers).is_empty()
+                                    })
+                            })
+                        {
+                            let before_len = self.writer.len();
+                            if self.emit_tc39_decorated_class_expression(decl.initializer, &name) {
+                                let after_len = self.writer.len();
+                                let full_output = self.writer.get_output().to_string();
+                                let expr = full_output[before_len..after_len].trim().to_string();
+                                self.writer.truncate(before_len);
+                                self.write(&expr);
+                            } else {
+                                self.writer.truncate(before_len);
+                                self.emit(decl.initializer);
+                            }
+                        } else {
+                            self.emit(decl.initializer);
+                        }
                     } else {
                         self.write("void 0");
                     }
@@ -1637,6 +1663,51 @@ impl<'a> Printer<'a> {
                 self.write(";");
             }
             return true;
+        }
+        if !self.ctx.target_es5
+            && has_decorators
+            && !self.ctx.options.legacy_decorators
+            && !self.ctx.options.target.supports_es2025()
+        {
+            let before_len = self.writer.len();
+            if self.emit_tc39_decorated_class_expression(idx, &display_name) {
+                let after_len = self.writer.len();
+                let full_output = self.writer.get_output().to_string();
+                let expr = full_output[before_len..after_len].trim().to_string();
+                self.writer.truncate(before_len);
+
+                if let Some(export_name) = export_name.as_ref() {
+                    if !is_es_module_output {
+                        self.write_export_binding_start(export_name);
+                    }
+                    if export_name == "default" {
+                        self.write("_default = ");
+                        if class.name.is_some() {
+                            self.write(&binding_name);
+                            self.write(" = ");
+                        }
+                    } else {
+                        self.write(&binding_name);
+                        self.write(" = ");
+                    }
+                    self.write(&expr);
+                    if !is_es_module_output {
+                        self.write_export_binding_end();
+                    } else {
+                        self.write(";");
+                    }
+                } else {
+                    self.write(&binding_name);
+                    self.write(" = ");
+                    self.write(&expr);
+                    self.write(";");
+                }
+                if let Some(prev) = prev_anon_default_name {
+                    self.anonymous_default_export_name = prev;
+                }
+                return true;
+            }
+            self.writer.truncate(before_len);
         }
         if self.ctx.options.target.supports_es2025()
             && has_decorators
