@@ -7475,6 +7475,85 @@ fn test_ts2322_type_param_extends_never_transitive_constraint() {
 }
 
 #[test]
+fn test_ts2322_fbounded_object_literal_empty_array_no_error() {
+    let source = r#"
+        interface TreeNodeBase<T extends TreeNodeBase<T>> {
+            parent: TreeNodeBase<T> | null;
+            children: T[];
+        }
+        interface FileEntry extends TreeNodeBase<FileEntry> {
+            name: string;
+        }
+        const root: FileEntry = { name: "root", parent: null, children: [] };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322: empty array in F-bounded object literal should adopt contextual type: {diags:?}"
+    );
+
+    let libs = load_lib_files_for_test();
+    if !libs.is_empty() {
+        let diags = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+        let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+        assert_eq!(
+            ts2322, 0,
+            "Expected no TS2322 with lib files: empty array in F-bounded object literal should adopt contextual type: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn test_ts2322_fbounded_object_literal_empty_array_renamed_param() {
+    let source = r#"
+        interface NodeBase<U extends NodeBase<U>> {
+            parent: NodeBase<U> | null;
+            children: U[];
+        }
+        interface TreeItem extends NodeBase<TreeItem> {
+            label: string;
+        }
+        const root: TreeItem = { label: "root", parent: null, children: [] };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322: empty array in F-bounded (U param) object literal should adopt contextual type: {diags:?}"
+    );
+
+    let libs = load_lib_files_for_test();
+    if !libs.is_empty() {
+        let diags = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+        let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+        assert_eq!(
+            ts2322, 0,
+            "Expected no TS2322 with lib files (U param): {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn test_ts2322_fbounded_wrong_element_type_errors() {
+    let source = r#"
+        interface TreeNodeBase<T extends TreeNodeBase<T>> {
+            children: T[];
+        }
+        interface FileEntry extends TreeNodeBase<FileEntry> {
+            name: string;
+        }
+        const root: FileEntry = { name: "root", children: [42] };
+    "#;
+    let diags = get_all_diagnostics(source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322: number is not assignable to FileEntry: {diags:?}"
+    );
+}
+
+#[test]
 fn test_ts2345_concrete_value_to_never_param_errors() {
     // Negative: concrete types remain non-assignable to never (the fix must not loosen this).
     let source = r#"

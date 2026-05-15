@@ -1310,9 +1310,17 @@ pub fn classify_for_property_access_resolution(
         TypeData::Intersection(list_id) => {
             PropertyAccessResolutionKind::Intersection(db.type_list(list_id))
         }
-        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-            PropertyAccessResolutionKind::Readonly(inner)
+        TypeData::ReadonlyType(inner) => {
+            // Array/Tuple inner: keep the wrapper intact so resolve_readonly_type_property
+            // blocks mutating methods. Object inner types are transparent (wrapper stripped).
+            match db.lookup(inner) {
+                Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
+                    PropertyAccessResolutionKind::Resolved
+                }
+                _ => PropertyAccessResolutionKind::Readonly(inner),
+            }
         }
+        TypeData::NoInfer(inner) => PropertyAccessResolutionKind::Readonly(inner),
         TypeData::Function(_) | TypeData::Callable(_) => PropertyAccessResolutionKind::FunctionLike,
         _ => PropertyAccessResolutionKind::Resolved,
     }
