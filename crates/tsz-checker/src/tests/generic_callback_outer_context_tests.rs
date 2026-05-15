@@ -7,8 +7,8 @@
 //! the inner callback's still-generic type parameter is compared against
 //! the concrete argument and produces a false TS2345.
 //!
-//! Both repros below are tsc-clean. They were reported failing on
-//! `62353d1cb1923cab1e39785b875bde7b82c87fc7` and are kept here so that
+//! Both repros below are tsc-clean. They were reported failing and are kept
+//! here so that
 //! the inference path from the outer context through the callback type
 //! parameter cannot regress.
 use crate::test_utils::check_source_diagnostics;

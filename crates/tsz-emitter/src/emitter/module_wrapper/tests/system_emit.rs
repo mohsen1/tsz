@@ -617,7 +617,6 @@ class Component {
 /// just because their `PascalCase` name appears as the return type of
 /// an async function under ES5. Mirrors the existing guard in
 /// `extract_awaiter_promise_constructor`.
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2314#discussion_r3176824619>
 #[test]
 fn amd_es5_type_alias_named_like_import_does_not_force_retention() {
     // The source declares a type alias `Foo` AND imports a value named `Foo`.
@@ -652,7 +651,6 @@ async function f(): Foo { return "" as any; }
 /// JSX factory imports must not be elided by the AMD/System helper-emission
 /// usage check, even when the factory name doesn't textually appear in the
 /// source (JSX elements reference it implicitly).
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2295#discussion_r3176647570>
 #[test]
 fn amd_jsx_factory_default_import_kept_in_helpers_check() {
     use crate::emitter::JsxEmit;

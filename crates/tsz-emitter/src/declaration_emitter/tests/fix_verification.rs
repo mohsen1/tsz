@@ -591,7 +591,6 @@ fn explore_type_operator_in_array() {
 /// function- or constructor-type operand must keep parentheses around
 /// the operand. Without them the output `keyof () => void` is either a
 /// syntax error or a function type whose parameter list begins with `(`.
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2258#discussion_r3176332311>
 #[test]
 fn type_operator_function_type_operand_is_parenthesized() {
     let output = emit_dts("export type K = keyof (() => void);");

@@ -112,7 +112,7 @@ fn standalone_function_emits_ts2683() {
     assert!(has_error(src, 2683));
 }
 
-// --- Tests from upstream (067fb8ba41) ---
+// --- Tests from upstream ---
 
 #[test]
 fn explicit_this_param_suppresses_ts2683() {

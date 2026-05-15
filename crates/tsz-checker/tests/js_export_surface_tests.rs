@@ -2071,7 +2071,7 @@ exports.apply = 1;
         "Expected no TS2349 for same-file CommonJS calls after reassignment, got: {ts2349:#?}"
     );
 
-    // After CJS export assignment suppression changes (d322905ff), reassigning
+    // After CJS export assignment suppression changes, reassigning
     // `exports.apply` to incompatible types now correctly emits TS2322 because
     // the last assignment (`= 1`) widens the property type.
     let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();

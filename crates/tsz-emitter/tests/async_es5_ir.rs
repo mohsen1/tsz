@@ -259,7 +259,6 @@ fn test_await_method_call_argument_captures_receiver_before_yield() {
 /// class body. Previously `es5_class_factory` destructured only the
 /// IIFE body and silently dropped `weakmap_decls` and `weakmap_inits`,
 /// causing the generated code to reference undeclared `WeakMap` names.
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2306#discussion_r3176720196>
 #[test]
 fn test_async_class_extends_await_preserves_private_field_weakmaps() {
     let output = transform_and_print(
@@ -282,7 +281,6 @@ fn test_async_class_extends_await_preserves_private_field_weakmaps() {
 /// detected by `contains_await_recursive` and `find_suspension_expression`,
 /// otherwise the IR transformer emits `_a.sent()` without a preceding
 /// `[4 /*yield*/]` instruction in the generated state machine.
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2278#discussion_r3176478496>
 #[test]
 fn test_async_await_under_as_expression_emits_yield() {
     let output =

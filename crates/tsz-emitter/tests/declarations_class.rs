@@ -890,7 +890,6 @@ fn malformed_source_class_brace_scan_no_panic() {
 /// were emitted after all field initializers, so a static block that
 /// reads `this.a` would see the value assigned by a later `static b = 2`
 /// initializer instead of the in-source value.
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2279#discussion_r3176494185>
 #[test]
 fn test_class_expression_static_field_and_block_evaluation_order_preserved() {
     let source = r"const X = class {

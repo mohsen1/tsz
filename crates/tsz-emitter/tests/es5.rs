@@ -161,7 +161,6 @@ fn test_es5_async_transformer_detects_await_in_body() {
 /// the temp-variable state pushed by `emit_function_parameters_es5`.
 /// Without it, the printer leaks state across functions, leaving the
 /// scope stack non-empty after a top-level async function has been emitted.
-/// Devin review: <https://github.com/mohsen1/tsz/pull/2305#discussion_r3176690840>
 #[test]
 fn test_es5_async_inline_wrapper_pops_temp_scope() {
     use crate::emitter::{Printer, PrinterOptions};

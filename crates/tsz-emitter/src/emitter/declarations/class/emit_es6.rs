@@ -2851,7 +2851,6 @@ impl<'a> Printer<'a> {
             // evaluation order matches the source — e.g.
             // `static a = 1; static { console.log(this.a); } static b = 2;`
             // must emit the static block AFTER `_a.a = 1` and BEFORE `_a.b = 2`.
-            // Devin review: <https://github.com/mohsen1/tsz/pull/2279#discussion_r3176494185>
             //
             // We build a single position-keyed list. `field` items reuse the
             // owned `StaticFieldInit` entries; `block` items consume the
