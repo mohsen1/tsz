@@ -401,9 +401,8 @@ impl<'a> CheckerContext<'a> {
 /// - Cache is populated by `CheckerState::get_type_of_symbol()` before Application evaluation
 /// - This separation keeps the solver layer (`ApplicationEvaluator`) independent of checker logic
 impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
-    /// Resolve a symbol reference to its cached type (deprecated).
+    /// Resolve a symbol reference to its cached type.
     ///
-    /// `TypeData::Ref` is removed, but we keep this for compatibility.
     /// Converts `SymbolRef` to `SymbolId` and looks up in cache.
     fn resolve_ref(
         &self,

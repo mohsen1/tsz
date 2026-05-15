@@ -2257,11 +2257,6 @@ impl<'a> TypeFormatter<'a> {
         format!("{}({})", fallback_prefix, def_id.0)
     }
 
-    // NOTE: format_raw_def_id_symbol_fallback was removed.
-    // It incorrectly assumed DefId.0 == SymbolId.0, which caused wrong type
-    // names in diagnostics (e.g., enum "Foo" displaying as "timeout").
-    // DefId and SymbolId are independent ID spaces and must not be conflated.
-
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.
     pub(super) fn resolve_object_shape_name(&mut self, shape: &ObjectShape) -> Option<String> {
         // The empty object `{}` is a universally-shared shape. `find_def_by_shape`
