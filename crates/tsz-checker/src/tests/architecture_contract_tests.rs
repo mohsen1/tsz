@@ -1115,11 +1115,6 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "class member compatibility should use centralized class query-boundary mismatch helpers"
     );
 
-    // NOTE: error_handler.rs was removed — the ErrorHandler trait was dead
-    // abstraction (20+ unused trait methods, unused DiagnosticBuilder). The only
-    // used method (emit_error_at) is now an inherent method on CheckerState.
-    // The TS2322 gateway contract is enforced by the assignability module guards below.
-
     let call_checker_applicability_src =
         fs::read_to_string("src/checkers/call_checker/applicability.rs")
             .expect("failed to read src/checkers/call_checker/applicability.rs");
