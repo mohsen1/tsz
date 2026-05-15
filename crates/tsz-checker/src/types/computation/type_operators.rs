@@ -3,7 +3,8 @@
 
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::{SymbolRef, TypeId};
 
 impl<'a> CheckerState<'a> {
@@ -123,7 +124,9 @@ impl<'a> CheckerState<'a> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                if inner_type == TypeId::SYMBOL {
+                if inner_type == TypeId::SYMBOL
+                    && !has_declared_unique_symbol_owner(self.ctx.arena, idx)
+                {
                     return self.ctx.types.unique_symbol(synthetic_unique_symbol_ref(
                         &self.ctx.file_name,
                         node.pos,
@@ -305,6 +308,45 @@ impl<'a> CheckerState<'a> {
         self.get_class_decl_for_display_type(type_id)
             .map(|(class_idx, _)| self.get_class_name_from_decl(class_idx))
     }
+}
+
+fn has_declared_unique_symbol_owner(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(parent) = arena
+        .get_extended(idx)
+        .and_then(|ext| arena.get(ext.parent))
+    else {
+        return false;
+    };
+
+    if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+        return true;
+    }
+
+    if parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+        || parent.kind == syntax_kind_ext::PROPERTY_DECLARATION
+    {
+        let mut cursor = idx;
+        while let Some(ext) = arena.get_extended(cursor) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                return true;
+            }
+            if parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            {
+                return false;
+            }
+            cursor = parent_idx;
+        }
+    }
+
+    false
 }
 
 fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {

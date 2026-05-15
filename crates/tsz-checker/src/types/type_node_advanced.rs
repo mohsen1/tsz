@@ -80,7 +80,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                if inner_type == TypeId::SYMBOL {
+                if inner_type == TypeId::SYMBOL
+                    && !has_declared_unique_symbol_owner(self.ctx.arena, idx)
+                {
                     return self.ctx.types.unique_symbol(synthetic_unique_symbol_ref(
                         &self.ctx.file_name,
                         node.pos,
@@ -1967,6 +1969,45 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Delegate to TypeLowering with extended resolvers (enum flags + lib search)
         self.lower_with_resolvers(idx, true, false)
     }
+}
+
+fn has_declared_unique_symbol_owner(arena: &tsz_parser::parser::NodeArena, idx: NodeIndex) -> bool {
+    let Some(parent) = arena
+        .get_extended(idx)
+        .and_then(|ext| arena.get(ext.parent))
+    else {
+        return false;
+    };
+
+    if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+        return true;
+    }
+
+    if parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+        || parent.kind == syntax_kind_ext::PROPERTY_DECLARATION
+    {
+        let mut cursor = idx;
+        while let Some(ext) = arena.get_extended(cursor) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                return true;
+            }
+            if parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            {
+                return false;
+            }
+            cursor = parent_idx;
+        }
+    }
+
+    false
 }
 
 fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
