@@ -1975,6 +1975,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 &non_constraint_bounds,
                                 infer_ctx.best_common_type(&non_constraint_bounds),
                                 has_usable_contra_candidates,
+                                infer_ctx.has_fresh_array_element_candidate(var),
                             );
                             let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
                                 !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
@@ -2022,6 +2023,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     &lower_bounds,
                                     ty,
                                     has_usable_contra_candidates,
+                                    infer_ctx.has_fresh_array_element_candidate(var),
                                 )
                             } else {
                                 ty
@@ -2171,6 +2173,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     &lower_bounds,
                                     fallback,
                                     has_usable_contra_candidates,
+                                    infer_ctx.has_fresh_array_element_candidate(var),
                                 )
                             } else {
                                 fallback
