@@ -635,55 +635,7 @@ impl<'a> CheckerState<'a> {
         let mut prop_order: u32 = 1;
         let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
 
-        // Pre-scan: collect ALL method names from the object literal so that
-        // the synthetic `this` type includes placeholders for all methods,
-        // enabling mutually-recursive methods to resolve `this.otherMethod`.
-        // Maps method name atom → element node index so we can extract annotated
-        // parameter/return types when building placeholders for not-yet-processed methods.
-        // This includes both method declarations (get() {}) and property assignments
-        // with function values (set: function() {}) to ensure complete this-typing.
-        let obj_all_method_names: rustc_hash::FxHashMap<Atom, (NodeIndex, u32)> = obj
-            .elements
-            .nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(pos, &elem_idx)| {
-                let elem_node = self.ctx.arena.get(elem_idx)?;
-
-                // Case 1: Method declaration like `get() {}`
-                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
-                    let name = self.get_property_name(method.name)?;
-                    return Some((
-                        self.ctx.types.intern_string(&name),
-                        (elem_idx, (pos + 1) as u32),
-                    ));
-                }
-
-                // Case 2: Property assignment with function value like `set: function() {}`
-                if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                    let initializer_is_function_like = self
-                        .ctx
-                        .arena
-                        .get(prop.initializer)
-                        .is_some_and(|init_node| {
-                            matches!(
-                                init_node.kind,
-                                syntax_kind_ext::ARROW_FUNCTION
-                                    | syntax_kind_ext::FUNCTION_EXPRESSION
-                            )
-                        });
-                    if initializer_is_function_like {
-                        let name = self.get_property_name_resolved(prop.name)?;
-                        return Some((
-                            self.ctx.types.intern_string(&name),
-                            (elem_idx, (pos + 1) as u32),
-                        ));
-                    }
-                }
-
-                None
-            })
-            .collect();
+        let obj_all_method_names = self.object_literal_callable_member_names(&obj.elements.nodes);
         let circular_return_method_sites =
             self.object_literal_circular_return_method_sites(&obj_all_method_names);
 

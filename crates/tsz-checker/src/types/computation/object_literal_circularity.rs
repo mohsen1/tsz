@@ -8,6 +8,45 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn object_literal_callable_member_names(
+        &mut self,
+        elements: &[NodeIndex],
+    ) -> FxHashMap<Atom, (NodeIndex, u32)> {
+        elements
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, &elem_idx)| {
+                let elem_node = self.ctx.arena.get(elem_idx)?;
+
+                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                    let name = self.get_property_name(method.name)?;
+                    return Some((
+                        self.ctx.types.intern_string(&name),
+                        (elem_idx, (pos + 1) as u32),
+                    ));
+                }
+
+                let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                let initializer = self
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(prop.initializer);
+                let init_node = self.ctx.arena.get(initializer)?;
+                if !matches!(
+                    init_node.kind,
+                    syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+                ) {
+                    return None;
+                }
+                let name = self.get_property_name_resolved(prop.name)?;
+                Some((
+                    self.ctx.types.intern_string(&name),
+                    (elem_idx, (pos + 1) as u32),
+                ))
+            })
+            .collect()
+    }
+
     pub(super) fn object_literal_circular_return_method_sites(
         &self,
         obj_all_method_names: &FxHashMap<Atom, (NodeIndex, u32)>,
