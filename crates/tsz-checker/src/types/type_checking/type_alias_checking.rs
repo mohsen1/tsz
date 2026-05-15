@@ -1444,7 +1444,16 @@ impl<'a> CheckerState<'a> {
                         self.check_type_node(arg_idx);
                     }
                     let expr_name = type_query.expr_name;
-                    let expr_type = self.get_type_of_node(expr_name);
+                    let expr_type = if self
+                        .ctx
+                        .arena
+                        .get(expr_name)
+                        .is_some_and(|expr| expr.kind == syntax_kind_ext::QUALIFIED_NAME)
+                    {
+                        self.resolve_typeof_qualified_value_chain(expr_name, true)
+                    } else {
+                        self.get_type_of_node(expr_name)
+                    };
                     let num_type_args = args_nodes.len();
                     self.check_instantiation_expression_type_args(
                         expr_type,

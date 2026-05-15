@@ -381,6 +381,13 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
+        if !args.is_empty() {
+            let instantiated = self.instantiate_callable_type_params(base, &args);
+            if instantiated != base {
+                return self.evaluate_type_with_env(instantiated);
+            }
+        }
+
         // Check if the base is a Lazy or Enum type
         let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
             return type_id;

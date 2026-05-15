@@ -1635,22 +1635,18 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // TS1329: Check if the decorator accepts too few arguments for this position.
-                // For experimental decorators on methods/accessors, the decorator is called
-                // with 3 arguments (target, propertyKey, descriptor). If the decorator has
-                // call signatures but none can accept 3 args, it's likely a factory that
-                // should be called first: @dec() instead of @dec.
-                if self.ctx.compiler_options.experimental_decorators
-                    && !is_abstract
+                if !is_abstract
                     && !legacy_decorator_not_valid
                     && (node.kind == syntax_kind_ext::METHOD_DECLARATION
                         || node.kind == syntax_kind_ext::GET_ACCESSOR
                         || node.kind == syntax_kind_ext::SET_ACCESSOR)
                 {
-                    self.check_method_decorator_arity(
+                    self.check_method_or_accessor_decorator_call_signature(
                         decorator.expression,
                         decorator_type,
                         modifier_idx,
+                        member_idx,
+                        self.ctx.compiler_options.experimental_decorators,
                     );
                 }
             }
