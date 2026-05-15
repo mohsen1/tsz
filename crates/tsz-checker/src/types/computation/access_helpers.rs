@@ -324,7 +324,8 @@ impl<'a> CheckerState<'a> {
         let shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
                 .or_else(|| {
-                    let evaluated = tsz_solver::evaluate_type(self.ctx.types, object_type);
+                    let evaluated =
+                        crate::query_boundaries::common::evaluate_type(self.ctx.types, object_type);
                     if evaluated != object_type {
                         crate::query_boundaries::common::object_shape_for_type(
                             self.ctx.types,
