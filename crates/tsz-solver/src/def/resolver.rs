@@ -966,11 +966,15 @@ impl TypeResolver for TypeEnvironment {
         self.get_def(def_id).or_else(|| {
             // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
             // where N is the raw SymbolId. Look up the real DefId via symbol_to_def.
-            let real_def = self.symbol_to_def.get(&def_id.0)?;
+            let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
+                self.definition_store
+                    .as_ref()
+                    .and_then(|store| store.find_def_by_symbol(def_id.0))
+            })?;
             if let Some(&instance_type) = self.class_instance_types.get(&real_def.0) {
                 return Some(instance_type);
             }
-            self.get_def(*real_def)
+            self.get_def(real_def)
         })
     }
 
@@ -988,8 +992,12 @@ impl TypeResolver for TypeEnvironment {
         // in the shared store (not the local cache) are found.
         self.get_def_params_owned(def_id).or_else(|| {
             // Fallback: resolve raw SymbolId-based DefIds to real DefIds
-            let real_def = self.symbol_to_def.get(&def_id.0)?;
-            self.get_def_params_owned(*real_def)
+            let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
+                self.definition_store
+                    .as_ref()
+                    .and_then(|store| store.find_def_by_symbol(def_id.0))
+            })?;
+            self.get_def_params_owned(real_def)
         })
     }
 

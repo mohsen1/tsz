@@ -79,8 +79,15 @@ pub(crate) fn lib_def_id_from_node(
     decl_arenas: &[(NodeIndex, &NodeArena)],
     fallback_arena: &NodeArena,
 ) -> Option<tsz_solver::DefId> {
-    resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)
-        .map(|sym_id| ctx.get_lib_def_id(sym_id))
+    let sym_id = resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)?;
+    let name = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena)?;
+    let expected_name = name
+        .strip_prefix("globalThis.")
+        .unwrap_or(&name)
+        .rsplit('.')
+        .next()
+        .unwrap_or(&name);
+    Some(ctx.get_canonical_lib_def_id(expected_name, sym_id))
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via lib-context binders.
