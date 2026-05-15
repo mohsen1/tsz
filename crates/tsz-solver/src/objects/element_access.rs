@@ -191,6 +191,21 @@ impl<'a> ElementAccessEvaluator<'a> {
             }
             Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
+                // When a string index exists with a restricted key type (e.g. a template
+                // literal), check whether index_type actually satisfies that key type.
+                // For example, `{ [key: \`on${string}\`]: V }["someKey"]` should report
+                // NoIndexSignature because "someKey" is not assignable to `on${string}`.
+                if let Some(sig) = shape.string_index.as_ref()
+                    && sig.key_type != TypeId::STRING
+                    && sig.key_type != TypeId::SYMBOL
+                {
+                    checker.reset();
+                    if checker.is_subtype_of(index_type, TypeId::STRING) {
+                        checker.reset();
+                        return !checker.is_subtype_of(index_type, sig.key_type);
+                    }
+                    return false;
+                }
                 checker.reset();
                 if checker.is_subtype_of(index_type, TypeId::STRING) && shape.string_index.is_none()
                 {
