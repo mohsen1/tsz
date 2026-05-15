@@ -933,7 +933,7 @@ fn test_check_files_parallel_preserves_same_file_namespace_exports() {
 }
 
 #[test]
-#[ignore] // TODO: Import shadowing type meaning needs parallel checking refinement
+
 fn test_check_files_parallel_preserves_import_shadowing_type_meaning() {
     let files = vec![
         ("b.ts".to_string(), "export const zzz = 123;\n".to_string()),
@@ -1154,7 +1154,7 @@ const text: string = outputValue;
 }
 
 #[test]
-#[ignore = "current-base direct unit regression; unrelated to server protocol shape"]
+
 fn test_check_files_parallel_zod_issue_data_cross_file_spread() {
     let files = vec![
         (
@@ -2267,7 +2267,7 @@ export default function () {
 }
 
 #[test]
-#[ignore] // TODO: Cross-file const/class redeclaration TS2451 needs parallel detection
+
 fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts2451() {
     let files = vec![
         ("a.ts".to_string(), "const Bar = 3;\n".to_string()),
@@ -2557,7 +2557,7 @@ fn test_umd_export_vs_declare_global_const_emits_ts2451() {
 
 // TODO: Implement TS2300 duplicate identifier detection for global augmentation conflicts.
 #[test]
-#[ignore]
+
 fn test_check_files_parallel_global_augmentation_member_conflicts_emit_ts2300() {
     let files = vec![
         (
@@ -3219,7 +3219,7 @@ class B {
 }
 
 #[test]
-#[ignore] // TODO: Private accessor before field declarations reporting needs parallel handling
+
 fn test_check_files_parallel_private_accessor_before_field_reports_both_declarations() {
     // tsc reports TS2300 on BOTH declarations when a private accessor and
     // private field share the same name, so we expect 6 total (2 per class).

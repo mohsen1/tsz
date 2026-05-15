@@ -229,7 +229,7 @@ const f31: <T extends Box<number>>(a: T[]) => T[] = arrayFilter(x => x.value > 1
 }
 
 #[test]
-#[ignore = "pre-existing: generic callback mismatch inference not yet implemented"]
+
 fn test_contextual_signature_instantiation_reports_generic_callback_mismatch() {
     let source = r#"
 declare function foo<T>(cb: (x: number, y: string) => T): T;
@@ -261,7 +261,7 @@ var c = bar(1, "one", g);
 }
 
 #[test]
-#[ignore = "pre-existing: overloaded callback generic call not yet matching tsc"]
+
 fn test_generic_call_with_overloaded_callback_uses_last_source_signature() {
     let source = r#"
 interface Promise<T> {
@@ -678,7 +678,7 @@ class Chain2<T extends { length: number }> {
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
+
 fn test_promise_chaining_reports_both_callback_body_ts2322s() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

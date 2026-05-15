@@ -369,7 +369,7 @@ fn test_optional_computed_method_in_class_emits_optional_property_function_type(
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
+
 fn test_static_computed_methods_emit_body_inferred_return_types() {
     let output = emit_dts(
         r#"
@@ -399,7 +399,7 @@ fn test_static_computed_methods_emit_body_inferred_return_types() {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
+
 fn test_simple_computed_names_match_declaration_baseline_shape() {
     let output = emit_dts(
         r#"

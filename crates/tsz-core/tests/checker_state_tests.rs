@@ -1477,7 +1477,7 @@ function foo() {}
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
+
 fn test_duplicate_identifier_var_let_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -12495,7 +12495,7 @@ Foo;
 }
 
 #[test]
-#[ignore = "cross-enum TS2322 not emitted after solver changes"]
+
 fn test_numeric_enum_open_and_nominal_assignability() {
     let source = r#"
 enum A { X, Y }

@@ -614,7 +614,7 @@ export const Mixed = mixin(Unmixed);
 }
 
 #[test]
-#[ignore = "regressed after remote changes: class extends expression declaration emit loses local dependency source order"]
+
 fn test_named_class_extends_expression_keeps_local_dependency_in_source_order() {
     let source = r#"
 export class ExportedClass<T> {

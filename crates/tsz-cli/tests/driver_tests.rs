@@ -1873,7 +1873,7 @@ export const timestamp = now();
 }
 
 #[test]
-#[ignore] // TODO: declaration emit should report TS7056 for private import type alias
+
 fn declaration_emit_reports_ts7056_for_private_import_type_alias() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -3157,7 +3157,7 @@ declare module "server" {
 }
 
 #[test]
-#[ignore] // TODO: UMD global class surface should stay unaugmented
+
 fn compile_project_umd_global_class_surface_stays_unaugmented() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -6088,7 +6088,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-#[ignore = "pre-existing: remote merge regression"]
+
 fn direct_checker_with_real_default_libs_contextually_types_constructor_parameters_rest() {
     let source = r#"
 declare function createInstance<Ctor extends new (...args: any[]) => any, R extends InstanceType<Ctor>>(ctor: Ctor, ...args: ConstructorParameters<Ctor>): R;
@@ -6190,7 +6190,7 @@ const bad: B[] = Array.from(inputA.values());
 }
 
 #[test]
-#[ignore] // TODO: Promise should be assignable to PromiseLike with default libs
+
 fn merged_program_promise_is_assignable_to_promise_like_with_default_libs() {
     let files = vec![(
         "main.ts".to_string(),
@@ -8683,7 +8683,7 @@ fn compile_rejects_root_slash_package_import_specifier_under_node16() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
+
 fn compile_resolves_package_imports_prefers_types_condition() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9060,7 +9060,7 @@ export const value = new Namespace.Foo();
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
+
 fn compile_node_next_resolves_js_extension_to_ts() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9096,7 +9096,7 @@ fn compile_node_next_resolves_js_extension_to_ts() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
+
 fn compile_node_next_prefers_mts_for_module_package() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9145,7 +9145,7 @@ fn compile_node_next_prefers_mts_for_module_package() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
+
 fn compile_node_next_prefers_cts_for_commonjs_package() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -12830,7 +12830,7 @@ export function wrap<T>(value: T, count: number = 1): T[] {
 }
 
 #[test]
-#[ignore] // TODO: generic utility library classes should compile without errors
+
 fn compile_generic_utility_library_classes() {
     // Test generic utility classes
     let temp = TempDir::new().expect("temp dir");

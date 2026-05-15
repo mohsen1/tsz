@@ -594,7 +594,7 @@ fn test_computed_binding_element_identifier_key_unions_pre_and_default_assignmen
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
+
 fn test_computed_assignment_pattern_order_uses_exact_rhs_tuple_access() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -924,7 +924,7 @@ export type TypeGeneric3<T extends keyof DataFetchFns, F extends keyof DataFetch
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
+
 fn test_js_strict_false_suppresses_file_level_strict_mode_bind_errors() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",

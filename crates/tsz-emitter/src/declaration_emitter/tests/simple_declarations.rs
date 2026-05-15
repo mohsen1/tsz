@@ -728,7 +728,7 @@ export interface Box {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
+
 fn test_returned_object_literal_member_comments_are_preserved() {
     let output = emit_dts(
         r#"
@@ -953,7 +953,7 @@ class C {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
+
 fn test_computed_methods_emit_as_property_signatures() {
     let output = emit_dts(
         r#"
@@ -1329,7 +1329,7 @@ fn test_js_callback_without_return_tag_defaults_to_any() {
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
+
 fn test_js_leading_jsdoc_typedef_before_function_is_emitted() {
     let source = r#"
 /** @typedef {{x: string} | number} SomeType */
@@ -1793,7 +1793,7 @@ export { g };
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
+
 fn test_js_named_exports_preserve_explicit_export_order() {
     let source = r#"
 function require() {}

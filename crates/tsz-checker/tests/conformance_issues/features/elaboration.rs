@@ -232,7 +232,7 @@ let p: Passport = passport.use();
 }
 
 #[test]
-#[ignore = "merged backlog: needs tsc-compatible widened keyof array element display"]
+
 fn test_keyof_array_elaboration_reports_only_invalid_literal_element() {
     let source = r#"
 function foo<T extends { a: string, b: string }>() {
@@ -577,7 +577,7 @@ let c: Config = { name: "hello" };
 /// also works. This suggests a caching side-effect in function parameter
 /// type processing that corrupts the keyof type alias evaluation.
 #[test]
-#[ignore = "keyof type alias caching bug - function parameter processing corrupts keyof evaluation"]
+
 fn test_keyof_type_alias_in_function_parameter_should_not_corrupt_assignability() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
