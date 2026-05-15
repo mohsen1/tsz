@@ -928,7 +928,7 @@ fn ts2322_optional_function_property_target_display_omits_synthetic_undefined() 
     // for the property return types. Without lib loaded that lowers to
     // `Application(UnresolvedTypeName('Promise'), [...])`, which is now
     // recognised as an error type by `is_error_type` and short-circuits
-    // the assignability check (per Devin review on PR #2616). To keep
+    // the assignability check. To keep
     // exercising the optional-property display invariant without relying
     // on the cascading-error path, we substitute a locally declared
     // generic alias so the property types are fully resolved.

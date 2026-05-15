@@ -713,7 +713,7 @@ fn multiline_comment_top_level_preserved() {
 /// space-prefixed so it visually aligns with the ` *` column above. This
 /// guards against an over-broad fix where every `*/` line was emitted
 /// flush, breaking alignment of the common JSDoc shape.
-/// Regression test for Devin review on PR #2554.
+/// Regression test: JSDoc closing-token alignment matches tsc-compatible behavior.
 #[test]
 fn jsdoc_closing_star_slash_aligns_with_continuation() {
     let source = "/**\n * Gets the value.\n */\nfunction getValue() { return 1; }\n";

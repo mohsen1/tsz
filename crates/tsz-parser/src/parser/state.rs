@@ -421,8 +421,7 @@ impl ParserState {
         // see a stale `last()` whose `pos` accidentally matches a new-parse
         // error and wrongly suppress it. The Scanner's `set_text` (called
         // above) intentionally does NOT clear the diagnostics for callers
-        // outside ParserState, so we explicitly clear them here. (Devin
-        // review on PR #1521.)
+        // outside ParserState, so we explicitly clear them here.
         self.scanner.clear_scanner_diagnostics();
         self.scanner_diagnostics_high_water_mark = 0;
     }

@@ -500,9 +500,8 @@ fn test_apply_wildcard_substitution_directory_target() {
 fn test_apply_wildcard_substitution_star_pattern_with_dir_target() {
     // `*`-pattern key (is_directory_match = false) mapping to a `/`-ending
     // target without `*`: target must remain unchanged. Without this, a
-    // package like `{ \"./*\": { \"types\": \"./types/\" } }` would resolve
-    // `pkg/foo` to `./types/foo` instead of `./types/`, diverging from
-    // Node.js (Devin review on #1915).
+    // package like `{ "./*": { "types": "./types/" } }` would resolve
+    // `pkg/foo` to `./types/foo` instead of `./types/`, diverging from Node.js.
     assert_eq!(
         apply_wildcard_substitution("./types/", "foo", false),
         "./types/"

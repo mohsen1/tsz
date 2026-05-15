@@ -511,7 +511,7 @@ declare const x: Box<MissingType>;
     );
 }
 
-/// Regression for Devin review on PR #2616: end-to-end check that an
+/// Regression check: end-to-end check that an
 /// unresolved generic in an interface property annotation does not
 /// produce cascading false-positive assignability diagnostics on top of
 /// the underlying TS2304. Before the fix, `Application(UnresolvedTypeName,

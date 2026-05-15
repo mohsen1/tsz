@@ -668,7 +668,7 @@ fn test_skip_block_opening_line_comments_uses_forward_search_for_param_lowered_b
     );
 }
 
-/// Regression test for a review on PR #2563:
+/// Regression test for comment placement between CJS prologue directives:
 /// Comments between pre-emitted CJS prologue directives must remain
 /// between the directives, not be displaced after the entire CJS
 /// preamble (`"use strict"`, `Object.defineProperty(exports, ...)`, etc.).

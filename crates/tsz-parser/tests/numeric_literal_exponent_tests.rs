@@ -78,7 +78,7 @@ fn underscore_only_exponent_emits_both() {
 
 #[test]
 fn parser_state_reset_clears_scanner_diagnostics_and_high_water_mark() {
-    // Devin review on PR #1521: ParserState::reset must clear both the
+    // ParserState::reset must clear both the
     // scanner's accumulated diagnostics vec AND the high-water mark used by
     // parse_error_at's dedup. Otherwise a reused parser (LSP `update_source`
     // path) carries stale entries; if a new-parse parser error happens to
