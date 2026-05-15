@@ -54,6 +54,10 @@ pub(crate) struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_module")]
     module: Option<u32>,
 
+    /// Enable full iterator support when targeting ES5/ES3.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    downlevel_iteration: Option<bool>,
+
     /// Interpret optional property types as written, rather than adding 'undefined'.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     exact_optional_property_types: Option<bool>,
@@ -267,6 +271,9 @@ impl CompilerOptions {
             options.module = self.resolve_module();
             options.module_explicitly_set = true;
         }
+        if let Some(v) = self.downlevel_iteration {
+            options.downlevel_iteration = v;
+        }
 
         options
     }
@@ -372,6 +379,15 @@ mod tests {
         assert!(!options.strict_bind_call_apply);
         assert!(!options.strict_builtin_iterator_return);
         assert!(!options.use_unknown_in_catch_variables);
+    }
+
+    #[test]
+    fn to_checker_options_preserves_downlevel_iteration() {
+        let options = parse_compiler_options_json(r#"{"downlevelIteration":true}"#)
+            .unwrap()
+            .to_checker_options();
+
+        assert!(options.downlevel_iteration);
     }
 
     #[test]

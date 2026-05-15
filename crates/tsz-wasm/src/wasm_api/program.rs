@@ -64,6 +64,8 @@ pub struct TsCompilerOptions {
     #[serde(default)]
     pub no_resolve: Option<bool>,
     #[serde(default)]
+    pub downlevel_iteration: Option<bool>,
+    #[serde(default)]
     pub sound_mode: Option<bool>,
 }
 
@@ -127,6 +129,7 @@ impl TsCompilerOptions {
             allow_importing_ts_extensions: false,
             rewrite_relative_import_extensions: false,
             implied_classic_resolution: false,
+            downlevel_iteration: self.downlevel_iteration.unwrap_or(false),
             verbatim_module_syntax: false,
             ignore_deprecations: false,
             allow_umd_global_access: false,
