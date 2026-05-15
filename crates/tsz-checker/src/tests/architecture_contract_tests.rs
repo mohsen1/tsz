@@ -3158,7 +3158,7 @@ fn test_excess_property_classification_quarantined_to_property_rs() {
         let allowed = rel.ends_with("state/state_checking/property.rs")
             || rel.ends_with("query_boundaries/assignability.rs")
             || rel.ends_with("assignability/assignability_diagnostics.rs") // target scoring
-            || rel.ends_with("computation/object_literal_context.rs") // contextual type decomposition
+            || rel.ends_with("types/computation/object_literal_context.rs") // contextual type decomposition
             || rel.contains("/tests/");
         if allowed {
             continue;
