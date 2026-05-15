@@ -1524,15 +1524,29 @@ impl<'a> CheckerState<'a> {
             local_name.to_string()
         };
 
-        let export_type = self.resolve_js_export_named_type(
+        let surface_export_type = self.resolve_js_export_named_type(
             &module_specifier,
             &export_name,
             Some(self.ctx.current_file_idx),
         );
-        if let Some(export_type) = export_type {
+        let mut surface_fallback = None;
+        if let Some(export_type) = surface_export_type {
             if let Some(instance_type) = self.instance_type_from_constructor_type(export_type) {
                 return Some(instance_type);
             }
+            if export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN {
+                surface_fallback = Some(export_type);
+            }
+        }
+
+        if let Some((export_sym_id, export_file_idx)) = self.resolve_js_export_named_class_symbol(
+            &module_specifier,
+            &export_name,
+            Some(self.ctx.current_file_idx),
+        ) {
+            self.ctx
+                .register_symbol_file_target(export_sym_id, export_file_idx);
+            let export_type = self.resolve_jsdoc_symbol_type(export_sym_id);
             if export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN {
                 return Some(export_type);
             }
@@ -1561,10 +1575,16 @@ impl<'a> CheckerState<'a> {
                     &export_name,
                     &mut visited_aliases,
                 )
-            })?;
+            });
 
-        let export_type = self.resolve_jsdoc_symbol_type(export_sym_id);
-        (export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN).then_some(export_type)
+        if let Some(export_sym_id) = export_sym_id {
+            let export_type = self.resolve_jsdoc_symbol_type(export_sym_id);
+            if export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN {
+                return Some(export_type);
+            }
+        }
+
+        surface_fallback
     }
 
     pub(in crate::jsdoc) fn resolve_jsdoc_symbol_type(
