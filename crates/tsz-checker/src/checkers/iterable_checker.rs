@@ -570,8 +570,7 @@ impl<'a> CheckerState<'a> {
         // Treat ANY as extraction failure (the operation returns
         // `(ANY, ANY)` for unresolved shapes) so we fall through to the
         // `.value` access fallback below — matching the sync version's
-        // `yield_type != TypeId::ANY` gate. Without this, ANY short-
-        // circuited the success path and the fallback was dead code.
+        // `yield_type != TypeId::ANY` gate.
         if yield_type != TypeId::ANY && yield_type != TypeId::NEVER && yield_type != TypeId::ERROR {
             return yield_type;
         }
