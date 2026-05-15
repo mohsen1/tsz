@@ -818,6 +818,41 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, Vec::new()));
             }
 
+            let direct_target_file_idx =
+                if symbol_type_cache_from_symbol_arena || needs_cross_file_delegation {
+                    symbol_type_cache_file_idx
+                } else {
+                    None
+                };
+            if let Some((direct_type, direct_params)) = self.direct_source_file_type_alias_result(
+                sym_id,
+                direct_target_file_idx,
+                symbol_type_cache_from_symbol_arena,
+            ) {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx
+                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
+                {
+                    if symbol_type_cache_from_symbol_arena {
+                        self.ctx.cache_stable_source_file_symbol_arena_type(
+                            sym_id,
+                            file_idx as u32,
+                            source_cache_scope,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    } else {
+                        self.ctx.cache_cross_file_symbol_type(
+                            sym_id,
+                            file_idx as u32,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    }
+                }
+                return Some((direct_type, direct_params));
+            }
+
             if let Some(p) = perf {
                 p.delegate_cross_arena_misses
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

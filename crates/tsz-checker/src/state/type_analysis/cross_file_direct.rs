@@ -9,7 +9,7 @@ use tsz_common::perf_counters::{
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
 use tsz_solver::{TypeId, TypeParamInfo};
@@ -698,6 +698,36 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn source_file_type_node_contains_kind(arena: &NodeArena, root: NodeIndex, kind: u16) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if arena.get(idx).is_some_and(|node| node.kind == kind) {
+                return true;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        false
+    }
+
+    fn source_file_type_node_contains_identifier_name(
+        arena: &NodeArena,
+        root: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if arena
+                .get(idx)
+                .and_then(|node| arena.get_identifier(node))
+                .is_some_and(|ident| ident.escaped_text == name)
+            {
+                return true;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        false
+    }
+
     fn source_file_interface_declarations_are_direct_lowerable(
         declarations: &[(NodeIndex, &NodeArena)],
     ) -> bool {
@@ -836,6 +866,91 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             allow_source_file_arena,
         )
+    }
+
+    pub(super) fn direct_source_file_type_alias_result(
+        &mut self,
+        sym_id: SymbolId,
+        target_file_idx: Option<usize>,
+        allow_source_file_arena: bool,
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        let target_file_idx = target_file_idx?;
+        let (symbol_arena_arc, delegate_binder_arc) = {
+            let symbol_arena_arc = self.ctx.all_arenas.as_ref()?.get(target_file_idx)?.clone();
+            let delegate_binder_arc = self.ctx.all_binders.as_ref()?.get(target_file_idx)?.clone();
+            (symbol_arena_arc, delegate_binder_arc)
+        };
+        let symbol_arena = symbol_arena_arc.as_ref();
+        let delegate_binder = delegate_binder_arc.as_ref();
+        if !allow_source_file_arena || !is_direct_lowering_source_file_arena(symbol_arena) {
+            return None;
+        }
+
+        let symbol = delegate_binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+            return None;
+        }
+        if symbol.flags
+            & (symbol_flags::VALUE
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE)
+            != 0
+        {
+            return None;
+        }
+        if symbol.declarations.len() != 1 {
+            return None;
+        }
+
+        let name = symbol.escaped_name.clone();
+        let decl_idx = symbol.declarations[0];
+        if !Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, &name) {
+            return None;
+        }
+        let decl_node = symbol_arena.get(decl_idx)?;
+        let type_alias = symbol_arena.get_type_alias(decl_node)?;
+
+        // Keep flow-sensitive `typeof` aliases and direct self/cycle cases on
+        // the child-checker path, where the declaring file's diagnostics and
+        // resolution stack are already handled.
+        if Self::source_file_type_node_contains_kind(
+            symbol_arena,
+            type_alias.type_node,
+            syntax_kind_ext::TYPE_QUERY,
+        ) || Self::source_file_type_node_contains_identifier_name(
+            symbol_arena,
+            type_alias.type_node,
+            &name,
+        ) {
+            return None;
+        }
+
+        let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
+            sym_id,
+            decl_idx,
+            symbol_arena,
+            type_alias,
+        );
+        if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
+            return None;
+        }
+
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        if let Some(shape) = crate::query_boundaries::state::type_environment::object_shape(
+            self.ctx.types,
+            alias_type,
+        ) {
+            self.ctx.definition_store.set_instance_shape(def_id, shape);
+        }
+        self.ctx
+            .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
+        self.ctx
+            .definition_store
+            .register_type_to_def(alias_type, def_id);
+
+        Some((alias_type, params))
     }
 
     pub(super) fn direct_cross_file_interface_lowering(
@@ -1227,6 +1342,119 @@ mod tests {
                     true,
                 )
                 .is_none(),
+        );
+    }
+
+    #[test]
+    fn direct_source_file_type_alias_lowers_generic_alias_body() {
+        let (target_arena, target_binder, types) = parse_bound_source(
+            r#"
+                type Maybe<X> = X | null;
+                export type Box<T> = { value: Maybe<T> };
+            "#,
+        );
+        let (requester_arena, requester_binder, _) =
+            parse_bound_source("import { Box } from './target';");
+        let ctx = CheckerContext::new(
+            requester_arena.as_ref(),
+            requester_binder.as_ref(),
+            &types,
+            "requester.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        state.ctx.set_all_arenas(Arc::new(vec![
+            Arc::clone(&requester_arena),
+            Arc::clone(&target_arena),
+        ]));
+        state.ctx.set_all_binders(Arc::new(vec![
+            Arc::clone(&requester_binder),
+            Arc::clone(&target_binder),
+        ]));
+        let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
+
+        let (ty, params) = state
+            .direct_source_file_type_alias_result(box_sym, Some(1), true)
+            .expect("source-file alias should lower without a child checker");
+
+        assert_ne!(ty, TypeId::UNKNOWN);
+        assert_ne!(ty, TypeId::ERROR);
+        assert_eq!(params.len(), 1, "generic alias params should be preserved");
+        let def_id = state
+            .ctx
+            .get_existing_def_id(box_sym)
+            .expect("alias DefId should be registered");
+        assert_eq!(
+            state.ctx.definition_store.get_body(def_id),
+            Some(ty),
+            "alias body should be registered for lazy resolution",
+        );
+        assert_eq!(
+            state
+                .ctx
+                .get_def_type_params(def_id)
+                .unwrap_or_default()
+                .len(),
+            params.len(),
+            "alias type parameters should be available from the definition store",
+        );
+    }
+
+    #[test]
+    fn direct_source_file_type_alias_rejects_typeof_and_self_references() {
+        let (typeof_arena, typeof_binder, types) = parse_bound_source(
+            r#"
+                const value = 1;
+                export type FromValue = typeof value;
+            "#,
+        );
+        let (requester_arena, requester_binder, _) =
+            parse_bound_source("import { FromValue } from './target';");
+        let ctx = CheckerContext::new(
+            requester_arena.as_ref(),
+            requester_binder.as_ref(),
+            &types,
+            "requester.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        state.ctx.set_all_arenas(Arc::new(vec![
+            Arc::clone(&requester_arena),
+            Arc::clone(&typeof_arena),
+        ]));
+        state.ctx.set_all_binders(Arc::new(vec![
+            Arc::clone(&requester_binder),
+            Arc::clone(&typeof_binder),
+        ]));
+        let from_value = typeof_binder
+            .file_locals
+            .get("FromValue")
+            .expect("FromValue symbol");
+
+        assert!(
+            state
+                .direct_source_file_type_alias_result(from_value, Some(1), true,)
+                .is_none(),
+            "`typeof` aliases need the child-checker path",
+        );
+
+        let (loop_arena, loop_binder, _) = parse_bound_source("export type Loop = Loop;");
+        state.ctx.set_all_arenas(Arc::new(vec![
+            Arc::clone(&requester_arena),
+            Arc::clone(&typeof_arena),
+            Arc::clone(&loop_arena),
+        ]));
+        state.ctx.set_all_binders(Arc::new(vec![
+            Arc::clone(&requester_binder),
+            Arc::clone(&typeof_binder),
+            Arc::clone(&loop_binder),
+        ]));
+        let loop_sym = loop_binder.file_locals.get("Loop").expect("Loop symbol");
+        assert!(
+            state
+                .direct_source_file_type_alias_result(loop_sym, Some(2), true,)
+                .is_none(),
+            "self references need the child-checker circularity path",
         );
     }
 
