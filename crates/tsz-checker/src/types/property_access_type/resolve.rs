@@ -58,6 +58,18 @@ impl<'a> CheckerState<'a> {
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
         }
+        let optional_property_chain_cache_key =
+            self.optional_property_chain_cache_key(idx, request);
+        if let Some(key) = optional_property_chain_cache_key.as_ref()
+            && let Some(&cached) = self
+                .ctx
+                .narrowing_cache
+                .optional_property_chain_cache
+                .borrow()
+                .get(key)
+        {
+            return cached;
+        }
 
         if let Some(type_id) = self.partial_object_literal_initializer_property_type(
             access.expression,
@@ -701,6 +713,20 @@ impl<'a> CheckerState<'a> {
                                 )
                             {
                                 result_type = factory.union2(result_type, TypeId::UNDEFINED);
+                            }
+                            if skip_result_flow_for_result {
+                                self.ctx
+                                    .narrowing_cache
+                                    .optional_chain_cache
+                                    .borrow_mut()
+                                    .insert((object_type, prop_atom), result_type);
+                            }
+                            if let Some(key) = optional_property_chain_cache_key.as_ref() {
+                                self.ctx
+                                    .narrowing_cache
+                                    .optional_property_chain_cache
+                                    .borrow_mut()
+                                    .insert(key.clone(), result_type);
                             }
                             return self.finalize_property_access_result(
                                 idx,
