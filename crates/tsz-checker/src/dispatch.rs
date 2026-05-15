@@ -238,6 +238,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     .enclosing_class
                     .as_ref()
                     .map(|info| info.class_idx)
+                    .or_else(|| {
+                        (!has_intermediate_function
+                            && !contextual_owner.is_some_and(|owner_idx| {
+                                self.checker.ctx.arena.get(owner_idx).is_some_and(|owner| {
+                                    owner.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                })
+                            }))
+                        .then(|| self.checker.nearest_enclosing_class(idx))
+                        .flatten()
+                    })
                 {
                     // Inside a class but no explicit this type on stack -
                     // return the class instance/constructor type depending on static context.
