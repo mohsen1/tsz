@@ -1319,7 +1319,7 @@ impl<'a> CheckerState<'a> {
                 // constructor/instance split diagnostics (e.g. `Type 'Dataset' is not
                 // assignable to type 'Dataset'` in parser harness regressions).
                 // Also check class_instance_type_cache for in-progress builds
-                // (Phase 2 partial type), preventing constructor type fallback.
+                // (second pass partial type), preventing constructor type fallback.
                 self.ctx
                     .symbol_instance_types
                     .get(&sym_id)
@@ -1523,7 +1523,7 @@ impl<'a> CheckerState<'a> {
             }
             // For CLASS symbols, prefer the instance type over the constructor
             // type returned by get_type_of_symbol.  During class construction
-            // (Phase 2 of get_class_instance_type_inner), symbol_instance_types
+            // (second pass of get_class_instance_type_inner), symbol_instance_types
             // is not populated yet, but class_instance_type_cache holds the
             // partial instance type.  Without this, TypeEnvironment::resolve_lazy
             // returns the constructor type (Callable), causing false TS2339 on

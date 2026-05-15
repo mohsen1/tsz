@@ -2873,7 +2873,7 @@ impl<'a> CheckerState<'a> {
                 if seen_diag_keys.iter().any(|existing| existing.0 == diag.code && existing.1 == diag.start) {
                     return false;
                 }
-                // --- Phase 2: classify the diagnostic ---
+                // --- Second pass: classify the diagnostic ---
                 let is_provisional_implicit_any = matches!(
                     diag.code,
                     diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE

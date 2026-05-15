@@ -676,7 +676,7 @@ pub(super) fn read_source_files(
             })
             .collect();
 
-        // Phase 2 (parallel): read + parse imports/refs for `Read` paths.
+        // second pass (parallel): read + parse imports/refs for `Read` paths.
         // Each task is independent — no shared mutable state — and the closure
         // returns owned data. Per-path overhead is dominated by the open()
         // syscall plus the linear scanners over the file body, both of which

@@ -595,7 +595,7 @@ impl Server {
             return Ok(vec![]);
         }
 
-        // Phase 2: Create LibContexts from all loaded libs
+        // Second pass: Create LibContexts from all loaded libs
         let lib_contexts: Vec<LibContext> = lib_files
             .iter()
             .map(|lib| LibContext {

@@ -954,7 +954,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Phase 0.5: Check multi-overload union members for compatible signatures.
         // When multiple union members have multiple overloads, first try to find
         // compatible signatures across members. If found, validate `this` types.
-        // If not found, fall through to per-member resolution (Phase 2) which
+        // If not found, fall through to per-member resolution (second pass) which
         // resolves each member's overloads independently — this matches tsc's
         // behavior for cases like `(A[] | B[]).filter(cb)` where each array type
         // has overloaded `filter` but per-member resolution succeeds.
@@ -1160,7 +1160,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Phase 2: Per-member resolution for argument type checking.
+        // Second pass: Per-member resolution for argument type checking.
         // This avoids over-constraining via intersection when tsc would reduce the union.
         let compatibility = if combined.is_some() {
             // Combined signature already validated arity; skip old bounds check

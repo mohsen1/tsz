@@ -1147,7 +1147,7 @@ impl<'a> CheckerState<'a> {
                 idxs
             };
 
-            // Phase 2: resolve each base to TypeId, check its index sigs, collect names.
+            // Second pass: resolve each base to TypeId, check its index sigs, collect names.
             let mut str_covered = std::collections::HashSet::new();
             let mut num_covered = std::collections::HashSet::new();
 

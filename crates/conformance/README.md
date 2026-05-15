@@ -7,7 +7,7 @@ High-performance Rust implementation for testing the tsz TypeScript compiler aga
 This is a two-phase conformance testing system:
 
 1. **Phase 1 (Cache Generation)**: Run official TSC compiler on all test files to generate a golden master cache
-2. **Phase 2 (Test Execution)**: Run tsz on test files and compare results against TSC cache
+2. **second pass (Test Execution)**: Run tsz on test files and compare results against TSC cache
 
 ## Performance
 

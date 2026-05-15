@@ -3664,7 +3664,7 @@ fn test_class_query_boundary_uses_relation_request_for_property_mismatch() {
 }
 
 // =============================================================================
-// Phase 2: Object/property/call compatibility through canonical boundary
+// Second pass: Object/property/call compatibility through canonical boundary
 // =============================================================================
 
 /// `RelationOutcome` must include `property_classification` for structured

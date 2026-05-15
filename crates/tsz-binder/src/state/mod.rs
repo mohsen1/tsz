@@ -471,7 +471,7 @@ pub struct BinderState {
     pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
 
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`).
-    /// This allows Phase 2 of `merge_bind_results` to find the Phase 1 global ID for each
+    /// This allows second pass of `merge_bind_results` to find the Phase 1 global ID for each
     /// user-local lib symbol. Built during `merge_lib_contexts_into_binder`.
     ///
     /// `Arc`-wrapped so per-file binders constructed by the CLI driver
@@ -682,7 +682,7 @@ pub struct SemanticDefEntry {
     ///
     /// Captured at bind time so the checker and file-skeleton infrastructure can
     /// determine export visibility without re-examining the symbol table. This is
-    /// a prerequisite for Phase 2 file-skeleton decomposition where export surfaces
+    /// a prerequisite for second pass file-skeleton decomposition where export surfaces
     /// are extracted from binder-owned identity rather than full symbol residency.
     pub is_exported: bool,
     /// Enum member names (empty for non-enum declarations).

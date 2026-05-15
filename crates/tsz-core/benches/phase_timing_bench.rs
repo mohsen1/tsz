@@ -150,7 +150,7 @@ fn bench_phase_timing(c: &mut Criterion) {
             });
         });
 
-        // Phase 2: Parse + Bind
+        // Second pass: Parse + Bind
         group.bench_with_input(
             BenchmarkId::new("2_parse_bind", &label),
             &source,

@@ -1414,7 +1414,7 @@ impl<'a> CheckerState<'a> {
             };
             results.push((tag, Some((pos, len))));
         }
-        // Phase 2: Check for dangling JSDoc comments not attached to any statement
+        // Second pass: Check for dangling JSDoc comments not attached to any statement
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
         for comment in comments {
             if !is_jsdoc_comment(comment, source_text) {

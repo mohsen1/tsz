@@ -313,7 +313,7 @@ impl BinderState {
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), new_id);
 
-                // Store reverse mapping for Phase 2 of merge_bind_results.
+                // Store reverse mapping for second pass of merge_bind_results.
                 // Arc::make_mut is free when refcount=1 (the case during a
                 // single file's bind, before the bound state is shared).
                 Arc::make_mut(&mut self.lib_symbol_reverse_remap)
@@ -324,7 +324,7 @@ impl BinderState {
             }
         }
 
-        // Phase 2: Remap internal references (parent, exports, members)
+        // second pass: Remap internal references (parent, exports, members)
         // We need a second pass because parents/exports/members may reference symbols
         // that were processed later in the first pass.
         for lib_ctx in lib_contexts {

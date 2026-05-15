@@ -11,7 +11,7 @@ fn test_phase_distribution() {
     let audit = UnsoundnessAudit::new();
     // Phase 1 should have 5 rules
     assert_eq!(audit.rules_by_phase(ImplementationPhase::Phase1).len(), 5);
-    // Phase 2 should have 5 rules
+    // second pass should have 5 rules
     assert_eq!(audit.rules_by_phase(ImplementationPhase::Phase2).len(), 5);
     // Phase 3 should have 5 rules
     assert_eq!(audit.rules_by_phase(ImplementationPhase::Phase3).len(), 5);

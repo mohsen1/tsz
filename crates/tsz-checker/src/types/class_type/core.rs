@@ -547,7 +547,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Phase 1: Process all non-method members (properties, accessors, constructors, index sigs).
-        // Methods are deferred to phase 2 so that a partial instance type (with property types)
+        // Methods are deferred to second pass so that a partial instance type (with property types)
         // can be pushed as `this`, allowing method body inference to resolve `this.x` references.
         let mut deferred_methods: Vec<(NodeIndex, &tsz_parser::parser::node::MethodDeclData, u32)> =
             Vec::with_capacity(member_count / 2);
@@ -765,7 +765,7 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    // Defer method processing to phase 2
+                    // Defer method processing to second pass
                     deferred_methods.push((member_idx, method, declaration_order));
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
@@ -963,7 +963,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Pop the prescan `this` type — Phase 2 will push its own partial type.
+        // Pop the prescan `this` type — second pass will push its own partial type.
         if pushed_prescan_this {
             self.ctx.this_type_stack.pop();
         }
@@ -1002,7 +1002,7 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
-        // Phase 2: Process deferred methods with a partial `this` type so that
+        // Second pass: Process deferred methods with a partial `this` type so that
         // method body inference can resolve `this.x` references (e.g. `return this.b`).
         if !deferred_methods.is_empty() {
             let mut partial_method_props = properties.clone();
@@ -1355,7 +1355,7 @@ impl<'a> CheckerState<'a> {
                         // partial class instance type (i.e. the body does `return this;`),
                         // replace with polymorphic `ThisType` — same as for methods.
                         //
-                        // Two checks mirror the method logic (Phase 2):
+                        // Two checks mirror the method logic (second pass):
                         // (1) type-based — the inferred return matches partial_type,
                         // (2) syntactic — every return statement returns `this`.
                         // The syntactic check is needed because return-type widening

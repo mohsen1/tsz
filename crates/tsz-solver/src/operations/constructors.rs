@@ -315,7 +315,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// Phase 1: Arity check against the combined signature (max of all members'
     ///          required counts, intersection of param types, union of return types).
-    /// Phase 2: Per-member resolution to collect actual return types.
+    /// Second pass: Per-member resolution to collect actual return types.
     /// Phase 3: Validate arg types against the combined (intersected) param types.
     ///
     /// When no combined signature exists (any member has multiple/generic construct
@@ -354,7 +354,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Phase 2: Per-member resolution to collect return types and failures.
+        // Second pass: Per-member resolution to collect return types and failures.
         let mut return_types = Vec::new();
         let mut failures = Vec::new();
 
