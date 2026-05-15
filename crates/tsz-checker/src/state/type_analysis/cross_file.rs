@@ -666,11 +666,28 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
+            let shared_actual_lib_delegation_name = self.shared_actual_lib_delegation_name(
+                sym_id,
+                delegate_arena,
+                needs_cross_file_delegation,
+            );
             if let Some(p) = perf {
                 p.delegate_cross_arena_calls
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+
+            if symbol_type_cache_file_idx.is_none()
+                && !needs_cross_file_delegation
+                && let Some(shared_name) = shared_actual_lib_delegation_name.as_deref()
+                && let Some(cached) = self.cached_shared_actual_lib_delegation(sym_id, shared_name)
+            {
+                if let Some(p) = perf {
+                    p.delegate_cross_arena_cache_hits_lib
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Some(cached);
+            }
 
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
@@ -1082,6 +1099,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .lib_delegation_cache
                     .insert_symbol_type(sym_id, (result, result_params.clone()));
+                if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                    self.cache_shared_actual_lib_delegation(shared_name, result);
+                }
             }
 
             // Write through to the canonical cross-file symbol-type cache so
