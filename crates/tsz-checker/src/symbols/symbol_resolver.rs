@@ -1416,6 +1416,10 @@ impl<'a> CheckerState<'a> {
         &self,
         name: &str,
     ) -> Option<tsz_solver::def::DefId> {
+        if !name.contains('.') && self.ctx.type_parameter_scope.contains_key(name) {
+            return None;
+        }
+
         if is_compiler_managed_type(name) {
             return None;
         }
@@ -1549,9 +1553,15 @@ impl<'a> CheckerState<'a> {
                     .get_symbol_with_libs(resolved_sym, &lib_binders)
             })
             .map_or(canonical_name, |symbol| symbol.escaped_name.as_str());
-        let def_id = self
-            .ctx
-            .get_or_create_def_id_for_symbol_name(resolved_sym, expected_name);
+        let def_id = if self.ctx.has_lib_loaded()
+            && self.ctx.symbol_is_from_actual_or_cloned_lib(resolved_sym)
+        {
+            self.ctx
+                .get_canonical_lib_def_id(expected_name, resolved_sym)
+        } else {
+            self.ctx
+                .get_or_create_def_id_for_symbol_name(resolved_sym, expected_name)
+        };
         self.ctx
             .lowering_entity_name_resolution_cache
             .borrow_mut()
