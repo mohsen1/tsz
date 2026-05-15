@@ -6699,18 +6699,6 @@ fn test_strict_null_checks_null_only() {
 // ============== Symbol type checking tests ==============
 
 #[test]
-fn test_symbol_constructor_call_signature() {
-    // Skip test - lib loading was removed
-    // Tests that need lib files should use the TestContext API
-}
-
-#[test]
-fn test_symbol_constructor_too_many_args() {
-    // Skip test - lib loading was removed
-    // Tests that need lib files should use the TestContext API
-}
-
-#[test]
 fn test_variable_redeclaration_same_type() {
     // Test that redeclaring a variable with the same type is allowed
     let source = r#"function test() {
@@ -28772,14 +28760,6 @@ class Foo {
         "Expected no TS2564 when strictNullChecks is false, got: {:?}",
         checker.ctx.diagnostics
     );
-}
-
-/// Test that global types from lib.d.ts (Promise, Array, console, etc.) resolve correctly
-/// This verifies the fix for TS2304 errors where global symbols were undefined
-#[test]
-fn test_global_symbol_resolution_from_lib_dts() {
-    // Skip test - lib loading was removed
-    // Tests that need lib files should use the TestContext API
 }
 
 /// Comprehensive test for all Tier 2 Type Checker Accuracy fixes
