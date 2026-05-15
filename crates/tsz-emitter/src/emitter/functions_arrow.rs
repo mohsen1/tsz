@@ -258,7 +258,7 @@ impl<'a> Printer<'a> {
         } else if !body_is_block && self.concise_body_needs_parens(func.body) {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             if let Some(body_node) = self.arena.get(func.body) {
-                self.emit_comments_before_pos(body_node.pos);
+                self.emit_arrow_concise_body_leading_comments(body_node.pos);
             }
             self.write("(");
             self.emit(func.body);
@@ -267,7 +267,7 @@ impl<'a> Printer<'a> {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             // tsc preserves these and places the body on a new line when comments exist.
             if !body_is_block && let Some(body_node) = self.arena.get(func.body) {
-                self.emit_comments_before_pos(body_node.pos);
+                self.emit_arrow_concise_body_leading_comments(body_node.pos);
             }
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
@@ -293,6 +293,41 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
+    }
+
+    pub(in crate::emitter) fn emit_arrow_concise_body_leading_comments(&mut self, body_pos: u32) {
+        if self.pending_comment_before_pos_starts_after_newline(body_pos) {
+            self.write_line();
+        }
+        self.emit_comments_before_pos(body_pos);
+    }
+
+    pub(in crate::emitter) fn pending_comment_before_pos_starts_after_newline(
+        &self,
+        pos: u32,
+    ) -> bool {
+        if self.ctx.options.remove_comments || self.comment_emit_idx >= self.all_comments.len() {
+            return false;
+        }
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
+        let comment = &self.all_comments[self.comment_emit_idx];
+        if comment.end > actual_start {
+            return false;
+        }
+        let Some(source) = self.source_text else {
+            return false;
+        };
+        let bytes = source.as_bytes();
+        let mut idx = comment.pos as usize;
+        while idx > 0 {
+            idx -= 1;
+            match bytes[idx] {
+                b' ' | b'\t' => {}
+                b'\n' | b'\r' => return true,
+                _ => return false,
+            }
+        }
+        false
     }
 
     fn emit_arrow_concise_body_with_stripped_type_erasure_parens(
@@ -801,7 +836,10 @@ impl<'a> Printer<'a> {
         }
 
         if let Some(call) = self.arena.get_call_expr(node) {
-            if node.is_optional_chain() && !self.is_simple_nullish_expression(call.expression) {
+            if node.is_optional_chain()
+                && !self.optional_chain_call_uses_simple_receiver(call.expression)
+                && !self.is_simple_nullish_expression(call.expression)
+            {
                 return true;
             }
             if self.param_initializer_generates_hoisted_temp(call.expression) {
@@ -848,6 +886,16 @@ impl<'a> Printer<'a> {
         }
 
         false
+    }
+
+    fn optional_chain_call_uses_simple_receiver(&self, callee: NodeIndex) -> bool {
+        let Some(callee_node) = self.arena.get(callee) else {
+            return false;
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        access.question_dot_token && self.is_simple_nullish_expression(access.expression)
     }
 
     fn class_expression_initializer_needs_temp_prologue(
