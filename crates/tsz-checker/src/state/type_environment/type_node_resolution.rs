@@ -458,6 +458,8 @@ impl<'a> CheckerState<'a> {
         // so that type references to them are not falsely flagged as needing type
         // arguments (e.g., `<A>(x: A) => A` where `A` shadows an outer generic).
         let mut type_param_names = FxHashSet::default();
+        type_param_names.extend(self.ctx.type_parameter_scope.keys().cloned());
+        self.collect_enclosing_type_param_names(root, &mut type_param_names);
         self.collect_type_param_names_from_function_type(root, &mut type_param_names);
 
         let mut stack = vec![root];
@@ -529,6 +531,60 @@ impl<'a> CheckerState<'a> {
                 }
             }
             stack.extend(self.ctx.arena.get_children(idx));
+        }
+    }
+
+    fn collect_enclosing_type_param_names(&self, root: NodeIndex, names: &mut FxHashSet<String>) {
+        let mut parent = self
+            .ctx
+            .arena
+            .get_extended(root)
+            .map_or(NodeIndex::NONE, |info| info.parent);
+
+        while parent.is_some() {
+            let Some(node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+
+            if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                && let Some(alias) = self.ctx.arena.get_type_alias(node)
+            {
+                self.collect_type_param_names_from_list(&alias.type_parameters, names);
+            } else if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                && let Some(interface) = self.ctx.arena.get_interface(node)
+            {
+                self.collect_type_param_names_from_list(&interface.type_parameters, names);
+            } else if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class) = self.ctx.arena.get_class(node)
+            {
+                self.collect_type_param_names_from_list(&class.type_parameters, names);
+            }
+
+            parent = self
+                .ctx
+                .arena
+                .get_extended(parent)
+                .map_or(NodeIndex::NONE, |info| info.parent);
+        }
+    }
+
+    fn collect_type_param_names_from_list(
+        &self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        names: &mut FxHashSet<String>,
+    ) {
+        let Some(type_parameters) = type_parameters else {
+            return;
+        };
+
+        for &tp_idx in &type_parameters.nodes {
+            if let Some(tp_node) = self.ctx.arena.get(tp_idx)
+                && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                names.insert(ident.escaped_text.clone());
+            }
         }
     }
 
