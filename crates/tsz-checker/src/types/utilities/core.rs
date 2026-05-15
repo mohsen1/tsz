@@ -1549,7 +1549,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Fallback: check via symbol flags (legacy path)
+        // Fallback: check via symbol flags.
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
@@ -1582,7 +1582,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Fallback: check via symbol flags (legacy path)
+        // Fallback: check via symbol flags.
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)

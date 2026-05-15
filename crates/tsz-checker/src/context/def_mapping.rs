@@ -1223,8 +1223,8 @@ impl<'a> CheckerContext<'a> {
     /// This ensures both `SymbolRef` and `DefId` resolution paths can find the
     /// type during evaluation.
     ///
-    /// The `SymbolRef` mapping is written to `type_environment` only (legacy flow-analyzer
-    /// path). The DefId mapping is written to **both** environments via the dual-env
+    /// The `SymbolRef` mapping is written to `type_environment` only. The
+    /// DefId mapping is written to **both** environments via the dual-env
     /// helpers so the evaluator (`type_env`) and flow analyzer (`type_environment`)
     /// stay consistent.
     ///
@@ -1237,8 +1237,8 @@ impl<'a> CheckerContext<'a> {
     ) {
         use tsz_solver::SymbolRef;
 
-        // Insert SymbolRef key into type_environment only (legacy path —
-        // type_env never uses SymbolRef-keyed lookups).
+        // Insert SymbolRef key into type_environment only (flow-analyzer compatibility
+        // path). type_env never uses SymbolRef-keyed lookups.
         if let Ok(mut env) = self.type_environment.try_borrow_mut() {
             if type_params.is_empty() {
                 env.insert(SymbolRef(sym_id.0), type_id);
@@ -1254,7 +1254,7 @@ impl<'a> CheckerContext<'a> {
         if let Some(def_id) = self.get_existing_def_id(sym_id) {
             self.register_def_auto_params_in_envs(def_id, type_id, type_params);
 
-            // Register mapping for InheritanceGraph bridge (Phase 3.2)
+            // Register mapping for InheritanceGraph bridge (shared path).
             // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
             if let Ok(mut env) = self.type_environment.try_borrow_mut() {
                 env.register_def_symbol_mapping(def_id, sym_id);

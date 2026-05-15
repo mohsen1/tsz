@@ -40,8 +40,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check a declaration node.
     ///
-    /// This dispatches to specialized handlers based on declaration kind.
-    /// Currently a skeleton - logic will be migrated incrementally from `CheckerState`.
+    /// Dispatches to specialized handlers based on declaration kind.
     pub fn check(&mut self, decl_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return;

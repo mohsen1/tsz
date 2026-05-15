@@ -20,7 +20,7 @@ pub trait StatementCheckCallbacks {
     /// Get the type of a node (expression or type annotation).
     fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId;
 
-    /// Request-aware node typing. Defaults to the legacy no-request path.
+    /// Request-aware node typing. Defaults to the no-request path.
     fn get_type_of_node_with_request(&mut self, idx: NodeIndex, request: &TypingRequest) -> TypeId {
         let _ = request;
         self.get_type_of_node(idx)
@@ -31,7 +31,7 @@ pub trait StatementCheckCallbacks {
     /// not the flow-narrowed type (avoids false TS2678).
     fn get_type_of_node_no_narrowing(&mut self, idx: NodeIndex) -> TypeId;
 
-    /// Request-aware no-narrowing node typing. Defaults to the legacy path.
+    /// Request-aware no-narrowing node typing. Defaults to the no-request path.
     fn get_type_of_node_no_narrowing_with_request(
         &mut self,
         idx: NodeIndex,
