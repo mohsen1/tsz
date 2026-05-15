@@ -580,7 +580,8 @@ impl<'a> CheckerState<'a> {
     /// from a different file in multi-file mode. Returns the `SymbolId` of the export
     /// if found, or None if cross-file resolution is not available or the export is not found.
     ///
-    /// This is the core of Phase 1.1: `ModuleResolver` ↔ Checker Integration.
+    /// Resolve cross-file module exports by unifying `ModuleResolver` and Checker
+    /// symbol lookups.
     pub(crate) fn resolve_cross_file_export(
         &self,
         module_specifier: &str,

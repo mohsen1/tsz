@@ -2274,7 +2274,7 @@ impl<'a> CheckerState<'a> {
             // This can happen during recursive type resolution (e.g., class inheritance).
             // If we can't borrow, skip the cache update - the type is still computed correctly.
             if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                // Get the DefId if one exists (Phase 4.3 migration)
+                // Get the DefId when available for constructor caching.
                 let def_id = self.ctx.get_existing_def_id(sym_id);
 
                 // For CLASS symbols:

@@ -621,7 +621,8 @@ impl<'a> CheckerState<'a> {
     /// - The module cannot be resolved
     /// - Promise is not available (ES5 target without lib)
     ///
-    /// This method implements Phase 1.3 of the module resolution plan.
+    /// Resolve dynamic import return types through module-resolution and checked
+    /// export-table wiring.
     pub(crate) fn get_dynamic_import_type(
         &mut self,
         call: &tsz_parser::parser::node::CallExprData,
