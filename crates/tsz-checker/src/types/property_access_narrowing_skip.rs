@@ -1,6 +1,6 @@
 //! Flow-narrowing skip predicates for property access results.
 //!
-//! Extracted from `property_access_type.rs` to keep that module under
+//! Extracted from `property_access_type/mod.rs` to keep that module under
 //! the 2000 LOC architecture ceiling.
 
 use crate::state::CheckerState;

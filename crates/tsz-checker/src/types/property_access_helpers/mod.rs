@@ -3,7 +3,7 @@
 //! Contains expando function/property detection, union/type-parameter property
 //! checks, strict bind/call/apply method synthesis, and import.meta CJS checks.
 //!
-//! Extracted from `property_access_type.rs` to keep module size manageable.
+//! Extracted from `property_access_type/mod.rs` to keep module size manageable.
 
 mod access_semantics;
 mod expando;

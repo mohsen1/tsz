@@ -1,7 +1,7 @@
 //! Global augmentation property resolution and namespace member
 //! visibility helpers.
 //!
-//! Extracted from `property_access_type.rs` to keep module size manageable.
+//! Extracted from `property_access_type/mod.rs` to keep module size manageable.
 
 use super::queries::lib_resolution::{
     augmentation_def_id_from_node, no_value_resolver, resolve_augmentation_node,
