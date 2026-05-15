@@ -117,6 +117,22 @@ const point: Point = { x: 1, y: 2, z: 3 } as Point;
     );
 }
 
+#[test]
+fn spread_only_excess_property_does_not_trigger_ts2353() {
+    // A spread source uses explicit-only EPC: properties that arrive only from
+    // the spread operand are not checked as fresh object-literal excess.
+    let source = r#"
+type Point = { x: number, y: number }
+const base = { x: 1, y: 2, z: 3 }
+const point: Point = { ...base }
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353 && d.1.contains("'z'")),
+        "Did not expect TS2353 for spread-only excess property z, got: {diags:?}",
+    );
+}
+
 // --- Discriminated union excess property checking ---
 
 #[test]

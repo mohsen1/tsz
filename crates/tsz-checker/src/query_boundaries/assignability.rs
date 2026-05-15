@@ -84,14 +84,32 @@ pub(crate) enum MissingPropertyMode {
 /// Encodes all the policy dimensions that affect how the checker interprets
 /// a relation result. The checker builds a request, invokes the boundary,
 /// and uses the result + failure info for diagnostics.
+///
+/// Current field ownership:
+/// - `source` and `target` are semantic solver inputs and diagnostic inputs.
+/// - `kind` is diagnostic/tracing context today; it does not alter solver flags.
+/// - `allow_erased_generic_signature_retry` is translated to a solver relation flag.
+/// - `source_is_fresh`, `excess_property_mode`, and `missing_property_mode` are
+///   request-level policy descriptors. They are preserved for callers and tests,
+///   but `execute_relation` does not yet branch on them; EPC and missing-property
+///   diagnostics still have caller-side checks.
 #[derive(Debug, Clone)]
 pub(crate) struct RelationRequest {
+    /// Prepared source type for the relation. This feeds the solver query,
+    /// failure analysis, weak-union detection, and property classification.
     pub source: TypeId,
+    /// Prepared target type for the relation. This feeds the same semantic and
+    /// diagnostic paths as `source`.
     pub target: TypeId,
+    /// Relation context for diagnostics and tracing. Currently advisory only.
     pub kind: RelationKind,
+    /// Requested excess-property policy. Currently advisory; object-literal EPC
+    /// emission still happens in caller-side diagnostic paths.
     pub excess_property_mode: ExcessPropertyMode,
+    /// Requested missing-property policy. Currently advisory; failure rendering
+    /// still decides how to present missing-property diagnostics.
     pub missing_property_mode: MissingPropertyMode,
-    /// Whether the source is a fresh object literal.
+    /// Whether the source is a fresh object literal. Currently advisory.
     pub source_is_fresh: bool,
     /// Whether failed contextual generic-signature inference may retry with
     /// erased signatures. This is a targeted interface property compatibility
@@ -603,9 +621,11 @@ pub(crate) struct RelationOutcome {
 /// 2. When not related, collects a structured failure reason.
 /// 3. Detects weak-union violations.
 ///
-/// All policy dimensions (freshness, excess-property mode, missing-property
-/// mode) are encoded in the `request`; the boundary translates them to
-/// solver-level knobs.
+/// The boundary currently translates only `allow_erased_generic_signature_retry`
+/// into solver flags. Freshness, excess-property mode, and missing-property mode
+/// are carried on `RelationRequest` as explicit policy descriptors for follow-up
+/// centralization, but existing caller-side EPC/missing-property diagnostics still
+/// own those decisions.
 pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     request: &RelationRequest,
     db: &dyn QueryDatabase,
@@ -680,8 +700,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         classify_object_properties(db.as_type_database(), request.source, request.target);
 
     // Suppress ExcessProperty failure when the target has structural features
-    // that make EPC inapplicable. This centralizes the policy that was previously
-    // duplicated in `analyze_assignability_failure`.
+    // that make EPC inapplicable.
     let failure =
         suppress_excess_property_failure_if_needed(failure, db.as_type_database(), request.target);
 
@@ -706,8 +725,6 @@ fn suppress_excess_property_failure_if_needed(
     db: &dyn TypeDatabase,
     target: TypeId,
 ) -> Option<super::relation_types::RelationFailure> {
-    use super::common::is_type_parameter_like;
-
     let is_excess = matches!(
         &failure,
         Some(super::relation_types::RelationFailure::ExcessProperty { .. })
@@ -716,21 +733,68 @@ fn suppress_excess_property_failure_if_needed(
         return failure;
     }
 
-    // Check for deferred conditional members.
-    if tsz_solver::has_deferred_conditional_member(db, target) {
-        return None;
-    }
-
-    // Check for non-EPC intersection members (primitives/type-params).
-    if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target)
-        && members.iter().any(|member| {
-            tsz_solver::is_primitive_type(db, *member) || is_type_parameter_like(db, *member)
-        })
-    {
+    if target_suppresses_excess_property_failure(db, [target], |member| member) {
         return None;
     }
 
     failure
+}
+
+/// Apply the boundary-owned `ExcessProperty` suppression policy to raw failure
+/// analysis collected outside [`execute_relation`].
+///
+/// Some legacy callers still use [`check_assignable_gate_with_overrides`] for
+/// structured failure analysis. They may need checker-specific type evaluation
+/// before inspecting intersection members, so the boundary owns the decision
+/// while callers provide the member normalization callback.
+pub(crate) fn suppress_raw_excess_property_failure_if_needed<I, F>(
+    mut analysis: AssignabilityFailureAnalysis,
+    db: &dyn TypeDatabase,
+    target_candidates: I,
+    normalize_member: F,
+) -> AssignabilityFailureAnalysis
+where
+    I: IntoIterator<Item = TypeId>,
+    F: FnMut(TypeId) -> TypeId,
+{
+    if matches!(
+        &analysis.failure_reason,
+        Some(SubtypeFailureReason::ExcessProperty { .. })
+    ) && target_suppresses_excess_property_failure(db, target_candidates, normalize_member)
+    {
+        analysis.failure_reason = None;
+    }
+
+    analysis
+}
+
+fn target_suppresses_excess_property_failure<I, F>(
+    db: &dyn TypeDatabase,
+    target_candidates: I,
+    mut normalize_member: F,
+) -> bool
+where
+    I: IntoIterator<Item = TypeId>,
+    F: FnMut(TypeId) -> TypeId,
+{
+    use super::common::is_type_parameter_like;
+
+    for target in target_candidates {
+        if tsz_solver::has_deferred_conditional_member(db, target) {
+            return true;
+        }
+
+        if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target)
+            && members.iter().any(|member| {
+                let member = normalize_member(*member);
+                tsz_solver::is_primitive_type(db, member) || is_type_parameter_like(db, member)
+            })
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------
