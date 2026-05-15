@@ -39,6 +39,25 @@ impl<'a> CheckerState<'a> {
             .map(|evidence| &evidence.outcome)
     }
 
+    fn report_argument_assignability_with_evidence(
+        &mut self,
+        relation_evidence: &[CallRelationEvidence],
+        source: TypeId,
+        target: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        if let Some(outcome) = Self::relation_evidence_for_pair(relation_evidence, source, target) {
+            self.report_argument_assignability_with_outcome(
+                source,
+                target,
+                arg_idx,
+                outcome.clone(),
+            )
+        } else {
+            self.check_argument_assignable_or_report(source, target, arg_idx)
+        }
+    }
+
     fn is_generic_indexed_access_surface(&self, type_id: TypeId) -> bool {
         self.generic_indexed_access_surface_inner(type_id)
             || self
@@ -1336,19 +1355,9 @@ impl<'a> CheckerState<'a> {
                                 reported_expected,
                                 arg_idx,
                             );
-                        } else if let Some(outcome) = Self::relation_evidence_for_pair(
-                            relation_evidence,
-                            reported_actual,
-                            reported_expected,
-                        ) {
-                            let _ = self.report_argument_assignability_with_outcome(
-                                reported_actual,
-                                reported_expected,
-                                arg_idx,
-                                outcome.clone(),
-                            );
                         } else {
-                            let _ = self.check_argument_assignable_or_report(
+                            let _ = self.report_argument_assignability_with_evidence(
+                                relation_evidence,
                                 reported_actual,
                                 reported_expected,
                                 arg_idx,
@@ -1391,7 +1400,8 @@ impl<'a> CheckerState<'a> {
                                 aggregate_anchor_override.unwrap_or(call_idx),
                             );
                         } else {
-                            let _ = self.check_argument_assignable_or_report(
+                            let _ = self.report_argument_assignability_with_evidence(
+                                relation_evidence,
                                 reported_actual,
                                 reported_expected,
                                 call_idx,
@@ -1434,7 +1444,8 @@ impl<'a> CheckerState<'a> {
                                 aggregate_anchor_override.unwrap_or(last_arg),
                             );
                         } else {
-                            let _ = self.check_argument_assignable_or_report(
+                            let _ = self.report_argument_assignability_with_evidence(
+                                relation_evidence,
                                 reported_actual,
                                 reported_expected,
                                 last_arg,
@@ -1458,7 +1469,8 @@ impl<'a> CheckerState<'a> {
                             aggregate_anchor_override.unwrap_or(call_idx),
                         );
                     } else {
-                        let _ = self.check_argument_assignable_or_report(
+                        let _ = self.report_argument_assignability_with_evidence(
+                            relation_evidence,
                             reported_actual,
                             reported_expected,
                             call_idx,
