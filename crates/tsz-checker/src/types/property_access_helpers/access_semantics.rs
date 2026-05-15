@@ -800,12 +800,12 @@ impl<'a> CheckerState<'a> {
         fn method_this_arg_type(
             sig: &tsz_solver::CallSignature,
             is_constructor: bool,
-            receiver_this_type: Option<TypeId>,
+            _receiver_this_type: Option<TypeId>,
         ) -> TypeId {
             if is_constructor {
                 sig.return_type
             } else if sig.this_type.is_some() {
-                receiver_this_type.unwrap_or_else(|| sig.this_type.unwrap_or(TypeId::ANY))
+                sig.this_type.unwrap_or(TypeId::ANY)
             } else {
                 TypeId::ANY
             }
@@ -814,12 +814,12 @@ impl<'a> CheckerState<'a> {
         fn bind_this_arg_type(
             sig: &tsz_solver::CallSignature,
             is_constructor: bool,
-            receiver_this_type: Option<TypeId>,
+            _receiver_this_type: Option<TypeId>,
         ) -> TypeId {
             if is_constructor {
                 TypeId::ANY
             } else if sig.this_type.is_some() {
-                receiver_this_type.unwrap_or_else(|| sig.this_type.unwrap_or(TypeId::ANY))
+                sig.this_type.unwrap_or(TypeId::ANY)
             } else {
                 TypeId::ANY
             }
