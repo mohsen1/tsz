@@ -7356,3 +7356,172 @@ const wrong: Select<Bird, "bird"> = { tag: "fish", wings: 6 };
         "expected inline numeric-union property mismatch, got: {messages:#?}"
     );
 }
+
+// =============================================================================
+// Intersection source assigned to callable-interface target (issue #6202)
+// =============================================================================
+
+/// Structural rule: when an intersection containing a function member and object
+/// members is assigned to a callable interface with properties, the failure message
+/// must list only properties not supplied by any intersection member.
+#[test]
+fn intersection_function_object_satisfies_callable_interface_with_matching_props() {
+    // All required call sig and properties are satisfied by the intersection.
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+const cwp: CallableWithProps = Object.assign(
+  (x: number) => x.toString(),
+  { version: "1.0" }
+);
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: fn-object intersection should satisfy callable interface with matching properties. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn intersection_type_alias_satisfies_callable_interface_with_matching_props() {
+    // Same structural rule via explicit type alias (not Object.assign).
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+type FnWithVersion = ((x: number) => string) & { version: string };
+declare const fn1: FnWithVersion;
+const cwp: CallableWithProps = fn1;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: explicit fn-object intersection alias should satisfy callable interface. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn intersection_function_object_missing_one_prop_reports_only_that_prop() {
+    // The intersection provides `version` but not `name`.
+    // The error should name only `name`, not both `version` and `name`.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnWithVersionOnly = ((x: number) => string) & { version: string };
+declare const cwp2: FnWithVersionOnly;
+const cwp: RequiresAll = cwp2;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when required property `name` is missing from intersection source."
+    );
+    // Should NOT report `version` as missing; it is supplied by the object member.
+    for diag in &diagnostics {
+        let msg = &diag.message_text;
+        assert!(
+            !msg.contains("version"),
+            "Error message should not mention `version` (it is present in the intersection): {msg}"
+        );
+    }
+}
+
+#[test]
+fn intersection_type_alias_missing_one_prop_reports_only_that_prop() {
+    // Same rule via explicit intersection alias.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnWithVersion = ((x: number) => string) & { version: string };
+declare const fn1: FnWithVersion;
+const cwp: RequiresAll = fn1;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when required property `name` is missing from intersection alias."
+    );
+    for diag in &diagnostics {
+        let msg = &diag.message_text;
+        assert!(
+            !msg.contains("version"),
+            "Error message should not mention `version` (it is present in intersection member): {msg}"
+        );
+    }
+}
+
+#[test]
+fn intersection_function_object_all_props_missing_reports_all() {
+    // The intersection has no object member providing properties.
+    // The error should list both required properties.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnOnly = (x: number) => string;
+declare const cwp2: FnOnly;
+const cwp: RequiresAll = cwp2;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when all required properties are missing from intersection source."
+    );
+}
+
+#[test]
+fn inline_intersection_satisfies_callable_interface_multiple_props() {
+    // Intersection with multiple properties covering all target requirements.
+    let source = r#"
+interface FullCallable {
+  (x: number): string;
+  name: string;
+  version: number;
+}
+
+const fc: FullCallable = Object.assign(
+  (x: number) => x.toString(),
+  { name: "fn", version: 1 }
+);
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: fn-object intersection with all props should satisfy callable interface. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn named_function_with_assign_satisfies_callable_interface() {
+    // Named function (not arrow) assigned via Object.assign.
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+function myFn(x: number): string { return x.toString(); }
+const cwp: CallableWithProps = Object.assign(myFn, { version: "1.0" });
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: named function + Object.assign should satisfy callable interface. Got: {diagnostics:#?}"
+    );
+}
