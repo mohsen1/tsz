@@ -949,6 +949,7 @@ pub fn resolve_compiler_options(
 
     if let Some(downlevel_iteration) = options.downlevel_iteration {
         resolved.printer.downlevel_iteration = downlevel_iteration;
+        resolved.checker.downlevel_iteration = downlevel_iteration;
     }
 
     if let Some(remove_comments) = options.remove_comments {
@@ -5925,6 +5926,7 @@ mod tests {
         assert!(resolved.printer.no_emit_helpers);
         assert!(resolved.checker.preserve_const_enums);
         assert!(resolved.printer.preserve_const_enums);
+        assert!(resolved.checker.downlevel_iteration);
         assert!(resolved.printer.downlevel_iteration);
     }
 
