@@ -1061,6 +1061,12 @@ impl<'a> Printer<'a> {
                     }
                 });
             if !arg_text.is_empty() {
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
                 let comment = format!("{enum_name}[{arg_text}]").replace("*/", "*_/");
                 Some(format!("{} /* {} */", value.to_js_literal(), comment))
             } else if is_template {

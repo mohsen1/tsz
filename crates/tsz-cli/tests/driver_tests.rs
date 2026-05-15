@@ -4312,6 +4312,12 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
     source = source.replace("\"/.lib/react16.d.ts\"", "\"./.lib/react16.d.ts\"");
 
     write_file(&base.join("test.tsx"), &source);
@@ -4351,6 +4357,12 @@ fn compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322()
         return;
     };
     let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
         return;
     };
 

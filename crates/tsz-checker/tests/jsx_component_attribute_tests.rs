@@ -2551,6 +2551,12 @@ fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
     ) else {
         return;
     };
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
     source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
 
     let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
@@ -2587,6 +2593,12 @@ fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
 fn test_jsx_fragment_factory_no_unused_locals_react16_fixture_checks_nested_callback_body() {
     let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
         return;
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
     };
     let Some(source) = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/jsxFragmentFactoryNoUnusedLocals.tsx",

@@ -2263,6 +2263,12 @@ impl Server {
         let mut enum_name = String::new();
         let mut member_name = String::new();
         for line in &lines {
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
             let trimmed = line.trim().replace("/**/", "");
             if trimmed.starts_with("enum ")
                 || trimmed.starts_with("export enum ")
@@ -2477,6 +2483,12 @@ impl Server {
                 .join("\n");
             if normalized != content {
                 return Self::apply_add_missing_enum_member_simple_fallback(&normalized);
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
             }
         }
 

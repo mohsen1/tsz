@@ -2667,6 +2667,12 @@ fn expand_tsconfig_include_pattern(pattern: &str) -> Vec<String> {
     }
 
     let mut expanded = vec![normalized.clone()];
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
     let direct_child_variant = normalized.replace("/**/", "/");
     if direct_child_variant != normalized {
         expanded.push(direct_child_variant);
