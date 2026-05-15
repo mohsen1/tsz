@@ -3122,6 +3122,42 @@ class Container<T> {
 }
 
 #[test]
+fn generic_class_expression_method_contextualizes_callback_parameter() {
+    let source = r#"
+const Container = class<T> {
+    constructor(public value: T) {}
+
+    map<U>(fn: (v: T) => U): InstanceType<typeof Container<U>> {
+        return null as any;
+    }
+};
+
+const numContainer = new Container(42);
+const checkNumber: number = numContainer.value;
+const checkString: string = numContainer.value;
+numContainer.map(n => n.toString());
+numContainer.map((n: string) => n);
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "generic class expression method should contextually type callback parameter from instantiated class type. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2322 && message.contains("number")),
+        "generic class expression constructor inference should preserve `value: number`. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("string")),
+        "generic class expression method should reject callback parameter annotations incompatible with number. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn generic_constructor_options_infer_from_context_sensitive_object_member_return() {
     let source = r#"
 declare class Connection {
