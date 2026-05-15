@@ -752,11 +752,17 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let cache_key = (target_arena as *const NodeArena as usize, decl_idx, 1);
+        if let Some(cached) = self.ctx.cross_file_declaration_node_types.get(&cache_key) {
+            let cached = *cached;
+            return cached;
+        }
+
         if !Self::enter_cross_arena_delegation() {
             return TypeId::ERROR;
         }
 
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let delegate_file_name = target_arena
             .source_files
             .first()
@@ -814,6 +820,11 @@ impl<'a> CheckerState<'a> {
         }
         let _ = sym_id;
         Self::leave_cross_arena_delegation();
+        if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+            self.ctx
+                .cross_file_declaration_node_types
+                .insert(cache_key, result);
+        }
         result
     }
 
@@ -921,6 +932,20 @@ impl<'a> CheckerState<'a> {
             return cached_type;
         }
 
+        let value_cache_key = (
+            decl_arena.as_ref() as *const NodeArena as usize,
+            decl_idx,
+            if apply_module_augmentations { 1 } else { 2 },
+        );
+        if let Some(cached) = self
+            .ctx
+            .cross_file_declaration_node_types
+            .get(&value_cache_key)
+        {
+            let cached = *cached;
+            return cached;
+        }
+
         // Guard against deep cross-arena recursion (shared with all delegation points)
         if !Self::enter_cross_arena_delegation() {
             return TypeId::ERROR;
@@ -988,6 +1013,17 @@ impl<'a> CheckerState<'a> {
         // for the full explanation: node_symbols collisions across arenas cause cache poisoning.
 
         Self::leave_cross_arena_delegation();
+        let cacheable_result = result != TypeId::ERROR
+            && (result != TypeId::UNKNOWN
+                || decl_arena
+                    .source_files
+                    .first()
+                    .is_some_and(|source_file| source_file.is_declaration_file));
+        if cacheable_result {
+            self.ctx
+                .cross_file_declaration_node_types
+                .insert(value_cache_key, result);
+        }
         result
     }
 
@@ -1042,43 +1078,53 @@ impl<'a> CheckerState<'a> {
             let decl_type = if std::ptr::eq(decl_arena, self.ctx.arena) {
                 self.get_type_of_node(decl_idx)
             } else {
-                if !Self::enter_cross_arena_delegation() {
-                    continue;
-                }
-
-                let delegate_file_name = decl_arena
-                    .source_files
-                    .first()
-                    .map(|sf| sf.file_name.clone())
-                    .unwrap_or_else(|| self.ctx.file_name.clone());
                 let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena);
+                let cache_key = (decl_arena as *const NodeArena as usize, decl_idx, 0);
+                if let Some(cached) = self.ctx.cross_file_declaration_node_types.get(&cache_key) {
+                    *cached
+                } else {
+                    if !Self::enter_cross_arena_delegation() {
+                        continue;
+                    }
 
-                // No cache fast-path on this delegate; every entry is a miss.
-                tsz_common::perf_counters::record_delegate_cross_arena_miss();
-                let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+                    let delegate_file_name = decl_arena
+                        .source_files
+                        .first()
+                        .map(|sf| sf.file_name.clone())
+                        .unwrap_or_else(|| self.ctx.file_name.clone());
 
-                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-                    decl_arena,
-                    self.ctx.binder,
-                    self.ctx.types,
-                    delegate_file_name,
-                    self.ctx.compiler_options.clone(),
-                    self,
-                    tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
-                ));
-                checker.ctx.copy_cross_file_state_from(&self.ctx);
-                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-                checker.ctx.current_file_idx =
-                    delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
-                checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
-                checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
-                checker
-                    .ctx
-                    .symbol_resolution_depth
-                    .set(self.ctx.symbol_resolution_depth.get());
-                let result = checker.get_type_of_node(decl_idx);
-                Self::leave_cross_arena_delegation();
-                result
+                    // No cache fast-path on this delegate; every entry is a miss.
+                    tsz_common::perf_counters::record_delegate_cross_arena_miss();
+                    let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+
+                    let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+                        decl_arena,
+                        self.ctx.binder,
+                        self.ctx.types,
+                        delegate_file_name,
+                        self.ctx.compiler_options.clone(),
+                        self,
+                        tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
+                    ));
+                    checker.ctx.copy_cross_file_state_from(&self.ctx);
+                    checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                    checker.ctx.current_file_idx =
+                        delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+                    checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
+                    checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
+                    checker
+                        .ctx
+                        .symbol_resolution_depth
+                        .set(self.ctx.symbol_resolution_depth.get());
+                    let result = checker.get_type_of_node(decl_idx);
+                    Self::leave_cross_arena_delegation();
+                    if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+                        self.ctx
+                            .cross_file_declaration_node_types
+                            .insert(cache_key, result);
+                    }
+                    result
+                }
             };
 
             if matches!(decl_type, TypeId::ERROR | TypeId::UNKNOWN) {

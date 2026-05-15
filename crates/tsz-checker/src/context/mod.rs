@@ -364,6 +364,13 @@ pub struct CheckerContext<'a> {
     /// Cached types for variable declarations (used for TS2403 checks).
     pub var_decl_types: FxHashMap<SymbolId, TypeId>,
 
+    /// Cached cross-arena declaration-node and value-declaration types.
+    /// Keyed by `(arena_ptr, declaration_node, mode)` so repeated lib overload
+    /// reads do not rebuild child checkers while keeping type-side and
+    /// value-side answers distinct for merged symbols. The arena pointer is
+    /// only a file-session-local identity; this cache is cleared on file reset.
+    pub cross_file_declaration_node_types: Arc<dashmap::DashMap<(usize, NodeIndex, u8), TypeId>>,
+
     /// Cache for `resolve_lib_type_by_name` results.
     /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
     pub lib_type_resolution_cache: FxHashMap<String, Option<TypeId>>,

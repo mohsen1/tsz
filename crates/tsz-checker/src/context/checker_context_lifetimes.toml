@@ -22,6 +22,7 @@ symbol_types = { lifetime = "FileLocalReset", reason = "checker-local mutable st
 symbol_instance_types = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 enum_namespace_types = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 var_decl_types = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+cross_file_declaration_node_types = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 lib_type_resolution_cache = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 lib_delegation_cache = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 namespace_member_resolution_cache = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

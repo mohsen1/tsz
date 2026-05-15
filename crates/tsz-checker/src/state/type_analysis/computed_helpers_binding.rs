@@ -1428,6 +1428,12 @@ impl<'a> CheckerState<'a> {
         let file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
         arena.get(decl_idx)?;
+        let cache_key = (arena as *const NodeArena as usize, decl_idx, 1);
+        if let Some(cached) = self.ctx.cross_file_declaration_node_types.get(&cache_key) {
+            let cached = *cached;
+            return Some(cached);
+        }
+
         let binder = self.ctx.get_binder_for_file(file_idx)?;
         let file_name = arena
             .source_files
@@ -1453,7 +1459,13 @@ impl<'a> CheckerState<'a> {
             .ctx
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
-        Some(checker.type_of_value_declaration_for_symbol(sym_id, decl_idx))
+        let result = checker.type_of_value_declaration_for_symbol(sym_id, decl_idx);
+        if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+            self.ctx
+                .cross_file_declaration_node_types
+                .insert(cache_key, result);
+        }
+        Some(result)
     }
 
     fn local_value_symbol_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
