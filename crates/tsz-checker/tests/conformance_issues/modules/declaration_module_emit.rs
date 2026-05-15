@@ -2567,6 +2567,56 @@ const u2: IUser = u1;
 }
 
 #[test]
+fn test_ts2460_no_false_positive_when_direct_export_also_renamed() {
+    // When the declaration is exported under its own name and also re-exported
+    // under an alias, both names are valid import targets. TS2460 is only for
+    // declarations that are local-only except for the renamed export.
+    let files = [
+        (
+            "/main.ts",
+            r#"
+export const namedConst = 42;
+export interface User {
+  id: number;
+}
+export { namedConst as renamedConst, User as Person };
+"#,
+        ),
+        (
+            "/consumer.ts",
+            r#"
+import { namedConst, renamedConst, User, Person } from "./main";
+
+const n: number = namedConst;
+const r: number = renamedConst;
+const u: User = { id: 1 };
+const p: Person = u;
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/consumer.ts",
+        CheckerOptions {
+            strict: true,
+            module: ModuleKind::ES2020,
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2460),
+        "Expected no TS2460 when a declaration is directly exported and also renamed.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2460_still_fires_when_only_renamed_export_no_star_reexport() {
     // Sanity-check: when a module ONLY renames the export (no star re-export that
     // brings the original name back), importing the original name must still be TS2460.

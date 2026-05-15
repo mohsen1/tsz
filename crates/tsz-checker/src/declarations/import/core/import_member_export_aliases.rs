@@ -8,7 +8,6 @@ use tsz_scanner::SyntaxKind;
 impl<'a> CheckerState<'a> {
     /// Check if a declaration's name matches the expected string.
     pub(super) fn declaration_name_matches_string(
-        &self,
         arena: &NodeArena,
         decl_idx: NodeIndex,
         expected_name: &str,
@@ -18,6 +17,25 @@ impl<'a> CheckerState<'a> {
         };
 
         let name_node_idx = match node.kind {
+            syntax_kind_ext::VARIABLE_STATEMENT => {
+                let Some(var_stmt) = arena.get_variable_at(decl_idx) else {
+                    return false;
+                };
+                for &list_idx in &var_stmt.declarations.nodes {
+                    let Some(list_node) = arena.get(list_idx) else {
+                        continue;
+                    };
+                    let Some(list) = arena.get_variable(list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &list.declarations.nodes {
+                        if Self::declaration_name_matches_string(arena, decl_idx, expected_name) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
             syntax_kind_ext::VARIABLE_DECLARATION => {
                 if let Some(var_decl) = arena.get_variable_declaration(node) {
                     var_decl.name
@@ -90,7 +108,7 @@ impl<'a> CheckerState<'a> {
             if arena
                 .get_declaration_modifiers(stmt_node)
                 .is_some_and(|mods| arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword))
-                && self.declaration_name_matches_string(arena, stmt_idx, import_name)
+                && Self::declaration_name_matches_string(arena, stmt_idx, import_name)
             {
                 direct_export = true;
                 continue;
@@ -112,7 +130,7 @@ impl<'a> CheckerState<'a> {
             };
             if arena.get_named_imports(clause_node).is_none() {
                 if !decl_is_type_only
-                    && self.declaration_name_matches_string(
+                    && Self::declaration_name_matches_string(
                         arena,
                         export_decl.export_clause,
                         import_name,
