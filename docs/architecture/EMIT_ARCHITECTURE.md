@@ -23,9 +23,9 @@ The emitter's architectural contract is simple:
 ```text
 scanner -> parser -> binder -> checker -> solver -> emitter
                                                     ├── lowering (Phase 1)
-                                                    │   └── produces TransformContext
+                                                    │   └── produces EmitPlan
                                                     ├── printer (Phase 2)
-                                                    │   └── walks AST + directives -> JS
+                                                    │   └── walks AST + EmitPlan -> JS
                                                     └── declaration emitter
                                                         └── produces .d.ts from AST + type cache
 ```
@@ -44,6 +44,22 @@ The emitter produces:
 - Source map JSON.
 - Emit diagnostics (declaration emit only).
 
+### 2.1 TS6+ Target Policy
+
+The strategic emit lane follows TypeScript 6+:
+
+- `ES2015` is the lowest strategic JavaScript emit target.
+- `ES3`/`ES5` are legacy compatibility inputs only. They may remain for config
+  parsing, diagnostics, and quarantined compatibility paths, but new emit
+  architecture should not optimize for them as first-class targets.
+- Deprecated TS6 module outputs (`AMD`, `UMD`, `System`, `None`) are also
+  compatibility lanes. New module/export planning should prioritize modern
+  `CommonJS`, ESM, `Node16`/`Node18`/`Node20`, `NodeNext`, and `Preserve`.
+
+Direct-to-target emit remains the performance direction. tsz should not add a
+chained `ES2025 -> ES2024 -> ... -> ES5` pipeline; instead, a single
+direct-to-target `EmitPlan` records the required transforms and their ordering.
+
 ---
 
 ## 3. Two-Phase Emission Model
@@ -52,10 +68,12 @@ The emitter uses a two-phase architecture that separates analysis from output ge
 
 ### 3.1 Phase 1: Lowering Pass
 
-`LoweringPass` performs a read-only walk of the AST and produces a `TransformContext` — a map from `NodeIndex` to `TransformDirective`.
+`LoweringPass` performs a read-only walk of the AST and produces an `EmitPlan`.
+The plan owns target facts, module mode, helper needs, temp reservations,
+hoists, export scheduling, region transforms, and the current directive bridge.
 
 ```text
-LoweringPass::new(arena, ctx).run(source_file) -> TransformContext
+LoweringPass::new(arena, ctx).run_plan(source_file) -> EmitPlan
 ```
 
 The lowering pass decides **what** needs to be transformed (ES5 classes, enums, namespaces, CommonJS exports, arrow functions, async/await, destructuring, etc.) without producing any output text. It records its decisions as lightweight directive values.
@@ -66,14 +84,17 @@ The lowering pass decides **what** needs to be transformed (ES5 classes, enums, 
 - O(n) single pass with recursion depth limits (`MAX_AST_DEPTH = 500`).
 - Stateful tracking for scoping (namespace depth, this-capture, class context).
 - Declaration merging detection via `declared_names`.
-- Output is a `HashMap<NodeIndex, TransformDirective>` — no intermediate AST copies.
+- Output is an `EmitPlan`. Existing node directives remain as the compatibility
+  bridge while high-risk scheduling facts migrate into typed plan fields.
 
 ### 3.2 Phase 2: Print Pass
 
-`Printer` walks the AST and checks the `TransformContext` before emitting each node. If a directive exists, it dispatches to the appropriate transform emitter; otherwise it emits the node's literal representation.
+`Printer` walks the AST and consumes the `EmitPlan`. If a directive exists in
+the plan's compatibility bridge, it dispatches to the appropriate transform
+emitter; otherwise it emits the node's literal representation.
 
 ```text
-Printer::with_transforms_and_options(arena, transforms, options).emit(root)
+Printer::with_emit_plan_and_options(arena, emit_plan, options).emit(root)
 ```
 
 **Key properties:**
@@ -97,6 +118,11 @@ Separating analysis from emission provides:
 ## 4. Transform Directive Model
 
 Since the AST is read-only (Data-Oriented Design), the emitter cannot annotate or mutate AST nodes. Instead, it uses a **projection layer**: the `TransformContext` maps node indices to `TransformDirective` variants that override default emission.
+
+`TransformContext` is now the compatibility bridge inside `EmitPlan`, not the
+whole target architecture. New cross-cutting work should prefer typed plan
+fields over adding more node-local directives when the behavior depends on
+file, module, region, hoist, temp, or export ordering.
 
 ### 4.1 Directive Variants
 
@@ -240,6 +266,24 @@ invariant, and removal condition.
 ---
 
 ## 7. Output Layer
+
+### 7.0 Output-Surgery Ban
+
+Emitter code must not rewrite already-emitted JS/DTS strings to change program
+structure, wrapping, exports, decorators, class output, module wrappers, or
+declaration shapes. These rewrites are output surgery.
+
+Allowed string-data cleanup includes escaping, numeric separator cleanup, path
+separator normalization, source-map/path utilities, and runtime helper source
+strings. Existing semantic output surgery is migration debt tracked by:
+
+```bash
+python3 scripts/emit/audit-output-surgery.py
+```
+
+The audit ratchets current debt by file and category. New semantic
+`replace`/`replacen`/`replace_range` usage must either remove existing debt or
+be explicitly categorized with a removal reason in the allowlist.
 
 ### 7.1 SourceWriter
 
@@ -451,6 +495,10 @@ For any non-trivial emitter PR, ask:
 5. Does this keep the emitter free of checker/solver internal dependencies?
 6. Does this preserve file-level parallelism (no shared mutable state)?
 7. Does this maintain source map accuracy through `SourceWriter`?
+8. Does this keep new target logic in `EmitTargetFacts`/`EmitPlan` instead of
+   scattering raw target gates?
+9. Does `python3 scripts/emit/audit-output-surgery.py` still pass without
+   increasing output-surgery debt?
 
 ---
 
@@ -465,6 +513,8 @@ The following are explicitly not the target architecture:
 5. Sharing mutable state across file emission boundaries.
 6. Making the emitter responsible for diagnostic messages about type errors.
 7. Letting declaration emit grow into a shadow type checker.
+8. Rewriting already-emitted output strings to repair transform ordering.
+9. Treating `ES3`/`ES5` as first-class strategic emit targets.
 
 ---
 

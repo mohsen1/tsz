@@ -64,6 +64,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle keyof operator
             if operator == SyntaxKind::KeyOfKeyword as u16 {
+                if let Some(operand_node) = self.ctx.arena.get(type_op.type_node)
+                    && operand_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(operand_node)
+                    && let Some(imported_operand) =
+                        self.import_call_type_reference(type_ref.type_name)
+                {
+                    let evaluated = self.ctx.types.evaluate_keyof(imported_operand);
+                    if evaluated != TypeId::ERROR {
+                        return evaluated;
+                    }
+                }
                 return factory.keyof(inner_type);
             }
 

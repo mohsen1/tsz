@@ -80,6 +80,11 @@ Use the narrowest command that answers the question:
 - `scripts/ci/project-compile-guard.sh` for CI-style project compile guards.
 - Targeted unit or integration tests when validating a semantic invariant.
 
+For project benchmark harness changes, measure failed-row overhead as part of
+the benchmark contract. A project row that fails pre-validation should record
+exit class and first diagnostic deltas from the first compiler invocation; it
+should not rerun the failing compiler just to populate compatibility metadata.
+
 Do not run full conformance, full emit, or full fourslash locally.
 
 ## Durable Design Constraints
