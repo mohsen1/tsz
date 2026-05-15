@@ -188,7 +188,7 @@ const a: any
 }
 
 // =============================================================================
-// Target-appropriate spread prop handling (committed in 8717f7d)
+// Target-appropriate spread prop handling is covered by this regression test.
 // =============================================================================
 
 #[test]
