@@ -318,9 +318,23 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         index_type: TypeId,
     ) -> bool {
-        let Some(shape) =
+        // For Mapped types (e.g. `{ [K in \`on${string}\`]?: V }`), `object_shape_for_type`
+        // returns None because the shape is not directly accessible. Evaluate the type first
+        // to get the underlying ObjectWithIndex, then extract the string index.
+        let shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
-        else {
+                .or_else(|| {
+                    let evaluated = tsz_solver::evaluate_type(self.ctx.types, object_type);
+                    if evaluated != object_type {
+                        crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                    } else {
+                        None
+                    }
+                });
+        let Some(shape) = shape else {
             return false;
         };
         let Some(string_index) = shape.string_index.as_ref() else {
