@@ -91,6 +91,27 @@ by keeping old include/exclude rules.
 
 Do not run full conformance, full emit, or full fourslash locally.
 
+## Project Compile Guard Contract
+
+`project-compile-guard.sh` is the cheap compile-only gate for rows that are
+already fixture-reduced enough for CI. It must work in the same workspaces used
+by developers and CI:
+
+1. The default `TSZ_BIN` follows `CARGO_TARGET_DIR` when that environment
+   variable is set, otherwise it falls back to `.target/dist-fast/tsz`.
+2. `TSZ_PROJECT_COMPILE_FILTER='<row-regex>'` runs only matching rows, so agents
+   can verify one project without cloning or checking every earlier fixture.
+3. Generated app prerequisites (`node` and `npm`) are required only when a
+   generated app row is selected.
+
+Use the guard to answer "does this row compile?" Do not treat it as the full
+benchmark dashboard: rows like `zod-project` can still fail in
+`bench-vs-tsgo.sh` even when the compile guard's smaller row set is green. A
+current `zod-project` failure is the contextual generic-constructor path at
+`src/types.ts:280`, where tsz widens the nested `Effect<any>` discriminant and
+emits `TS2322` while `tsc` accepts the project. That belongs to checker/solver
+contextual typing, not benchmark harness code.
+
 ## Durable Design Constraints
 
 1. `NodeIndex` is a syntax traversal coordinate, not cross-file semantic

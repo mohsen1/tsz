@@ -7,8 +7,8 @@ use tsz_lowering::TypeLowering;
 use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
+use tsz_solver::{TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_cross_arena_type_alias_body_with_checker(
@@ -239,6 +239,92 @@ impl<'a> CheckerState<'a> {
             &resolve_type_name,
         );
         let computed_name_resolver = |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
+        let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+            let expr_node = decl_arena.get(expr_name_idx)?;
+            let ident = decl_arena.get_identifier(expr_node)?;
+            let referenced_sym_id = resolve_type_name(&ident.escaped_text)?;
+            let symbol = decl_binder
+                .get_symbol(referenced_sym_id)
+                .or_else(|| self.get_cross_file_symbol(referenced_sym_id))
+                .or_else(|| binder.get_symbol_with_libs(referenced_sym_id, &lib_binders))?;
+            if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
+                return None;
+            }
+
+            let mut value_decl = if symbol.value_declaration.is_some() {
+                symbol.value_declaration
+            } else {
+                symbol.primary_declaration()?
+            };
+            let mut value_node = decl_arena.get(value_decl)?;
+            if value_node.kind == SyntaxKind::Identifier as u16 {
+                value_decl = decl_arena.get_extended(value_decl)?.parent;
+                value_node = decl_arena.get(value_decl)?;
+            }
+            if value_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+                || !decl_arena.is_const_variable_declaration(value_decl)
+            {
+                return None;
+            }
+
+            let decl = decl_arena.get_variable_declaration(value_node)?;
+            let assertion_expr = decl_arena.skip_parenthesized(decl.initializer);
+            let initializer_is_const_assertion = decl_arena
+                .get(assertion_expr)
+                .and_then(|node| decl_arena.get_type_assertion(node))
+                .and_then(|assertion| decl_arena.get(assertion.type_node))
+                .is_some_and(|type_node| type_node.kind == SyntaxKind::ConstKeyword as u16);
+            if !initializer_is_const_assertion {
+                return None;
+            }
+
+            let initializer = decl_arena.skip_parenthesized_and_assertions(decl.initializer);
+            let init_node = decl_arena.get(initializer)?;
+            if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                return None;
+            }
+
+            let array = decl_arena.get_literal_expr(init_node)?;
+            let factory = self.ctx.types.factory();
+            let mut elements = Vec::with_capacity(array.elements.nodes.len());
+            for &element in &array.elements.nodes {
+                if element.is_none() {
+                    return None;
+                }
+                let element = decl_arena.skip_parenthesized_and_assertions(element);
+                let element_node = decl_arena.get(element)?;
+                let element_type = match element_node.kind {
+                    k if k == SyntaxKind::StringLiteral as u16
+                        || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                    {
+                        decl_arena
+                            .get_literal(element_node)
+                            .map(|lit| factory.literal_string(&lit.text))?
+                    }
+                    k if k == SyntaxKind::NumericLiteral as u16 => {
+                        let value = decl_arena.get_literal(element_node).and_then(|lit| {
+                            lit.value.or_else(|| {
+                                tsz_common::numeric::parse_numeric_literal_value(&lit.text)
+                            })
+                        })?;
+                        factory.literal_number(value)
+                    }
+                    k if k == SyntaxKind::TrueKeyword as u16 => factory.literal_boolean(true),
+                    k if k == SyntaxKind::FalseKeyword as u16 => factory.literal_boolean(false),
+                    k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
+                    k if k == SyntaxKind::UndefinedKeyword as u16 => TypeId::UNDEFINED,
+                    _ => return None,
+                };
+                elements.push(TupleElement {
+                    type_id: element_type,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                });
+            }
+
+            Some(factory.tuple(elements))
+        };
         let bindings = self.get_type_param_bindings();
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
@@ -252,7 +338,8 @@ impl<'a> CheckerState<'a> {
         .with_type_param_bindings(bindings)
         .with_computed_name_resolver(&computed_name_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
-        .with_name_def_id_resolver(&name_resolver);
+        .with_name_def_id_resolver(&name_resolver)
+        .with_type_query_override(&type_query_override);
         let lowering = if std::ptr::eq(decl_arena, self.ctx.arena) {
             lowering
         } else {
