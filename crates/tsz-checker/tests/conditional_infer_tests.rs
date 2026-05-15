@@ -1451,6 +1451,32 @@ const q2: Q = ["y", "x"];
 }
 
 #[test]
+fn test_permutation_type_with_builtin_exclude() {
+    let source = r#"
+type Permutation<T, K = T> =
+  [T] extends [never]
+    ? []
+    : K extends K
+      ? [K, ...Permutation<Exclude<T, K>>]
+      : never;
+
+type P = Permutation<"A" | "B">;
+
+const p1: P = ["A", "B"];
+const p2: P = ["B", "A"];
+"#;
+    let diags = check_source_strict_with_default_libs(source);
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for Permutation<'A'|'B'> through built-in Exclude, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_permutation_type_three_element_union() {
     // Case 3: larger union (3 members) — ensures distribution over >2 members works
     let source = r#"
