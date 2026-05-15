@@ -654,7 +654,7 @@ pub(super) fn read_source_files(
     while !pending.is_empty() {
         let batch: Vec<PathBuf> = pending.drain(..).collect();
 
-        // Phase 1 (serial): classify each path. The cache + skip checks are
+        // first pass (serial): classify each path. The cache + skip checks are
         // cheap (HashMap lookups + path component scans) and need read access
         // to `cache`/`changed_paths`, so we keep them on the calling thread.
         let actions: Vec<BatchAction> = batch
@@ -692,7 +692,7 @@ pub(super) fn read_source_files(
             })
             .collect();
 
-        // Phase 3 (serial): apply each batch entry's action, queueing newly
+        // third pass (serial): apply each batch entry's action, queueing newly
         // discovered deps into `pending` for the next BFS level.
         for ((path, action), maybe_parsed) in batch.into_iter().zip(actions).zip(parsed) {
             match action {

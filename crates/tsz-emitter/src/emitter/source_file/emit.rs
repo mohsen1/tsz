@@ -937,7 +937,7 @@ impl<'a> Printer<'a> {
         // Order: "use strict" → jsx-import(ESM) → tslib-import(ESM) → helpers → __esModule → tslib-require(CJS) → exports init
 
         // Use helpers from TransformContext (populated during lowering pass)
-        // This eliminates O(N) arena scans - all helpers are detected in Phase 1
+        // This eliminates O(N) arena scans - all helpers are detected in first pass
         let mut helpers = if self.transforms.helpers_populated() {
             self.transforms.helpers().clone()
         } else {

@@ -1206,7 +1206,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
         }
-        // Phase 3: Result aggregation.
+        // third pass: Result aggregation.
         if let Some(ref combined) = combined
             && !arg_types
                 .iter()

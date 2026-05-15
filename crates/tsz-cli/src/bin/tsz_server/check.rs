@@ -584,7 +584,7 @@ impl Server {
             return Ok(vec![std::sync::Arc::clone(cached_lib)]);
         }
 
-        // Phase 1: Load all libs normally (each with its own binder)
+        // first pass: Load all libs normally (each with its own binder)
         let mut lib_files = Vec::new();
         let mut loaded = rustc_hash::FxHashSet::default();
         for lib_name in &lib_names {
@@ -604,13 +604,13 @@ impl Server {
             })
             .collect();
 
-        // Phase 3: Create a unified binder by merging ALL lib binders
+        // third pass: Create a unified binder by merging ALL lib binders
         // This is the key fix - we merge symbols from all libs into a single binder
         // so cross-lib references (e.g., Array in dom.d.ts from es5.d.ts) are resolved
         let mut unified_binder = BinderState::new();
         unified_binder.merge_lib_contexts_into_binder(&lib_contexts);
 
-        // Phase 4: Create a unified LibFile
+        // fourth pass: Create a unified LibFile
         // Use the first arena as representative (the unified binder tracks symbol_arenas)
         let unified_arena = lib_files.first().map_or_else(
             || Arc::new(tsz::parser::node::NodeArena::new()),

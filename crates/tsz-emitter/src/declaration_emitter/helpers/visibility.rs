@@ -1425,7 +1425,7 @@ impl<'a> DeclarationEmitter<'a> {
         (default_count, named_count)
     }
 
-    /// Phase 4: Prepare import aliases before emitting anything.
+    /// fourth pass: Prepare import aliases before emitting anything.
     ///
     /// This detects name collisions and generates aliases for conflicting imports.
     pub(crate) fn prepare_import_aliases(&mut self, root_idx: NodeIndex) {

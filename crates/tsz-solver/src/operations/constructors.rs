@@ -316,7 +316,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// first pass: Arity check against the combined signature (max of all members'
     ///          required counts, intersection of param types, union of return types).
     /// Second pass: Per-member resolution to collect actual return types.
-    /// Phase 3: Validate arg types against the combined (intersected) param types.
+    /// third pass: Validate arg types against the combined (intersected) param types.
     ///
     /// When no combined signature exists (any member has multiple/generic construct
     /// signatures), falls back to strict per-member semantics: ALL members must
@@ -379,7 +379,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Phase 3 (combined path): validate arg types against intersected param types.
+        // third pass (combined path): validate arg types against intersected param types.
         if let Some(ref combined) = combined {
             // When all members succeeded, return the union of their return types.
             if failures.is_empty() {
