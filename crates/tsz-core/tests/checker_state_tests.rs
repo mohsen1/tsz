@@ -1477,7 +1477,7 @@ function foo() {}
 }
 
 #[test]
-#[ignore = "Pre-existing failure from recent merges"]
+#[ignore = "pre-existing regression"]
 fn test_duplicate_identifier_var_let_2300() {
     use crate::checker::diagnostics::diagnostic_codes;
 

@@ -1154,7 +1154,7 @@ const text: string = outputValue;
 }
 
 #[test]
-#[ignore = "current-base direct unit regression; unrelated to server protocol shape"]
+#[ignore = "pre-existing regression"]
 fn test_check_files_parallel_zod_issue_data_cross_file_spread() {
     let files = vec![
         (

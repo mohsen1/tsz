@@ -108,7 +108,7 @@ function test() {
 }
 
 #[test]
-#[ignore = "TODO: pre-existing perf hotspot — recursive reverse-mapped inference over \
+#[ignore = "pending: pre-existing perf hotspot — recursive reverse-mapped inference over \
              union templates (`Definition<T> = { [K in keyof T]: f(T[K]) | Definition<T[K]> }`). \
              The test passes correctly (~120s locally) but exceeds CI's runner budget. \
              Root cause is in `reverse_infer_through_template` Case 2 (Application template) in \

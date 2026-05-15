@@ -1985,7 +1985,7 @@ fn jsx_construct_sig_with_outer_type_params_no_false_ts2786() {
 /// whole-object assignability check determines the final result. Our solver
 /// currently accepts this (consistent with tsc's JSX attribute checking).
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
+#[ignore = "pre-existing regression"]
 fn jsx_discriminated_union_props_full_concrete_union_no_ts2322() {
     let diagnostics = check_jsx_codes(
         r#"
