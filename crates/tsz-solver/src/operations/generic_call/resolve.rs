@@ -3132,6 +3132,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             _ => None,
                         })
                         .unwrap_or(expected);
+                    if crate::contains_this_type(self.interner, expected)
+                        && let Some(concrete_this) = self
+                            .checker
+                            .type_resolver()
+                            .and_then(|resolver| resolver.resolve_this_type(self.interner))
+                    {
+                        let substituted_expected =
+                            crate::instantiation::instantiate::substitute_this_type(
+                                self.interner,
+                                expected,
+                                concrete_this,
+                            );
+                        let substituted_rest_element =
+                            crate::contextual::rest_argument_element_type(
+                                self.interner,
+                                substituted_expected,
+                            );
+                        if self.checker.is_assignable_to(actual, substituted_expected)
+                            || self
+                                .checker
+                                .is_assignable_to(actual, substituted_rest_element)
+                        {
+                            return CallResult::Success(return_type);
+                        }
+                    }
 
                     CallResult::ArgumentTypeMismatch {
                         index,
