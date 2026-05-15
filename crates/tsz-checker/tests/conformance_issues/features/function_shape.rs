@@ -678,7 +678,7 @@ class Chain2<T extends { length: number }> {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
+#[ignore = "pending"]
 fn test_promise_chaining_reports_both_callback_body_ts2322s() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

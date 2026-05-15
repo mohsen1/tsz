@@ -6243,7 +6243,7 @@ fn test_infer_generic_tuple_element() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered tuple rest inference"]
+#[ignore = "pending: upstream changes altered tuple rest inference"]
 fn test_infer_generic_tuple_rest_elements() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -6307,7 +6307,7 @@ fn test_infer_generic_tuple_rest_elements() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
+#[ignore = "pending: heterogeneous rest parameter inference now returns ERROR instead of union"]
 fn test_infer_generic_tuple_rest_parameter() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -6361,7 +6361,7 @@ fn test_infer_generic_tuple_rest_parameter() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered tuple rest inference"]
+#[ignore = "pending: upstream changes altered tuple rest inference"]
 fn test_infer_generic_tuple_rest_from_rest_argument() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -7204,7 +7204,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
 // Same reasoning as above - required properties don't infer from index signatures.
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered union source inference"]
+#[ignore = "pending: upstream changes altered union source inference"]
 fn test_infer_generic_union_source() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -7385,7 +7385,7 @@ fn test_infer_generic_optional_union_target_with_null() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
+#[ignore = "pending: heterogeneous rest parameter inference now returns ERROR instead of union"]
 fn test_infer_generic_rest_parameters() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -8077,7 +8077,7 @@ fn test_rest_param_spreading_homogeneous_args() {
 /// Test rest parameter type spreading with heterogeneous arguments creates union
 /// function foo<T>(...args: T[]): T with mixed-type args
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
+#[ignore = "pending: heterogeneous rest parameter inference now returns ERROR instead of union"]
 fn test_rest_param_spreading_heterogeneous_args() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);

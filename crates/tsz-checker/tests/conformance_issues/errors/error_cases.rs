@@ -1518,7 +1518,7 @@ f2(
 }
 
 #[test]
-#[ignore = "pre-existing regression: AsyncGenerator lib types emit TS2504/TS2318"]
+#[ignore = "pending: AsyncGenerator lib types emit TS2504/TS2318"]
 fn test_async_generator_type_references_preserve_all_type_params() {
     if !lib_files_available() {
         return;

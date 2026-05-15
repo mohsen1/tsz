@@ -11066,7 +11066,7 @@ fn test_source_map_es5_transform_async_for_of_destructuring_mapping() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: yield expression source map mappings no longer generated"]
+#[ignore = "pending: yield expression source map mappings no longer generated"]
 fn test_source_map_es5_transform_generator_yield_mapping() {
     let source = "function* gen() { yield first(); yield second(); }";
     let (parser, root) = parse_test_source(source);
