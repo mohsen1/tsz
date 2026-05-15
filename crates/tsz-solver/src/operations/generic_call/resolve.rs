@@ -1869,7 +1869,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // 4. Resolve inference variables
         // CRITICAL: Strengthen inter-parameter constraints before resolution
-        // This ensures SCC-based cycle unification happens (commit c3ede45a9)
+        // This ensures SCC-based cycle unification runs before resolution.
         if infer_ctx.strengthen_constraints().is_err() {
             // Cycle unification failed - this indicates a circularity that cannot be resolved
             // Fall back to resolving without unification (may result in less precise types)

@@ -502,8 +502,8 @@ fn leading_comment_before_catch_stays_before_catch_keyword() {
 /// tsc output: `; // Error`
 /// Previous bug: `// Error` was stripped because the erased range for the
 /// *next* erased statement captured it.
-/// Previously broken since commit 118ebd752 — fixed by capping erased statement
-/// comment consumption at non-erased sibling boundaries.
+/// Fixed by capping erased statement comment consumption at non-erased
+/// sibling boundaries.
 #[test]
 fn trailing_comment_after_erased_interface_sibling_preserved() {
     // Simplified version of circularBaseTypes
