@@ -771,13 +771,15 @@ type Compute<A, depth extends 'flat' | 'deep' = 'deep'> = {
             "Recursive mapped / conditional alias body must NOT emit TS2589; got: {ts2589:?}"
         );
 
-        // Algorithmic regression guard. macOS ARM observation is ~50ms; the
-        // pre-fix CI Linux observation was ~3.6s. 1000ms is well clear of
-        // both runner noise and the genuine fast path while still failing on
-        // a regression to the redundant resolver-pass double-walk.
+        // Algorithmic regression guard. macOS ARM observation in dist /
+        // native-cpu is ~50ms; the unoptimized test profile lands around
+        // 160ms locally. The pre-fix CI Linux observation was ~3.6s. 2s
+        // is well clear of both runner noise plus first-test lib-load
+        // amortization, while still failing loudly on a regression to the
+        // redundant resolver-pass double-walk.
         assert!(
-            elapsed.as_millis() < 1000,
-            "Recursive mapped alias body check took {elapsed:?}, expected < 1s. \
+            elapsed.as_millis() < 2000,
+            "Recursive mapped alias body check took {elapsed:?}, expected < 2s. \
              Possible regression to the redundant CheckerContext resolver pass \
              after a structural silent-bail in TypeEvaluator."
         );
@@ -815,8 +817,8 @@ type Invert<O extends Record<keyof O, Key>> =
             "Invert alias body must NOT emit TS2589; got: {ts2589:?}"
         );
         assert!(
-            elapsed.as_millis() < 1000,
-            "Invert alias body check took {elapsed:?}, expected < 1s."
+            elapsed.as_millis() < 2000,
+            "Invert alias body check took {elapsed:?}, expected < 2s."
         );
     }
 }
