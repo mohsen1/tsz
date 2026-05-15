@@ -2054,6 +2054,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 //
 // SECTION 6: DefId-First Semantic Type Resolution
 // - [x] No ad-hoc TypeData::Lazy interning                -> test_array_helpers_avoid_direct_typekey_interning (existing)
+// - [x] instanceof class narrowing uses real DefIds       -> test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback
 // - [x] No new raw SymbolRef reference construction       -> test_checker_raw_symbol_reference_construction_budget
 // - [x] ensure_relation_input_ready used before relations  -> test_subtype_path_establishes_preconditions_before_subtype_cache_lookup (existing)
 //
@@ -5039,7 +5040,29 @@ fn test_core_type_resolution_has_ensure_def_ready_call() {
         src.contains("ensure_def_ready_for_lowering"),
         "core.rs must call ensure_def_ready_for_lowering for generic type \
          reference resolution. This is the stable-identity helper that \
-         replaces ad hoc type-param priming blocks."
+        replaces ad hoc type-param priming blocks."
+    );
+}
+
+/// Guard: `instanceof` narrowing for class symbols must use real DefId-backed
+/// lazy types rather than raw SymbolId-shaped `reference(SymbolRef)` fallback.
+#[test]
+fn test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback() {
+    let source = fs::read_to_string("src/flow/control_flow/narrowing.rs")
+        .expect("failed to read src/flow/control_flow/narrowing.rs");
+    let class_branch = source
+        .split("if symbol.has_any_flags(symbol_flags::CLASS)")
+        .nth(1)
+        .and_then(|rest| rest.split("// Global constructor variables").next())
+        .expect("failed to isolate instanceof class-symbol branch");
+
+    assert!(
+        class_branch.contains("self.resolve_symbol_to_lazy(symbol_ref)"),
+        "instanceof class-symbol branch should resolve through the DefId-backed lazy helper"
+    );
+    assert!(
+        !class_branch.contains(".reference("),
+        "instanceof class-symbol branch must not create Lazy(DefId(symbol_id)) via raw SymbolRef fallback"
     );
 }
 
