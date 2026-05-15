@@ -914,6 +914,10 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         name: &str,
     ) -> Option<String> {
+        if self.ctx.binder.file_import_sources.is_empty() {
+            return None;
+        }
+
         let mut current = idx;
         let mut guard = 0u32;
         while let Some(ext) = self.ctx.arena.get_extended(current) {
