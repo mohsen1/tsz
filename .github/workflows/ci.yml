@@ -302,7 +302,7 @@ jobs:
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 10
     env:
-      CARGO_SHEAR_VERSION: "1.11.2"
+      CARGO_SHEAR_VERSION: "1.12.0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -319,6 +319,31 @@ jobs:
           cargo install cargo-shear --version "${CARGO_SHEAR_VERSION}" --locked
       - name: Run cargo shear
         run: cargo shear
+
+  cargo-deny:
+    name: cargo-deny
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 10
+    env:
+      CARGO_DENY_VERSION: "0.19.6"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Install cargo-deny
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v cargo-deny >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-deny v${CARGO_DENY_VERSION}:"; then
+            echo "cargo-deny ${CARGO_DENY_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked
+      - name: Run cargo deny
+        run: cargo deny check
 
   dist-binaries:
     name: dist-binaries
@@ -661,6 +686,7 @@ jobs:
       - gate
       - lint
       - cargo-shear
+      - cargo-deny
       - project-corpus-pr-body
       - dist-binaries
       - project-compile-guard
@@ -698,7 +724,7 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "dist-binaries", "unit"}
+          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries", "unit"}
           pr_body = needs.get("project-corpus-pr-body")
           if pr_body and pr_body.get("result") not in ("success", "skipped"):
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
@@ -732,5 +758,5 @@ jobs:
           if full_run:
               print("All required CI jobs passed.")
           else:
-              print("Draft/light CI passed: lint, cargo-shear, dist-binaries, and unit.")
+              print("Draft/light CI passed: lint, cargo-shear, cargo-deny, dist-binaries, and unit.")
           PY
