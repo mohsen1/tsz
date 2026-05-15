@@ -842,7 +842,7 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
 /// tsc's TS2367 diagnostic uses widened types for number/boolean operands
 /// (e.g., `true` → `boolean`, `0` → `number`) but preserves string/bigint
 /// literal types in the message text.
-#[allow(dead_code)] // Reserved for TS2367 diagnostic message formatting
+#[allow(dead_code)]
 pub(crate) fn widen_non_string_bigint_literal(
     db: &dyn crate::TypeDatabase,
     type_id: TypeId,
