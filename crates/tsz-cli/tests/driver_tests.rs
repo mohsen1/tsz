@@ -9862,7 +9862,7 @@ export * from './services/user-service';
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    // TODO: After the module augmentation lazy resolution change (2e96c99c2),
+    // TODO: After the module augmentation lazy-resolution refactor,
     // global `escape` spuriously leaks into module re-exports causing TS2308.
     // Filter out these known false positives until the root cause is fixed.
     let real_diagnostics: Vec<_> = result
@@ -15520,7 +15520,7 @@ var m: typeof moduleA = i;
 
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
-    // TODO: After the module augmentation lazy resolution change (2e96c99c2),
+    // TODO: After the module augmentation lazy-resolution refactor,
     // global `escape` spuriously leaks into module exports causing TS2741.
     // Filter out this known false positive until the root cause is fixed.
     let mut codes: Vec<u32> = result
