@@ -336,11 +336,11 @@ impl Parser {
     }
 
     fn emit_with_context(&self, root_idx: parser::NodeIndex, ctx: EmitContext) -> String {
-        let transforms = LoweringPass::new(self.parser.get_arena(), &ctx).run(root_idx);
+        let emit_plan = LoweringPass::new(self.parser.get_arena(), &ctx).run_plan(root_idx);
 
-        let mut printer = Printer::with_transforms_and_options(
+        let mut printer = Printer::with_emit_plan_and_options(
             self.parser.get_arena(),
-            transforms,
+            emit_plan,
             ctx.options.clone(),
         );
         printer.set_target_es5(ctx.target_es5);
