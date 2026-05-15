@@ -220,6 +220,14 @@ impl<'a> CheckerState<'a> {
         }
 
         match self.ctx.capabilities.diagnose_missing_name(name) {
+            Some(CapabilityDiagnostic::MissingPlainGlobalValue { .. }) => {
+                self.report_not_found_at_boundary(
+                    name,
+                    idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
+                return TypeId::ERROR;
+            }
             Some(CapabilityDiagnostic::MissingDomGlobal { .. }) => {
                 // Route through boundary for TS2304/TS2552 with suggestion collection
                 self.report_not_found_at_boundary(
