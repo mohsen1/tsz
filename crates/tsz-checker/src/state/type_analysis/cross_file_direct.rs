@@ -150,15 +150,25 @@ impl<'a> CheckerState<'a> {
                     .get(&(sym_id, decl_idx))
                     .is_some_and(|arenas| {
                         arenas.iter().any(|arena| {
-                            is_direct_actual_lib_declaration_arena(arena)
-                                && arena
-                                    .get(decl_idx)
-                                    .and_then(|node| arena.get_interface(node))
-                                    .and_then(|interface| interface.type_parameters.as_ref())
-                                    .is_some_and(|params| !params.nodes.is_empty())
+                            Self::direct_actual_lib_interface_has_type_parameters(
+                                arena.as_ref(),
+                                decl_idx,
+                            )
                         })
                     })
             })
+    }
+
+    fn direct_actual_lib_interface_has_type_parameters(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        is_direct_actual_lib_declaration_arena(arena)
+            && arena
+                .get(decl_idx)
+                .and_then(|node| arena.get_interface(node))
+                .and_then(|interface| interface.type_parameters.as_ref())
+                .is_some_and(|params| !params.nodes.is_empty())
     }
 
     fn symbol_declarations_are_direct_actual_lib_only(

@@ -458,16 +458,16 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
             .get_symbol(sym_id)
             .unwrap_or_else(|| panic!("{name} symbol should exist"))
             .clone();
-        assert!(
-            state.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol),
-            "{name} should be admitted to the param-preserving direct path by lib declaration shape",
-        );
         let delegate_arena = state
             .ctx
             .binder
             .symbol_arenas
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
+        assert!(
+            state.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol),
+            "{name} should be admitted to the param-preserving direct path by lib declaration shape",
+        );
 
         let (ty, params) = state
             .direct_actual_lib_symbol_type(
