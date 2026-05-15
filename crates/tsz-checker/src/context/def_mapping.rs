@@ -972,7 +972,7 @@ impl<'a> CheckerContext<'a> {
         def_id
     }
 
-    /// Insert type parameters for a `DefId` (Phase 4.2.1: generic type alias support).
+    /// Insert type parameters for a `DefId` (including generic aliases).
     ///
     /// This enables the Solver to expand Application(Lazy(DefId), Args) by providing
     /// the type parameters needed for generic substitution.
@@ -1066,7 +1066,7 @@ impl<'a> CheckerContext<'a> {
             return Some(SymbolId(sym_ref.0));
         }
 
-        // 1. Try to get DefId from Lazy type - Phase 4.2+
+        // 1. Try to get `DefId` from `Lazy(DefId)`.
         // Use with_fallback because get_or_create_def_id can invalidate per-context
         // DefId→SymbolId mappings when the same symbol gets a new DefId (e.g., lib
         // types like Promise referenced multiple times). The DefinitionStore retains
@@ -1176,7 +1176,7 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
-    /// Create a `TypeFormatter` with full context for displaying types (Phase 4.2.1).
+    /// Create a `TypeFormatter` with full context for displaying types.
     ///
     /// This includes symbol arena and definition store, which allows the formatter
     /// to display type names for Lazy(DefId) types instead of the internal "`Lazy(def_id)`"
