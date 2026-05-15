@@ -811,7 +811,11 @@ impl<'a> HoverProvider<'a> {
 
         if f & symbol_flags::FUNCTION != 0 {
             let merged_with_namespace = self.symbol_has_namespace_merge(symbol);
-            let sig = if merged_with_namespace || self.is_overload_display(type_string) {
+            let has_overload_declarations = self.symbol_has_overload_declarations(symbol);
+            let sig = if merged_with_namespace
+                || has_overload_declarations
+                || self.is_overload_display(type_string)
+            {
                 self.function_signature_from_symbol(symbol)
                     .unwrap_or_else(|| format::arrow_to_colon(type_string))
             } else {
@@ -1065,6 +1069,20 @@ impl<'a> HoverProvider<'a> {
                 .get(decl_idx)
                 .is_some_and(|node| node.kind == tsz_parser::syntax_kind_ext::MODULE_DECLARATION)
         })
+    }
+
+    fn symbol_has_overload_declarations(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol
+            .declarations
+            .iter()
+            .filter(|&&decl_idx| {
+                self.arena.get(decl_idx).is_some_and(|node| {
+                    node.kind == tsz_parser::syntax_kind_ext::FUNCTION_DECLARATION
+                })
+            })
+            .take(2)
+            .count()
+            > 1
     }
 
     fn is_overload_display(&self, type_string: &str) -> bool {

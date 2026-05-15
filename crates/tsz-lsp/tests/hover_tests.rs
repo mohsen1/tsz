@@ -1165,6 +1165,21 @@ const named = makeLabel("compiler");"#;
         "Should not concatenate the function name with raw overload object display, got: {}",
         info.display_string
     );
+
+    let decl_info =
+        get_hover_at(source, 0, 9).expect("Should find hover for overloaded declaration name");
+    assert!(
+        decl_info
+            .display_string
+            .contains("function makeLabel(value: string): { kind: \"name\"; value: string }"),
+        "Should show the overload signature when hovering declaration, got: {}",
+        decl_info.display_string
+    );
+    assert!(
+        !decl_info.display_string.contains("function makeLabelerror"),
+        "Should not fall back to an error display for overloaded declaration hover, got: {}",
+        decl_info.display_string
+    );
 }
 
 #[test]

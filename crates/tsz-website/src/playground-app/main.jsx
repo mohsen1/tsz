@@ -22,6 +22,8 @@ const LIB_FILES = [
 ];
 
 const TSCONFIG_MODEL_URI = "file:///tsconfig.json";
+const WASM_CACHE_KEY =
+  document.querySelector('meta[name="tsz-build-sha"]')?.getAttribute("content") || `dev-${Date.now()}`;
 
 const TSCONFIG_SCHEMA = {
   type: "object",
@@ -499,6 +501,19 @@ function PlaygroundApp() {
   }
 
   function createCheckProgram(nextCode, options) {
+    if (wasmRef.current.Parser) {
+      const parser = new wasmRef.current.Parser("input.ts", nextCode);
+      parser.setCompilerOptions(JSON.stringify(options));
+      for (const [name, content] of Object.entries(libFilesRef.current)) {
+        parser.addLibFile(name, content);
+      }
+      parser.parseSourceFile();
+      if (typeof parser.bindSourceFile === "function") {
+        parser.bindSourceFile();
+      }
+      return parser;
+    }
+
     if (!wasmRef.current.WasmProgram) {
       throw new Error("WasmProgram is required for playground diagnostics");
     }
@@ -517,6 +532,24 @@ function PlaygroundApp() {
   }
 
   function normalizeDiagnostics(program, nextCode) {
+    if (typeof program.checkSourceFile === "function") {
+      const result = JSON.parse(program.checkSourceFile() || "{}");
+      const diagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : [];
+      return diagnostics.map(diagnostic => ({
+        start: diagnostic.start ?? 0,
+        length: diagnostic.length ?? 1,
+        messageText: diagnostic.messageText || diagnostic.message_text || diagnostic.message || "",
+        category: diagnostic.category === "Warning"
+          ? 0
+          : diagnostic.category === "Suggestion"
+            ? 2
+            : diagnostic.category === "Message"
+              ? 3
+              : 1,
+        code: diagnostic.code,
+      }));
+    }
+
     if (typeof program.getPreEmitDiagnosticsJson === "function") {
       return JSON.parse(program.getPreEmitDiagnosticsJson() || "[]");
     }
@@ -698,7 +731,7 @@ function PlaygroundApp() {
   }
 
   async function loadWasm() {
-    const module = await import("/wasm/tsz_wasm.js");
+    const module = await import(`/wasm/tsz_wasm.js?v=${encodeURIComponent(WASM_CACHE_KEY)}`);
     await module.default();
     wasmRef.current = module;
     return module;
