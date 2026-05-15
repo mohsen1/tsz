@@ -917,6 +917,7 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &resolver,
                 )
+                .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
                 let lowering = if self.ctx.all_binders.is_some()

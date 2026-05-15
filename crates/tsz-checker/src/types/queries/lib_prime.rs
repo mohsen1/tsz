@@ -77,6 +77,7 @@ impl<'a> CheckerState<'a> {
             &def_id_resolver,
             &no_value_resolver,
         )
+        .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
 
