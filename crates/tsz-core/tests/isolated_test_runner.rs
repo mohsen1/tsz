@@ -500,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Flaky under parallel load: thread-based timeout monitoring unreliable with 2900+ concurrent tests
+    #[ignore = "pending: flaky under parallel load: thread-based timeout monitoring unreliable with 2900+ concurrent tests"]
     fn test_isolated_runner_timeout() {
         let config = IsolatedTestConfig {
             limits: ResourceLimits {
