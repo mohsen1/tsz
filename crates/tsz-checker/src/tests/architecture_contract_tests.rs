@@ -1636,7 +1636,7 @@ fn checker_files_stay_under_loc_limit() {
     //   types/computation/call.rs (1805→split), checkers/call_checker/mod.rs (1396),
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
-        ("state/type_analysis/computed_commonjs.rs", 2787),
+        ("state/type_analysis/computed_commonjs/mod.rs", 2787),
         ("checkers/jsx/props/resolution.rs", 1600),
         ("checkers/jsx/orchestration", 2397),
         ("checkers/call_checker/overload_resolution.rs", 1400),
@@ -2625,7 +2625,7 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
         "types/computation/call.rs",
-        "types/computation/object_literal.rs",
+        "types/computation/object_literal/mod.rs",
         "types/computation/helpers.rs",
         "types/computation/call_display.rs",
         "types/function_type.rs",
@@ -2811,7 +2811,7 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
         "checkers/jsx/diagnostics.rs",
         "types/computation/call.rs",
         "types/computation/helpers.rs",
-        "types/computation/object_literal.rs",
+        "types/computation/object_literal/mod.rs",
         "types/function_type.rs",
         "state/state_checking_members/ambient_signature_checks.rs",
         "types/computation/tagged_template.rs",
