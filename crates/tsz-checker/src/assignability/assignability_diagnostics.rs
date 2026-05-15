@@ -253,21 +253,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if self.is_assignable_to(source, target) {
-            return true;
-        }
-        if self.is_nested_same_wrapper_application_assignment(source, target) {
-            return true;
-        }
-
         // Build a RelationRequest so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        {
+        let relation_outcome = {
             use crate::query_boundaries::assignability::RelationRequest;
             let (ps, pt) = self.prepare_assignability_inputs(source, target);
             let request = RelationRequest::assign(ps, pt).with_property_classification();
             let outcome = self.execute_relation_request(&request);
+            if outcome.related {
+                return true;
+            }
+            if self.is_nested_same_wrapper_application_assignment(source, target) {
+                return true;
+            }
             if self.should_skip_weak_union_error_with_outcome(
                 source,
                 target,
@@ -280,7 +279,8 @@ impl<'a> CheckerState<'a> {
                 self.error_no_common_properties(source, target, diag_idx);
                 return false;
             }
-        }
+            outcome
+        };
 
         // tsc 6.0: `satisfies` ignores readonly-to-mutable mismatches.
         // `[1,2,3] as const satisfies unknown[]` is accepted because `satisfies`
@@ -327,7 +327,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx, keyword_pos);
+        self.error_type_does_not_satisfy_the_expected_type_with_outcome(
+            source,
+            target,
+            diag_idx,
+            keyword_pos,
+            Some(&relation_outcome),
+        );
         false
     }
 

@@ -443,15 +443,38 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         keyword_pos: Option<u32>,
     ) {
+        self.error_type_does_not_satisfy_the_expected_type_with_outcome(
+            source,
+            target,
+            idx,
+            keyword_pos,
+            None,
+        );
+    }
+
+    pub(crate) fn error_type_does_not_satisfy_the_expected_type_with_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+        keyword_pos: Option<u32>,
+        outcome: Option<&crate::query_boundaries::assignability::RelationOutcome>,
+    ) {
         if !self.has_exact_optional_property_mismatch(source, target)
             && self.should_suppress_assignability_diagnostic(source, target)
         {
             return;
         }
 
-        let reason = self
-            .analyze_assignability_failure(source, target)
-            .failure_reason;
+        let fallback_analysis;
+        let reason = if let Some(outcome) = outcome {
+            outcome.failure.as_ref().map(
+                crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason,
+            )
+        } else {
+            fallback_analysis = self.analyze_assignability_failure(source, target);
+            fallback_analysis.failure_reason
+        };
 
         // For TS1360, point the diagnostic at the `satisfies` keyword position
         // when available, rather than walking up to the enclosing statement.
