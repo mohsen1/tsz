@@ -666,6 +666,37 @@ impl<'a> PropertyAccessEvaluator<'a> {
         Vec::new()
     }
 
+    fn instantiate_application_member_type(
+        &self,
+        member_type: TypeId,
+        type_params: &[TypeParamInfo],
+        type_args: &[TypeId],
+        app_type: TypeId,
+        infer_aware: bool,
+    ) -> TypeId {
+        let contains_declared_this = crate::contains_this_type(self.interner(), member_type);
+        let instantiated = if type_params.is_empty() {
+            member_type
+        } else {
+            let substitution = TypeSubstitution::from_args(self.interner(), type_params, type_args);
+            if infer_aware {
+                self.instantiate_type_with_infer_cached(member_type, &substitution)
+            } else {
+                self.instantiate_type_cached(member_type, &substitution)
+            }
+        };
+
+        // Do not rebind `ThisType` introduced by a type argument. For
+        // `Array<this>.push(...items: T[])`, instantiating `T` yields `this[]`;
+        // rebinding that `this` to the receiver application would incorrectly
+        // produce `Array<this>[]`.
+        if contains_declared_this {
+            self.substitute_this_type_cached(instantiated, app_type)
+        } else {
+            instantiated
+        }
+    }
+
     /// Resolve property access on a generic Application type (e.g., `D<string>`) nominally.
     ///
     /// This preserves nominal identity for classes/interfaces instead of structurally
@@ -708,22 +739,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 let type_params = self.application_base_type_params(app.base, shape.symbol);
 
-                // Instantiate the property type with type-param substitution (only
-                // when we have valid type-params for this base). Then ALWAYS run
-                // `substitute_this_type` so `Promise<this>`-style return types
-                // resolve to the actual receiver — even when type-params are
-                // unavailable (e.g., non-Array generic interface resolved to
-                // Object). Without the always-on `this` substitution, regressions
-                // appear in patterns like `(a: Bar | Baz).doThing(): Promise<this>`.
-                let instantiated_prop_type = if type_params.is_empty() {
-                    prop.type_id
-                } else {
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
-                };
-                let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -742,15 +764,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 let type_params = self.application_base_type_params(app.base, shape.symbol);
 
-                let instantiated_prop_type = if type_params.is_empty() {
-                    prop.type_id
-                } else {
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
-                };
-                let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -776,15 +796,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 let type_params = self.application_base_type_params(app.base, shape.symbol);
 
-                let instantiated_prop_type = if type_params.is_empty() {
-                    prop.type_id
-                } else {
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
-                };
-                let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -810,11 +828,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     TypeSubstitution::from_args(self.interner(), type_params, &app.args);
                 let instantiated_base = self.instantiate_type_cached(app.base, &substitution);
                 if instantiated_base != app.base {
-                    return self.resolve_property_access_inner(
+                    let previous_skip_this_binding = self.is_skip_this_binding();
+                    self.set_skip_this_binding(true);
+                    let result = self.resolve_property_access_inner(
                         instantiated_base,
                         prop_name,
                         Some(prop_atom),
                     );
+                    self.set_skip_this_binding(previous_skip_this_binding);
+                    return result;
                 }
             }
         }
@@ -908,27 +930,21 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(prop) =
                     self.lookup_object_property(shape_id, &shape.properties, prop_atom)
                 {
-                    // Found! Now instantiate the property type with the type arguments
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-
                     // Instantiate both read and write types
-                    let instantiated_read_type =
-                        self.instantiate_type_cached(prop.type_id, &substitution);
-                    let instantiated_write_type =
-                        self.instantiate_type_cached(prop.write_type, &substitution);
-                    let instantiated_read_type =
-                        if crate::contains_this_type(self.interner(), instantiated_read_type) {
-                            self.substitute_this_type_cached(instantiated_read_type, app_type)
-                        } else {
-                            instantiated_read_type
-                        };
-                    let instantiated_write_type =
-                        if crate::contains_this_type(self.interner(), instantiated_write_type) {
-                            self.substitute_this_type_cached(instantiated_write_type, app_type)
-                        } else {
-                            instantiated_write_type
-                        };
+                    let instantiated_read_type = self.instantiate_application_member_type(
+                        prop.type_id,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
+                    let instantiated_write_type = self.instantiate_application_member_type(
+                        prop.write_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
                     let read_type = self.optional_property_type(&PropertyInfo {
                         name: prop.name,
                         type_id: instantiated_read_type,
@@ -956,16 +972,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Property not found in explicit properties - check index signatures
                 if let Some(ref idx) = shape.string_index {
                     // Found string index signature - instantiate the value type
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    let instantiated_value =
-                        self.instantiate_type_cached(idx.value_type, &substitution);
-                    let instantiated_value =
-                        if crate::contains_this_type(self.interner(), instantiated_value) {
-                            self.substitute_this_type_cached(instantiated_value, app_type)
-                        } else {
-                            instantiated_value
-                        };
+                    let instantiated_value = self.instantiate_application_member_type(
+                        idx.value_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
 
                     return PropertyAccessResult::from_index(
                         self.add_undefined_if_unchecked(instantiated_value),
@@ -978,16 +991,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if resolver.is_numeric_index_name(prop_name)
                     && let Some(ref idx) = shape.number_index
                 {
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    let instantiated_value =
-                        self.instantiate_type_cached(idx.value_type, &substitution);
-                    let instantiated_value =
-                        if crate::contains_this_type(self.interner(), instantiated_value) {
-                            self.substitute_this_type_cached(instantiated_value, app_type)
-                        } else {
-                            instantiated_value
-                        };
+                    let instantiated_value = self.instantiate_application_member_type(
+                        idx.value_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
 
                     return PropertyAccessResult::from_index(
                         self.add_undefined_if_unchecked(instantiated_value),

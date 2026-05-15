@@ -96,6 +96,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if type_id.is_intrinsic() {
             return false;
         }
+        if self.array_application_element_type(type_id).is_some() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
@@ -683,6 +686,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .is_assignable_to(expanded_arg_type, effective_param_type)
             };
             let assignable = assignable
+                || if crate::contains_this_type(self.interner, effective_param_type) {
+                    self.checker
+                        .type_resolver()
+                        .and_then(|resolver| resolver.resolve_this_type(self.interner))
+                        .is_some_and(|concrete_this| {
+                            let substituted =
+                                crate::instantiation::instantiate::substitute_this_type(
+                                    self.interner,
+                                    effective_param_type,
+                                    concrete_this,
+                                );
+                            self.checker
+                                .is_assignable_to(expanded_arg_type, substituted)
+                        })
+                } else {
+                    false
+                };
+            let assignable = assignable
                 || self.callable_satisfies_top_rest_any_constraint(
                     expanded_arg_type,
                     effective_param_type,
@@ -840,10 +861,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if type_id.is_intrinsic() {
             return false;
         }
+        if self.array_application_element_type(type_id).is_some() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 self.rest_type_needs_aggregate_argument_check(inner)
             }
+            Some(TypeData::Array(_)) => false,
             Some(TypeData::Union(members)) => {
                 let members: Vec<_> = self.interner.type_list(members).iter().copied().collect();
                 members.into_iter().any(|member| {
@@ -1123,6 +1148,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Evaluate Application/Mapped types (e.g., TupleMapper<[string, number]>) to
         // their concrete Array/Tuple form so rest parameter spreading works correctly.
         let rest_param_type = self.evaluate_rest_param_type(rest_param_type);
+        if let Some(elem) = self.array_application_element_type(rest_param_type) {
+            return Some(elem);
+        }
         trace!(
             rest_param_type_id = %rest_param_type.0,
             rest_param_type_key = ?self.interner.lookup(rest_param_type),
@@ -1194,6 +1222,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(rest_param_type)
             }
         }
+    }
+
+    fn array_application_element_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let array_base = crate::relations::subtype::TypeResolver::get_array_base_type(
+            self.interner.as_type_resolver(),
+        )?;
+        (app.base == array_base && app.args.len() == 1).then_some(app.args[0])
     }
 
     fn tuple_length_bounds(&self, elements: &[TupleElement]) -> (usize, Option<usize>) {
