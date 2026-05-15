@@ -1062,6 +1062,10 @@ pub struct PerfCounters {
         COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_COUNT],
     pub compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome: [AtomicU64;
         COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT],
+    pub property_classification_calls: AtomicU64,
+    pub property_classification_string_fallback_source_lookups: AtomicU64,
+    pub property_classification_string_fallback_target_names: AtomicU64,
+    pub property_classification_string_fallback_target_types: AtomicU64,
 
     // ─── resolver / VFS ──────────────────────────────────────────────────
     pub resolver_lookup_calls: AtomicU64,
@@ -1154,6 +1158,10 @@ impl PerfCounters {
                 AtomicU64::new(0)
             };
                 COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT],
+            property_classification_calls: AtomicU64::new(0),
+            property_classification_string_fallback_source_lookups: AtomicU64::new(0),
+            property_classification_string_fallback_target_names: AtomicU64::new(0),
+            property_classification_string_fallback_target_types: AtomicU64::new(0),
             resolver_lookup_calls: AtomicU64::new(0),
             resolver_is_file_calls: AtomicU64::new(0),
             resolver_is_dir_calls: AtomicU64::new(0),
@@ -1950,6 +1958,22 @@ pub fn record_compute_type_of_symbol_interface_simple_object_type_reference_reje
     }
 }
 
+pub fn record_property_classification_call() {
+    inc(&counters().property_classification_calls);
+}
+
+pub fn record_property_classification_string_fallback_source_lookup() {
+    inc(&counters().property_classification_string_fallback_source_lookups);
+}
+
+pub fn record_property_classification_string_fallback_target_name() {
+    inc(&counters().property_classification_string_fallback_target_names);
+}
+
+pub fn record_property_classification_string_fallback_target_type() {
+    inc(&counters().property_classification_string_fallback_target_types);
+}
+
 /// Record a `TypeInterner::intern_string` call. Mirrors the existing
 /// `record_compute_type_of_symbol_*` shape: gate once, one `counters()`
 /// lookup, increment exactly the named field.
@@ -2243,6 +2267,11 @@ impl PerfCounters {
              total calls                {:>12}\n  \
              cache hits                 {:>12}\n  \
              simple-object hits         {:>12}\n\
+             property classification:\n  \
+             calls                      {:>12}\n  \
+             string source lookups      {:>12}\n  \
+             string target names        {:>12}\n  \
+             string target type entries {:>12}\n\
              TypeInterner:\n  \
              intern calls (total)       {:>12}\n  \
              intern hits                {:>12}\n  \
@@ -2281,6 +2310,13 @@ impl PerfCounters {
             snap.checker.compute_type_of_symbol_cache_hits,
             snap.checker
                 .compute_type_of_symbol_interface_simple_object_fastpath_hits,
+            snap.checker.property_classification_calls,
+            snap.checker
+                .property_classification_string_fallback_source_lookups,
+            snap.checker
+                .property_classification_string_fallback_target_names,
+            snap.checker
+                .property_classification_string_fallback_target_types,
             snap.interner.intern_calls.unwrap_or(0),
             snap.interner.intern_hits.unwrap_or(0),
             snap.interner.intern_misses.unwrap_or(0),
@@ -2772,7 +2808,7 @@ impl PerfCounters {
 
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -2976,6 +3012,7 @@ pub struct PerfCounterSnapshot {
 pub struct WiredCounters {
     pub delegate_cross_arena: bool,
     pub checker_construction: bool,
+    pub property_classification: bool,
     pub overlay_copy: bool,
     pub interner_intern_calls: bool,
     pub interner_per_kind: bool,
@@ -3010,6 +3047,10 @@ pub struct CheckerCounters {
     pub compute_type_of_symbol_calls: u64,
     pub compute_type_of_symbol_cache_hits: u64,
     pub compute_type_of_symbol_interface_simple_object_fastpath_hits: u64,
+    pub property_classification_calls: u64,
+    pub property_classification_string_fallback_source_lookups: u64,
+    pub property_classification_string_fallback_target_names: u64,
+    pub property_classification_string_fallback_target_types: u64,
 }
 
 /// One `(name, count)` row in a named-counter JSON array.
@@ -3153,6 +3194,7 @@ impl PerfCounters {
             wired: WiredCounters {
                 delegate_cross_arena: true,
                 checker_construction: true,
+                property_classification: true,
                 overlay_copy: true,
                 interner_intern_calls: true,
                 interner_per_kind: true,
@@ -3178,6 +3220,16 @@ impl PerfCounters {
                 compute_type_of_symbol_cache_hits: load(&c.compute_type_of_symbol_cache_hits),
                 compute_type_of_symbol_interface_simple_object_fastpath_hits: load(
                     &c.compute_type_of_symbol_interface_simple_object_fastpath_hits,
+                ),
+                property_classification_calls: load(&c.property_classification_calls),
+                property_classification_string_fallback_source_lookups: load(
+                    &c.property_classification_string_fallback_source_lookups,
+                ),
+                property_classification_string_fallback_target_names: load(
+                    &c.property_classification_string_fallback_target_names,
+                ),
+                property_classification_string_fallback_target_types: load(
+                    &c.property_classification_string_fallback_target_types,
                 ),
             },
             overlay: OverlayCounters {
@@ -3456,10 +3508,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_one() {
+    fn schema_version_is_two() {
         // Bumping schema_version is a breaking change for the bench harness;
         // make the intent explicit.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 1);
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 2);
     }
 
     #[test]
@@ -3498,7 +3550,7 @@ mod json_tests {
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["schema_version"], 2);
     }
 
     #[test]
@@ -3636,6 +3688,7 @@ mod json_tests {
         let expected_keys: std::collections::BTreeSet<&str> = [
             "delegate_cross_arena",
             "checker_construction",
+            "property_classification",
             "overlay_copy",
             "interner_intern_calls",
             "interner_per_kind",
@@ -3703,6 +3756,10 @@ mod json_tests {
                 "compute_type_of_symbol_calls",
                 "compute_type_of_symbol_cache_hits",
                 "compute_type_of_symbol_interface_simple_object_fastpath_hits",
+                "property_classification_calls",
+                "property_classification_string_fallback_source_lookups",
+                "property_classification_string_fallback_target_names",
+                "property_classification_string_fallback_target_types",
             ],
         );
     }
@@ -4588,6 +4645,17 @@ mod json_tests {
         let before_ctos_simple_object_hits = c
             .compute_type_of_symbol_interface_simple_object_fastpath_hits
             .load(Ordering::Relaxed);
+        let before_property_classification_calls =
+            c.property_classification_calls.load(Ordering::Relaxed);
+        let before_property_classification_source_lookups = c
+            .property_classification_string_fallback_source_lookups
+            .load(Ordering::Relaxed);
+        let before_property_classification_target_names = c
+            .property_classification_string_fallback_target_names
+            .load(Ordering::Relaxed);
+        let before_property_classification_target_types = c
+            .property_classification_string_fallback_target_types
+            .load(Ordering::Relaxed);
         let before_ctos_simple_object_non_primitive_annotation_kind = c
             .compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind
             [ctos_simple_object_non_primitive_annotation_kind_idx]
@@ -4622,6 +4690,14 @@ mod json_tests {
             [ctos_simple_object_type_reference_reject_outcome_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_simple_object_fastpath_hits
+            .fetch_add(1, Ordering::Relaxed);
+        c.property_classification_calls
+            .fetch_add(1, Ordering::Relaxed);
+        c.property_classification_string_fallback_source_lookups
+            .fetch_add(1, Ordering::Relaxed);
+        c.property_classification_string_fallback_target_names
+            .fetch_add(1, Ordering::Relaxed);
+        c.property_classification_string_fallback_target_types
             .fetch_add(1, Ordering::Relaxed);
 
         let snap = PerfCounters::snapshot();
@@ -4805,6 +4881,34 @@ mod json_tests {
                 > before_ctos_simple_object_hits,
             "checker.compute_type_of_symbol_interface_simple_object_fastpath_hits did not reflect the bump",
         );
+        assert!(
+            json["checker"]["property_classification_calls"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_property_classification_calls,
+            "checker.property_classification_calls did not reflect the bump",
+        );
+        assert!(
+            json["checker"]["property_classification_string_fallback_source_lookups"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_property_classification_source_lookups,
+            "checker.property_classification_string_fallback_source_lookups did not reflect the bump",
+        );
+        assert!(
+            json["checker"]["property_classification_string_fallback_target_names"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_property_classification_target_names,
+            "checker.property_classification_string_fallback_target_names did not reflect the bump",
+        );
+        assert!(
+            json["checker"]["property_classification_string_fallback_target_types"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_property_classification_target_types,
+            "checker.property_classification_string_fallback_target_types did not reflect the bump",
+        );
     }
 
     #[test]
@@ -4817,7 +4921,7 @@ mod json_tests {
         let raw = std::fs::read_to_string(&path).expect("read back");
         // Round-trip through serde to confirm structure.
         let value: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["schema_version"], 2);
         assert!(value["wired"].is_object());
         // The atomic-rename `.json.tmp` should not be left behind.
         let tmp = path.with_extension("json.tmp");
