@@ -1016,9 +1016,13 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ERROR;
                 }
-                let arg_idx = self
-                    .map_expanded_arg_index_to_original(args, index)
-                    .map(|arg_idx| self.ctx.arena.skip_parenthesized(arg_idx));
+                let arg_idx = self.map_expanded_arg_index_to_original(args, index);
+                let arg_idx = arg_idx.map(|i| self.ctx.arena.skip_parenthesized(i));
+                if self
+                    .this_argument_satisfies_polymorphic_this_rest_target(arg_idx, actual, expected)
+                {
+                    return fallback_return;
+                }
                 if expected == TypeId::NEVER
                     && let Some(return_type) =
                         self.correlated_union_call_recovery_return(callee_type, index, actual)
@@ -1843,10 +1847,6 @@ impl<'a> CheckerState<'a> {
                 .any(|&(start, end)| diag.start >= start && diag.start < end)
         });
         self.ctx.rebuild_emitted_diagnostics_from_current();
-    }
-
-    fn is_callee_function_expression(&self, callee_expr: NodeIndex) -> bool {
-        self.is_callback_like_argument(callee_expr)
     }
 
     pub(crate) fn build_expanded_args_for_error(&mut self, args: &[NodeIndex]) -> Vec<NodeIndex> {

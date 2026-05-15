@@ -218,6 +218,22 @@ var x: { z: I; [s: string]: { x: any; y: any; } };
 }
 
 #[test]
+fn type_literal_in_generic_type_argument_checks_property_against_index_signature() {
+    let source = r#"
+type KeysOfIndex<T> = keyof T;
+
+type KI = KeysOfIndex<{ [key: string]: number; a: boolean }>;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2411
+            && d.1.contains("Property 'a' of type 'boolean'")
+            && d.1.contains("index type 'number'")),
+        "Should emit TS2411 for type literal generic argument property not assignable to index, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_type_literal_union_function_property_vs_index_signature() {
     let source = r#"
 function test(arg: string | number, whatever: any) {

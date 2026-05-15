@@ -636,3 +636,33 @@ export {};
         "Function call/apply/bind should accept the function's declared this parameter, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn this_array_push_accepts_this_element_with_lib_array_signature() {
+    let source = r#"
+class State {
+  history: this[] = [];
+
+  save(): void {
+    this.history.push(this);
+  }
+}
+
+const s = new State();
+s.save();
+"#;
+    let libs = tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &libs,
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    assert!(
+        diagnostics.is_empty(),
+        "pushing this into this[] should not produce diagnostics, got: {diagnostics:?}"
+    );
+}

@@ -195,6 +195,8 @@ function normalizedKnownBlockers(compatibility, diagnosticSubsystems) {
   const phase = String(compatibility?.phase || "");
 
   if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "oom") add("OOM or killed during project check");
+  if (exitClass === "crash") add("compiler crash during project check");
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");

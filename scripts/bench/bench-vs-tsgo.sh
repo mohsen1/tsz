@@ -338,6 +338,51 @@ hyperfine_exit_status_for() {
     return 0
 }
 
+project_failure_class() {
+    local status="$1"
+    shift || true
+
+    if [[ "$status" == *"timeout"* ]]; then
+        echo "timeout"
+        return
+    fi
+
+    local code
+    for code in "$@"; do
+        case "$code" in
+            124|142)
+                echo "timeout"
+                return
+                ;;
+            137)
+                echo "oom"
+                return
+                ;;
+            132|134|136|139)
+                echo "crash"
+                return
+                ;;
+        esac
+    done
+
+    echo "nonzero exit"
+}
+
+project_failure_status() {
+    case "$1" in
+        timeout) echo "compiler timed out" ;;
+        oom) echo "compiler OOM or killed" ;;
+        crash) echo "compiler crashed" ;;
+        *) echo "diagnostic mismatch or compiler error" ;;
+    esac
+}
+
+exit_codes_from_status() {
+    local status="$1"
+    printf '%s\n' "$status" | sed -E 's/[^0-9]+/\
+/g' | sed '/^$/d'
+}
+
 sum_ts_lines() {
     local src_dir="$1"
     find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
@@ -770,6 +815,8 @@ function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticC
   };
 
   if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "oom") add("OOM or killed during project check");
+  if (exitClass === "crash") add("compiler crash during project check");
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
@@ -1171,11 +1218,9 @@ run_project_benchmark() {
             status="${status:+${status}; }tsc ok"
         fi
 
-        if [ "$tsz_check" -eq 124 ] || [ "$tsgo_check" -eq 124 ]; then
-            record_project_compatibility "$name" "timeout" "check" "compiler timed out" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
-        else
-            record_project_compatibility "$name" "nonzero exit" "check" "diagnostic mismatch or compiler error" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
-        fi
+        local exit_class
+        exit_class="$(project_failure_class "$status" "$tsz_check" "$tsgo_check")"
+        record_project_compatibility "$name" "$exit_class" "check" "$(project_failure_status "$exit_class")" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
         return
     fi
@@ -1324,11 +1369,9 @@ run_project_benchmark() {
             [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
             [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
             echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
-            if [[ "$status" == *"timeout"* ]]; then
-                record_project_compatibility "$name" "timeout" "timing" "compiler timed out" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
-            else
-                record_project_compatibility "$name" "nonzero exit" "timing" "diagnostic mismatch or compiler error" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
-            fi
+            local exit_class
+            exit_class="$(project_failure_class "$status" $(exit_codes_from_status "$status"))"
+            record_project_compatibility "$name" "$exit_class" "timing" "$(project_failure_status "$exit_class")" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             rm -f "$json_file"
             return
@@ -1545,6 +1588,8 @@ function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas) {
   const phase = String(recorded.phase || "");
 
   if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "oom") add("OOM or killed during project check");
+  if (exitClass === "crash") add("compiler crash during project check");
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
