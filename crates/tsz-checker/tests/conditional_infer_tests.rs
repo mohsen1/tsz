@@ -15,6 +15,34 @@ fn check_source_strict_with_default_libs(source: &str) -> Vec<Diagnostic> {
     )
 }
 
+#[test]
+fn equal_any_unknown_is_false_and_later_identity_stays_true() {
+    let source = r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+type EQ_any = Equal<any, unknown>;
+type EQ5 = Equal<{ a: 1 }, { a: 1 }>;
+
+const eq_any: EQ_any = false;
+const eq5: EQ5 = true;
+
+export {};
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Equal<any, unknown> must be false and must not affect a later identical structural Equal instantiation. Actual diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that conditional types with `infer V` pattern resolve to concrete types
 /// when the check type is a concrete application of the same generic interface.
 ///
