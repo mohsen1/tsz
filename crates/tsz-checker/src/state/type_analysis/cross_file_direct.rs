@@ -114,21 +114,6 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .is_some_and(|source_file| !source_file.is_declaration_file)
 }
 
-fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
-    matches!(
-        name,
-        "ArrayIterator"
-            | "Iterator"
-            | "IteratorObject"
-            | "Object"
-            | "Promise"
-            | "RegExpStringIterator"
-            | "StringIterator"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
 fn allow_iterator_symbol_direct_fallback(name: &str) -> bool {
     matches!(name, "Iterator")
 }
@@ -164,6 +149,30 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::INTERFACE)
             && self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, name)
+    }
+
+    fn symbol_has_direct_actual_lib_interface_type_parameters(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        symbol.has_any_flags(symbol_flags::INTERFACE)
+            && symbol.declarations.iter().any(|&decl_idx| {
+                self.ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .is_some_and(|arenas| {
+                        arenas.iter().any(|arena| {
+                            is_direct_actual_lib_declaration_arena(arena)
+                                && arena
+                                    .get(decl_idx)
+                                    .and_then(|node| arena.get_interface(node))
+                                    .and_then(|interface| interface.type_parameters.as_ref())
+                                    .is_some_and(|params| !params.nodes.is_empty())
+                        })
+                    })
+            })
     }
 
     fn symbol_declarations_are_direct_actual_lib_only(
@@ -446,7 +455,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let mut intl_success_outcome = None;
-        let (direct_type, params) = if should_resolve_actual_lib_interface_with_params(&name) {
+        let has_interface_type_params =
+            self.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol);
+        let (direct_type, params) = if has_interface_type_params {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
             if let Some(direct_type) = direct_type {
                 (direct_type, params)

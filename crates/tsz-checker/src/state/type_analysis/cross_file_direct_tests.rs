@@ -408,7 +408,11 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
 
 #[test]
 fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
-    let lib_files = load_lib_files(&["es2015.iterable.d.ts", "esnext.iterator.d.ts"]);
+    let lib_files = load_lib_files(&[
+        "es2015.iterable.d.ts",
+        "es2020.symbol.wellknown.d.ts",
+        "esnext.iterator.d.ts",
+    ]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
@@ -434,13 +438,29 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
     state.ctx.set_lib_contexts(lib_contexts);
     state.ctx.set_actual_lib_file_count(lib_files.len());
 
-    for name in ["Iterator", "IteratorObject"] {
+    for name in [
+        "ArrayIterator",
+        "Iterator",
+        "IteratorObject",
+        "RegExpStringIterator",
+        "StringIterator",
+    ] {
         let sym_id = state
             .ctx
             .binder
             .file_locals
             .get(name)
             .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
+        let symbol = state
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .unwrap_or_else(|| panic!("{name} symbol should exist"))
+            .clone();
+        assert!(
+            state.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol),
+            "{name} should be admitted to the param-preserving direct path by lib declaration shape",
+        );
         let delegate_arena = state
             .ctx
             .binder
