@@ -374,6 +374,10 @@ name = "rest_tuple_conditional_arg_tests"
 path = "tests/rest_tuple_conditional_arg_tests.rs"
 
 [[test]]
+name = "curry_recursive_conditional_infer_tests"
+path = "tests/curry_recursive_conditional_infer_tests.rs"
+
+[[test]]
 name = "ts1210_class_arguments_tests"
 path = "tests/ts1210_class_arguments_tests.rs"
 
