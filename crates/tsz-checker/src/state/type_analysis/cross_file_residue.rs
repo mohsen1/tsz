@@ -18,17 +18,26 @@ impl<'a> CheckerState<'a> {
             miss_kind,
             miss_target_is_declaration_file,
         );
-        if !miss_target_is_declaration_file || !perf_counters::enabled_fast() {
+        if !perf_counters::enabled_fast() {
             return;
         }
         let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
             return;
         };
-        perf_counters::record_cross_arena_declaration_file_miss_residue(
-            miss_source,
-            miss_kind,
-            symbol.escaped_name.as_str(),
-            miss_target_file,
-        );
+        if miss_target_is_declaration_file {
+            perf_counters::record_cross_arena_declaration_file_miss_residue(
+                miss_source,
+                miss_kind,
+                symbol.escaped_name.as_str(),
+                miss_target_file,
+            );
+        } else {
+            perf_counters::record_cross_arena_source_file_miss_residue(
+                miss_source,
+                miss_kind,
+                symbol.escaped_name.as_str(),
+                miss_target_file,
+            );
+        }
     }
 }
