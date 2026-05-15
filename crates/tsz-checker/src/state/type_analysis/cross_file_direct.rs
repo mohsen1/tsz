@@ -23,7 +23,7 @@ struct DirectActualLibAliasBodyProof {
 }
 
 fn is_special_generic_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
-    matches!(name, "FlatArray" | "IteratorResult")
+    matches!(name, "IteratorResult")
 }
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
@@ -364,6 +364,7 @@ impl<'a> CheckerState<'a> {
             );
         let generic_alias_has_admitted_body = !params.is_empty()
             && (common::mapped_type_id(self.ctx.types, body).is_some()
+                || common::contains_conditional_type(self.ctx.types, body)
                 || is_special_generic_direct_actual_lib_alias_body_admitted(name));
         let outcome = if non_generic_alias_has_resolved_body || generic_alias_has_admitted_body {
             DirectActualLibAliasBodyOutcome::Success

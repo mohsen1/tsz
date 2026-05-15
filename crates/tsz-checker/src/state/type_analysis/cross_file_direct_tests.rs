@@ -1036,15 +1036,20 @@ fn direct_actual_lib_alias_proof_matches_mapped_utility_fallback_bodies() {
 
     for (name, expected_param_count, expected_outcome) in [
         ("FlatArray", 2, DirectActualLibAliasBodyOutcome::Success),
+        ("Awaited", 1, DirectActualLibAliasBodyOutcome::Success),
+        ("Exclude", 2, DirectActualLibAliasBodyOutcome::Success),
+        ("Extract", 2, DirectActualLibAliasBodyOutcome::Success),
         (
             "IteratorResult",
             2,
             DirectActualLibAliasBodyOutcome::Success,
         ),
+        ("Parameters", 1, DirectActualLibAliasBodyOutcome::Success),
         ("Record", 2, DirectActualLibAliasBodyOutcome::Success),
         ("Partial", 1, DirectActualLibAliasBodyOutcome::Success),
         ("Pick", 2, DirectActualLibAliasBodyOutcome::Success),
         ("Required", 1, DirectActualLibAliasBodyOutcome::Success),
+        ("ReturnType", 1, DirectActualLibAliasBodyOutcome::Success),
         ("Readonly", 1, DirectActualLibAliasBodyOutcome::Success),
     ] {
         let sym_id = state
