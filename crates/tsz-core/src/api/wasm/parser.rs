@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
+use serde::Serialize;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 use crate::CheckerState;
@@ -1102,7 +1103,11 @@ impl Parser {
             &mut self.scope_cache,
             None,
         ) {
-            Ok(edit) => Ok(serde_wasm_bindgen::to_value(&edit)?),
+            Ok(edit) => {
+                let serializer =
+                    serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+                Ok(edit.serialize(&serializer)?)
+            }
             Err(e) => Err(JsValue::from_str(&e)),
         }
     }
