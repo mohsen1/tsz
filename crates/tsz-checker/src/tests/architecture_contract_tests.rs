@@ -3766,7 +3766,9 @@ fn test_boundary_owns_excess_property_suppression_policy() {
         "boundary excess-property suppression must inspect intersection members"
     );
     assert!(
-        source.contains("is_primitive_type(db, *member) || is_type_parameter_like(db, *member)"),
+        source.contains("let member = normalize_member(*member);")
+            && source
+                .contains("is_primitive_type(db, member) || is_type_parameter_like(db, member)"),
         "boundary excess-property suppression must skip EPC for primitive/type-parameter \
          intersection members"
     );

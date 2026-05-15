@@ -28838,6 +28838,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             no_resolve: false,
             no_unchecked_side_effect_imports: false,
             no_implicit_override: false,
+            downlevel_iteration: false,
             no_fallthrough_cases_in_switch: false,
             jsx_mode: tsz_common::checker_options::JsxMode::None,
             module_explicitly_set: false,

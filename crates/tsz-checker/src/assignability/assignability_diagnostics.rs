@@ -1,7 +1,7 @@
 use crate::query_boundaries::assignability::{
     AssignabilityQueryInputs, ExcessPropertiesKind, check_assignable_gate_with_overrides,
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
-    is_type_parameter_like, object_shape_for_type,
+    is_type_parameter_like, object_shape_for_type, suppress_raw_excess_property_failure_if_needed,
 };
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type, type_param_info};
 use crate::state::{CheckerOverrideProvider, CheckerState};
@@ -2036,11 +2036,6 @@ impl<'a> CheckerState<'a> {
                 failure_reason: None,
             };
         }
-        // ExcessProperty failure suppression (deferred conditionals, non-EPC
-        // intersection members) is now handled by the boundary's
-        // `suppress_excess_property_failure_if_needed` in `execute_relation`.
-        // The raw failure reason here is from `check_assignable_gate_with_overrides`
-        // which doesn't go through that path, so we apply it here too.
         let result = gate.analysis.unwrap_or(
             crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,
@@ -2048,53 +2043,26 @@ impl<'a> CheckerState<'a> {
             },
         );
 
-        // Apply boundary-level excess property suppression to the raw failure reason.
-        let failure_reason = if matches!(
-            &result.failure_reason,
-            Some(tsz_solver::SubtypeFailureReason::ExcessProperty { .. })
-        ) {
-            // Convert to RelationFailure to check, then back. But simpler: just
-            // check the conditions directly using the boundary's logic.
-            let evaluated_target = self.evaluate_type_for_assignability(target);
-            let should_suppress = crate::query_boundaries::common::has_deferred_conditional_member(
-                self.ctx.types,
-                evaluated_target,
-            ) || [target, evaluated_target].into_iter().any(|candidate| {
-                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
-                    .is_some_and(|members| {
-                        members.iter().any(|member| {
-                            let evaluated = self.evaluate_type_for_assignability(*member);
-                            crate::query_boundaries::common::is_primitive_type(
-                                self.ctx.types,
-                                evaluated,
-                            ) || crate::query_boundaries::common::is_type_parameter_like(
-                                self.ctx.types,
-                                evaluated,
-                            )
-                        })
-                    })
-            });
-            if should_suppress {
-                None
-            } else {
-                result.failure_reason
-            }
-        } else {
-            result.failure_reason
-        };
+        let evaluated_target = self.evaluate_type_for_assignability(target);
+        let result = suppress_raw_excess_property_failure_if_needed(
+            result,
+            self.ctx.types,
+            [target, evaluated_target],
+            |member| self.evaluate_type_for_assignability(member),
+        );
 
         // Suppress false TS2559 (NoCommonProperties) for interfaces that extend
         // arrays/tuples. These types inherit non-optional members from Array.prototype
         // (length, push, pop, etc.) that aren't in the ObjectShape's property list,
         // making them appear as weak types when they aren't.
         let failure_reason = if matches!(
-            &failure_reason,
+            &result.failure_reason,
             Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
         ) && self.target_extends_array_or_tuple(target)
         {
             None
         } else {
-            failure_reason
+            result.failure_reason
         };
 
         crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
