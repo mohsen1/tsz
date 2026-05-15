@@ -466,14 +466,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let fallback_analysis;
+        let fallback_outcome;
         let reason = if let Some(outcome) = outcome {
             outcome.failure.as_ref().map(
                 crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason,
             )
         } else {
-            fallback_analysis = self.analyze_assignability_failure(source, target);
-            fallback_analysis.failure_reason
+            use crate::query_boundaries::assignability::RelationRequest;
+
+            let (prepared_source, prepared_target) =
+                self.prepare_assignability_inputs(source, target);
+            let request = RelationRequest::assign(prepared_source, prepared_target);
+            fallback_outcome = self.execute_relation_request(&request);
+            fallback_outcome.failure.as_ref().map(
+                crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason,
+            )
         };
 
         // For TS1360, point the diagnostic at the `satisfies` keyword position
