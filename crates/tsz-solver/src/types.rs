@@ -1826,14 +1826,15 @@ pub fn process_template_escape_sequences(input: &str) -> String {
 /// structure (e.g., `TypeData::Array`) rather than by symbol reference (`TypeData::Ref`).
 /// This ensures canonicalization: `Array<number>` and `number[]` resolve to the same type.
 ///
-/// **Referenced types** (user-defined and lib types) are represented as `TypeData::Ref(symbol_id)`
-/// and resolved lazily during type checking through the `TypeEnvironment`.
+/// **Referenced types** (user-defined and lib types) are represented as
+/// `TypeData::Lazy(DefId)` and resolved lazily during type checking through
+/// the `TypeEnvironment`.
 ///
 /// ## Examples
 ///
 /// - `Array<T>` → `TypeData::Array(T)` (structural, not `Ref`)
 /// - `Uppercase<S>` → `TypeData::StringIntrinsic { kind: Uppercase, ... }`
-/// - `MyInterface` → `TypeData::Ref(SymbolRef(sym_id))`
+/// - `MyInterface` → `TypeData::Lazy(def_id)`
 ///
 /// ## When to Add Types
 ///
