@@ -1633,7 +1633,7 @@ fn checker_files_stay_under_loc_limit() {
     // Removed after dropping below 2000 LOC:
     //   complex.rs (926), variable_checking/core.rs (1606),
     //   symbol_types.rs (892), error_reporter/core/mod.rs (1576),
-    //   types/computation/call.rs (1805→split), checkers/call_checker/mod.rs (1396),
+    //   types/computation/call/mod.rs (1805→split), checkers/call_checker/mod.rs (1396),
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
         ("state/type_analysis/computed_commonjs/mod.rs", 2787),
@@ -2624,7 +2624,7 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "checkers/jsx/props/validation.rs",
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
-        "types/computation/call.rs",
+        "types/computation/call/mod.rs",
         "types/computation/object_literal/mod.rs",
         "types/computation/helpers.rs",
         "types/computation/call_display.rs",
@@ -2809,7 +2809,7 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
         "checkers/jsx/props/validation.rs",
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
-        "types/computation/call.rs",
+        "types/computation/call/mod.rs",
         "types/computation/helpers.rs",
         "types/computation/object_literal/mod.rs",
         "types/function_type.rs",
@@ -3103,7 +3103,7 @@ fn no_ambient_current_callable_type() {
         "src/checkers/call_checker/candidate_collection.rs",
         "src/checkers/call_checker/diagnostics.rs",
         "src/checkers/call_checker/overload_resolution.rs",
-        "src/types/computation/call.rs",
+        "src/types/computation/call/mod.rs",
         "src/types/computation/call_inference.rs",
         "src/types/computation/call_display.rs",
         "src/state/type_analysis/computed_helpers.rs",
