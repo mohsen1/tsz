@@ -9,7 +9,8 @@ impl<'a> CheckerState<'a> {
         substitution: &mut tsz_solver::TypeSubstitution,
         shape: &tsz_solver::FunctionShape,
         args: &[tsz_parser::NodeIndex],
-    ) {
+    ) -> bool {
+        let mut seeded = false;
         for (i, param) in shape.params.iter().enumerate() {
             let Some(param_info) = common::type_param_info(self.ctx.types, param.type_id) else {
                 continue;
@@ -50,8 +51,10 @@ impl<'a> CheckerState<'a> {
             let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
             if widened_literal == evaluated_constraint {
                 substitution.insert(type_param.name, literal_arg_type);
+                seeded = true;
             }
         }
+        seeded
     }
 
     pub(super) fn new_type_args_are_applyable(

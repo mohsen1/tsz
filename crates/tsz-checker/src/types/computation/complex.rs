@@ -1139,13 +1139,16 @@ impl<'a> CheckerState<'a> {
                             &shape.type_params,
                         );
                     }
-                    self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
+                    let seeded_literal_constraint_type_arg =
+                        self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
                     let type_args: Vec<TypeId> = shape
                         .type_params
                         .iter()
                         .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
                         .collect();
-                    if self.new_type_args_are_applyable(shape, &type_args, &substitution) {
+                    if seeded_literal_constraint_type_arg
+                        && self.new_type_args_are_applyable(shape, &type_args, &substitution)
+                    {
                         inferred_new_type_args = Some(type_args);
                     }
                     if let Some(contextual) = contextual_type {
