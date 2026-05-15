@@ -1321,6 +1321,19 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
+        let lib_name = self.ctx.definition_store.get(def_id).and_then(|info| {
+            (info.file_id == Some(u32::MAX)).then(|| self.ctx.types.resolve_atom(info.name))
+        });
+        if let Some(name) = lib_name
+            && self.ctx.has_lib_loaded()
+        {
+            if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
+                self.try_insert_def_in_type_env(def_id, resolved);
+                return Some(resolved);
+            }
+            return Some(self.ctx.types.lazy(def_id));
+        }
+
         let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
         if let Some(file_idx) = owner_file_idx
             && file_idx != self.ctx.current_file_idx

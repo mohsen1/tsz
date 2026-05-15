@@ -154,7 +154,7 @@ impl<'a> CheckerState<'a> {
                     self.validate_type_reference_type_arguments(sym_id, args, idx);
                 }
                 // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                let base_type = self.resolve_symbol_as_lazy_type(sym_id);
+                let base_type = self.resolve_symbol_as_lazy_type_named(sym_id, name);
                 if has_type_args {
                     let type_args = type_ref
                         .type_arguments
@@ -421,7 +421,7 @@ impl<'a> CheckerState<'a> {
                     type_param
                 } else if let Some(sym_id) = sym_id {
                     // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                    self.resolve_symbol_as_lazy_type(sym_id)
+                    self.resolve_symbol_as_lazy_type_named(sym_id, name)
                 } else {
                     TypeId::ERROR
                 };
@@ -444,7 +444,7 @@ impl<'a> CheckerState<'a> {
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
                 {
                     // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                    return self.resolve_symbol_as_lazy_type(sym_id);
+                    return self.resolve_symbol_as_lazy_type_named(sym_id, name);
                 }
                 if let Some(type_param) = self.lookup_type_parameter(name) {
                     return type_param;
