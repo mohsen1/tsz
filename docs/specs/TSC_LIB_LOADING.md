@@ -770,7 +770,7 @@ pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
 
 ### Recommended Fix
 
-To match tsc behavior, change `default_lib_name_for_target()` in `src/cli/config.rs`:
+To match tsc behavior, change `default_lib_name_for_target()` in `crates/tsz-core/src/config/mod.rs`:
 
 | Target | Current (tsz) | Correct (tsc) |
 |--------|--------------|---------------|
