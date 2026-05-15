@@ -1744,7 +1744,7 @@ impl<'a> CheckerState<'a> {
                         };
                         // Check if this symbol has a declaration with the import_name
                         let has_matching_name = sym.declarations.iter().any(|&decl_idx| {
-                            self.declaration_name_matches_string(decl_arena, decl_idx, import_name)
+                            Self::declaration_name_matches_string(decl_arena, decl_idx, import_name)
                         });
 
                         if has_matching_name && export_name.as_str() != import_name {
@@ -1771,7 +1771,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.get_arena_for_file(sym.decl_file_idx)
                     };
                     let has_matching_name = sym.declarations.iter().any(|&decl_idx| {
-                        self.declaration_name_matches_string(decl_arena, decl_idx, import_name)
+                        Self::declaration_name_matches_string(decl_arena, decl_idx, import_name)
                     });
 
                     if has_matching_name && export_name.as_str() != import_name {

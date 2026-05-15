@@ -820,6 +820,7 @@ export class ZodError<T = any> extends Error {
     this.issues = [...this.issues, sub];
   };
 }
+
 "#,
         "test.ts",
         CheckerOptions {
@@ -846,5 +847,48 @@ export class ZodError<T = any> extends Error {
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn zod_type_field_initializer_this_keeps_instance_method_alias() {
+    let diags = crate::test_utils::check_with_options(
+        r#"
+type ZodTypeDef = {};
+type ZodError<T = unknown> = Error & { input?: T };
+type ZodTypeAny = ZodType<any, any, any>;
+
+export abstract class ZodType<
+  Output = any,
+  Def extends ZodTypeDef = ZodTypeDef,
+  Input = Output
+> {
+  async safeParseAsync(data: unknown): Promise<
+    { success: true; data: Output } | { success: false; error: Error }
+  > {
+    return Promise.resolve({ success: true, data: data as Output });
+  }
+
+  spa = this.safeParseAsync;
+}
+
+declare const z: ZodType<string>;
+z.spa;
+"#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2532 | 2683))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected class field initializer `this` to resolve to the instance type, got: {relevant:#?}"
     );
 }
