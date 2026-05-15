@@ -213,6 +213,9 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) arena: &'a NodeArena,
     pub(crate) binder: &'a BinderState,
     pub(crate) interner: &'a dyn QueryDatabase,
+    /// Optional checker context for creating real `DefId`-backed lazy refs
+    /// when the flow snapshot has not seen a symbol yet.
+    pub(crate) checker_context: Option<&'a crate::context::CheckerContext<'a>>,
     pub(crate) node_types: Option<&'a crate::context::NodeTypeCache>,
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
     /// Optional cache for flow analysis results to avoid redundant graph traversals
@@ -444,6 +447,7 @@ impl<'a> FlowAnalyzer<'a> {
             arena,
             binder,
             interner,
+            checker_context: None,
             node_types: None,
             flow_graph,
             flow_cache: None,
@@ -478,6 +482,7 @@ impl<'a> FlowAnalyzer<'a> {
             arena,
             binder,
             interner,
+            checker_context: None,
             node_types: Some(node_types),
             flow_graph,
             flow_cache: None,
@@ -658,6 +663,15 @@ impl<'a> FlowAnalyzer<'a> {
         type_env: &'a RefCell<tsz_solver::TypeEnvironment>,
     ) -> Self {
         self.type_environment = Some(type_env);
+        self
+    }
+
+    /// Set the owning checker context for stable `DefId` fallback resolution.
+    pub const fn with_checker_context(
+        mut self,
+        ctx: &'a crate::context::CheckerContext<'a>,
+    ) -> Self {
+        self.checker_context = Some(ctx);
         self
     }
 
