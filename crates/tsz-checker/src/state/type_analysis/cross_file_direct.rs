@@ -1,5 +1,6 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
 
+use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
@@ -9,6 +10,7 @@ use tsz_common::perf_counters::{
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
@@ -19,26 +21,6 @@ struct DirectActualLibAliasBodyProof {
     type_params: Vec<TypeParamInfo>,
     def_id: DefId,
     outcome: DirectActualLibAliasBodyOutcome,
-}
-
-fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
-    matches!(
-        name,
-        "DecoratorMetadata"
-            | "DecoratorMetadataObject"
-            | "FlatArray"
-            | "IteratorResult"
-            | "LocalesArgument"
-            | "NumberFormatOptionsCurrencyDisplay"
-            | "NumberFormatOptionsSignDisplay"
-            | "NumberFormatOptionsStyle"
-            | "NumberFormatOptionsUseGrouping"
-            | "Partial"
-            | "PropertyKey"
-            | "Readonly"
-            | "Record"
-            | "UnicodeBCP47LocaleIdentifier"
-    )
 }
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
@@ -127,72 +109,125 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .is_some_and(|source_file| !source_file.is_declaration_file)
 }
 
-fn should_resolve_actual_lib_interface_with_params(name: &str) -> bool {
-    matches!(
-        name,
-        "ArrayIterator"
-            | "Iterator"
-            | "IteratorObject"
-            | "Object"
-            | "Promise"
-            | "RegExpStringIterator"
-            | "StringIterator"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
-fn allow_iterator_symbol_direct_fallback(name: &str) -> bool {
-    matches!(name, "Iterator")
+fn allow_generic_actual_lib_direct_fallback(name: &str) -> bool {
+    matches!(name, "Iterator" | "Promise" | "PromiseLike")
 }
 
 fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
     matches!(name, "Iterator")
 }
 
-fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
-    matches!(
-        name,
-        "CollatorOptions"
-            | "DateTimeFormatOptions"
-            | "Locale"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsSignDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
-    )
-}
-
-fn is_direct_actual_intl_interface_candidate_name(name: &str) -> bool {
-    is_direct_actual_intl_lib_interface_name(name) || name.ends_with("Info")
-}
-
-fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Date"
-            | "DateTimeFormatOptions"
-            | "Error"
-            | "Function"
-            | "Iterator"
-            | "IteratorObject"
-            | "Locale"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsSignDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
-            | "Object"
-            | "Promise"
-            | "RegExp"
-            | "Symbol"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
 impl<'a> CheckerState<'a> {
+    fn symbol_is_actual_lib_namespace_export(
+        &self,
+        namespace: &str,
+        export_name: &str,
+        sym_id: SymbolId,
+    ) -> bool {
+        self.resolve_lib_namespace_export_symbol(namespace, export_name)
+            .is_some_and(|export_sym_id| export_sym_id == sym_id)
+    }
+
+    fn symbol_is_proven_direct_actual_lib_value_interface(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        name: &str,
+    ) -> bool {
+        symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::INTERFACE)
+            && self.symbol_declarations_are_direct_actual_lib_only(sym_id, symbol, name)
+    }
+
+    fn symbol_has_direct_actual_lib_interface_type_parameters(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        symbol.has_any_flags(symbol_flags::INTERFACE)
+            && symbol.declarations.iter().any(|&decl_idx| {
+                self.ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .is_some_and(|arenas| {
+                        arenas.iter().any(|arena| {
+                            Self::direct_actual_lib_interface_has_type_parameters(
+                                arena.as_ref(),
+                                decl_idx,
+                            )
+                        })
+                    })
+            })
+    }
+
+    fn direct_actual_lib_interface_has_type_parameters(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        is_direct_actual_lib_declaration_arena(arena)
+            && arena
+                .get(decl_idx)
+                .and_then(|node| arena.get_interface(node))
+                .and_then(|interface| interface.type_parameters.as_ref())
+                .is_some_and(|params| !params.nodes.is_empty())
+    }
+
+    fn symbol_has_direct_actual_lib_iterator_object_heritage(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .is_some_and(|arenas| {
+                    arenas.iter().any(|arena| {
+                        Self::direct_actual_lib_interface_has_iterator_object_heritage(
+                            arena.as_ref(),
+                            decl_idx,
+                        )
+                    })
+                })
+        })
+    }
+
+    fn direct_actual_lib_interface_has_iterator_object_heritage(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        if !is_direct_actual_lib_declaration_arena(arena) {
+            return false;
+        }
+        let Some(interface) = arena
+            .get(decl_idx)
+            .and_then(|node| arena.get_interface(node))
+        else {
+            return false;
+        };
+        let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+            return false;
+        };
+        heritage_clauses.nodes.iter().copied().any(|clause_idx| {
+            let Some(clause) = arena
+                .get(clause_idx)
+                .and_then(|node| arena.get_heritage_clause(node))
+            else {
+                return false;
+            };
+            clause.types.nodes.iter().copied().any(|type_idx| {
+                let Some(expr) = arena
+                    .get(type_idx)
+                    .and_then(|node| arena.get_expr_type_args(node))
+                else {
+                    return false;
+                };
+                arena.get_identifier_text(expr.expression) == Some("IteratorObject")
+            })
+        })
+    }
+
     fn symbol_declarations_are_direct_actual_lib_only(
         &self,
         sym_id: SymbolId,
@@ -385,7 +420,16 @@ impl<'a> CheckerState<'a> {
         };
 
         let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-        let outcome = if is_direct_actual_lib_alias_body_admitted(name) {
+        let non_generic_alias_has_resolved_body = params.is_empty()
+            && !matches!(
+                body,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+            );
+        let generic_alias_has_admitted_body = !params.is_empty()
+            && (common::mapped_type_id(self.ctx.types, body).is_some()
+                || common::contains_conditional_type(self.ctx.types, body)
+                || common::union_members(self.ctx.types, body).is_some());
+        let outcome = if non_generic_alias_has_resolved_body || generic_alias_has_admitted_body {
             DirectActualLibAliasBodyOutcome::Success
         } else if !params.is_empty() {
             DirectActualLibAliasBodyOutcome::GenericAlias
@@ -418,14 +462,18 @@ impl<'a> CheckerState<'a> {
 
         let symbol = self.get_cross_file_symbol(sym_id)?.clone();
         let name = symbol.escaped_name.clone();
-        let intl_candidate = is_direct_actual_intl_interface_candidate_name(&name);
+        let intl_namespace_export =
+            self.symbol_is_actual_lib_namespace_export("Intl", &name, sym_id);
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
+        let proven_value_interface =
+            self.symbol_is_proven_direct_actual_lib_value_interface(sym_id, &symbol, &name);
         if symbol.has_any_flags(symbol_flags::VALUE)
-            && !is_direct_actual_lib_value_interface_name(&name)
+            && !proven_value_interface
+            && !allow_actual_lib_declaration_proof_bypass(&name)
         {
-            if intl_candidate {
+            if intl_namespace_export {
                 record_direct_actual_lib_intl_interface_outcome(
                     DirectActualLibIntlInterfaceOutcome::ValueInterfaceNotAdmitted,
                 );
@@ -451,10 +499,11 @@ impl<'a> CheckerState<'a> {
                 .insert_symbol_type(sym_id, (alias_type, params.clone()));
             return Some((alias_type, params));
         }
-        if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
+        if !proven_value_interface
+            && !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
             && !allow_actual_lib_declaration_proof_bypass(&name)
         {
-            if intl_candidate {
+            if intl_namespace_export {
                 record_direct_actual_lib_intl_interface_outcome(
                     DirectActualLibIntlInterfaceOutcome::DeclarationNotProven,
                 );
@@ -462,11 +511,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let mut intl_success_outcome = None;
-        let (direct_type, params) = if should_resolve_actual_lib_interface_with_params(&name) {
+        let has_interface_type_params =
+            self.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol);
+        if has_interface_type_params && !allow_generic_actual_lib_direct_fallback(&name) {
+            return None;
+        }
+        let (direct_type, params) = if has_interface_type_params {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
             if let Some(direct_type) = direct_type {
                 (direct_type, params)
-            } else if allow_iterator_symbol_direct_fallback(&name) {
+            } else if allow_generic_actual_lib_direct_fallback(&name) {
                 let direct_type = self.resolve_lib_interface_type_by_symbol(&name, sym_id)?;
                 let params = self.get_type_params_for_symbol(sym_id);
                 (direct_type, params)
@@ -474,20 +528,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
         } else {
-            let direct_type = if let Some(direct_type) = self.resolve_lib_type_by_name(&name) {
-                if is_direct_actual_intl_lib_interface_name(&name) {
-                    intl_success_outcome = Some(DirectActualLibIntlInterfaceOutcome::SuccessByName);
-                }
-                direct_type
-            } else {
-                if !is_direct_actual_intl_lib_interface_name(&name) {
-                    if intl_candidate {
-                        record_direct_actual_lib_intl_interface_outcome(
-                            DirectActualLibIntlInterfaceOutcome::IntlNameNotAdmitted,
-                        );
-                    }
-                    return None;
-                }
+            let direct_type = if intl_namespace_export {
                 let Some(namespace_sym_id) =
                     self.resolve_lib_namespace_export_symbol("Intl", &name)
                 else {
@@ -514,12 +555,14 @@ impl<'a> CheckerState<'a> {
                 intl_success_outcome =
                     Some(DirectActualLibIntlInterfaceOutcome::SuccessNamespaceExport);
                 direct_type
+            } else {
+                self.resolve_lib_type_by_name(&name)?
             };
             let params = self.get_type_params_for_symbol(sym_id);
             (direct_type, params)
         };
         if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
-            if is_direct_actual_intl_lib_interface_name(&name) {
+            if intl_namespace_export {
                 record_direct_actual_lib_intl_interface_outcome(
                     DirectActualLibIntlInterfaceOutcome::UnknownOrError,
                 );
@@ -1024,973 +1067,5 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
-    use crate::context::{CheckerContext, CheckerOptions, LibContext};
-    use crate::state::CheckerState;
-    use crate::test_utils::load_lib_files;
-    use std::sync::Arc;
-    use tsz_binder::BinderState;
-    use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
-    use tsz_parser::parser::{ParserState, syntax_kind_ext};
-    use tsz_solver::{TypeId, TypeInterner};
-
-    fn parse_interface_declarations(
-        source: &str,
-    ) -> (
-        tsz_parser::parser::node::NodeArena,
-        Vec<tsz_parser::NodeIndex>,
-    ) {
-        let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let arena = parser.get_arena().clone();
-        let source_file = arena
-            .get_source_file_at(root)
-            .expect("source file should parse");
-        let declarations = source_file
-            .statements
-            .nodes
-            .iter()
-            .copied()
-            .filter(|idx| {
-                arena
-                    .get(*idx)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
-            })
-            .collect();
-        (arena, declarations)
-    }
-
-    fn parse_bound_source(
-        source: &str,
-    ) -> (
-        Arc<tsz_parser::parser::node::NodeArena>,
-        Arc<BinderState>,
-        TypeInterner,
-    ) {
-        parse_bound_source_with_name("fixture.ts", source)
-    }
-
-    fn parse_bound_source_with_name(
-        file_name: &str,
-        source: &str,
-    ) -> (
-        Arc<tsz_parser::parser::node::NodeArena>,
-        Arc<BinderState>,
-        TypeInterner,
-    ) {
-        let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-        (
-            Arc::new(parser.get_arena().clone()),
-            Arc::new(binder),
-            TypeInterner::new(),
-        )
-    }
-
-    #[test]
-    fn detects_npm_and_source_tree_builtin_lib_names() {
-        assert!(is_builtin_lib_file_name("lib.es2024.d.ts"));
-        assert!(is_builtin_lib_file_name("lib.dom.d.ts"));
-        assert!(is_builtin_lib_file_name("es2024.d.ts"));
-        assert!(is_builtin_lib_file_name("es2024.full.d.ts"));
-        assert!(is_builtin_lib_file_name("dom.generated.d.ts"));
-        assert!(is_builtin_lib_file_name("dom.iterable.generated.d.ts"));
-        assert!(is_builtin_lib_file_name("webworker.asynciterable.d.ts"));
-        assert!(is_builtin_lib_file_name("decorators.legacy.d.ts"));
-    }
-
-    #[test]
-    fn does_not_treat_arbitrary_declaration_files_as_builtin_libs() {
-        assert!(!is_builtin_lib_file_name("react/index.d.ts"));
-        assert!(!is_builtin_lib_file_name(
-            "node_modules/@types/node/fs.d.ts"
-        ));
-        assert!(!is_builtin_lib_file_name("packages/foo/src/types.d.ts"));
-    }
-
-    #[test]
-    fn detects_external_package_declaration_paths() {
-        assert!(is_external_package_declaration_file_name(
-            "node_modules/react/index.d.ts"
-        ));
-        assert!(is_external_package_declaration_file_name(
-            "/repo/node_modules/@types/node/fs.d.ts"
-        ));
-        assert!(is_external_package_declaration_file_name(
-            r"C:\repo\node_modules\@types\node\fs.d.ts"
-        ));
-    }
-
-    #[test]
-    fn does_not_treat_local_declaration_paths_as_external_packages() {
-        assert!(!is_external_package_declaration_file_name(
-            "packages/foo/src/types.d.ts"
-        ));
-        assert!(!is_external_package_declaration_file_name(
-            "/repo/fixtures/node-modules-like/types.d.ts"
-        ));
-    }
-
-    #[test]
-    fn source_file_direct_interface_lowering_accepts_scope_independent_members() {
-        let (arena, declarations) = parse_interface_declarations(
-            r#"
-                interface Leaf {
-                    value: number;
-                    tag: "leaf";
-                    flags: true | false;
-                }
-            "#,
-        );
-        let declarations = vec![(declarations[0], &arena)];
-
-        assert!(
-            CheckerState::source_file_interface_declarations_are_direct_lowerable(&declarations,)
-        );
-    }
-
-    #[test]
-    fn source_file_direct_interface_lowering_rejects_scope_dependent_members() {
-        let (arena, declarations) = parse_interface_declarations(
-            r#"
-                interface Local { value: number; }
-                interface UsesLocal { value: Local; }
-            "#,
-        );
-        let declarations = vec![(declarations[1], &arena)];
-
-        assert!(
-            !CheckerState::source_file_interface_declarations_are_direct_lowerable(&declarations,)
-        );
-    }
-
-    #[test]
-    fn direct_source_file_variable_annotation_accepts_same_file_simple_interface() {
-        let (arena, binder, types) = parse_bound_source(
-            r#"
-                interface Leaf { value: number; tag: "leaf"; }
-                const leaf: Leaf = { value: 1, tag: "leaf" };
-            "#,
-        );
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let state = CheckerState { ctx };
-        let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
-
-        let result = state
-            .direct_source_file_variable_annotation_type(
-                leaf_sym,
-                binder.as_ref(),
-                arena.as_ref(),
-                true,
-            )
-            .expect("simple same-file interface annotation should lower directly");
-
-        assert!(
-            crate::query_boundaries::common::is_lazy_type(&types, result),
-            "variable annotation should preserve the interface lazy type"
-        );
-    }
-
-    #[test]
-    fn direct_source_file_variable_annotation_rejects_type_alias_reference() {
-        let (arena, binder, types) = parse_bound_source(
-            r#"
-                type Leaf = { value: number };
-                const leaf: Leaf = { value: 1 };
-            "#,
-        );
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let state = CheckerState { ctx };
-        let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
-
-        assert!(
-            state
-                .direct_source_file_variable_annotation_type(
-                    leaf_sym,
-                    binder.as_ref(),
-                    arena.as_ref(),
-                    true,
-                )
-                .is_none(),
-        );
-    }
-
-    #[test]
-    fn resolves_intl_namespace_exported_lib_interface_directly() {
-        let lib_files = load_lib_files(&["es5.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-        let sym_id = state
-            .resolve_lib_namespace_export_symbol("Intl", "CollatorOptions")
-            .expect("Intl.CollatorOptions export should resolve");
-
-        let ty = state
-            .resolve_lib_interface_type_by_symbol("Intl.CollatorOptions", sym_id)
-            .expect("Intl.CollatorOptions should lower directly");
-
-        assert_ne!(ty, TypeId::UNKNOWN);
-        assert_ne!(ty, TypeId::ERROR);
-    }
-
-    #[test]
-    fn direct_actual_lib_delegation_cache_preserves_type_params() {
-        let lib_files = load_lib_files(&["es2015.iterable.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        let sym_id = state
-            .ctx
-            .binder
-            .file_locals
-            .get("ArrayIterator")
-            .expect("ArrayIterator should resolve to a lib symbol");
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-
-        let (ty, params) = state
-            .direct_actual_lib_symbol_type(
-                sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                delegate_arena,
-                false,
-            )
-            .expect("ArrayIterator should lower through the direct lib path");
-
-        assert_ne!(ty, TypeId::UNKNOWN);
-        assert_ne!(ty, TypeId::ERROR);
-        assert_eq!(params.len(), 1, "ArrayIterator should expose T");
-
-        let (cached_ty, cached_params) = state
-            .ctx
-            .lib_delegation_cache
-            .symbol_type(sym_id)
-            .expect("direct lib path should populate the delegation cache");
-        assert_eq!(cached_ty, ty);
-        assert_eq!(
-            cached_params.len(),
-            params.len(),
-            "cache hits must preserve generic application metadata",
-        );
-    }
-
-    #[test]
-    fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
-        let lib_files = load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts", "es2020.intl.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        for (name, expected_params) in [
-            ("Date", 0),
-            ("DateTimeFormatOptions", 0),
-            ("Error", 0),
-            ("Function", 0),
-            ("Locale", 0),
-            ("NumberFormatOptions", 0),
-            ("NumberFormatOptionsCurrencyDisplayRegistry", 0),
-            ("NumberFormatOptionsSignDisplayRegistry", 0),
-            ("NumberFormatOptionsStyleRegistry", 0),
-            ("NumberFormatOptionsUseGroupingRegistry", 0),
-            ("Object", 0),
-            ("Promise", 1),
-            ("RegExp", 0),
-            ("Symbol", 0),
-            ("WeakMap", 2),
-            ("WeakSet", 1),
-        ] {
-            let sym_id = state
-                .ctx
-                .binder
-                .file_locals
-                .get(name)
-                .or_else(|| state.resolve_lib_namespace_export_symbol("Intl", name))
-                .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
-            let delegate_arena = state
-                .ctx
-                .binder
-                .symbol_arenas
-                .get(&sym_id)
-                .map(std::convert::AsRef::as_ref);
-
-            let Some((ty, params)) = state.direct_actual_lib_symbol_type(
-                sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                delegate_arena,
-                false,
-            ) else {
-                panic!("{name} should lower directly");
-            };
-
-            assert_ne!(ty, TypeId::UNKNOWN, "{name} must not lower to unknown");
-            assert_ne!(ty, TypeId::ERROR, "{name} must not lower to error");
-            assert_eq!(
-                params.len(),
-                expected_params,
-                "{name} should preserve type-parameter arity",
-            );
-            assert!(
-                state.ctx.lib_delegation_cache.contains_symbol_type(sym_id),
-                "{name} should populate the delegation cache",
-            );
-        }
-    }
-
-    #[test]
-    fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
-        let lib_files = load_lib_files(&["es2015.iterable.d.ts", "esnext.iterator.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        for name in ["Iterator", "IteratorObject"] {
-            let sym_id = state
-                .ctx
-                .binder
-                .file_locals
-                .get(name)
-                .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
-            let delegate_arena = state
-                .ctx
-                .binder
-                .symbol_arenas
-                .get(&sym_id)
-                .map(std::convert::AsRef::as_ref);
-
-            let (ty, params) = state
-                .direct_actual_lib_symbol_type(
-                    sym_id,
-                    CrossArenaSymbolMissSource::SymbolArena,
-                    delegate_arena,
-                    false,
-                )
-                .unwrap_or_else(|| panic!("{name} should lower through the direct lib path"));
-
-            assert_ne!(ty, TypeId::UNKNOWN, "{name} should not lower to UNKNOWN");
-            assert_ne!(ty, TypeId::ERROR, "{name} should not lower to ERROR");
-            assert!(
-                !params.is_empty(),
-                "{name} should preserve generic type parameters",
-            );
-        }
-    }
-
-    #[test]
-    fn direct_actual_lib_symbol_type_allows_iterator_without_declaration_arena_proof() {
-        let lib_files = load_lib_files(&["es2015.iterable.d.ts", "esnext.iterator.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-
-        let iterator_sym_id = binder
-            .file_locals
-            .get("Iterator")
-            .expect("Iterator should resolve to a lib symbol");
-        let iterator_decls = binder
-            .get_symbol(iterator_sym_id)
-            .expect("Iterator symbol should exist")
-            .declarations
-            .clone();
-        let declaration_arenas = std::sync::Arc::make_mut(&mut binder.declaration_arenas);
-        for decl_idx in iterator_decls {
-            declaration_arenas.remove(&(iterator_sym_id, decl_idx));
-        }
-
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&iterator_sym_id)
-            .map(std::convert::AsRef::as_ref);
-
-        let (ty, params) = state
-            .direct_actual_lib_symbol_type(
-                iterator_sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                delegate_arena,
-                false,
-            )
-            .expect("Iterator should still lower through the direct lib path");
-
-        assert_ne!(ty, TypeId::UNKNOWN, "Iterator should not lower to UNKNOWN");
-        assert_ne!(ty, TypeId::ERROR, "Iterator should not lower to ERROR");
-        assert!(
-            !params.is_empty(),
-            "Iterator should preserve generic type parameters",
-        );
-    }
-
-    #[test]
-    fn direct_actual_lib_symbol_type_handles_non_generic_alias_body_query() {
-        let lib_files = load_lib_files(&["es5.d.ts", "decorators.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        let sym_id = state
-            .ctx
-            .binder
-            .file_locals
-            .get("DecoratorMetadataObject")
-            .expect("DecoratorMetadataObject should resolve to a lib symbol");
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-
-        let (ty, params) = state
-            .direct_actual_lib_symbol_type(
-                sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                delegate_arena,
-                false,
-            )
-            .expect("non-generic actual-lib alias body should lower directly");
-
-        assert!(
-            params.is_empty(),
-            "DecoratorMetadataObject should be non-generic",
-        );
-        assert!(
-            crate::query_boundaries::common::lazy_def_id(&types, ty).is_none(),
-            "direct alias result should return the registered alias body, not the opaque Lazy alias",
-        );
-
-        let (cached_ty, cached_params) = state
-            .ctx
-            .lib_delegation_cache
-            .symbol_type(sym_id)
-            .expect("direct alias path should populate the delegation cache");
-        assert_eq!(cached_ty, ty);
-        assert!(cached_params.is_empty());
-    }
-
-    #[test]
-    fn direct_actual_lib_symbol_type_handles_property_key_alias_body_query() {
-        let lib_files = load_lib_files(&["es5.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        let sym_id = state
-            .ctx
-            .binder
-            .file_locals
-            .get("PropertyKey")
-            .expect("PropertyKey should resolve to a lib symbol");
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-        let symbol = state
-            .get_cross_file_symbol(sym_id)
-            .expect("PropertyKey symbol should be available")
-            .clone();
-
-        let proof = state
-            .direct_actual_lib_type_alias_body(
-                sym_id,
-                &symbol,
-                "PropertyKey",
-                delegate_arena.expect("PropertyKey should have a delegate arena"),
-            )
-            .expect("PropertyKey should have a proven actual-lib alias body");
-        assert_eq!(proof.outcome, DirectActualLibAliasBodyOutcome::Success);
-        assert!(proof.type_params.is_empty(), "PropertyKey is non-generic",);
-
-        let (ty, params) = state
-            .direct_actual_lib_symbol_type(
-                sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                delegate_arena,
-                false,
-            )
-            .expect("PropertyKey should lower through the direct alias body path");
-        assert_ne!(ty, TypeId::UNKNOWN);
-        assert_ne!(ty, TypeId::ERROR);
-        assert!(params.is_empty(), "PropertyKey should remain non-generic");
-    }
-
-    #[test]
-    fn direct_actual_lib_symbol_type_handles_record_generic_alias_body_query() {
-        let lib_files = load_lib_files(&["es5.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        let sym_id = state
-            .ctx
-            .binder
-            .file_locals
-            .get("Record")
-            .expect("Record should resolve to a lib symbol");
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-
-        let (ty, params) = state
-            .direct_actual_lib_symbol_type(
-                sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                delegate_arena,
-                false,
-            )
-            .expect("Record should lower through the direct alias body path");
-
-        assert_ne!(ty, TypeId::UNKNOWN);
-        assert_ne!(ty, TypeId::ERROR);
-        assert_eq!(params.len(), 2, "Record should expose K and T");
-    }
-
-    #[test]
-    fn direct_actual_lib_symbol_type_handles_intl_non_generic_alias_bodies() {
-        let lib_files = load_lib_files(&["es5.d.ts", "es2020.intl.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        for name in [
-            "LocalesArgument",
-            "NumberFormatOptionsCurrencyDisplay",
-            "NumberFormatOptionsSignDisplay",
-            "NumberFormatOptionsStyle",
-            "NumberFormatOptionsUseGrouping",
-            "UnicodeBCP47LocaleIdentifier",
-        ] {
-            let sym_id = state
-                .ctx
-                .binder
-                .file_locals
-                .get(name)
-                .or_else(|| state.resolve_lib_namespace_export_symbol("Intl", name))
-                .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
-            let delegate_arena = state
-                .ctx
-                .binder
-                .symbol_arenas
-                .get(&sym_id)
-                .map(std::convert::AsRef::as_ref)
-                .unwrap_or_else(|| panic!("{name} should have a delegate arena"));
-            let symbol = state
-                .get_cross_file_symbol(sym_id)
-                .unwrap_or_else(|| panic!("{name} symbol should be available"))
-                .clone();
-
-            let proof = state
-                .direct_actual_lib_type_alias_body(sym_id, &symbol, name, delegate_arena)
-                .unwrap_or_else(|| panic!("{name} should have a proven actual-lib alias body"));
-            assert_eq!(
-                proof.outcome,
-                DirectActualLibAliasBodyOutcome::Success,
-                "{name} should be admitted in the direct alias allowlist",
-            );
-            assert!(
-                proof.type_params.is_empty(),
-                "{name} should remain non-generic",
-            );
-
-            let (direct_ty, direct_params) = state
-                .direct_actual_lib_symbol_type(
-                    sym_id,
-                    CrossArenaSymbolMissSource::SymbolArena,
-                    Some(delegate_arena),
-                    false,
-                )
-                .unwrap_or_else(|| panic!("{name} should lower through direct alias path"));
-            assert_ne!(
-                direct_ty,
-                TypeId::UNKNOWN,
-                "{name} should not lower to UNKNOWN"
-            );
-            assert_ne!(direct_ty, TypeId::ERROR, "{name} should not lower to ERROR");
-            assert!(
-                direct_params.is_empty(),
-                "{name} should stay non-generic on direct path",
-            );
-
-            let (fallback_body, fallback_params) = state.compute_type_of_symbol(sym_id);
-            assert_eq!(
-                direct_ty, fallback_body,
-                "{name} direct alias body must match child-checker fallback body",
-            );
-            assert!(
-                fallback_params.is_empty(),
-                "{name} fallback should remain non-generic",
-            );
-        }
-    }
-
-    #[test]
-    fn direct_actual_lib_symbol_type_handles_readonly_generic_alias_body_query() {
-        let lib_files = load_lib_files(&["es5.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        let sym_id = state
-            .ctx
-            .binder
-            .file_locals
-            .get("Readonly")
-            .expect("Readonly should resolve to a lib symbol");
-        let delegate_arena = state
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-
-        let (ty, params) = state
-            .direct_actual_lib_symbol_type(
-                sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                delegate_arena,
-                false,
-            )
-            .expect("Readonly should lower through the direct alias body path");
-
-        assert_ne!(ty, TypeId::UNKNOWN);
-        assert_ne!(ty, TypeId::ERROR);
-        assert_eq!(params.len(), 1, "Readonly should expose T");
-
-        let (cached_ty, cached_params) = state
-            .ctx
-            .lib_delegation_cache
-            .symbol_type(sym_id)
-            .expect("direct alias path should populate the delegation cache");
-        assert_eq!(cached_ty, ty);
-        assert_eq!(
-            cached_params.len(),
-            params.len(),
-            "cache hits must preserve generic alias metadata",
-        );
-
-        let (cached_result_ty, cached_result_params) = state
-            .delegate_cross_arena_symbol_resolution(sym_id)
-            .expect("Readonly cache hit should resolve through lib delegation cache");
-        assert_eq!(cached_result_ty, ty);
-        assert_eq!(
-            cached_result_params.len(),
-            params.len(),
-            "Readonly cache hits must return the cached alias type params",
-        );
-    }
-
-    #[test]
-    fn direct_actual_lib_alias_proof_matches_mapped_utility_fallback_bodies() {
-        let lib_files = load_lib_files(&["es5.d.ts", "es2015.iterable.d.ts", "es2019.array.d.ts"]);
-        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-        let arena = Arc::new(parser.get_arena().clone());
-        let binder = Arc::new(binder);
-        let types = TypeInterner::new();
-        let ctx = CheckerContext::new(
-            arena.as_ref(),
-            binder.as_ref(),
-            &types,
-            "fixture.ts".to_string(),
-            CheckerOptions::default(),
-        );
-        let mut state = CheckerState { ctx };
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        state.ctx.set_lib_contexts(lib_contexts);
-        state.ctx.set_actual_lib_file_count(lib_files.len());
-
-        for (name, expected_param_count, expected_outcome) in [
-            ("FlatArray", 2, DirectActualLibAliasBodyOutcome::Success),
-            (
-                "IteratorResult",
-                2,
-                DirectActualLibAliasBodyOutcome::Success,
-            ),
-            ("Record", 2, DirectActualLibAliasBodyOutcome::Success),
-            ("Partial", 1, DirectActualLibAliasBodyOutcome::Success),
-            ("Readonly", 1, DirectActualLibAliasBodyOutcome::Success),
-        ] {
-            let sym_id = state
-                .ctx
-                .binder
-                .file_locals
-                .get(name)
-                .unwrap_or_else(|| panic!("{name} should resolve to a lib symbol"));
-            let delegate_arena = state
-                .ctx
-                .binder
-                .symbol_arenas
-                .get(&sym_id)
-                .map(std::convert::AsRef::as_ref)
-                .unwrap_or_else(|| panic!("{name} should have a delegate arena"));
-            let symbol = state
-                .get_cross_file_symbol(sym_id)
-                .unwrap_or_else(|| panic!("{name} symbol should be available"))
-                .clone();
-
-            let proof = state
-                .direct_actual_lib_type_alias_body(sym_id, &symbol, name, delegate_arena)
-                .unwrap_or_else(|| panic!("{name} should have a proven actual-lib alias body"));
-            assert_eq!(proof.outcome, expected_outcome);
-            assert_eq!(
-                proof.type_params.len(),
-                expected_param_count,
-                "{name} should expose its declared type params",
-            );
-
-            let (fallback_body, fallback_params) = state.compute_type_of_symbol(sym_id);
-            assert_eq!(
-                fallback_body, proof.body,
-                "{name} proof must match the existing child-checker fallback body",
-            );
-            assert_eq!(
-                fallback_params.len(),
-                proof.type_params.len(),
-                "{name} proof must preserve the same type-parameter arity as fallback",
-            );
-        }
-    }
-}
+#[path = "cross_file_direct_tests.rs"]
+mod tests;

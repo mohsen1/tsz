@@ -10,6 +10,49 @@ use tsz_binder::SymbolId;
 use super::CheckerContext;
 
 impl<'a> CheckerContext<'a> {
+    pub fn actual_lib_def_id_for_bare_name(&self, name: &str) -> Option<tsz_solver::DefId> {
+        if name.contains('.') {
+            return None;
+        }
+        // This lib alias is an option-dependent intrinsic: it lowers to
+        // `undefined` under `strictBuiltinIteratorReturn` and `any` otherwise.
+        // Returning a stable lib `DefId` here would bypass that policy.
+        if name == "BuiltinIteratorReturn" {
+            return None;
+        }
+
+        if let Some(sym_id) = self.actual_lib_symbol_id_for_bare_name(name) {
+            return Some(self.get_or_create_def_id_for_symbol_name(sym_id, name));
+        }
+
+        for lib_ctx in self.lib_contexts.iter().take(self.actual_lib_file_count) {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                return Some(self.get_or_create_def_id_for_symbol_name(sym_id, name));
+            }
+        }
+
+        None
+    }
+
+    fn actual_lib_symbol_id_for_bare_name(&self, name: &str) -> Option<SymbolId> {
+        if let Some(sym_id) = self.binder.file_locals.get(name)
+            && self.symbol_is_from_actual_or_cloned_lib(sym_id)
+        {
+            return Some(sym_id);
+        }
+
+        self.global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .map(|&(_, sym_id)| sym_id)
+                    .filter(|&sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
+                    .max_by_key(|sym_id| sym_id.0)
+            })
+    }
+
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 

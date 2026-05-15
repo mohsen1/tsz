@@ -413,6 +413,17 @@ impl<'a> CheckerState<'a> {
             if let Some(val_node) = self.ctx.arena.get(prop_value_idx)
                 && val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
+                let evaluated_target_prop_type = self.evaluate_type_with_env(target_prop_type);
+                if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                    self.ctx.types,
+                    target_prop_type,
+                ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                    self.ctx.types,
+                    evaluated_target_prop_type,
+                ) {
+                    continue;
+                }
+
                 let diags_before = self.ctx.diagnostics.len();
                 self.check_object_literal_excess_properties(
                     prop_value_type,
