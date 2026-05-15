@@ -3492,7 +3492,7 @@ fn ts2322_function_return_mismatch_does_not_double_elaborate_with_outer_source()
 fn ts2322_function_return_mismatch_param_name_independent() {
     // Same rule as the test above, but with different binding names —
     // locks the rule as structural per the anti-hardcoding directive
-    // in CLAUDE.md §25.
+    // in .claude/CLAUDE.md §25.
     let source = r#"
         declare let alpha: (input: Object) => number;
         declare let beta: (input: Object) => Object;

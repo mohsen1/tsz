@@ -130,7 +130,7 @@ const c: Public = {
 
 #[test]
 fn omit_with_alternate_interface_and_key_names() {
-    // Anti-hardcoding (CLAUDE.md §25): rule must not depend on identifier
+    // Anti-hardcoding (.claude/CLAUDE.md §25): rule must not depend on identifier
     // spellings.
     let source = r#"
 interface User {

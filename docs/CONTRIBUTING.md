@@ -14,7 +14,7 @@ Open a draft PR to run the light CI suite: lint, dist-fast build, and unit
 tests. Mark the PR ready for review when it should run the heavy suites:
 WASM, conformance, emit, fourslash, and snapshot gates.
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the full development guide.
 
 ## How tsz Works
 
@@ -35,7 +35,7 @@ source -> scanner -> parser -> binder -> checker <-> solver -> emitter
 
 The most important rule: **if code computes type semantics, it belongs in the Solver.** The Checker is thin orchestration — it asks questions, the Solver answers them.
 
-See [docs/architecture/BOUNDARIES.md](docs/architecture/BOUNDARIES.md) for the full boundary model.
+See [BOUNDARIES.md](architecture/BOUNDARIES.md) for the full boundary model.
 
 ## What to Work On
 
@@ -73,8 +73,8 @@ coordination notes.
 ### Architecture Contributions
 
 Before making changes, review:
-- [docs/architecture/CONTRIBUTION_CHECKLIST.md](docs/architecture/CONTRIBUTION_CHECKLIST.md)
-- [docs/architecture/NORTH_STAR.md](docs/architecture/NORTH_STAR.md)
+- [BOUNDARIES.md](architecture/BOUNDARIES.md) and [QUERY_BOUNDARY_INVENTORY.md](architecture/QUERY_BOUNDARY_INVENTORY.md)
+- [NORTH_STAR.md](architecture/NORTH_STAR.md)
 
 Key questions for every semantic PR:
 1. Is this `WHAT` (type algorithm → Solver) or `WHERE` (orchestration → Checker)?

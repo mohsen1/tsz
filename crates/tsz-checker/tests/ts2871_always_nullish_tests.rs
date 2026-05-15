@@ -47,7 +47,7 @@ fn null_then_undefined_nullish_chain_emits_ts2871() {
 }
 
 /// Reversed order: `(undefined ?? null)` is also always nullish. Per
-/// CLAUDE.md §25 anti-hardcoding, the rule must work both ways.
+/// .claude/CLAUDE.md §25 anti-hardcoding, the rule must work both ways.
 #[test]
 fn undefined_then_null_nullish_chain_emits_ts2871() {
     let diags = check_source_codes("const r = (undefined ?? null) ?? 42;\n");

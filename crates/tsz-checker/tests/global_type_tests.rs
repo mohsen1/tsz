@@ -595,8 +595,7 @@ class C {
 /// ES2015 libs are loaded in tests or the Symbol resolution bug is fixed.
 ///
 /// KNOWN BUG: When running with full lib files (CLI), `Symbol()` incorrectly resolves to
-/// `RTCEncodedVideoFrameType` instead of symbol primitive. See
-/// `docs/conformance/bug-symbol-resolution.md`.
+/// `RTCEncodedVideoFrameType` instead of symbol primitive.
 /// With lib files loaded, `Symbol()` should resolve and produce the `symbol`
 /// primitive type without emitting global-name diagnostics.
 #[test]

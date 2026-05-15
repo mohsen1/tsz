@@ -20318,7 +20318,7 @@ fn test_return_type_union_distributive() {
 
 // ============================================================================
 // Distributive Conditional Type Stress Tests
-// Per GOALS.md Objective 2: Distributive conditional types over unions
+// Historical notes: evaluate conditional types over unions.
 // ============================================================================
 
 #[test]

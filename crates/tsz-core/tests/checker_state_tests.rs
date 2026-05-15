@@ -32908,7 +32908,8 @@ const list: List<number> = { value: 1, next: { value: 2, next: null } };
 // =============================================================================
 
 /// Test that properties are checked against own index signatures (not inherited).
-/// This is the main failing case identified in docs/ts2411-remaining-issues.md
+/// This is a known TS2411 regression path currently tracked in TODO-style
+/// conformance notes and expected to be closed as roadmap items are resolved.
 #[test]
 fn test_ts2411_own_string_index_signature() {
     use crate::checker::diagnostics::diagnostic_codes;

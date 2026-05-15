@@ -1618,7 +1618,7 @@ fn test_no_push_diagnostic_outside_error_reporter() {
     );
 }
 
-/// Enforce the 2000 LOC limit for checker files (CLAUDE.md §12).
+/// Enforce the 2000 LOC limit for checker files (.claude/CLAUDE.md §12).
 ///
 /// Files exceeding the limit are grandfathered with a ceiling that can only shrink.
 /// New files must stay under 2000 lines.
@@ -2030,7 +2030,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 // Prompt 4.1 — Architecture Invariant Coverage Checklist
 // =============================================================================
 //
-// CLAUDE.md Rule -> Test Coverage mapping:
+// .claude/CLAUDE.md Rule -> Test Coverage mapping:
 //
 // SECTION 3: Responsibility Split
 // - [x] Scanner: no downstream imports                    -> test_scanner_must_not_import_downstream_crates
@@ -2108,7 +2108,7 @@ fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// CLAUDE.md §4: Binder must not import Solver.
+/// .claude/CLAUDE.md §4: Binder must not import Solver.
 /// The binder produces symbols, scopes, and flow graphs without type computation.
 #[test]
 fn test_binder_must_not_import_solver() {
@@ -2134,12 +2134,12 @@ fn test_binder_must_not_import_solver() {
 
     assert!(
         violations.is_empty(),
-        "Binder must not import Solver (CLAUDE.md §4). Violations:\n  {}",
+        "Binder must not import Solver (.claude/CLAUDE.md §4). Violations:\n  {}",
         violations.join("\n  ")
     );
 }
 
-/// CLAUDE.md §4: Emitter must not import Checker internals.
+/// .claude/CLAUDE.md §4: Emitter must not import Checker internals.
 /// The emitter prints/transforms output; no on-the-fly semantic type validation.
 #[test]
 fn test_emitter_must_not_import_checker_internals() {
@@ -2165,7 +2165,7 @@ fn test_emitter_must_not_import_checker_internals() {
 
     assert!(
         violations.is_empty(),
-        "Emitter must not import Checker internals (CLAUDE.md §4/§13). Violations:\n  {}",
+        "Emitter must not import Checker internals (.claude/CLAUDE.md §4/§13). Violations:\n  {}",
         violations.join("\n  ")
     );
 }
@@ -2295,7 +2295,7 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
     );
 }
 
-/// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
+/// .claude/CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]
 fn test_scanner_must_not_import_downstream_crates() {
@@ -2338,12 +2338,12 @@ fn test_scanner_must_not_import_downstream_crates() {
 
     assert!(
         violations.is_empty(),
-        "Scanner must not import downstream crates (CLAUDE.md §4/§8). Violations:\n  {}",
+        "Scanner must not import downstream crates (.claude/CLAUDE.md §4/§8). Violations:\n  {}",
         violations.join("\n  ")
     );
 }
 
-/// CLAUDE.md §4: Parser must not import Binder/Checker/Solver.
+/// .claude/CLAUDE.md §4: Parser must not import Binder/Checker/Solver.
 /// The parser produces syntax-only AST; no semantic awareness.
 #[test]
 fn test_parser_must_not_import_binder_checker_solver() {
@@ -2380,7 +2380,7 @@ fn test_parser_must_not_import_binder_checker_solver() {
 
     assert!(
         violations.is_empty(),
-        "Parser must not import Binder/Checker/Solver (CLAUDE.md §4/§9). Violations:\n  {}",
+        "Parser must not import Binder/Checker/Solver (.claude/CLAUDE.md §4/§9). Violations:\n  {}",
         violations.join("\n  ")
     );
 }
@@ -2389,7 +2389,7 @@ fn test_parser_must_not_import_binder_checker_solver() {
 // Prompt 4.3 — Solver Encapsulation Tests
 // =============================================================================
 
-/// CLAUDE.md §4/§6: No `TypeKey` usage in checker code.
+/// .claude/CLAUDE.md §4/§6: No `TypeKey` usage in checker code.
 /// `TypeKey` is solver-internal (crate-private); checker must use TypeId/TypeData.
 #[test]
 fn test_no_typekey_in_checker_code() {
@@ -2422,12 +2422,12 @@ fn test_no_typekey_in_checker_code() {
 
     assert!(
         violations.is_empty(),
-        "TypeKey is solver-internal and must not appear in checker code (CLAUDE.md §4/§6). Violations:\n  {}",
+        "TypeKey is solver-internal and must not appear in checker code (.claude/CLAUDE.md §4/§6). Violations:\n  {}",
         violations.join("\n  ")
     );
 }
 
-/// CLAUDE.md §11: No solver cache access types (`RelationCacheProbe`, etc.) in checker code.
+/// .claude/CLAUDE.md §11: No solver cache access types (`RelationCacheProbe`, etc.) in checker code.
 /// Solver owns algorithmic caches; checker must not access them directly.
 #[test]
 fn test_no_solver_cache_types_in_checker() {
@@ -2467,12 +2467,12 @@ fn test_no_solver_cache_types_in_checker() {
 
     assert!(
         violations.is_empty(),
-        "Solver cache types must not appear in checker code (CLAUDE.md §11). Violations:\n  {}",
+        "Solver cache types must not appear in checker code (.claude/CLAUDE.md §11). Violations:\n  {}",
         violations.join("\n  ")
     );
 }
 
-/// CLAUDE.md §4/§22: No direct `SubtypeChecker` construction outside `query_boundaries`.
+/// .claude/CLAUDE.md §4/§22: No direct `SubtypeChecker` construction outside `query_boundaries`.
 /// Relation checks should go through boundary helpers.
 #[test]
 fn test_no_direct_subtype_checker_construction_outside_query_boundaries() {
@@ -2501,7 +2501,7 @@ fn test_no_direct_subtype_checker_construction_outside_query_boundaries() {
 
     assert!(
         violations.is_empty(),
-        "SubtypeChecker must not be constructed outside query_boundaries (CLAUDE.md §4/§22). \
+        "SubtypeChecker must not be constructed outside query_boundaries (.claude/CLAUDE.md §4/§22). \
          Route relation checks through boundary helpers instead. Violations:\n  {}",
         violations.join("\n  ")
     );
@@ -2511,7 +2511,7 @@ fn test_no_direct_subtype_checker_construction_outside_query_boundaries() {
 // Prompt 4.4 — Structural Health Tests
 // =============================================================================
 
-/// CLAUDE.md §12: Track `query_boundaries` coverage ratio.
+/// .claude/CLAUDE.md §12: Track `query_boundaries` coverage ratio.
 /// This is a directional metric -- warns if the ratio of direct solver imports
 /// to `query_boundaries` usage is too high.
 #[test]
@@ -4128,7 +4128,7 @@ fn test_error_reporter_does_not_perform_type_construction() {
 
 /// Guard that the number of checker source files exceeding ~2000 LOC does not increase.
 ///
-/// Per CLAUDE.md section 12: "Checker files should stay under ~2000 LOC."
+/// Per .claude/CLAUDE.md section 12: "Checker files should stay under ~2000 LOC."
 /// This ratchet captures the current state and prevents
 /// regression. As files are split, this ceiling must be lowered.
 ///
@@ -4215,7 +4215,7 @@ fn test_checker_file_size_ceiling() {
     );
 }
 
-/// CLAUDE.md §4: Lowering must not import Checker or Emitter.
+/// .claude/CLAUDE.md §4: Lowering must not import Checker or Emitter.
 /// tsz-lowering is a bridge from AST to solver types; it should only depend on
 /// parser, binder, solver, and common. Importing the checker or emitter would
 /// create a backwards dependency in the pipeline.
@@ -4257,7 +4257,7 @@ fn test_lowering_must_not_import_checker_or_emitter() {
 
     assert!(
         violations.is_empty(),
-        "Lowering must not import Checker or Emitter (CLAUDE.md §4). \
+        "Lowering must not import Checker or Emitter (.claude/CLAUDE.md §4). \
          Lowering bridges AST to solver types; it should not depend on \
          downstream pipeline stages. Violations:\n  {}",
         violations.join("\n  ")
@@ -4266,7 +4266,7 @@ fn test_lowering_must_not_import_checker_or_emitter() {
 
 /// Guard that CLI and ancillary crates consume checker only through public API paths.
 ///
-/// Per CLAUDE.md section 4: "CLI and ancillary crates must consume checker diagnostics
+/// Per .claude/CLAUDE.md section 4: "CLI and ancillary crates must consume checker diagnostics
 /// via `tsz_checker::diagnostics`."
 ///
 /// This prevents the CLI from reaching into checker internals (types, state, flow,
@@ -4735,7 +4735,7 @@ fn test_def_mapping_and_speculation_do_not_cross_reference() {
 ///
 /// `CompatChecker` is the solver's Lawyer layer. Checker code should never construct
 /// it directly — the relation should flow through `query_boundaries/assignability`
-/// via `execute_relation()` and related helpers (CLAUDE.md §5, §22).
+/// via `execute_relation()` and related helpers (.claude/CLAUDE.md §5, §22).
 #[test]
 fn test_no_direct_compat_checker_construction_outside_query_boundaries() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -4775,7 +4775,7 @@ fn test_no_direct_compat_checker_construction_outside_query_boundaries() {
     assert!(
         violations.is_empty(),
         "Direct CompatChecker construction found outside query_boundaries/. \
-         Route relation checks through query_boundaries/assignability instead (CLAUDE.md §5, §22).\n\
+         Route relation checks through query_boundaries/assignability instead (.claude/CLAUDE.md §5, §22).\n\
          Violations:\n{}",
         violations.join("\n")
     );

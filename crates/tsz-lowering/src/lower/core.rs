@@ -944,7 +944,7 @@ impl<'a> TypeLowering<'a> {
             // Return ERROR for missing type annotations to prevent "Any poisoning".
             // This forces explicit type annotations and surfaces bugs early instead
             // of silently accepting invalid assignments via any/unknown defaults.
-            // Per SOLVER.md Section 6.4: Error propagation prevents cascading noise.
+            // Error propagation prevents cascading noise by surfacing failures eagerly.
             return TypeId::ERROR;
         }
 
@@ -1096,7 +1096,7 @@ impl<'a> TypeLowering<'a> {
 
             // =========================================================================
             // Unknown/unsupported - return ERROR to propagate type checking errors
-            // This aligns with PROJECT_DIRECTION.md: errors should not be silently accepted
+            // This aligns with project direction: errors should not be silently accepted.
             // =========================================================================
             _ => TypeId::ERROR,
         }

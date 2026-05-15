@@ -1581,9 +1581,8 @@ impl<'a> CheckerState<'a> {
             // rewritten to ANY for parity with tsc's display policy) instead
             // of the alias.
             //
-            // See `compiler/pushTypeGetTypeOfAlias.ts` for the symptom and
-            // `memory/project_pushTypeGetTypeOfAlias_modulenamespace_display.md`
-            // for the iter-20/22/24/28/30/32 investigation trail.
+            // See `compiler/pushTypeGetTypeOfAlias.ts` for the symptom and related
+            // internal issue notes for the iter-20/22/24/28/30/32 investigation trail.
             if self.ctx.namespace_module_names.contains_key(&type_id) {
                 let recomputed_surface_type = {
                     let current_file_idx = self.ctx.current_file_idx;

@@ -17,7 +17,7 @@
 //! the `Symbol` reference is *not* shadowed by a local declaration.
 //!
 //! These tests intentionally use multiple shadowing identifier names where
-//! the directive in CLAUDE.md §25 calls for it; the helper must drive its
+//! the directive in .claude/CLAUDE.md §25 calls for it; the helper must drive its
 //! decision off binder identity, not the spelling of any particular
 //! variable.
 

@@ -51,7 +51,7 @@ const PointValue = { origin: { x: 0, y: 0 } as PointType };
 
 #[test]
 fn merged_alias_with_alternate_name() {
-    // Anti-hardcoding (CLAUDE.md §25): rule must not depend on the
+    // Anti-hardcoding (.claude/CLAUDE.md §25): rule must not depend on the
     // identifier spelling.
     let source = r#"
 type Shape = { side: number };

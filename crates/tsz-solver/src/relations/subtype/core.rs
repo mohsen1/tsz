@@ -2168,7 +2168,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =======================================================================
         // In TypeScript, numeric enums are "open" - they allow bidirectional
         // assignability with the number type. This is unsound but matches tsc behavior.
-        // See docs/specs/TS_UNSOUNDNESS_CATALOG.md Item #7.
+        // See unsoundness audit rule metadata in `crates/tsz-solver/src/unsoundness_audit.rs`.
 
         // Helper to extract DefId from Enum or Lazy types
         let get_enum_def_id = |type_id: TypeId| -> Option<DefId> {

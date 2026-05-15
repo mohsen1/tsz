@@ -315,7 +315,7 @@ function c(...{0: a, length, 3: d}: [boolean, string, number]) { }
 /// Companion regression: the bounds check is structural (per-tuple), not
 /// keyed off the user's identifier names. Different binding names with a
 /// different out-of-bounds key still surface TS2493 (locks the rule per
-/// CLAUDE.md §25 anti-hardcoding directive).
+/// .claude/CLAUDE.md §25 anti-hardcoding directive).
 #[test]
 fn ts2493_object_binding_pattern_numeric_property_on_tuple_param_name_independent() {
     let diagnostics = check_source_diagnostics(

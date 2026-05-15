@@ -584,7 +584,7 @@ const first = xs.firstOrUndefined();
 /// narrowing the variable type to the assigned type.
 ///
 /// Complexity: HIGH - requires binder/checker coordination
-/// See: docs/conformance-work-session-summary.md
+/// See: the failing-reporter notes in the checker conformance issue tracker.
 #[test]
 fn test_flow_narrowing_from_invalid_assignment() {
     let diagnostics: Vec<_> = compile_and_get_diagnostics(

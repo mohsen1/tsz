@@ -1,8 +1,8 @@
 //! Persistent on-disk snapshot of parsed + bound lib files.
 //!
 //! See `docs/plan/PERFORMANCE_PLAN.md` for the full campaign,
-//! and `/Users/mohsen/claude-configs/de-at-2/plans/floating-crunching-treasure.md`
-//! for the implementation plan. This is PR #4 — the disk-backed cache
+//! and internal implementation planning notes for the disk-backed cache rollout.
+//! This is PR #4 — the disk-backed cache
 //! wired through the binder serde foundation that landed in PRs #1-#3.
 //!
 //! # Format

@@ -898,7 +898,7 @@ const item1: Item = { kind: "b", subkind: 1 };
 /// Same rule with different discriminator property names (`tag` / `extra`)
 /// — confirms the fix is keyed on the *shape* of the discriminant (one
 /// non-uniform unit-typed property), not on any specific identifier (per
-/// CLAUDE.md §25 anti-hardcoding checklist).
+/// .claude/CLAUDE.md §25 anti-hardcoding checklist).
 #[test]
 fn test_discriminated_union_keeps_lacking_members_alt_names() {
     let source = r#"
@@ -952,7 +952,7 @@ exports.blah = exports.someProp;
 
 /// Same structural rule with a different export property name. Confirms
 /// the fix is keyed on the *shape* (callable apparent type with merged
-/// properties), not on any specific identifier (per CLAUDE.md §25
+/// properties), not on any specific identifier (per .claude/CLAUDE.md §25
 /// anti-hardcoding checklist).
 #[test]
 fn test_cjs_module_exports_callable_renders_structurally_alt_name() {

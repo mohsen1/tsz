@@ -44,7 +44,7 @@ function assertComplete(d: Data): asserts d is Data & { status: "complete"; valu
 
 #[test]
 fn intersection_predicate_with_alternate_names() {
-    // Anti-hardcoding (CLAUDE.md §25): rule is structural, not name-based.
+    // Anti-hardcoding (.claude/CLAUDE.md §25): rule is structural, not name-based.
     let source = r#"
 interface Box {
   kind: "A" | "B";

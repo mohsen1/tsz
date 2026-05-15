@@ -8,7 +8,7 @@
 //!
 //! These tests intentionally vary type-parameter and identifier names to
 //! confirm the fix is not keyed on user-chosen spellings (anti-hardcoding
-//! per CLAUDE.md §25 / §26).
+//! per .claude/CLAUDE.md §25 / §26).
 
 use tsz_checker::test_utils::check_source_codes;
 

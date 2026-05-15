@@ -38,7 +38,7 @@ fn constructor_param_decorator_with_string_key_emits_ts1239() {
     );
 }
 
-/// CLAUDE.md §25 anti-hardcoding: the structural rule must not depend on
+/// .claude/CLAUDE.md §25 anti-hardcoding: the structural rule must not depend on
 /// the spelling of the decorator function or the class. Same shape,
 /// different names.
 #[test]

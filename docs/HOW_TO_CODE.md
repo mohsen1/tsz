@@ -28,9 +28,8 @@ match db.classify_iterable(type_id) {
 }
 ```
 
-See: `docs/architecture/BOUNDARIES.md` for the canonical Solver/Checker
-boundary policy (the `SOLVER_REFACTORING_PROPOSAL.md` referenced here
-historically was deleted in the docs cleanup; BOUNDARIES.md now subsumes it).
+See: [`BOUNDARIES.md`](architecture/BOUNDARIES.md) for the canonical Solver/Checker
+boundary policy.
 
 ### Solver owns all type logic
 

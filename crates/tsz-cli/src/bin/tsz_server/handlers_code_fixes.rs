@@ -866,7 +866,7 @@ impl Server {
             // JSDoc `@type {function(...)}` annotations. tsz used to inject
             // empty-changes placeholders gated on a hardcoded list of
             // conformance fixture filenames (issue #3848). The
-            // filename-driven branch was a CLAUDE.md §25 anti-hardcoding
+            // filename-driven branch was a .claude/CLAUDE.md §25 anti-hardcoding
             // pattern and produced different protocol responses for the
             // same source text under different file names; deleted in
             // favor of always matching tsserver.

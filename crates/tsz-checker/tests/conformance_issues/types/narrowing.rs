@@ -949,7 +949,7 @@ class C extends B {
 /// Root cause: Control flow analysis not recognizing never-returning patterns
 ///
 /// Complexity: HIGH - requires improving control flow analysis
-/// See: docs/conformance-analysis-slice3.md
+/// See: the conformance narrowing tracking notes for current follow-up work.
 #[test]
 fn test_narrowing_after_never_returning_function() {
     let diagnostics = compile_and_get_diagnostics(

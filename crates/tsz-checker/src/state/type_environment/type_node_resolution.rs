@@ -70,7 +70,7 @@ impl<'a> CheckerState<'a> {
         // UNION_TYPE containing typeof, TYPE_LITERAL), we still use CheckerState's
         // specialized methods to ensure proper symbol resolution.
         //
-        // See: docs/TS2304_SMART_CACHING_FIX.md
+        // See: the caching guidance in TS2304-focused implementation notes.
 
         // First check if this is a type that needs special handling with binder resolution
         if let Some(node) = self.ctx.arena.get(idx) {

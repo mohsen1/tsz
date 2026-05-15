@@ -11,7 +11,7 @@
 //! Both repros from the issue must produce zero diagnostics. The tests
 //! also vary type-parameter and parameter names so a future regression
 //! cannot pass by hardcoding the original spelling
-//! (CLAUDE.md §25 — anti-hardcoding directive).
+//! (.claude/CLAUDE.md §25 — anti-hardcoding directive).
 
 use tsz_checker::test_utils::check_source_diagnostics;
 

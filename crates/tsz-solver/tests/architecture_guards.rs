@@ -1,6 +1,6 @@
 //! Cross-crate architecture guard tests.
 //!
-//! These tests enforce structural invariants from CLAUDE.md that cannot be
+//! These tests enforce structural invariants from .claude/CLAUDE.md that cannot be
 //! expressed through Rust's module system or Cargo dependency declarations.
 //!
 //! Guards:
@@ -33,8 +33,8 @@ fn walk_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
 
 /// Guard that the emitter crate does not perform on-the-fly semantic type validation.
 ///
-/// Per CLAUDE.md section 13: "No on-the-fly semantic type validation."
-/// Per CLAUDE.md section 4: "Emitter importing Checker internals for semantic checks"
+/// Per .claude/CLAUDE.md section 13: "No on-the-fly semantic type validation."
+/// Per .claude/CLAUDE.md section 4: "Emitter importing Checker internals for semantic checks"
 /// is a forbidden shortcut.
 ///
 /// The emitter may use solver read-only APIs (`TypeInterner`, `type_queries`, visitor)
@@ -102,7 +102,7 @@ fn emitter_must_not_use_semantic_validation_apis() {
 
     assert!(
         violations.is_empty(),
-        "Emitter must not perform semantic type validation (CLAUDE.md section 13). \
+        "Emitter must not perform semantic type validation (.claude/CLAUDE.md section 13). \
          The emitter may use read-only solver APIs (TypeInterner, type_queries, visitor) \
          but must NOT use relation/compatibility/checker APIs. \
          Violations found:\n{}",
@@ -116,9 +116,9 @@ fn emitter_must_not_use_semantic_validation_apis() {
 
 /// Guard that the binder crate does not import solver or checker types.
 ///
-/// Per CLAUDE.md section 4: "Binder importing Solver for semantic decisions"
+/// Per .claude/CLAUDE.md section 4: "Binder importing Solver for semantic decisions"
 /// is a forbidden shortcut.
-/// Per CLAUDE.md section 10: "No type inference/subtyping logic in binder."
+/// Per .claude/CLAUDE.md section 10: "No type inference/subtyping logic in binder."
 ///
 /// This is enforced at the Cargo dependency level, but this test provides
 /// a source-level belt-and-suspenders check and clearer error messages.
@@ -178,7 +178,7 @@ fn binder_must_not_import_solver_or_checker() {
 
     assert!(
         violations.is_empty(),
-        "Binder must not import solver or checker (CLAUDE.md sections 4, 10). \
+        "Binder must not import solver or checker (.claude/CLAUDE.md sections 4, 10). \
          The binder produces symbols, scopes, and control-flow graphs without \
          type computation. Violations found:\n{}",
         violations.join("\n")

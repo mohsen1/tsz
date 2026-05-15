@@ -52,7 +52,7 @@ fn read_baseline(key: &str) -> usize {
 }
 
 /// `TSZ_FILE_SIZE_RATCHET_UPDATE=1` mode: rewrite the baseline file with the
-/// observed `(key, value)` pairs and skip the failing assertion. The CLAUDE.md
+/// observed `(key, value)` pairs and skip the failing assertion. The .claude/CLAUDE.md
 /// pre-existing convention is that ratchet bumps are explicit, so we do not
 /// auto-rewrite on every run — only when the developer opts in.
 fn ratchet_update_enabled() -> bool {

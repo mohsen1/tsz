@@ -1,7 +1,7 @@
 //! Type System Law Tests
 //!
 //! This module tests the mathematical properties that the type system must satisfy.
-//! These are the foundational laws from SOLVER.md Section 1 and `SOLVER_ROADMAP.md` Section 7.2.
+//! These are foundational type-system laws used by the Judge layer.
 //!
 //! ## Laws Tested
 //! - **Reflexivity**: T ≤ T (every type is a subtype of itself)

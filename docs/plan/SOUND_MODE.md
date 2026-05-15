@@ -264,7 +264,7 @@ This keeps the `sound` naming family coherent without prematurely committing to 
 
 ## Executive Summary
 
-TypeScript is **intentionally unsound**. The TypeScript team made deliberate design choices to prioritize developer ergonomics over type-theoretic correctness. These choices are documented in [docs/specs/TS_UNSOUNDNESS_CATALOG.md](../specs/TS_UNSOUNDNESS_CATALOG.md).
+TypeScript is **intentionally unsound**. The TypeScript team made deliberate design choices to prioritize developer ergonomics over type-theoretic correctness, documented in the [TS_UNSOUNDNESS_CATALOG.md](../specs/TS_UNSOUNDNESS_CATALOG.md).
 
 tsz's **Judge/Lawyer architecture** separates concerns:
 - **Judge (Core Solver)**: Implements strict, sound set-theory semantics
@@ -1180,7 +1180,9 @@ If tsz rewrites or overlays declarations internally, trust and reproducibility s
 
 The object store should be **shared** between external packages and referenced-project emitted declarations. They should use the same `objects/<entry_hash>/` layout, the same manifest schema, and the same atomic commit protocol. The thing that differs is the tagged `subject` identity and the lock scope, not the storage backend. This keeps cache GC, debug tooling, and correctness rules unified while still preventing package/project collisions.
 
-(`docs/plan/SOUND_OVERLAY_CACHE_NOTE.md` was referenced here historically as the source of the canonical `resolution_profile_hash` payload, the package-vs-project subject split, and a minimal Rust schema prototype, but it was never landed; treat the placeholder shape below as the only durable artifact until the note is written.)
+This section treats the placeholder shape below as the durable artifact for now. The
+note that originally described the canonical `resolution_profile_hash` payload, subject
+split, and schema prototype has not yet been written.
 
 The current placeholder shape (`react@18.3.1` + `transform_version` + one `output_hash`) is not strong enough for real reuse. It can alias patched installs, stale `exports` maps, different module-resolution contexts, and partial writes.
 

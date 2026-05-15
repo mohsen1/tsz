@@ -4,7 +4,7 @@
 //! and the core structural subtype checking ("Judge" layer). It applies TypeScript-
 //! specific business logic, including nuanced rules for `any` propagation.
 //!
-//! ## Judge vs. Lawyer Architecture (SOLVER.md Section 8)
+//! ## Judge vs. Lawyer Architecture
 //!
 //! - **Judge (SubtypeChecker):** Implements strict, sound set theory semantics.
 //!   It knows nothing about TypeScript legacy behavior.

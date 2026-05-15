@@ -310,7 +310,7 @@ mod binding_contextual_type_tests {
     /// Same rule with different identifier names (`outer/inner` instead of
     /// `a/b`) — confirms the fix is keyed on the *structure* (nested binding
     /// pattern with optional property), not on any specific identifier name
-    /// (per CLAUDE.md §25 anti-hardcoding review checklist).
+    /// (per .claude/CLAUDE.md §25 anti-hardcoding review checklist).
     #[test]
     fn nested_destructured_optional_property_propagates_undefined_alt_names() {
         let codes = check_source_codes(

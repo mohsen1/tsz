@@ -49,7 +49,7 @@ let eq2 = b6 === a6;
 
 /// Issue: Computed property destructuring produces false TS2349
 ///
-/// From: computed-property-destructuring.md
+/// From: historical computed-property destructuring tracking notes.
 /// Expected: No TS2349 errors
 /// Actual: TS2349 "This expression is not callable" errors
 ///
@@ -137,7 +137,7 @@ let bar4: any;
 
 /// Issue: Contextual typing for generic function parameters
 ///
-/// From: contextual-typing-generics.md
+/// From: historical contextual-typing generics tracking notes.
 /// Expected: No TS7006 errors (parameter gets contextual type from generic function type)
 /// Actual: TS7006 "Parameter implicitly has 'any' type"
 ///

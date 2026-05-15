@@ -59,7 +59,7 @@ fn for_of_custom_iterable_es5_emits_ts2802() {
     );
 }
 
-/// Per CLAUDE.md §25 anti-hardcoding: the rule must not depend on
+/// Per .claude/CLAUDE.md §25 anti-hardcoding: the rule must not depend on
 /// the spelling of the class.
 #[test]
 fn for_of_custom_iterable_es5_emits_ts2802_independent_of_class_name() {

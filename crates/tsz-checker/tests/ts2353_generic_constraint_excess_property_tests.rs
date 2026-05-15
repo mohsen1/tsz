@@ -201,7 +201,7 @@ const name0: string = m[0].name;
 
 #[test]
 fn renamed_type_parameter_still_works() {
-    // Adjacent-case test (per CLAUDE.md §25/§26): renaming the bound
+    // Adjacent-case test (per .claude/CLAUDE.md §25/§26): renaming the bound
     // type-parameter must not break the fix — the rule is structural, not
     // name-based.
     let source = r#"

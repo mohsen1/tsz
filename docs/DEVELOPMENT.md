@@ -175,7 +175,7 @@ These are enforced by code review and CI:
 4. **Single type universe** — one `TypeId` space via the Solver's interner
 5. **DefId-first resolution** — semantic references use `TypeData::Lazy(DefId)`, resolved through `TypeEnvironment`
 
-See `docs/architecture/BOUNDARIES.md` and `docs/architecture/NORTH_STAR.md` for details.
+See [`BOUNDARIES.md`](architecture/BOUNDARIES.md) and [`NORTH_STAR.md`](architecture/NORTH_STAR.md) for details.
 
 ## Memory-Guarded Execution
 

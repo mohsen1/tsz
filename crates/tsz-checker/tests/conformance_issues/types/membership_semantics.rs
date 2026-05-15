@@ -874,7 +874,7 @@ a.other.length;         // ERROR — falls through index signature, `string | un
 fn test_branded_primitive_alternate_iteration_var_name() {
     // Same invariant as the test above, but the mapped type uses iteration
     // variable name `K` instead of `P`. Guards against any hardcoded variable
-    // name in the printer or solver expansion path (see CLAUDE.md §25).
+    // name in the printer or solver expansion path (see .claude/CLAUDE.md §25).
     let options = CheckerOptions {
         strict: true,
         strict_null_checks: true,

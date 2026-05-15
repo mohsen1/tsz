@@ -43,7 +43,7 @@ fn out_annotation_with_method_param_only_no_ts2636() {
     );
 }
 
-/// Anti-hardcoding (CLAUDE.md §25): the rule must not depend on the
+/// Anti-hardcoding (.claude/CLAUDE.md §25): the rule must not depend on the
 /// spelling of the interface or method.
 #[test]
 fn method_bivariance_independent_of_names() {

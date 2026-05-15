@@ -1682,7 +1682,7 @@ mod unknown_fallback_tests {
     }
 }
 
-/// Test suite for SOLVER.md Section 8.2: TypeScript Quirks (The Lawyer Layer)
+/// Test suite for TypeScript quirk coverage (The Lawyer Layer)
 ///
 /// This module tests the intentional unsoundness in TypeScript that we must support
 /// for compatibility. These are not bugs - they are documented design decisions.
@@ -1690,7 +1690,7 @@ mod unknown_fallback_tests {
 mod typescript_quirks_tests {
     use super::*;
 
-    /// Test suite for SOLVER.md Section 8.2.C: The Void Exception
+    /// Test suite for the TypeScript void-return quirk
     ///
     /// TypeScript allows `() => void` to match `() => T` for any T because
     /// the caller promises to ignore the return value. This is an intentional
@@ -1884,7 +1884,7 @@ mod typescript_quirks_tests {
         );
     }
 
-    /// Test suite for SOLVER.md Section 8.2.A: Function Variance
+    /// Test suite for TypeScript function-parameter variance quirks
     ///
     /// TypeScript supports two modes for function parameter checking:
     /// - Contravariant (strict): Target param must be subtype of source param

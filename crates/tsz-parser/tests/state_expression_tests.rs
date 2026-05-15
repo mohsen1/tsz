@@ -669,7 +669,7 @@ fn legacy_octal_with_bigint_suffix_recovers_with_comma_expected() {
 fn legacy_octal_with_bigint_suffix_recovers_param_name_independent() {
     // Same rule as the test above but with a different binding name —
     // locks the recovery as structural, not name-specific
-    // (per the anti-hardcoding directive in CLAUDE.md §25).
+    // (per the anti-hardcoding directive in .claude/CLAUDE.md §25).
     let (parser, _root) = parse_source("const arbitraryName = 0567n;");
     let diags = parser.get_diagnostics();
     let ts1005_messages: Vec<&str> = diags
