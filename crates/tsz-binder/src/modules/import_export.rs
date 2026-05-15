@@ -559,6 +559,26 @@ impl BinderState {
                                                     );
                                                 self.symbols.alloc_from(&src)
                                             };
+                                            if self.lib_symbol_ids.contains(&sym_id) {
+                                                Arc::make_mut(&mut self.lib_symbol_ids)
+                                                    .insert(clone_id);
+                                                if let Some(symbol_arena) =
+                                                    self.symbol_arenas.get(&sym_id).cloned()
+                                                {
+                                                    Arc::make_mut(&mut self.symbol_arenas)
+                                                        .insert(clone_id, symbol_arena);
+                                                }
+                                                if let Some(reverse_remap) = self
+                                                    .lib_symbol_reverse_remap
+                                                    .get(&sym_id)
+                                                    .copied()
+                                                {
+                                                    Arc::make_mut(
+                                                        &mut self.lib_symbol_reverse_remap,
+                                                    )
+                                                    .insert(clone_id, reverse_remap);
+                                                }
+                                            }
                                             if let Some(clone_sym) = self.symbols.get_mut(clone_id)
                                             {
                                                 clone_sym.is_type_only = true;
