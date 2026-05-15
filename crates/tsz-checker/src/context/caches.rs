@@ -67,8 +67,9 @@ impl NodeTypeCache {
         // return either the existing real value or NONE without touching the
         // map. Without this guard, `or_insert(key, NONE)` followed by `get(key)`
         // would return `Some(&NONE)` (a stale "cached" sentinel) instead of
-        // `None`, and downstream callers (e.g. `type_node_resolution.rs:226`)
-        // that check `if let Some(&cached) = ...get(&idx.0)` would return the
+        // `None`, and downstream callers (e.g.
+        // `type_node.rs` cache-hit branch in `TypeNodeChecker::check`) that
+        // check `if let Some(&cached) = ...get(&idx.0)` would return the
         // sentinel as if it were a real type.
         if value == TypeId::NONE {
             return self.data.get(&key).copied().unwrap_or(TypeId::NONE);
