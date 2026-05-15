@@ -218,6 +218,68 @@ jobs:
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
           echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
 
+  project-corpus-pr-body:
+    name: project-corpus-pr-body
+    needs: gate
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require project corpus impact fields for semantic PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          changed_paths=""
+          page=1
+          while :; do
+            page_paths=$(gh api \
+              "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}" \
+              --jq '.[] | (.filename, (.previous_filename // empty))' \
+              2>/dev/null || true)
+            if [[ -z "$page_paths" ]]; then break; fi
+            changed_paths+="${page_paths}"$'\n'
+            count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
+            if [[ "$count" -lt 100 ]]; then break; fi
+            page=$((page + 1))
+            if [[ "$page" -gt 30 ]]; then break; fi
+          done
+
+          semantic_paths=$(printf '%s\n' "$changed_paths" \
+            | grep -E '^(crates/(tsz-(binder|checker|cli|core|emitter|lsp|parser|scanner|solver|transforms)|tsz-website)/|scripts/(bench|ci|conformance|emit|fourslash)/|\.github/workflows/bench\.yml|\.github/workflows/ci\.yml)' \
+            || true)
+          if [[ -z "$semantic_paths" ]]; then
+            echo "No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
+            exit 0
+          fi
+
+          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
+          missing=()
+          if ! grep -Eq '^##[[:space:]]+Project Corpus Impact[[:space:]]*$' <<<"$body"; then
+            missing+=("## Project Corpus Impact")
+          fi
+          if ! grep -Eq '^[[:space:]]*-[[:space:]]*Row:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            missing+=("- Row: <project row or n/a>")
+          fi
+          if ! grep -Eq '^[[:space:]]*-[[:space:]]*Bug family:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            missing+=("- Bug family: <family or n/a>")
+          fi
+
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "Semantic/project-corpus-affecting PRs must keep Track 1 impact metadata in the PR body."
+            echo "Changed paths requiring the metadata:"
+            printf '  %s\n' $(printf '%s\n' "$semantic_paths" | sort -u)
+            echo "Missing fields:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+
+          echo "Project corpus impact metadata is present."
+
   lint:
     name: lint
     needs: [gate, unit]
@@ -599,6 +661,7 @@ jobs:
       - gate
       - lint
       - cargo-shear
+      - project-corpus-pr-body
       - dist-binaries
       - project-compile-guard
       - wasm
@@ -636,6 +699,11 @@ jobs:
               sys.exit(0)
 
           required = {"lint", "cargo-shear", "dist-binaries", "unit"}
+          pr_body = needs.get("project-corpus-pr-body")
+          if pr_body and pr_body.get("result") not in ("success", "skipped"):
+              print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
+              sys.exit(1)
+
           if full_run:
               required.update({
                   "wasm",
