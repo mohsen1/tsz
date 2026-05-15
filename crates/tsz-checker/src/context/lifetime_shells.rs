@@ -16,9 +16,8 @@
 //!    migrate a single bucket of fields into one of these shells. The structural
 //!    target already exists.
 //!
-//! These shells implement no methods today. **Do not add behavior to them
-//! until the next focused field-migration PR, where the addition is reviewed
-//! alongside its accompanying behavior changes.
+//! These shells implement no methods today. Add behavior only in follow-up
+//! field-work where the migration and any behavior changes are reviewed together.
 //!
 //! Mapping from the partitioning plan:
 //!

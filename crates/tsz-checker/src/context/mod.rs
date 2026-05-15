@@ -69,7 +69,7 @@ pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 
-/// T2.2 cross-file type-parameter memoization map.
+/// Cross-file type-parameter memoization map.
 ///
 /// Keyed by `(target_file_idx, decl_idx)` — never by user-chosen
 /// identifier names — and stores the `Vec<TypeParamInfo>` produced by
@@ -411,9 +411,9 @@ pub struct CheckerContext<'a> {
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
     pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,
-    // T2.2 cross-file type-parameter cache type alias is defined just below.
+    // Cross-file type-parameter cache type alias is defined just below.
     /// Program-wide memoization for `extract_type_params_from_decl` slow-path
-    /// results, keyed by `(target_file_idx, decl_idx)`. T2.2: collapses
+    /// results, keyed by `(target_file_idx, decl_idx)`. The cache collapses
     /// redundant child-checker constructions on the `TypeEnvironmentCore`
     /// path (the dominant share of `with_parent_cache_constructed` per
     /// the 2026-05-10 attribution run, ~84 % on the cliff fixtures).
@@ -1524,7 +1524,7 @@ pub struct ProgramContext {
     /// Shared `DefinitionStore` for parallel checking.
     /// When set, all parallel checkers share this store for globally unique `DefIds`.
     pub shared_definition_store: Option<Arc<DefinitionStore>>,
-    /// T2.2 program-wide memo for cross-file type-parameter extraction.
+    /// Program-wide memo for cross-file type-parameter extraction.
     /// Mirrors `CheckerContext::cross_file_type_params_cache`; built once
     /// per project run by the driver and shared via `Arc` across every
     /// checker.

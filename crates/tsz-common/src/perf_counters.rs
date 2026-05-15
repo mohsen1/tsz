@@ -1,5 +1,4 @@
-//! Process-wide performance counters used to drive the perf-architectural
-//! plan in `docs/plan/PERFORMANCE_PLAN.md`.
+//! Process-wide performance counters used to drive perf attribution and follow-up work.
 //!
 //! Counters are gated by the `TSZ_PERF_COUNTERS` environment variable. When
 //! the variable is unset the increments still fire (`AtomicU64::fetch_add`
@@ -12,9 +11,8 @@
 //! into `--extendedDiagnostics` (or `--perfCounters`) so a single bench
 //! invocation produces both the standard phase timings and the counter dump.
 //!
-//! Per the architectural plan, this is a plan-changing PR — the data we
-//! collect here decides how PRs 2–7 are scoped. Don't ship later PRs without
-//! looking at the dump on `large-ts-repo` first.
+//! Use this data to scope later perf-related changes; keep an eye on `large-ts-repo`
+//! before landing follow-up work.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -731,10 +729,10 @@ impl ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
 /// The 2026-05-11 attribution decision record locked in
 /// `delegate.cache_hits_cross_file = 0` on the cliff (1107 calls,
 /// 0 hits on `monorepo-006`). The flat miss counter does not say
-/// **why** each miss happens. Splitting the cause buckets lets the
-/// next T2.2 architecture PR target the dominant root cause directly
-/// instead of guessing between the gate state, the cache-key
-/// collision, and `TypeId` namespacing.
+/// **why** each miss happens. Splitting the cause buckets lets follow-up
+/// work target the dominant root cause directly instead of guessing
+/// between the gate state, the cache-key collision, and `TypeId`
+/// namespacing.
 ///
 /// The four root causes the buckets distinguish:
 ///
@@ -926,7 +924,7 @@ pub struct PerfCounters {
     pub delegate_cross_arena_cache_hits_lib: AtomicU64,
     pub delegate_cross_arena_cache_hits_cross_file: AtomicU64,
     pub delegate_cross_arena_misses: AtomicU64,
-    /// T2.2 cross-file type-parameter memo: hits and misses on the
+    /// Cross-file type-parameter memo: hits and misses on the
     /// `extract_type_params_from_decl` slow-path memoization. A hit means
     /// the slow-path's `with_parent_cache_attributed(..., TypeEnvironmentCore)`
     /// was elided.
@@ -2721,8 +2719,8 @@ pub struct PerfCounterSnapshot {
     ///
     /// JSON counterpart of `dump_cross_arena_symbol_miss_classification`.
     /// Says how each miss reached the fallback child-checker path, so
-    /// reviewers picking a T2.2 migration target can see whether
-    /// `symbol_arenas` / `declaration_arenas` / `symbol_file_targets`
+    /// reviewers can see whether `symbol_arenas` / `declaration_arenas` /
+    /// `symbol_file_targets`
     /// dominates, and which symbol kinds are walking through the path.
     pub delegate_miss_classification: DelegateMissClassification,
     /// Bounded symbol-level attribution for declaration-file targets that
@@ -2732,7 +2730,7 @@ pub struct PerfCounterSnapshot {
     /// Captures at most `DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT`
     /// distinct `(name, kind, source, target_file)` rows in perf-counter mode.
     /// This turns the remaining declaration-file residue from an aggregate
-    /// count into the exact APIs the next T2.2 PR needs to prove safe.
+    /// count into the exact APIs follow-up work needs to prove safe.
     pub delegate_declaration_file_miss_residues: Vec<DelegateDeclarationFileMissResidue>,
     /// Outcome buckets for the no-child alias shortcut attempted before
     /// constructing a `DelegateCrossArenaSymbol` child checker.
@@ -2855,9 +2853,9 @@ pub struct PerfCounterSnapshot {
     /// Always `CROSS_FILE_CACHE_MISS_CAUSE_COUNT` long, in
     /// `CROSS_FILE_CACHE_MISS_CAUSE_NAMES` order. The 2026-05-11
     /// attribution decision record locked in
-    /// `delegate.cache_hits_cross_file = 0`; this array splits that
-    /// flat miss number into structural root causes so the next T2.2
-    /// architecture PR can target the dominant cause directly.
+    /// `delegate.cache_hits_cross_file = 0`; this array splits that flat miss
+    /// number into structural root causes so follow-up work can target the
+    /// dominant cause directly.
     ///
     /// Sum of all rows equals the total miss count across the four
     /// reader helpers in
@@ -2895,9 +2893,9 @@ pub struct DelegateCounters {
     pub cache_hits_cross_file: u64,
     pub misses: u64,
     pub max_recursion_depth: u64,
-    /// T2.2 typed-query memo: hits on the cross-file type-parameter cache.
+    /// Cross-query memo: hits on the cross-file type-parameter cache.
     pub cross_file_type_params_cache_hits: u64,
-    /// T2.2 typed-query memo: misses (where the slow path constructed a child checker).
+    /// Cross-query memo: misses where the slow path constructed a child checker.
     pub cross_file_type_params_cache_misses: u64,
 }
 
@@ -2942,8 +2940,8 @@ pub struct NamedCount {
 ///
 /// Counterpart of `dump_cross_arena_symbol_miss_classification`'s text
 /// dump. Says *why* a delegate path missed both caches and the alias
-/// shortcut — i.e. which fast paths the next T2.2 migration could
-/// plausibly cover.
+/// shortcut so follow-up migration work can see which fast paths still
+/// carry misses.
 ///
 /// The `by_source` and `by_kind` arrays are always emitted at their
 /// full `*_NAMES` length so consumers can index by position. The two
@@ -2972,8 +2970,7 @@ pub struct DelegateMissClassification {
 /// Counterpart of one row in `dump_by_reason`'s text dump, lifted into
 /// machine-readable form so the bench harness and offline analysis tools
 /// (`scripts/conformance/query-conformance.py`-style readers) can pick
-/// the next T2.2 migration target from data instead of `dump_string`
-/// parsing.
+/// the next follow-up target from data instead of `dump_string` parsing.
 ///
 /// Reason names match `REASON_NAMES`. A future-added variant lands as a
 /// new row automatically — the array is always `CHECKER_CREATION_REASON_COUNT`
@@ -3388,8 +3385,8 @@ mod json_tests {
 
     #[test]
     fn by_reason_array_has_one_row_per_reason_with_stable_field_shape() {
-        // The T2.2 migration order (`PERFORMANCE_PLAN.md` §7) needs
-        // per-`CheckerCreationReason` data to pick the next target.
+        // The migration order needs per-`CheckerCreationReason` data to pick
+        // the next target.
         // `dump_string` exposes that breakdown as text; this snapshot
         // field exposes it as JSON. Lock both invariants:
         //   1. exactly `CHECKER_CREATION_REASON_COUNT` rows, in declaration order

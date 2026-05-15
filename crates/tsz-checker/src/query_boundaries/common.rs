@@ -1745,7 +1745,7 @@ pub(crate) fn new_binary_op_evaluator(
     tsz_solver::BinaryOpEvaluator::new(db)
 }
 
-// ── Visitor aliases (same-name wrappers for inline-call migration) ─────────
+// ── Visitor aliases (internal boundary facades) ─────────
 
 pub(crate) fn intersection_list_id(
     db: &dyn TypeDatabase,

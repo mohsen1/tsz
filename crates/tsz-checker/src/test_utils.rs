@@ -821,7 +821,7 @@ pub fn check_multi_file_with_libs(
     checker.ctx.diagnostics.clone()
 }
 
-/// T2.2 test helper: parse, bind, type-check a multi-file project AND return
+/// Test helper: parse, bind, type-check a multi-file project AND return
 /// the populated `cross_file_type_params_cache` for assertion. The cache is
 /// installed before the check runs and is the same `Arc<DashMap>` returned
 /// to the caller, so assertions can inspect what the checker memoized
