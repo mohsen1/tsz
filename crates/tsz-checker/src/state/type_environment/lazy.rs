@@ -201,6 +201,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut depth_exceeded = false;
+        let first_pass_silent_bailed;
         let result = {
             // First pass: evaluate with TypeEnvironment resolver.
             let env = self.ctx.type_env.borrow();
@@ -225,6 +226,7 @@ impl<'a> CheckerState<'a> {
                 depth_exceeded = true;
                 self.ctx.depth_exceeded.set(true);
             }
+            first_pass_silent_bailed = eval_result.silent_depth_bailed;
             // Persist intermediate evaluation results to the shared cache.
             // Skip entries whose result contains unbound `infer` types or type queries.
             if use_cache {
@@ -238,28 +240,40 @@ impl<'a> CheckerState<'a> {
         // contains unresolved IndexAccess or Mapped types, retry with the full
         // CheckerContext resolver which can resolve Lazy(DefId) on the fly via
         // get_type_of_symbol.
-        let needs_resolver_pass = query::index_access_types(self.ctx.types, result).is_some()
-            || query::mapped_type_id(self.ctx.types, result).is_some()
-            || (contains_lazy_or_recursive(self.ctx.types, result)
-                && (crate::query_boundaries::common::string_intrinsic_components(
-                    self.ctx.types,
-                    result,
-                )
-                .is_some()
-                    || crate::query_boundaries::common::is_template_literal_type(
+        //
+        // If the first pass silently bailed on structural depth AND made no
+        // progress on the root (`result == type_id`), running the same walk with
+        // a more powerful resolver hits the same structural protection limit at
+        // the same shape — it burns roughly the same time without producing a
+        // better answer. Recursive `ts-toolbelt` patterns like `ComputeDeep<A,
+        // Seen>` and `_Invert<O>` reach this condition; before this gate the
+        // redundant pass dominated their type-check time. The second pass still
+        // runs when first-pass progress was made (`result != type_id`), since
+        // the more powerful resolver may then lower sub-terms further.
+        let first_pass_made_no_progress = first_pass_silent_bailed && result == type_id;
+        let needs_resolver_pass = !first_pass_made_no_progress
+            && (query::index_access_types(self.ctx.types, result).is_some()
+                || query::mapped_type_id(self.ctx.types, result).is_some()
+                || (contains_lazy_or_recursive(self.ctx.types, result)
+                    && (crate::query_boundaries::common::string_intrinsic_components(
                         self.ctx.types,
                         result,
-                    )))
-            // When the first pass leaves an
-            // `Application(UnresolvedTypeName(...), args)` residue from
-            // cross-file lowering, retry with `CheckerContext` as the
-            // resolver. CheckerContext can walk the merged binder graph
-            // via `resolve_unresolved_type_name`, recover the alias's
-            // `DefId`, and let the application expand normally.
-            || crate::query_boundaries::spread::contains_unresolved_application(
-                self.ctx.types,
-                result,
-            );
+                    )
+                    .is_some()
+                        || crate::query_boundaries::common::is_template_literal_type(
+                            self.ctx.types,
+                            result,
+                        )))
+                // When the first pass leaves an
+                // `Application(UnresolvedTypeName(...), args)` residue from
+                // cross-file lowering, retry with `CheckerContext` as the
+                // resolver. CheckerContext can walk the merged binder graph
+                // via `resolve_unresolved_type_name`, recover the alias's
+                // `DefId`, and let the application expand normally.
+                || crate::query_boundaries::spread::contains_unresolved_application(
+                    self.ctx.types,
+                    result,
+                ));
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
                 self.ctx.env_eval_cache_seed_entries()

@@ -344,6 +344,16 @@ pub(crate) struct EvalWithCacheResult {
     pub result: TypeId,
     /// Whether the evaluator's recursion depth was exceeded.
     pub depth_exceeded: bool,
+    /// Whether any structural depth bailout was silently handled.
+    ///
+    /// Distinct from `depth_exceeded`: silent bails are cleared from the
+    /// evaluator's sticky-exceeded state under the legitimate-finite-recursion
+    /// policy (`Permutation<U>`, `Combination<U>` and similar `ts-toolbelt`
+    /// recursive mapped/conditional bodies). Callers that would retry on the
+    /// same root with a more powerful resolver use this signal to skip the
+    /// retry — the structural type-tree walk would hit the same protection
+    /// limit at the same shape.
+    pub silent_depth_bailed: bool,
     /// Cache entries produced by the evaluator (key → evaluated value).
     pub cache_entries: Vec<(TypeId, TypeId)>,
 }
@@ -372,6 +382,7 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::TypeResolver>(
     EvalWithCacheResult {
         result,
         depth_exceeded: evaluator.is_depth_exceeded(),
+        silent_depth_bailed: evaluator.is_silent_depth_bailed(),
         cache_entries: evaluator.drain_cache().collect(),
     }
 }
@@ -393,6 +404,7 @@ pub(crate) fn evaluate_type_for_ts2589<R: tsz_solver::TypeResolver>(
     EvalWithCacheResult {
         result,
         depth_exceeded: evaluator.is_depth_exceeded(),
+        silent_depth_bailed: evaluator.is_silent_depth_bailed(),
         cache_entries: evaluator.drain_cache().collect(),
     }
 }
