@@ -339,8 +339,10 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
     let mut failures = Vec::new();
     for name in [
         "DateTimeFormatOptions",
+        "DisplayNamesOptions",
         "Function",
         "Locale",
+        "LocaleOptions",
         "NumberFormatOptions",
         "NumberFormatOptionsCurrencyDisplayRegistry",
         "NumberFormatOptionsSignDisplayRegistry",
@@ -348,6 +350,8 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
         "NumberFormatOptionsUseGroupingRegistry",
         "Object",
         "RegExp",
+        "RelativeTimeFormatOptions",
+        "ResolvedRelativeTimeFormatOptions",
     ] {
         let sym_id = state
             .ctx
