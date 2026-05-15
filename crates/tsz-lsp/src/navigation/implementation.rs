@@ -111,7 +111,9 @@ impl<'a> GoToImplementationProvider<'a> {
 
         // 4. Get the symbol and determine its kind
         let symbol = self.binder.symbols.get(symbol_id)?;
-        let target_name = symbol.escaped_name.clone();
+        let target_name = self
+            .qualified_name_for_symbol(symbol)
+            .unwrap_or_else(|| symbol.escaped_name.clone());
 
         // Determine if the target is an interface or a class (abstract or not)
         let target_kind = self.determine_target_kind(symbol)?;
@@ -293,32 +295,70 @@ impl<'a> GoToImplementationProvider<'a> {
 
     /// Check if an expression node (typically an Identifier) matches the target name.
     /// Handles both simple identifiers and property access expressions (e.g., `Ns.Foo`).
-    ///
-    /// Uses `escaped_text` directly from `IdentifierData` to avoid depending on the interner.
     fn expression_matches_name(&self, expr_idx: NodeIndex, target_name: &str) -> bool {
+        self.expression_qualified_name(expr_idx)
+            .is_some_and(|name| name == target_name)
+    }
+
+    fn expression_qualified_name(&self, expr_idx: NodeIndex) -> Option<String> {
         if expr_idx.is_none() {
-            return false;
+            return None;
         }
 
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return false;
-        };
+        let expr_node = self.arena.get(expr_idx)?;
 
-        // Simple identifier: `Foo`
-        if expr_node.kind == SyntaxKind::Identifier as u16
-            && let Some(text) = self.get_identifier_escaped_text(expr_idx)
-        {
-            return text == target_name;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .get_identifier_escaped_text(expr_idx)
+                .map(str::to_string);
         }
 
-        // Property access: `Ns.Foo` - check the rightmost name
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = self.arena.get_access_expr(expr_node)
-        {
-            return self.expression_matches_name(access.name_or_argument, target_name);
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(expr_node)?;
+            let left = self.expression_qualified_name(access.expression)?;
+            let right = self.get_identifier_escaped_text(access.name_or_argument)?;
+            return Some(format!("{left}.{right}"));
         }
 
-        false
+        None
+    }
+
+    fn qualified_name_for_symbol(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
+        let decl_idx = symbol.declarations.first().copied()?;
+        let namespace = self.namespace_for_declaration(decl_idx);
+        namespace
+            .map(|ns| format!("{ns}.{}", symbol.escaped_name))
+            .or_else(|| Some(symbol.escaped_name.clone()))
+    }
+
+    fn namespace_for_declaration(&self, decl_idx: NodeIndex) -> Option<String> {
+        if !decl_idx.is_some() {
+            return None;
+        }
+
+        let mut names = Vec::new();
+        let mut current = decl_idx;
+        while current.is_some() {
+            let parent_idx = self.arena.get_extended(current)?.parent;
+            if !parent_idx.is_some() {
+                break;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_data) = self.arena.get_module(parent_node)
+                && let Some(name) = self.expression_qualified_name(module_data.name)
+            {
+                names.push(name);
+            }
+            current = parent_idx;
+        }
+
+        if names.is_empty() {
+            None
+        } else {
+            names.reverse();
+            Some(names.join("."))
+        }
     }
 
     /// Create a Location for a declaration node, preferring the name node for a tighter range.

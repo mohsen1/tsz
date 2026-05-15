@@ -24,6 +24,7 @@
   <meta name="twitter:description" content="{{ meta_description }}">
   <meta name="twitter:image" content="https://tsz.dev/og-image.png">
   <meta name="twitter:image:alt" content="tsz - A TypeScript compiler in Rust.">
+  {% if build.sha %}<meta name="tsz-build-sha" content="{{ build.sha }}">{% endif %}
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   {{ extra_head | safe }}
