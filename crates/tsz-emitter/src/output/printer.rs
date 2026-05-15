@@ -28,6 +28,7 @@
 //! ```
 
 use crate::context::emit::EmitContext;
+use crate::context::plan::EmitPlan;
 use crate::context::transform::TransformContext;
 use crate::emitter::{
     JsxEmit, ModuleKind, Printer as EmitterPrinter, PrinterOptions, ScriptTarget,
@@ -209,7 +210,8 @@ impl<'a> Printer<'a> {
         options: PrintOptions,
     ) -> Self {
         let printer_opts = options.to_printer_options();
-        let inner = EmitterPrinter::with_transforms_and_options(arena, transforms, printer_opts);
+        let plan = EmitPlan::from_transforms(&printer_opts, transforms);
+        let inner = EmitterPrinter::with_emit_plan_and_options(arena, plan, printer_opts);
 
         Self {
             inner,
@@ -293,11 +295,17 @@ pub fn lower_and_print(arena: &NodeArena, root: NodeIndex, options: PrintOptions
     // Create emit context for lowering
     let emit_ctx = EmitContext::with_options(options.to_printer_options());
 
-    // Run lowering pass
-    let transforms = LoweringPass::new(arena, &emit_ctx).run(root);
+    // Run emit planning pass
+    let plan = LoweringPass::new(arena, &emit_ctx).run_plan(root);
 
-    // Create printer with transforms
-    let mut printer = Printer::with_transforms(arena, transforms, options);
+    // Create printer with explicit emit plan
+    let printer_opts = options.to_printer_options();
+    let inner = EmitterPrinter::with_emit_plan_and_options(arena, plan, printer_opts);
+    let mut printer = Printer {
+        inner,
+        options,
+        source_map_enabled: false,
+    };
     printer.print(root);
     printer.finish()
 }

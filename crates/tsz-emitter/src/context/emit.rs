@@ -8,6 +8,7 @@
 //! 3. Make transform state explicit and easier to pass around
 //! 4. Enable transforms to manage their own state without bloating Printer
 
+use crate::context::target_facts::EmitTargetFacts;
 use crate::emitter::PrinterOptions;
 use crate::transforms::block_scoping_es5::BlockScopeState;
 use crate::transforms::private_fields_es5::PrivateFieldState;
@@ -207,6 +208,9 @@ pub struct EmitContext {
     /// Whether to emit ES5 (classes→IIFEs, arrows→functions)
     pub target_es5: bool,
 
+    /// Target-derived facts used by the direct-to-target emit plan.
+    pub target_facts: EmitTargetFacts,
+
     /// Whether exponentiation (`**` / `**=`) needs downleveling (target < ES2016)
     pub needs_es2016_lowering: bool,
 
@@ -285,10 +289,12 @@ impl EmitContext {
 
     /// Create a new `EmitContext` with the given options
     pub fn with_options(options: PrinterOptions) -> Self {
+        let target_facts = EmitTargetFacts::from_target(options.target);
         let mut ctx = Self {
             options,
             flags: EmitFlags::default(),
             target_es5: false,
+            target_facts,
             needs_es2016_lowering: false,
             needs_es2018_lowering: false,
             needs_es2019_lowering: false,
@@ -317,14 +323,15 @@ impl EmitContext {
 
     const fn sync_target_gates(&mut self) {
         let target = self.options.target;
-        self.target_es5 = matches!(target, ScriptTarget::ES3 | ScriptTarget::ES5);
-        self.needs_es2016_lowering = !target.supports_es2016();
-        self.needs_es2018_lowering = !target.supports_es2018();
-        self.needs_es2019_lowering = !target.supports_es2019();
-        self.needs_es2020_lowering = !target.supports_es2020();
-        self.needs_es2021_lowering = !target.supports_es2021();
-        self.needs_es2022_lowering = !target.supports_es2022();
-        self.needs_async_lowering = !target.supports_es2017();
+        self.target_facts = EmitTargetFacts::from_target(target);
+        self.target_es5 = self.target_facts.legacy_es5_or_lower;
+        self.needs_es2016_lowering = self.target_facts.needs_es2016_lowering;
+        self.needs_es2018_lowering = self.target_facts.needs_es2018_lowering;
+        self.needs_es2019_lowering = self.target_facts.needs_es2019_lowering;
+        self.needs_es2020_lowering = self.target_facts.needs_es2020_lowering;
+        self.needs_es2021_lowering = self.target_facts.needs_es2021_lowering;
+        self.needs_es2022_lowering = self.target_facts.needs_es2022_lowering;
+        self.needs_async_lowering = self.target_facts.needs_async_lowering;
     }
 
     /// Set the full script target and refresh all derived target gates.

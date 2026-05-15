@@ -1,4 +1,5 @@
 use crate::context::emit::EmitContext;
+use crate::context::plan::{EmitPlan, EmitPlanBuilder};
 use crate::context::transform::{TransformContext, TransformDirective};
 use std::sync::Arc;
 use tsz_common::ScriptTarget;
@@ -145,6 +146,19 @@ impl<'a> LoweringPass<'a> {
         }
 
         self.transforms
+    }
+
+    /// Run the emit planning pass on a source file.
+    ///
+    /// This is the direct-to-target planning boundary. It currently wraps the
+    /// existing transform directives while follow-up work migrates helper,
+    /// hoist, export, temp, and region facts into `EmitPlan`.
+    pub fn run_plan(self, source_file: NodeIndex) -> EmitPlan {
+        let options = self.ctx.options.clone();
+        let transforms = self.run(source_file);
+        EmitPlanBuilder::new(&options)
+            .with_transforms(transforms)
+            .build()
     }
 
     /// Visit a node and its children

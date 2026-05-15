@@ -296,6 +296,17 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         self.write(&self.print_type_id(return_type_id));
                     }
+                } else if method_body.is_some() {
+                    if self.body_returns_void(method_body) {
+                        self.write(": void");
+                    } else if let Some(type_text) =
+                        self.function_body_preferred_return_type_text(method_body)
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if !self.source_is_declaration_file {
+                        self.write(": any");
+                    }
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -383,6 +394,16 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         let type_text = self.print_type_id(return_type_id);
                         self.write_type_text_with_current_indent(&type_text);
+                    }
+                } else if method_body.is_some() {
+                    if self.body_returns_void(method_body) {
+                        self.write("void");
+                    } else if let Some(type_text) =
+                        self.function_body_preferred_return_type_text(method_body)
+                    {
+                        self.write_type_text_with_current_indent(&type_text);
+                    } else if !self.source_is_declaration_file {
+                        self.write("any");
                     }
                 }
             } else if method_body.is_some() {

@@ -1851,4 +1851,28 @@ impl<'a> CheckerState<'a> {
             .iter()
             .any(|&name| common::contains_type_parameter_named(self.ctx.types, type_id, name))
     }
+
+    /// Check if a type is an intersection containing an Application of a conditional
+    /// type alias (like Extract, Exclude, `NonNullable`). These types arise from type
+    /// predicate narrowing and should not be treated as constructor types.
+    pub(crate) fn is_intersection_with_conditional_application(&self, type_id: TypeId) -> bool {
+        let Some(members) = common::intersection_members(self.ctx.types, type_id) else {
+            return false;
+        };
+
+        members.iter().any(|&member| {
+            let Some(app_id) = common::application_id(self.ctx.types, member) else {
+                return false;
+            };
+            let app = self.ctx.types.type_application(app_id);
+            let Some(def_id) = common::lazy_def_id(self.ctx.types, app.base) else {
+                return false;
+            };
+
+            self.ctx
+                .def_to_symbol_id(def_id)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
+        })
+    }
 }
