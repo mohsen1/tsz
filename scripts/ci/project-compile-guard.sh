@@ -31,7 +31,7 @@ run_with_timeout() {
 
   "$@" &
   local pid=$!
-  ( sleep "$timeout_secs" && kill -KILL "$pid" 2>/dev/null || true ) &
+  perl -e 'sleep shift; kill 9, shift' "$timeout_secs" "$pid" &
   local watchdog_pid=$!
 
   local exit_code=0
