@@ -1,7 +1,7 @@
-//! Lifetime-class shell types for the T2.1 checker lifetime split.
+//! Lifetime-class shell types for checker context partitioning.
 //!
 //! These structs are intentionally **empty** in this initial pass. They exist
-//! as named types that future T2.1 PRs will populate with fields migrated out
+//! as named types that future workstreams will populate with fields migrated out
 //! of `CheckerContext`. The empty types serve three immediate purposes:
 //!
 //! 1. **Reviewers can grep** for `WorkerContext` / `FileSession` /
@@ -12,19 +12,18 @@
 //!    eventually mark each entry's "destination shell" alongside its
 //!    `lifetime` class. The shells make those destinations real types,
 //!    not just doc-comment strings.
-//! 3. **Future PRs are smaller and more reviewable.** Each subsequent
-//!    T2.1.B+ PR migrates a single bucket of fields into one of these
-//!    shells. The structural target already exists; the migration PR only
-//!    moves data.
+//! 3. **Future PRs are smaller and more reviewable.** Each follow-up PR can
+//!    migrate a single bucket of fields into one of these shells. The structural
+//!    target already exists.
 //!
 //! These shells implement no methods today. **Do not add behavior to them
-//! until the corresponding T2.1.B/C/D PR**, where the migration of the
-//! relevant fields is reviewed alongside the new behavior.
+//! until the next focused field-migration PR, where the addition is reviewed
+//! alongside its accompanying behavior changes.
 //!
-//! Mapping from `PERFORMANCE_PLAN.md` §6:
+//! Mapping from the partitioning plan:
 //!
 //! ```text
-//! ProgramContext      — already exists (renamed from ProjectEnv in PR 5B)
+//! ProgramContext      — already exists
 //! WorkerContext       — this file
 //! FileSession         — this file
 //! SpeculationScope    — this file
@@ -33,7 +32,7 @@
 
 /// Worker-scoped reusable scratch state.
 ///
-/// Future home for `WorkerReusable` fields per `PERFORMANCE_PLAN.md` §6:
+/// Future home for `WorkerReusable` fields per the partitioning plan:
 ///
 /// > Owned by one worker and reusable across file sessions.
 ///
@@ -43,8 +42,7 @@
 /// - per-worker counters and histograms that survive between files
 /// - thread-local mirrors of `ProgramStable` shared structures
 ///
-/// **Currently empty.** Populate via a T2.1.C PR that introduces scoped
-/// worker ownership.
+/// **Currently empty.** Populate when scoped worker ownership is introduced.
 #[derive(Debug, Default)]
 pub struct WorkerContext {
     // Reserved. See the module-level comment for the population policy.
@@ -53,7 +51,7 @@ pub struct WorkerContext {
 
 impl WorkerContext {
     /// Create an empty `WorkerContext`. Intentionally trivial in this initial
-    /// pass; meaningful constructors land alongside the first field migration.
+    /// pass; meaningful constructors land alongside the first field population.
     #[must_use]
     pub const fn new() -> Self {
         Self { _reserved: () }
@@ -62,8 +60,8 @@ impl WorkerContext {
 
 /// Per-file checking session.
 ///
-/// Future home for `FileLocalReset` and `DiagnosticsOnly` fields per
-/// `PERFORMANCE_PLAN.md` §6:
+/// Future home for `FileLocalReset` and `DiagnosticsOnly` fields per the
+/// partitioning plan:
 ///
 /// > Initialized for one file check and reset or dropped before the next file.
 ///
@@ -75,8 +73,8 @@ impl WorkerContext {
 /// - resolution stacks/sets (e.g. `node_resolution_stack`)
 /// - diagnostic accumulators (e.g. `diagnostics`, `emitted_diagnostics`)
 ///
-/// **Currently empty.** Populate via a T2.1.B PR that introduces a
-/// sequential session-reuse path behind a flag.
+/// **Currently empty.** Populate when sequential session-reuse support is
+/// introduced.
 #[derive(Debug, Default)]
 pub struct FileSession {
     // Reserved. See the module-level comment for the population policy.
@@ -93,7 +91,7 @@ impl FileSession {
 
 /// Speculative-overload save/restore scope.
 ///
-/// Future home for `SpeculationScoped` fields per `PERFORMANCE_PLAN.md` §6:
+/// Future home for `SpeculationScoped` fields per the partitioning plan:
 ///
 /// > Must roll back when overload/generic/speculative checking aborts.
 ///
@@ -104,7 +102,7 @@ impl FileSession {
 /// - contextual flags (`contextual_type`, `is_checking_statements`)
 /// - return-type / yield-type / this-type stacks
 ///
-/// **Currently empty.** Populate via a T2.1.C/D PR.
+/// **Currently empty.** Populate when speculative rollback state is introduced.
 #[derive(Debug, Default)]
 pub struct SpeculationScope {
     // Reserved. See the module-level comment for the population policy.
@@ -121,7 +119,7 @@ impl SpeculationScope {
 
 /// LSP-persistent cache that survives across requests.
 ///
-/// Future home for `LspPersistent` fields per `PERFORMANCE_PLAN.md` §6:
+/// Future home for `LspPersistent` fields per the partitioning plan:
 ///
 /// > Survives requests and is invalidated by document/project version.
 ///
@@ -148,7 +146,7 @@ impl LspPersistentCache {
 mod tests {
     use super::*;
 
-    /// The shells should be `Default` so future migrations can wire them up
+    /// The shells should be `Default` so future field migrations can wire them up
     /// via `Default::default()` without bespoke constructor plumbing.
     #[test]
     fn shells_implement_default() {
@@ -160,7 +158,7 @@ mod tests {
 
     /// `const fn new()` returns the same logical shape as `Default::default()`
     /// — verifies that const-construction is wired up for compile-time
-    /// initialization (the future migration may need this for static
+    /// initialization (future consumers may need this for static
     /// scratch).
     #[test]
     fn shells_can_be_constructed_const() {

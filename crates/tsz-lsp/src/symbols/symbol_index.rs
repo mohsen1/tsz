@@ -4,8 +4,6 @@
 //! reference lookups. Instead of iterating all files linearly (O(N)), the index
 //! maps symbol names to their locations across the project.
 //!
-//! Phase 2.2 of the LSP Performance migration roadmap.
-
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::document_symbols::SymbolKind;
@@ -52,9 +50,8 @@ pub struct ImportInfo {
 /// - Module exports and imports
 /// - Heritage clauses (extends/implements)
 ///
-/// Note: This is a foundational implementation for Phase 2.2. Full AST-based
-/// usage tracking will be added in a future iteration to capture all reference
-/// locations beyond just declarations.
+/// Note: Full AST-based usage tracking is planned as a future enhancement to
+/// capture all reference locations beyond declarations.
 #[derive(Debug, Default)]
 pub struct SymbolIndex {
     /// Symbol name -> files containing that symbol

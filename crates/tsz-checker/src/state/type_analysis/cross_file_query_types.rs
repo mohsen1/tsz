@@ -1,4 +1,4 @@
-//! Typed cross-file query API types from `PERFORMANCE_PLAN.md` §7.
+//! Typed cross-file query API types for cache key, discriminant, and answer payload.
 //!
 //! This sibling module owns the typed query bucket discriminant and the
 //! remaining two types from the plan's API contract:
@@ -9,17 +9,12 @@
 //!   query paths.
 //!
 //! Both types are intentionally `pub(crate)` and currently unused.
-//! They exist so subsequent PR 6B+ migrations can reference them from
-//! day one without introducing the type alongside the migration. See
-//! `docs/plan/PERFORMANCE_PLAN.md` §7 for the full API rationale.
+//! They are provided as an early scaffold for the typed cross-file query API.
 //!
 use crate::context::RequestCacheKey;
 use tsz_binder::SymbolId;
 
-/// Typed identifier for the cross-file query bucket a cache lookup or write
-/// targets. Replaces the four `u8` constants that used to live here, matching
-/// the API shape proposed in `docs/plan/PERFORMANCE_PLAN.md` §7 ("Typed
-/// Cross-File Queries"):
+/// Typed identifier for the cross-file query bucket used by cache lookups and writes.
 ///
 /// > pub enum CrossFileQueryKind {
 /// >     SymbolType,
@@ -60,8 +55,7 @@ impl CrossFileQueryKind {
     }
 }
 
-/// Typed cache key for cross-file query lookups. Matches
-/// `PERFORMANCE_PLAN.md` §7's API contract verbatim.
+/// Typed cache key for cross-file query lookups.
 ///
 /// Per §7 ("Cache Key Requirements"), every input that changes the answer
 /// must appear in the key. Today the storage layer keys caches by
@@ -72,12 +66,10 @@ impl CrossFileQueryKind {
 /// - `target_file_idx` is the storage `file_idx`.
 /// - `symbol_id.0` is the storage `primary`.
 /// - `request_key` and `options_fingerprint` together feed the storage
-///   `secondary` + `args_hash` slots; the projection rule is finalized
-///   when the first PR 6B+ migration ships.
+///   `secondary` + `args_hash` slots.
 ///
 /// **Currently unused.** This struct exists so subsequent typed-query PRs
-/// can reference it from day one without introducing the type alongside
-/// the migration.
+/// are currently reserved for phased rollout and kept for API readiness.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct CrossFileQueryKey {
     pub kind: CrossFileQueryKind,
@@ -87,8 +79,7 @@ pub(crate) struct CrossFileQueryKey {
     pub options_fingerprint: u64,
 }
 
-/// Typed answer payload for cross-file query results. Matches
-/// `PERFORMANCE_PLAN.md` §7's API contract verbatim.
+/// Typed answer payload for cross-file query results.
 ///
 /// Variants:
 ///

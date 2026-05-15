@@ -883,8 +883,9 @@ impl<'a> CheckerContext<'a> {
     /// without going through [`tsz_binder::Symbol::value_declaration`] or
     /// [`tsz_binder::Symbol::declarations`].
     ///
-    /// This is the Phase 1 step-2 bridge helper for the
-    /// [global query graph architecture][plan]: consumers that used to read
+    /// Resolve a [`StableLocation`] to `(NodeIndex, &NodeArena)` in a
+    /// compatibility-safe way for the
+    /// [global query graph architecture][plan]. Consumers that used to read
     /// `symbol.primary_declaration()` (a raw `NodeIndex`) can instead read
     /// `symbol.stable_value_declaration` or `symbol.stable_declarations` and
     /// rehydrate the `NodeIndex` on demand. The resolved arena survives

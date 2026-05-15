@@ -30,7 +30,7 @@ pub struct ProjectReference {
     /// If true, prepend the output of this project to the output of the referencing project
     #[serde(default)]
     pub prepend: bool,
-    /// Circular reference allowed (non-standard extension for gradual migration)
+    /// Circular reference allowed (non-standard extension).
     #[serde(default)]
     pub circular: bool,
 }

@@ -205,7 +205,8 @@ pub struct IdentifierData {
     /// the field became serialised).
     #[serde(default = "Atom::none")]
     pub atom: Atom,
-    /// The identifier text (DEPRECATED: kept for backward compatibility during migration)
+    /// The identifier text (DEPRECATED: retained for backward compatibility with
+    /// older snapshots).
     pub escaped_text: String,
     pub original_text: Option<String>,
     pub type_arguments: Option<NodeList>,

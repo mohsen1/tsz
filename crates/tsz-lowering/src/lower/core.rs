@@ -401,9 +401,10 @@ impl<'a> TypeLowering<'a> {
         )
     }
 
-    /// Create a `TypeLowering` with a `DefId` resolver (Phase 1 migration).
+    /// Create a `TypeLowering` with a `DefId` resolver.
     ///
-    /// This is the migration path from `SymbolRef` to `DefId` for type identity.
+    /// This path prefers `DefId`-based type identity and keeps fallback behavior
+    /// compatible with symbol-based identity when needed.
     /// The `DefId` resolver resolves identifier nodes to Solver-owned `DefIds`
     /// instead of Binder-owned `SymbolIds`.
     pub fn with_def_id_resolver(
@@ -423,7 +424,7 @@ impl<'a> TypeLowering<'a> {
         )
     }
 
-    /// Create a `TypeLowering` with both type and `DefId` resolvers (Phase 2 migration).
+    /// Create a `TypeLowering` with both type and `DefId` resolvers.
     ///
     /// This allows `TypeLowering` to prefer `DefId` when available, but fall back
     /// to `SymbolId` for types that don't have a `DefId` yet.

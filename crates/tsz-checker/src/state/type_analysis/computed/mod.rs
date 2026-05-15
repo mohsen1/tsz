@@ -1120,7 +1120,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Namespace / Module
-        // Return a Ref type AND register DefId mapping for gradual migration.
+        // Return a Ref type and register DefId mapping so both legacy and
+        // canonical resolution paths can use the same symbol.
         // The Ref type is needed because resolve_qualified_name and other code
         // extracts SymbolRef from the type to look up the symbol's exports map.
         // Skip this when the symbol is also a FUNCTION — the FUNCTION branch below
