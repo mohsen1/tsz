@@ -1,6 +1,6 @@
 //! Class-member decorator signature validation helpers.
 
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -125,6 +125,104 @@ impl<'a> CheckerState<'a> {
                 &msg,
                 diagnostic_codes::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT,
             );
+        }
+    }
+
+    /// TS1240/TS1271 for legacy property decorators.
+    ///
+    /// Under `experimentalDecorators`, plain fields use the legacy property
+    /// decorator ABI `(target, propertyKey)`, while `accessor` fields use
+    /// `(target, propertyKey, descriptor)`. Both forms require the decorator
+    /// return type to be `void` or `any`.
+    pub(crate) fn check_legacy_property_decorator_call_signature(
+        &mut self,
+        decorator_node: NodeIndex,
+        decorator_type: TypeId,
+        is_auto_accessor: bool,
+    ) {
+        if decorator_type_is_unchecked(decorator_type) {
+            return;
+        }
+
+        self.ensure_relation_input_ready(decorator_type);
+        let resolved = self.evaluate_type_for_assignability(decorator_type);
+        if decorator_type_is_unchecked(resolved) {
+            return;
+        }
+
+        let arg_types: &[TypeId] = if is_auto_accessor {
+            &[TypeId::ANY, TypeId::STRING, TypeId::ANY]
+        } else {
+            &[TypeId::ANY, TypeId::STRING]
+        };
+        let (result, _, _) =
+            self.resolve_call_with_checker_adapter(resolved, arg_types, false, None, None);
+
+        let return_type = match result {
+            CallResult::Success(return_type) => Some(return_type),
+            _ => {
+                self.error_at_node(
+                    decorator_node,
+                    diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                );
+                self.recover_decorator_return_type_with_any_args(resolved)
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::stable_call_recovery_return_type(
+                            self.ctx.types,
+                            resolved,
+                        )
+                    })
+            }
+        };
+
+        let Some(return_type) = return_type else {
+            return;
+        };
+        let return_type = self.evaluate_type_for_assignability(return_type);
+        if matches!(return_type, TypeId::ERROR | TypeId::ANY) {
+            return;
+        }
+        if !self.is_assignable_to(return_type, TypeId::VOID) {
+            let return_str = self.format_type_diagnostic(return_type);
+            let message = format_message(
+                diagnostic_messages::DECORATOR_FUNCTION_RETURN_TYPE_IS_BUT_IS_EXPECTED_TO_BE_VOID_OR_ANY,
+                &[&return_str],
+            );
+            self.error_at_node(
+                decorator_node,
+                &message,
+                diagnostic_codes::DECORATOR_FUNCTION_RETURN_TYPE_IS_BUT_IS_EXPECTED_TO_BE_VOID_OR_ANY,
+            );
+        }
+    }
+
+    fn recover_decorator_return_type_with_any_args(
+        &mut self,
+        decorator_type: TypeId,
+    ) -> Option<TypeId> {
+        let arg_count =
+            crate::query_boundaries::class_type::function_shape(self.ctx.types, decorator_type)
+                .map(|shape| shape.params.len())
+                .or_else(|| {
+                    crate::query_boundaries::class_type::callable_shape_for_type(
+                        self.ctx.types,
+                        decorator_type,
+                    )
+                    .and_then(|shape| {
+                        shape
+                            .call_signatures
+                            .first()
+                            .map(|signature| signature.params.len())
+                    })
+                })?;
+
+        let args = vec![TypeId::ANY; arg_count];
+        let (result, _, _) =
+            self.resolve_call_with_checker_adapter(decorator_type, &args, false, None, None);
+        match result {
+            CallResult::Success(return_type) => Some(return_type),
+            _ => None,
         }
     }
 
