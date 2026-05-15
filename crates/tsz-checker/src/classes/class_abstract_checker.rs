@@ -77,12 +77,11 @@ impl<'a> CheckerState<'a> {
         };
 
         // Determine the base class display name from the instance type.
-        // `collect_class_names_from_instance_type` ahead of
-        // `format_symbol_reference_with_type_arguments` handles mixin
-        // intersections like `AbstractBase & Mixin`, but it strips type
-        // arguments from lib classes like `Iterator<number>`. When the
-        // heritage clause carries explicit type arguments, run the
-        // symbol-with-type-arguments formatter first so those render as
+        // `intersection_instance_display_name` recovers expression-based
+        // constructor intersections like `AbstractBase & Mixin` even when the
+        // normalized instance type only preserves one nominal contributor. When
+        // the heritage clause carries explicit type arguments, run the
+        // symbol-with-type-arguments formatter first so lib classes render as
         // `Iterator<number, undefined, unknown>` instead of bare `Iterator`.
         let prefer_symbol_type_args = type_arguments.is_some_and(|ta| !ta.nodes.is_empty());
         let mut type_base_name =
@@ -95,10 +94,10 @@ impl<'a> CheckerState<'a> {
                 self.format_symbol_reference_with_type_arguments(sym_id, type_arguments);
         }
         if type_base_name.is_none() {
-            type_base_name = self.collect_class_names_from_instance_type(instance_type);
+            type_base_name = self.intersection_instance_display_name(h_expr_idx, type_arguments);
         }
         if type_base_name.is_none() {
-            type_base_name = self.intersection_instance_display_name(h_expr_idx, type_arguments);
+            type_base_name = self.collect_class_names_from_instance_type(instance_type);
         }
         if type_base_name.is_none()
             && let Some(sym_id) = heritage_sym_id
