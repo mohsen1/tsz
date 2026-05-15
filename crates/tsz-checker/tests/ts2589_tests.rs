@@ -703,6 +703,124 @@ let bad: Doubler<"yes", {}>;
             "Doubling recursion through alias must still emit TS2589; got: {diags:?}"
         );
     }
+
+    /// Performance regression guard for the structural silent-bail policy.
+    ///
+    /// Mirrors `ts-toolbelt`'s `Any/Compute.ts` body: a recursive mapped /
+    /// conditional alias whose tree, evaluated against a placeholder type
+    /// parameter, trips the per-`TypeId` structural recursion guard well
+    /// before any `def_depth` real-instantiation pressure exists. Before this
+    /// rule's silent-bail signal was propagated through `EvalWithCacheResult`,
+    /// callers that ran a follow-up `CheckerContext`-resolver pass re-walked
+    /// the entire structural tree at the same shape and burned multi-second
+    /// time per file. The check below caps wall time so a regression to that
+    /// double-walk behavior fails loudly. Wall-time budgets in compiler tests
+    /// are an unusual choice; here the cap is generous (10× the observed
+    /// stable single-file budget on a slow CI runner) so it only fires on
+    /// algorithmic regressions, not noise.
+    #[test]
+    fn recursive_mapped_alias_body_check_is_fast_no_ts2589() {
+        use std::time::Instant;
+        let start = Instant::now();
+        let diags = check_with_libs(
+            r#"
+type BuiltIn = Function | Error | Date | RegExp;
+type Key = string | number | symbol;
+type Has<U, U1> = [U1] extends [U] ? 1 : 0;
+type If<B extends 0 | 1, Then, Else = never> = B extends 1 ? Then : Else;
+
+type ComputeRaw<A> = A extends Function ? A : { [K in keyof A]: A[K] } & unknown;
+
+type ComputeFlat<A> =
+    A extends BuiltIn ? A :
+    A extends Array<any>
+    ? A extends Array<Record<Key, any>>
+      ? Array<{ [K in keyof A[number]]: A[number][K] } & unknown>
+      : A
+    : A extends ReadonlyArray<any>
+      ? A extends ReadonlyArray<Record<Key, any>>
+        ? ReadonlyArray<{ [K in keyof A[number]]: A[number][K] } & unknown>
+        : A
+      : { [K in keyof A]: A[K] } & unknown;
+
+type ComputeDeep<A, Seen = never> =
+    A extends BuiltIn ? A : If<Has<Seen, A>, A, (
+      A extends Array<any>
+      ? A extends Array<Record<Key, any>>
+        ? Array<{ [K in keyof A[number]]: ComputeDeep<A[number][K], A | Seen> } & unknown>
+        : A
+      : A extends ReadonlyArray<any>
+        ? A extends ReadonlyArray<Record<Key, any>>
+          ? ReadonlyArray<{ [K in keyof A[number]]: ComputeDeep<A[number][K], A | Seen> } & unknown>
+          : A
+        : { [K in keyof A]: ComputeDeep<A[K], A | Seen> } & unknown
+    )>;
+
+type Compute<A, depth extends 'flat' | 'deep' = 'deep'> = {
+    flat: ComputeFlat<A>,
+    deep: ComputeDeep<A>,
+}[depth];
+"#,
+        );
+        let elapsed = start.elapsed();
+
+        // Permutation-style finite recursion: TS2589 must stay quiet.
+        let ts2589 = diagnostics_with_code(&diags, 2589);
+        assert!(
+            ts2589.is_empty(),
+            "Recursive mapped / conditional alias body must NOT emit TS2589; got: {ts2589:?}"
+        );
+
+        // Algorithmic regression guard. macOS ARM observation in dist /
+        // native-cpu is ~50ms; the unoptimized test profile lands around
+        // 160ms locally. The pre-fix CI Linux observation was ~3.6s. 2s
+        // is well clear of both runner noise plus first-test lib-load
+        // amortization, while still failing loudly on a regression to the
+        // redundant resolver-pass double-walk.
+        assert!(
+            elapsed.as_millis() < 2000,
+            "Recursive mapped alias body check took {elapsed:?}, expected < 2s. \
+             Possible regression to the redundant CheckerContext resolver pass \
+             after a structural silent-bail in TypeEvaluator."
+        );
+    }
+
+    /// Same algorithmic invariant as above for the `ts-toolbelt`
+    /// `Object/Invert.ts` shape: a distributive conditional that delegates to
+    /// a generic helper which composes mapped + `IndexAccess` + intersection of
+    /// a union member projection. Pre-fix this also triggered the redundant
+    /// double-walk through the silent-bail result.
+    #[test]
+    fn recursive_invert_alias_body_check_is_fast_no_ts2589() {
+        use std::time::Instant;
+        let start = Instant::now();
+        let diags = check_with_libs(
+            r#"
+type Key = string | number | symbol;
+type IntersectOf<U> = (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
+type ComputeRaw<A> = A extends Function ? A : { [K in keyof A]: A[K] } & unknown;
+
+type _Invert<O extends Record<Key, Key>> =
+  ComputeRaw<IntersectOf<
+    { [K in keyof O]: Record<O[K], K> }[keyof O]
+  >>;
+
+type Invert<O extends Record<keyof O, Key>> =
+  O extends unknown ? _Invert<O> : never;
+"#,
+        );
+        let elapsed = start.elapsed();
+
+        let ts2589 = diagnostics_with_code(&diags, 2589);
+        assert!(
+            ts2589.is_empty(),
+            "Invert alias body must NOT emit TS2589; got: {ts2589:?}"
+        );
+        assert!(
+            elapsed.as_millis() < 2000,
+            "Invert alias body check took {elapsed:?}, expected < 2s."
+        );
+    }
 }
 
 /// TS2799 false positive: Permutation type should NOT trigger "tuple too large"
