@@ -390,6 +390,7 @@ var PAGE_EXAMPLE_KEYS = [
   "sound_mode_argument",
   "sound_mode_array"
 ];
+var WASM_CACHE_KEY = document.querySelector('meta[name="tsz-build-sha"]')?.getAttribute("content") || `dev-${Date.now()}`;
 function isDarkTheme() {
   return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
@@ -423,7 +424,7 @@ async function loadWasm() {
   if (window.__tszSoundModeWasm) {
     return window.__tszSoundModeWasm;
   }
-  const module = await import("/wasm/tsz_wasm.js");
+  const module = await import(`/wasm/tsz_wasm.js?v=${encodeURIComponent(WASM_CACHE_KEY)}`);
   await module.default();
   window.__tszSoundModeWasm = module;
   return module;
