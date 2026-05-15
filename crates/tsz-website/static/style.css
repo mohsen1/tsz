@@ -840,6 +840,7 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-size: 0.78rem;
 }
 
+.compat-blockers,
 .compat-queue,
 .compat-subsystems {
   display: grid;
