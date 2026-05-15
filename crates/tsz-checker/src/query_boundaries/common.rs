@@ -9,7 +9,6 @@ pub(crate) use tsz_solver::FunctionShape;
 pub(crate) use tsz_solver::IntrinsicKind;
 pub(crate) use tsz_solver::MappedType;
 pub(crate) use tsz_solver::ObjectFlags;
-pub(crate) use tsz_solver::ParamInfo;
 pub(crate) use tsz_solver::PendingDiagnostic;
 pub(crate) use tsz_solver::PendingDiagnosticBuilder;
 pub(crate) use tsz_solver::SourceLocation;
@@ -22,6 +21,7 @@ pub(crate) use tsz_solver::type_queries::{
     RemappedMappedIndexAccessResult, constraint_allows_mutable_array_like,
     is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
+pub(crate) use tsz_solver::{OptionalPropertyChainKey, ParamInfo};
 
 pub(crate) use tsz_solver::AssignabilityChecker;
 #[allow(unused_imports)]
