@@ -46,7 +46,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.interner().literal_number(elements.len() as f64))
                 }
             }
-            Some(TypeData::Array(_)) => Some(TypeId::NUMBER),
+            // Arrays and string types all have `length: number`. String.prototype.length
+            // is typed as `number`, so tsc infers `number` even for concrete string literals.
+            Some(
+                TypeData::Array(_)
+                | TypeData::Intrinsic(IntrinsicKind::String)
+                | TypeData::Literal(LiteralValue::String(_))
+                | TypeData::TemplateLiteral(_),
+            ) => Some(TypeId::NUMBER),
             _ => None,
         }
     }
@@ -1778,7 +1785,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 bindings.extend(combined);
                 true
             }
-            Some(TypeData::Tuple(_) | TypeData::Array(_) | TypeData::ReadonlyType(_)) => {
+            Some(
+                TypeData::Tuple(_)
+                | TypeData::Array(_)
+                | TypeData::ReadonlyType(_)
+                | TypeData::Intrinsic(IntrinsicKind::String)
+                | TypeData::Literal(LiteralValue::String(_))
+                | TypeData::TemplateLiteral(_),
+            ) => {
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
                     let Some(source_type) =
