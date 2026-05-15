@@ -1223,10 +1223,13 @@ impl<'a> Printer<'a> {
         let target_is_interface_or_type_alias = is_simple_identifier_target
             && self.identifier_target_is_interface_or_type_alias(import.module_specifier);
         let script_mode_preserves_alias = is_script_mode && target_is_interface_or_type_alias;
+        let recovered_missing_trailing_entity_identifier = !import.is_type_only
+            && self.is_import_equals_reference_missing_trailing_identifier(import.module_specifier);
         let is_namespace_alias =
             module_node.is_identifier() || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
         if !(has_runtime_value
             || script_mode_preserves_alias
+            || recovered_missing_trailing_entity_identifier
             || is_exported_var && module_node.kind != SyntaxKind::Identifier as u16)
         {
             return;
@@ -1278,9 +1281,18 @@ impl<'a> Printer<'a> {
 
         // Parser recovery can produce missing/invalid module references for
         // malformed `import x = ...;` declarations. TSC skips JS alias emission
-        // in that case and preserves only trailing recovered expressions.
+        // for most invalid references and preserves only trailing recovered
+        // expressions, but a dotted entity name with a missing final identifier
+        // still emits the alias assignment (`var x = N.;`).
         if !self.is_valid_import_equals_reference(import.module_specifier) {
-            if self.is_recovered_import_equals_expression(module_node) {
+            if recovered_missing_trailing_entity_identifier {
+                self.emit_import_equals_assignment_prefix(
+                    import.import_clause,
+                    is_external,
+                    is_exported_var,
+                );
+                self.emit_entity_name(import.module_specifier);
+            } else if self.is_recovered_import_equals_expression(module_node) {
                 self.emit_module_specifier(import.module_specifier);
             } else if self
                 .recovered_import_equals_rhs_text(node)
@@ -1325,22 +1337,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if is_exported_var {
-            // Emit directly as `exports.b = ...;` — the identifier substitution
-            // in emit() will produce `exports.b`.
-            self.emit(import.import_clause);
-            self.write(" = ");
-        } else if is_external {
-            // `import X = require("module")` uses const/var based on target.
-            self.write_var_or_const();
-            self.emit_decl_name(import.import_clause);
-            self.write(" = ");
-        } else {
-            // `import X = Y` (entity name) always uses `var` per TSC behavior.
-            self.write("var ");
-            self.emit_decl_name(import.import_clause);
-            self.write(" = ");
-        }
+        self.emit_import_equals_assignment_prefix(
+            import.import_clause,
+            is_external,
+            is_exported_var,
+        );
 
         if module_node.is_string_literal() {
             self.emit_import_equals_require_call(module_node, is_node_esm_external);
@@ -1348,6 +1349,30 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_entity_name(import.module_specifier);
+    }
+
+    fn emit_import_equals_assignment_prefix(
+        &mut self,
+        import_clause: NodeIndex,
+        is_external: bool,
+        is_exported_var: bool,
+    ) {
+        if is_exported_var {
+            // Emit directly as `exports.b = ...;` — the identifier substitution
+            // in emit() will produce `exports.b`.
+            self.emit(import_clause);
+            self.write(" = ");
+        } else if is_external {
+            // `import X = require("module")` uses const/var based on target.
+            self.write_var_or_const();
+            self.emit_decl_name(import_clause);
+            self.write(" = ");
+        } else {
+            // `import X = Y` (entity name) always uses `var` per TSC behavior.
+            self.write("var ");
+            self.emit_decl_name(import_clause);
+            self.write(" = ");
+        }
     }
 
     fn emit_node_esm_import_equals_require(&mut self, module_node: &Node) {
@@ -1499,6 +1524,27 @@ impl<'a> Printer<'a> {
             }
             _ => false,
         }
+    }
+
+    fn is_import_equals_reference_missing_trailing_identifier(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return false;
+        }
+        let Some(name) = self.arena.get_qualified_name(node) else {
+            return false;
+        };
+        let left_is_valid = self.is_valid_import_equals_reference(name.left);
+        if !left_is_valid {
+            return false;
+        }
+        self.arena
+            .get(name.right)
+            .filter(|right| right.kind == SyntaxKind::Identifier as u16)
+            .and_then(|right| self.arena.get_identifier(right))
+            .is_some_and(|ident| ident.escaped_text.is_empty())
     }
 
     const fn is_recovered_import_equals_expression(&self, node: &Node) -> bool {
