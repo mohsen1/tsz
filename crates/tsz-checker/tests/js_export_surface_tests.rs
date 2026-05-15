@@ -2180,7 +2180,6 @@ function f(k) {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_jsdoc_param_type_uses_instance_side_for_destructured_commonjs_named_class() {
     let diagnostics = check_commonjs_two_files(
         "mod1.js",
@@ -2210,6 +2209,39 @@ function f(k) {
     assert!(
         relevant.is_empty(),
         "Expected destructured CommonJS named class JSDoc param to resolve to instance side, got: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_param_type_uses_instance_side_for_renamed_commonjs_named_class() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+class Widget {
+    values() {
+        return new Widget();
+    }
+}
+module.exports.Widget = Widget;
+"#,
+        "main.js",
+        r#"
+const { Widget: LocalWidget } = require("./mod1");
+/** @param {LocalWidget} k */
+function f(k) {
+    k.values();
+}
+"#,
+        "./mod1",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 2322))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected renamed destructured CommonJS named class JSDoc param to resolve to instance side, got: {relevant:#?}"
     );
 }
 
