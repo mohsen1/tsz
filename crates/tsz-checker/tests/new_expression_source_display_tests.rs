@@ -120,3 +120,40 @@ function wrap(): number {
         );
     }
 }
+
+/// Regression for #6991: generic type arguments that are class instance types
+/// must display as `ClassName`, not `typeof ClassName`.
+#[test]
+fn ts2322_generic_class_instance_type_args_do_not_display_typeof() {
+    let diags = diagnostics(
+        r#"
+class Animal {
+  name: string = "";
+}
+
+class Dog extends Animal {
+  bark(): void {}
+}
+
+interface Box<T> {
+  value: T;
+}
+
+declare let animalBox: Box<Animal>;
+declare let dogBox: Box<Dog>;
+
+dogBox = animalBox;
+"#,
+    );
+    let msgs = ts2322_messages(&diags);
+    assert_eq!(msgs.len(), 1, "expected one TS2322, got: {diags:?}");
+    let msg = msgs[0];
+    assert!(
+        msg.contains("Type 'Box<Animal>' is not assignable to type 'Box<Dog>'."),
+        "generic class instance args should display without typeof, got: {msg}"
+    );
+    assert!(
+        !msg.contains("Box<typeof Animal>") && !msg.contains("Box<typeof Dog>"),
+        "instance type arguments must not display as typeof class constructors, got: {msg}"
+    );
+}
