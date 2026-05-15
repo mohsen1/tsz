@@ -791,6 +791,12 @@ impl<'a> Printer<'a> {
                             self.emit_function_expression_es5_params(func_node);
                             return;
                         }
+                        k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
+                            if let Some(func) = self.arena.get_function(func_node) {
+                                self.emit_arrow_function_native_with_parameter_prologue(func);
+                                return;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -1279,6 +1285,11 @@ impl<'a> Printer<'a> {
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
                             self.emit_function_expression_es5_params(func_node);
                         }
+                        k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
+                            if let Some(func) = self.arena.get_function(func_node) {
+                                self.emit_arrow_function_native_with_parameter_prologue(func);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -1649,6 +1660,12 @@ impl<'a> Printer<'a> {
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
                             self.emit_function_expression_es5_params(func_node);
                             return;
+                        }
+                        k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
+                            if let Some(func) = self.arena.get_function(func_node) {
+                                self.emit_arrow_function_native_with_parameter_prologue(func);
+                                return;
+                            }
                         }
                         _ => {}
                     }
