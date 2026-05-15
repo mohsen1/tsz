@@ -745,7 +745,6 @@ export class Foo {
 }
 
 #[test]
-#[ignore = "lib-backed JS overload diagnostic is currently red in direct unit CI"]
 fn test_check_js_global_tostring_overload_reports_ts2394_with_libs() {
     if !lib_files_available() {
         return;
@@ -768,13 +767,19 @@ function toString() {
         },
     );
 
-    // In tsc, file-scope function declarations shadow identically-named globals.
-    // `function toString()` shadows `lib.dom.d.ts`'s `declare function toString(): string;`
-    // rather than merging as overloads, so TS2394 should NOT be emitted.
+    // In checkJs, tsc still merges `function toString()` with the same-named
+    // `lib.dom.d.ts` global overload set. Keep the diagnostic shape aligned
+    // with that oracle instead of treating the JS declaration as a local-only
+    // shadow.
     assert!(
-        !diagnostics.iter().any(|d| d.code == 2394),
-        "function toString() in a script file should shadow the lib global, \
-         not produce TS2394. Actual diagnostics: {diagnostics:#?}"
+        diagnostics.iter().any(|d| d.code == 2394),
+        "Expected checkJs `function toString()` to report TS2394 against the \
+         lib global overload set. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2339),
+        "Expected checkJs `function toString()` to preserve TS2339 for an \
+         unknown `this` property. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

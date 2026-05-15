@@ -1632,28 +1632,27 @@ fn checker_files_stay_under_loc_limit() {
     // These ceilings represent the current state — they can only shrink, never grow.
     // Removed after dropping below 2000 LOC:
     //   complex.rs (926), variable_checking/core.rs (1606),
-    //   symbol_types.rs (892), error_reporter/core.rs (1576),
-    //   types/computation/call.rs (1805→split), checkers/call_checker.rs (1396),
+    //   symbol_types.rs (892), error_reporter/core/mod.rs (1576),
+    //   types/computation/call/mod.rs (1805→split), checkers/call_checker/mod.rs (1396),
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
-        ("state/type_analysis/computed_commonjs.rs", 2787),
+        ("state/type_analysis/computed_commonjs/mod.rs", 2787),
         ("checkers/jsx/props/resolution.rs", 1600),
         ("checkers/jsx/orchestration", 2397),
         ("checkers/call_checker/overload_resolution.rs", 1400),
         ("checkers/call_checker/candidate_collection.rs", 1100),
-        ("types/property_access_helpers.rs", 2104),
+        ("types/property_access_helpers/mod.rs", 2104),
         // Bumped from 2500 to 2501 for TS2532/TS18048 attribution fix in
         // `this: undefined` property access (module top-level arrow). The
         // file-split plan is still pending.
         ("types/property_access_type/resolve.rs", 2501),
-        ("declarations/import/core.rs", 2562),
+        ("declarations/import/core/mod.rs", 2562),
         ("declarations/import/declaration.rs", 2341),
         ("types/computation/call/inner.rs", 2019),
-        ("jsdoc/resolution.rs", 2357),
-        ("assignability/assignment_checker.rs", 2083),
-        ("error_reporter/core.rs", 2358),
-        ("error_reporter/call_errors.rs", 2554),
-        ("error_reporter/core/diagnostic_source.rs", 2069),
+        ("jsdoc/resolution/mod.rs", 2357),
+        ("assignability/assignment_checker/mod.rs", 2083),
+        ("error_reporter/core/mod.rs", 2358),
+        ("error_reporter/call_errors/mod.rs", 2554),
         ("types/type_checking/duplicate_identifiers_helpers.rs", 2244),
         ("types/type_checking/duplicate_identifiers.rs", 2060),
         ("error_reporter/render_failure.rs", 2240),
@@ -2054,6 +2053,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 //
 // SECTION 6: DefId-First Semantic Type Resolution
 // - [x] No ad-hoc TypeData::Lazy interning                -> test_array_helpers_avoid_direct_typekey_interning (existing)
+// - [x] instanceof class narrowing uses real DefIds       -> test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback
 // - [x] No new raw SymbolRef reference construction       -> test_checker_raw_symbol_reference_construction_budget
 // - [x] ensure_relation_input_ready used before relations  -> test_subtype_path_establishes_preconditions_before_subtype_cache_lookup (existing)
 //
@@ -2624,8 +2624,8 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "checkers/jsx/props/validation.rs",
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
-        "types/computation/call.rs",
-        "types/computation/object_literal.rs",
+        "types/computation/call/mod.rs",
+        "types/computation/object_literal/mod.rs",
         "types/computation/helpers.rs",
         "types/computation/call_display.rs",
         "types/function_type.rs",
@@ -2809,9 +2809,9 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
         "checkers/jsx/props/validation.rs",
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
-        "types/computation/call.rs",
+        "types/computation/call/mod.rs",
         "types/computation/helpers.rs",
-        "types/computation/object_literal.rs",
+        "types/computation/object_literal/mod.rs",
         "types/function_type.rs",
         "state/state_checking_members/ambient_signature_checks.rs",
         "types/computation/tagged_template.rs",
@@ -3103,7 +3103,7 @@ fn no_ambient_current_callable_type() {
         "src/checkers/call_checker/candidate_collection.rs",
         "src/checkers/call_checker/diagnostics.rs",
         "src/checkers/call_checker/overload_resolution.rs",
-        "src/types/computation/call.rs",
+        "src/types/computation/call/mod.rs",
         "src/types/computation/call_inference.rs",
         "src/types/computation/call_display.rs",
         "src/state/type_analysis/computed_helpers.rs",
@@ -3158,7 +3158,7 @@ fn test_excess_property_classification_quarantined_to_property_rs() {
         let allowed = rel.ends_with("state/state_checking/property.rs")
             || rel.ends_with("query_boundaries/assignability.rs")
             || rel.ends_with("assignability/assignability_diagnostics.rs") // target scoring
-            || rel.ends_with("computation/object_literal_context.rs") // contextual type decomposition
+            || rel.ends_with("types/computation/object_literal_context.rs") // contextual type decomposition
             || rel.contains("/tests/");
         if allowed {
             continue;
@@ -4174,23 +4174,23 @@ fn test_checker_file_size_ceiling() {
     // Ceiling: number of checker source files exceeding 2000 LOC.
     // This number must only shrink as files are split into smaller modules.
     // Current oversized files (as of 2026-04-03):
-    //   checkers/call_checker.rs, checkers/generic_checker.rs,
-    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs, checkers/jsx/orchestration.rs,
+    //   checkers/call_checker/mod.rs, checkers/generic_checker/mod.rs,
+    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs, checkers/jsx/orchestration/mod.rs,
     //   types/type_checking/duplicate_identifiers.rs, types/function_type.rs,
     //   types/queries/lib.rs, types/utilities/core.rs, types/computation/binary.rs,
-    //   types/computation/identifier.rs, types/computation/call/inner.rs,
-    //   types/computation/object_literal.rs, types/property_access_helpers.rs,
-    //   types/property_access_type.rs, types/class_type/core.rs,
+    //   types/computation/identifier/mod.rs, types/computation/call/inner.rs,
+    //   types/computation/object_literal/mod.rs, types/property_access_helpers/mod.rs,
+    //   types/property_access_type/mod.rs, types/class_type/core.rs,
     //   types/class_type/constructor.rs,
-    //   classes/class_checker.rs, classes/class_implements_checker.rs,
-    //   declarations/import/core.rs, declarations/import/declaration.rs,
+    //   classes/class_checker.rs, classes/class_implements_checker/mod.rs,
+    //   declarations/import/core/mod.rs, declarations/import/declaration.rs,
     //   state/variable_checking/core.rs,
-    //   state/variable_checking/variable_helpers.rs, state/variable_checking/destructuring.rs,
-    //   state/type_analysis/computed_commonjs.rs, state/type_analysis/computed.rs,
+    //   state/variable_checking/variable_helpers/mod.rs, state/variable_checking/destructuring.rs,
+    //   state/type_analysis/computed_commonjs/mod.rs, state/type_analysis/computed/mod.rs,
     //   state/type_resolution/module.rs,
-    //   jsdoc/params.rs, jsdoc/resolution.rs, symbols/scope_finder.rs,
-    //   assignability/assignment_checker.rs, error_reporter/core.rs,
-    //   error_reporter/call_errors.rs, flow/control_flow/core.rs
+    //   jsdoc/params.rs, jsdoc/resolution/mod.rs, symbols/scope_finder.rs,
+    //   assignability/assignment_checker/mod.rs, error_reporter/core/mod.rs,
+    //   error_reporter/call_errors/mod.rs, flow/control_flow/core.rs
     const FILE_COUNT_CEILING: usize = 35;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
@@ -5039,7 +5039,29 @@ fn test_core_type_resolution_has_ensure_def_ready_call() {
         src.contains("ensure_def_ready_for_lowering"),
         "core.rs must call ensure_def_ready_for_lowering for generic type \
          reference resolution. This is the stable-identity helper that \
-         replaces ad hoc type-param priming blocks."
+        replaces ad hoc type-param priming blocks."
+    );
+}
+
+/// Guard: `instanceof` narrowing for class symbols must use real DefId-backed
+/// lazy types rather than raw SymbolId-shaped `reference(SymbolRef)` fallback.
+#[test]
+fn test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback() {
+    let source = fs::read_to_string("src/flow/control_flow/narrowing.rs")
+        .expect("failed to read src/flow/control_flow/narrowing.rs");
+    let class_branch = source
+        .split("if symbol.has_any_flags(symbol_flags::CLASS)")
+        .nth(1)
+        .and_then(|rest| rest.split("// Global constructor variables").next())
+        .expect("failed to isolate instanceof class-symbol branch");
+
+    assert!(
+        class_branch.contains("self.resolve_symbol_to_lazy(symbol_ref)"),
+        "instanceof class-symbol branch should resolve through the DefId-backed lazy helper"
+    );
+    assert!(
+        !class_branch.contains(".reference("),
+        "instanceof class-symbol branch must not create Lazy(DefId(symbol_id)) via raw SymbolRef fallback"
     );
 }
 

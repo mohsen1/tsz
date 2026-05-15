@@ -181,6 +181,6 @@ Look for:
 
 ## Implementation Details
 
-Tracing is configured in `src/tracing_config.rs`. The subscriber is only initialized when `TSZ_LOG` or `RUST_LOG` is set, so there's zero overhead in normal usage.
+Tracing is configured in `crates/tsz-cli/src/reporting/tracing_config.rs`. The subscriber is only initialized when `TSZ_LOG` or `RUST_LOG` is set, so there's zero overhead in normal usage.
 
 Output always goes to stderr to avoid interfering with compiler output (diagnostics, `--showConfig`, or LSP JSON-RPC on stdout).

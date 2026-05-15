@@ -11,6 +11,7 @@ use super::{
 use crate::navigation::references::FindReferences;
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::find_node_at_offset;
+use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_binder::symbol_flags;
 use tsz_common::position::{Position, Range};
@@ -218,7 +219,7 @@ impl<'a> RenameProvider<'a> {
             .ok_or_else(|| "Could not find symbol to rename".to_string())?;
 
         let mut workspace_edit = WorkspaceEdit::new();
-        for loc in locations {
+        for loc in Self::dedup_locations(locations) {
             workspace_edit.add_edit(loc.file_path, TextEdit::new(loc.range, new_name.clone()));
         }
 
@@ -333,12 +334,32 @@ impl<'a> RenameProvider<'a> {
         // Convert locations to RenameTextEdits, handling special contexts
         let mut workspace_edit = RenameWorkspaceEdit::new();
 
-        for loc in &locations {
+        for loc in Self::dedup_locations(locations) {
             let edit = self.build_rename_edit(loc.range, &old_name, &normalized_name);
-            workspace_edit.add_edit(loc.file_path.clone(), edit);
+            workspace_edit.add_edit(loc.file_path, edit);
         }
 
         Ok(workspace_edit)
+    }
+
+    fn dedup_locations(
+        locations: Vec<tsz_common::position::Location>,
+    ) -> Vec<tsz_common::position::Location> {
+        let mut seen = FxHashSet::default();
+        let mut deduped = Vec::with_capacity(locations.len());
+        for location in locations {
+            let key = (
+                location.file_path.clone(),
+                location.range.start.line,
+                location.range.start.character,
+                location.range.end.line,
+                location.range.end.character,
+            );
+            if seen.insert(key) {
+                deduped.push(location);
+            }
+        }
+        deduped
     }
 
     /// Build a `RenameTextEdit` for a single reference, detecting special

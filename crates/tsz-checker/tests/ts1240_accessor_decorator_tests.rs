@@ -10,7 +10,11 @@
 //! confirm the fix is not keyed on user-chosen spellings (anti-hardcoding
 //! per CLAUDE.md §25 / §26).
 
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::test_utils::{check_source_codes, check_source_codes_experimental_decorators};
+
+fn check_experimental(source: &str) -> Vec<u32> {
+    check_source_codes_experimental_decorators(source)
+}
 
 /// The reported repro from #6652: a TC39 accessor decorator that takes a
 /// generic `ClassAccessorDecoratorTarget<This, Value>` must not produce
@@ -255,6 +259,123 @@ class Stacked {
     assert!(
         !codes.contains(&1240),
         "Expected no TS1240 for stacked accessor decorators, got: {codes:?}"
+    );
+}
+
+#[test]
+fn experimental_accessor_decorator_with_stage3_signature_emits_ts1240_and_ts1271() {
+    let codes = check_experimental(
+        r#"
+interface ClassAccessorDecoratorTarget<This, Value> {
+    get(this: This): Value;
+    set(this: This, value: Value): void;
+}
+interface ClassAccessorDecoratorContext {}
+interface ClassAccessorDecoratorResult<This, Value> {}
+
+function logged<T>(
+    target: ClassAccessorDecoratorTarget<T, number>,
+    context: ClassAccessorDecoratorContext
+): ClassAccessorDecoratorResult<T, number> {
+    return {} as any;
+}
+
+class DecoratedAccessor {
+    @logged
+    accessor value = 0;
+}
+"#,
+    );
+
+    assert!(
+        codes.contains(&1240),
+        "Expected TS1240 for stage-3 accessor decorator under experimentalDecorators, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1271),
+        "Expected TS1271 for non-void/non-any accessor decorator return under experimentalDecorators, got: {codes:?}"
+    );
+}
+
+#[test]
+fn experimental_accessor_decorator_with_legacy_three_arg_void_signature_accepted() {
+    let codes = check_experimental(
+        r#"
+function legacy(_target: any, _key: string, _descriptor: any): void {}
+
+class LegacyAccessor {
+    @legacy
+    accessor renamed = 0;
+}
+"#,
+    );
+
+    assert!(
+        !codes.contains(&1240) && !codes.contains(&1271),
+        "Expected legacy three-arg auto-accessor decorator to be accepted, got: {codes:?}"
+    );
+}
+
+#[test]
+fn experimental_accessor_decorator_with_two_arg_void_signature_emits_ts1240() {
+    let codes = check_experimental(
+        r#"
+function legacyField(_target: any, _key: string): void {}
+
+class AccessorArity {
+    @legacyField
+    accessor value = 0;
+}
+"#,
+    );
+
+    assert!(
+        codes.contains(&1240),
+        "Expected TS1240 when auto-accessor decorator cannot accept descriptor arg, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1271),
+        "Void-returning auto-accessor decorator should not emit TS1271, got: {codes:?}"
+    );
+}
+
+#[test]
+fn experimental_plain_field_decorator_keeps_two_arg_legacy_abi() {
+    let codes = check_experimental(
+        r#"
+function methodLike(_target: any, _key: string, _descriptor: any): void {}
+
+class PlainField {
+    @methodLike
+    field = 0;
+}
+"#,
+    );
+
+    assert!(
+        codes.contains(&1240),
+        "Expected TS1240 when plain field decorator expects a descriptor arg, got: {codes:?}"
+    );
+}
+
+#[test]
+fn experimental_plain_field_decorator_return_unknown_emits_ts1271() {
+    let codes = check_experimental(
+        r#"
+function returnsUnknown(_target: any, _key: string): unknown {
+    return undefined;
+}
+
+class PlainField {
+    @returnsUnknown
+    field = 0;
+}
+"#,
+    );
+
+    assert!(
+        codes.contains(&1271),
+        "Expected TS1271 for unknown-returning property decorator, got: {codes:?}"
     );
 }
 

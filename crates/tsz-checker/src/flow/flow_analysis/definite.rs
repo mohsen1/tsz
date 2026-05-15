@@ -224,6 +224,7 @@ impl<'a> CheckerState<'a> {
         .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(&self.ctx.type_environment)
+        .with_checker_context(&self.ctx)
         .with_narrowing_cache(&self.ctx.narrowing_cache)
         .with_call_type_predicates(&self.ctx.call_type_predicates)
         .with_flow_buffers(
