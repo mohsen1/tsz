@@ -639,7 +639,13 @@ impl<'a> InferenceContext<'a> {
             // tsc widens literal candidates BEFORE getCommonSupertype (via baseCandidates =
             // sameMap(candidates, getWidenedLiteralType)). This ensures the tournament
             // operates on widened types (number, string) not literals (3, "").
-            let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
+            let has_fresh_array_element_candidate = filtered_no_never
+                .iter()
+                .any(|c| c.from_array_element && c.is_fresh_literal);
+            let has_non_fresh = filtered_no_never.iter().any(|c| {
+                !(c.is_fresh_literal
+                    || has_fresh_array_element_candidate && c.type_id.is_any_unknown_or_error())
+            });
             // Mirror tsc's `widenLiteralTypes` gate in `getCovariantInference`:
             // when the type parameter is at top level in the return type AND has
             // not yet been fixed, fresh literal candidates are NOT widened during
@@ -714,7 +720,13 @@ impl<'a> InferenceContext<'a> {
         // getWidenedLiteralType which only widens fresh literal types. When a
         // non-fresh candidate (e.g., from a type annotation) survives BCT, its
         // literal types should be preserved.
-        let has_non_fresh = filtered_no_never.iter().any(|c| !c.is_fresh_literal);
+        let has_fresh_array_element_candidate = filtered_no_never
+            .iter()
+            .any(|c| c.from_array_element && c.is_fresh_literal);
+        let has_non_fresh = filtered_no_never.iter().any(|c| {
+            !(c.is_fresh_literal
+                || has_fresh_array_element_candidate && c.type_id.is_any_unknown_or_error())
+        });
         let resolved =
             if !preserve_literals && !is_const && !has_non_fresh && !skip_literal_widening {
                 self.widen_resolved_inference(resolved)
