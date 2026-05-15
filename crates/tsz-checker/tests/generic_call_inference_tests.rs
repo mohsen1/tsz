@@ -1801,6 +1801,29 @@ choose("a", "a");
 }
 
 #[test]
+fn noinfer_complex_return_widens_scalar_literal() {
+    let source = r#"
+function fn1<T>(a: T, b: NoInfer<T>): T {
+  return a;
+}
+
+function fn2<T>(a: T, b: NoInfer<T>): { v: T } {
+  return { v: a };
+}
+
+fn1("a", "b");
+fn2("a", "b");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(c, _)| *c == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Only direct scalar return should preserve the literal and reject the NoInfer fallback. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn noinfer_array_alias_widens_to_primitive() {
     let source = r#"
 type NI<T> = NoInfer<T>;
