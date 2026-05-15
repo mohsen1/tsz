@@ -29,6 +29,36 @@ For performance-motivated PRs, record in the PR body:
 
 Use `scripts/safe-run.sh` for memory-intensive or long-running commands.
 
+## Merge Discipline
+
+Performance work is only useful after it lands on `main`; do not optimize for a
+large stack of unmerged PRs. Each performance PR must stay small enough to merge
+quickly and must name the owning agent in the PR body.
+
+Before opening or reviving a performance branch:
+
+1. fetch `origin/main`,
+2. inspect open and recently merged PRs for overlap,
+3. rebase or merge the worktree onto current `main`,
+4. close or consolidate duplicate chore branches instead of leaving parallel
+   cleanup PRs open,
+5. record the exact verification command that protects the changed invariant.
+
+After opening a PR:
+
+1. enable auto-merge as soon as required checks are expected to pass,
+2. keep the branch synchronized with `main` whenever `main` moves or CI reports
+   a merge conflict,
+3. treat failing required checks as the next task before starting new
+   performance work,
+4. avoid opening additional performance PRs while earlier ready PRs are only
+   waiting for merge-queue or CI capacity,
+5. delete remote branches after merge or after closing duplicate work.
+
+Set an external timer or CI/status reminder for active performance PRs and
+refresh it when `main` advances. The reminder is part of the work: stale PRs are
+considered unfinished even when the code change is otherwise complete.
+
 Distinguish timing evidence from attribution evidence:
 
 | Mode | Purpose | Counter state | Comparable to `tsgo` timing? |

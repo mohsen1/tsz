@@ -8,7 +8,8 @@ impl<'a> CheckerState<'a> {
         substitution: &mut tsz_solver::TypeSubstitution,
         shape: &tsz_solver::FunctionShape,
         args: &[tsz_parser::NodeIndex],
-    ) {
+    ) -> bool {
+        let mut seeded = false;
         for (i, param) in shape.params.iter().enumerate() {
             let Some(param_info) =
                 crate::query_boundaries::common::type_param_info(self.ctx.types, param.type_id)
@@ -56,8 +57,10 @@ impl<'a> CheckerState<'a> {
             });
             if can_replace_current && widened_literal == evaluated_constraint {
                 substitution.insert(type_param.name, literal_arg_type);
+                seeded = true;
             }
         }
+        seeded
     }
 
     pub(super) fn new_type_args_are_applyable(
