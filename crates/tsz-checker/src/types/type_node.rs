@@ -173,6 +173,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && let Some(mut resolved) = self.import_call_type_reference(type_ref.type_name)
+        {
+            if let Some(args) = &type_ref.type_arguments
+                && !args.nodes.is_empty()
+            {
+                let type_args = args
+                    .nodes
+                    .iter()
+                    .map(|&arg_idx| self.check(arg_idx))
+                    .collect();
+                resolved = self.ctx.types.application(resolved, type_args);
+            }
+            return resolved;
+        }
+
         self.lower_with_resolvers(idx, false, true)
     }
 

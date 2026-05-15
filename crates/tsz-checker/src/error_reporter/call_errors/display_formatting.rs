@@ -1163,6 +1163,20 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         prop_name: &str,
     ) -> Option<TypeId> {
+        if let Some(members) = query_common::union_members(self.ctx.types, target_type) {
+            let property_types: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&member| member != TypeId::NULL && member != TypeId::UNDEFINED)
+                .filter_map(|member| self.finite_mapped_target_property_type(member, prop_name))
+                .collect();
+            return match property_types.as_slice() {
+                [] => None,
+                [single] => Some(*single),
+                _ => Some(self.ctx.types.factory().union(property_types)),
+            };
+        }
+
         if let Some(mapped_id) = query_common::mapped_type_id(self.ctx.types, target_type) {
             return crate::query_boundaries::state::checking::get_finite_mapped_property_type(
                 self.ctx.types,
@@ -1193,6 +1207,22 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
         prop_name: &str,
     ) -> Option<TypeId> {
+        if let Some(members) = query_common::union_members(self.ctx.types, target_type) {
+            let property_types: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&member| member != TypeId::NULL && member != TypeId::UNDEFINED)
+                .filter_map(|member| {
+                    self.finite_mapped_target_property_display_type(member, prop_name)
+                })
+                .collect();
+            return match property_types.as_slice() {
+                [] => None,
+                [single] => Some(*single),
+                _ => Some(self.ctx.types.factory().union(property_types)),
+            };
+        }
+
         if let Some(mapped_id) = query_common::mapped_type_id(self.ctx.types, target_type) {
             return crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
                 self.ctx.types,
