@@ -2557,7 +2557,7 @@ fn test_umd_export_vs_declare_global_const_emits_ts2451() {
 
 // TODO: Implement TS2300 duplicate identifier detection for global augmentation conflicts.
 #[test]
-#[ignore]
+#[ignore = "pending: parallel global augmentation duplicate member conflicts detection remains TODO"]
 fn test_check_files_parallel_global_augmentation_member_conflicts_emit_ts2300() {
     let files = vec![
         (
