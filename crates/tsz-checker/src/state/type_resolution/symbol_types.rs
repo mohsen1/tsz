@@ -1064,7 +1064,7 @@ impl<'a> CheckerState<'a> {
 
         let type_param_bindings = self.get_type_param_bindings();
         let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-        // Stable-identity helper: prefer Lazy(DefId) over Ref(SymbolRef)
+        // Stable-identity helper: prefer `Lazy(DefId)` before `SymbolRef` fallback.
         let def_id_resolver = |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
         let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
