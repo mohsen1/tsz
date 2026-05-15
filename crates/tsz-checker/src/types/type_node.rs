@@ -1388,6 +1388,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let ident = self.ctx.arena.get_identifier_at(node_idx)?;
         let name = ident.escaped_text.as_str();
 
+        if self.ctx.type_parameter_scope.contains_key(name) {
+            return None;
+        }
+
         if is_compiler_managed_type(name) && !self.ctx.file_local_type_shadow_for_lib_name(name) {
             return None;
         }
