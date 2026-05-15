@@ -1687,6 +1687,7 @@ impl<'a> CheckerState<'a> {
                                     &class_type_params,
                                     instance_type,
                                     None,
+                                    false,
                                 )
                             };
                         }
@@ -1793,11 +1794,13 @@ impl<'a> CheckerState<'a> {
                                 instance_type,
                             )
                         } else {
+                            let force_derived_instance = base_type_param.is_some();
                             self.remap_inherited_construct_signatures(
                                 base_constructor_type,
                                 &class_type_params,
                                 instance_type,
                                 None,
+                                force_derived_instance,
                             )
                         };
                     }
@@ -1896,6 +1899,7 @@ impl<'a> CheckerState<'a> {
                                 &class_type_params,
                                 instance_type,
                                 None,
+                                false,
                             )
                         };
                 }
@@ -2251,6 +2255,7 @@ impl<'a> CheckerState<'a> {
         class_type_params: &[TypeParamInfo],
         instance_type: TypeId,
         inherited_substitution: Option<&TypeSubstitution>,
+        force_derived_instance: bool,
     ) -> Option<Vec<CallSignature>> {
         let signatures = construct_signatures_for_type(self.ctx.types, constructor_type)?;
         if signatures.is_empty() {
@@ -2277,9 +2282,15 @@ impl<'a> CheckerState<'a> {
                         inherited_substitution
                             .map_or(t, |subst| instantiate_type(self.ctx.types, t, subst))
                     });
-                    // Preserve the base signature's type parameters so that generic
-                    // call resolution can infer them from arguments.
-                    let type_params = if sig.type_params.is_empty() {
+                    // Preserve ordinary base signature type parameters so generic
+                    // call resolution can infer them from constructor arguments.
+                    //
+                    // For mixin bases typed as a type parameter, though, inherited
+                    // constraint signature parameters (for example `Constructor<T>`)
+                    // are not owned by the returned class. Keeping them here can
+                    // shadow enclosing factory type parameters during later
+                    // instantiation, leaving returned class methods with stale `T`s.
+                    let type_params = if force_derived_instance || sig.type_params.is_empty() {
                         class_type_params.to_vec()
                     } else {
                         sig.type_params.clone()
@@ -2288,14 +2299,16 @@ impl<'a> CheckerState<'a> {
                     // and no substitution is provided yet, preserve the base's
                     // return type so generic resolution can instantiate it properly.
                     // Otherwise use the derived instance type.
-                    let return_type =
-                        if inherited_substitution.is_none() && !sig.type_params.is_empty() {
-                            sig.return_type
-                        } else {
-                            inherited_substitution.map_or(instance_type, |subst| {
-                                instantiate_type(self.ctx.types, sig.return_type, subst)
-                            })
-                        };
+                    let return_type = if !force_derived_instance
+                        && inherited_substitution.is_none()
+                        && !sig.type_params.is_empty()
+                    {
+                        sig.return_type
+                    } else {
+                        inherited_substitution.map_or(instance_type, |subst| {
+                            instantiate_type(self.ctx.types, sig.return_type, subst)
+                        })
+                    };
                     CallSignature {
                         type_params,
                         params,

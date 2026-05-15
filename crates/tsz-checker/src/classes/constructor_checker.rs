@@ -145,7 +145,12 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         let mut refined_return = factory.intersection2(return_type, base_arg_type);
 
-        if let Some(mixin_instance_type) = self.mixin_instance_type_from_returned_class(
+        if let Some(mixin_instance_type) =
+            self.mixin_instance_type_from_construct_returns(return_type, base_arg_type)
+        {
+            refined_return =
+                self.set_all_construct_return_types(refined_return, mixin_instance_type);
+        } else if let Some(mixin_instance_type) = self.mixin_instance_type_from_returned_class(
             class_expr_idx,
             base_arg_type,
             &type_param_substitution,
@@ -177,6 +182,41 @@ impl<'a> CheckerState<'a> {
         }
 
         refined_return
+    }
+
+    fn mixin_instance_type_from_construct_returns(
+        &mut self,
+        return_type: TypeId,
+        base_arg_type: TypeId,
+    ) -> Option<TypeId> {
+        let signatures = common::construct_signatures_for_type(self.ctx.types, return_type)?;
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let base_instance = self.instance_type_from_constructor_type(base_arg_type);
+        let mut returns = Vec::with_capacity(signatures.len() + 1);
+        for sig in signatures {
+            if !matches!(sig.return_type, TypeId::ANY | TypeId::ERROR)
+                && Some(sig.return_type) != base_instance
+            {
+                returns.push(sig.return_type);
+            }
+        }
+        if returns.is_empty() {
+            return None;
+        }
+        if let Some(base_instance) = base_instance
+            && !matches!(base_instance, TypeId::ANY | TypeId::ERROR)
+            && !returns.contains(&base_instance)
+        {
+            returns.push(base_instance);
+        }
+
+        Some(tsz_solver::utils::intersection_or_single(
+            self.ctx.types,
+            returns,
+        ))
     }
 
     fn clear_constructor_abstract_flag(&self, ctor_type: TypeId) -> TypeId {
