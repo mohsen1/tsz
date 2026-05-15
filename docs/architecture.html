@@ -1482,7 +1482,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   gets). Every subsequent occurrence of <code>x</code> anywhere in the program gets the
   same <code>Atom(47)</code>. This means comparing two identifiers for equality is just
   comparing two integers, which is O(1) regardless of string length. Defined in
-  <code>tsz-common/src/interner.rs</code>.
+  <code>crates/tsz-common/src/interner/mod.rs</code>.
 </p>
 
 <!-- ── B ── -->
@@ -1694,7 +1694,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <p>
   This two-phase approach keeps transforms clean (they describe <em>what</em> the output
   should look like structurally) and keeps formatting concerns separate (the printer handles
-  <em>how</em> to render it). The IR lives in <code>tsz-emitter/src/transforms/ir.rs</code>.
+  <em>how</em> to render it). The IR lives in <code>crates/tsz-emitter/src/transforms/ir.rs</code>.
 </p>
 
 <!-- ── L ── -->
@@ -1770,7 +1770,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <!-- ── Q ── -->
 <h3 id="g-query-boundaries">Query Boundaries</h3>
 <p>
-  The gateway API in the checker (<code>tsz-checker/src/query_boundaries/</code>) that
+  The gateway API in the checker (<code>crates/tsz-checker/src/query_boundaries/</code>) that
   routes type-checking questions to the solver. Instead of the checker calling solver
   methods directly all over the codebase, assignability checks for TS2322/TS2345/TS2416
   diagnostics must go through these boundary functions. This centralization ensures
