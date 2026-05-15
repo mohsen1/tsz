@@ -11,6 +11,7 @@ use crate::utils::{find_node_at_offset, is_symbol_query_node};
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_common::position::{Location, Position, Range};
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -361,8 +362,186 @@ impl<'a> FindReferences<'a> {
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let mut nodes = walker.find_references(root, symbol_id);
         nodes.extend(declarations.iter().copied());
+        self.collect_member_access_reference_nodes(root, symbol_id, &mut nodes);
         Self::sort_dedup_nodes(&mut nodes);
         nodes
+    }
+
+    fn collect_member_access_reference_nodes(
+        &self,
+        root: NodeIndex,
+        symbol_id: SymbolId,
+        nodes: &mut Vec<NodeIndex>,
+    ) {
+        use tsz_binder::symbol_flags;
+
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+        if !symbol.has_any_flags(
+            symbol_flags::METHOD
+                | symbol_flags::PROPERTY
+                | symbol_flags::GET_ACCESSOR
+                | symbol_flags::SET_ACCESSOR,
+        ) {
+            return;
+        }
+
+        let parent_symbol_id = symbol.parent;
+        if parent_symbol_id.is_none() {
+            return;
+        }
+        let Some(parent_symbol) = self.binder.symbols.get(parent_symbol_id) else {
+            return;
+        };
+        if !parent_symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE) {
+            return;
+        }
+
+        let member_name = symbol.escaped_name.as_str();
+        let parent_name = parent_symbol.escaped_name.as_str();
+        for node in &self.arena.nodes {
+            if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = self.arena.get_access_expr(node) else {
+                continue;
+            };
+            if self.arena.get_identifier_text(access.name_or_argument) != Some(member_name) {
+                continue;
+            }
+            if self.expression_has_named_type(root, access.expression, parent_name) {
+                nodes.push(access.name_or_argument);
+            }
+        }
+    }
+
+    fn expression_has_named_type(
+        &self,
+        root: NodeIndex,
+        expr_idx: NodeIndex,
+        type_name: &str,
+    ) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+            return self.enclosing_class_name(expr_idx).as_deref() == Some(type_name);
+        }
+
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let Some(sym_id) = walker.resolve_node(root, expr_idx) else {
+            return false;
+        };
+        if sym_id.is_none() {
+            return false;
+        }
+        let Some(expr_symbol) = self.binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        expr_symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.declaration_has_named_type(decl_idx, type_name))
+    }
+
+    fn declaration_has_named_type(&self, decl_idx: NodeIndex, type_name: &str) -> bool {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                let Some(decl) = self.arena.get_variable_declaration(node) else {
+                    return false;
+                };
+                self.type_node_matches_name(decl.type_annotation, type_name)
+                    || self.new_expression_matches_name(decl.initializer, type_name)
+            }
+            k if k == syntax_kind_ext::PARAMETER => {
+                let Some(param) = self.arena.get_parameter(node) else {
+                    return false;
+                };
+                self.type_node_matches_name(param.type_annotation, type_name)
+            }
+            _ => false,
+        }
+    }
+
+    fn type_node_matches_name(&self, type_idx: NodeIndex, type_name: &str) -> bool {
+        if !type_idx.is_some() {
+            return false;
+        }
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.arena.get_type_ref(type_node)
+        {
+            return self.expression_name_matches(type_ref.type_name, type_name);
+        }
+        self.expression_name_matches(type_idx, type_name)
+    }
+
+    fn new_expression_matches_name(&self, expr_idx: NodeIndex, type_name: &str) -> bool {
+        if !expr_idx.is_some() {
+            return false;
+        }
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.arena.get_call_expr(expr_node) else {
+            return false;
+        };
+        self.expression_name_matches(call.expression, type_name)
+    }
+
+    fn expression_name_matches(&self, expr_idx: NodeIndex, type_name: &str) -> bool {
+        if !expr_idx.is_some() {
+            return false;
+        }
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return self.arena.get_identifier_text(expr_idx) == Some(type_name);
+        }
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+        {
+            return self.arena.get_identifier_text(access.name_or_argument) == Some(type_name);
+        }
+        false
+    }
+
+    fn enclosing_class_name(&self, node_idx: NodeIndex) -> Option<String> {
+        let mut current = node_idx;
+        while current.is_some() {
+            let parent = self.arena.get_extended(current)?.parent;
+            if !parent.is_some() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                let class_data = self.arena.get_class(parent_node)?;
+                return self
+                    .arena
+                    .get_identifier_text(class_data.name)
+                    .map(str::to_string);
+            }
+            current = parent;
+        }
+        None
     }
 
     fn sort_dedup_nodes(nodes: &mut Vec<NodeIndex>) {
