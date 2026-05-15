@@ -178,6 +178,10 @@ name = "ts1240_accessor_decorator_tests"
 path = "tests/ts1240_accessor_decorator_tests.rs"
 
 [[test]]
+name = "ts1241_method_decorator_tests"
+path = "tests/ts1241_method_decorator_tests.rs"
+
+[[test]]
 name = "ts1207_decorated_accessor_tests"
 path = "tests/ts1207_decorated_accessor_tests.rs"
 
