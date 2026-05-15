@@ -1687,6 +1687,19 @@ impl<'a> Printer<'a> {
             }
             return true;
         }
+        if export_name.is_none() && !self.ctx.target_es5 && !has_decorators {
+            self.emit_class_es6_with_options(
+                node,
+                idx,
+                false,
+                Some(("", binding_name.clone())),
+                None,
+            );
+            if let Some(prev) = prev_anon_default_name {
+                self.anonymous_default_export_name = prev;
+            }
+            return true;
+        }
         let before_len = self.writer.len();
         self.emit(idx);
         let after_len = self.writer.len();

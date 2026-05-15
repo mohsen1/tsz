@@ -1083,6 +1083,7 @@ impl<'a> Printer<'a> {
         // in a comma expression: `(_a = class C { ... }, _WeakMap = new WeakMap(), ..., _a)`
         // tsc uses this pattern so the WeakMap/WeakSet initialization happens inline.
         let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
+        let emits_as_class_expression = is_class_expression || assignment_prefix.is_some();
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
         // Computed property name hoisting for targets < ES2022.
@@ -1200,8 +1201,8 @@ impl<'a> Printer<'a> {
                     .get(member_idx)
                     .is_some_and(|m| m.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
             });
-        let needs_static_comma_expr =
-            is_class_expression && (has_static_field_comma_expr || has_static_block_comma_expr);
+        let needs_static_comma_expr = emits_as_class_expression
+            && (has_static_field_comma_expr || has_static_block_comma_expr);
         let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
             && self
@@ -2993,6 +2994,9 @@ impl<'a> Printer<'a> {
                 self.write(")");
             }
             self.decrease_indent();
+            if assignment_prefix.is_some() {
+                self.write(";");
+            }
         } else if !static_field_inits.is_empty() && !class_name.is_empty() {
             self.write_line();
             if let Some(temp) = default_export_set_function_name_temp.as_ref() {
@@ -3463,6 +3467,9 @@ impl<'a> Printer<'a> {
                     self.write(")");
                 }
                 self.decrease_indent();
+                if assignment_prefix.is_some() {
+                    self.write(";");
+                }
             }
         } else if has_post_class_inits {
             self.write_line();
@@ -3690,6 +3697,9 @@ impl<'a> Printer<'a> {
                 self.write(")");
             }
             self.decrease_indent();
+            if assignment_prefix.is_some() {
+                self.write(";");
+            }
         } else if self.defer_class_static_blocks {
             self.deferred_class_static_blocks
                 .extend(deferred_static_blocks);
