@@ -127,6 +127,10 @@ name = "script_mode_import_equals_interface_alias_tests"
 path = "tests/script_mode_import_equals_interface_alias_tests.rs"
 
 [[test]]
+name = "for_statement_recovery_tests"
+path = "tests/for_statement_recovery_tests.rs"
+
+[[test]]
 name = "system_top_level_using_env_position_tests"
 path = "tests/system_top_level_using_env_position_tests.rs"
 
