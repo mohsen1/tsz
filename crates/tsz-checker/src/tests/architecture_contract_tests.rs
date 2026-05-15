@@ -4174,23 +4174,23 @@ fn test_checker_file_size_ceiling() {
     // Ceiling: number of checker source files exceeding 2000 LOC.
     // This number must only shrink as files are split into smaller modules.
     // Current oversized files (as of 2026-04-03):
-    //   checkers/call_checker.rs, checkers/generic_checker.rs,
-    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs, checkers/jsx/orchestration.rs,
+    //   checkers/call_checker/mod.rs, checkers/generic_checker/mod.rs,
+    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs, checkers/jsx/orchestration/mod.rs,
     //   types/type_checking/duplicate_identifiers.rs, types/function_type.rs,
     //   types/queries/lib.rs, types/utilities/core.rs, types/computation/binary.rs,
-    //   types/computation/identifier.rs, types/computation/call/inner.rs,
-    //   types/computation/object_literal.rs, types/property_access_helpers.rs,
-    //   types/property_access_type.rs, types/class_type/core.rs,
+    //   types/computation/identifier/mod.rs, types/computation/call/inner.rs,
+    //   types/computation/object_literal/mod.rs, types/property_access_helpers/mod.rs,
+    //   types/property_access_type/mod.rs, types/class_type/core.rs,
     //   types/class_type/constructor.rs,
-    //   classes/class_checker.rs, classes/class_implements_checker.rs,
-    //   declarations/import/core.rs, declarations/import/declaration.rs,
+    //   classes/class_checker.rs, classes/class_implements_checker/mod.rs,
+    //   declarations/import/core/mod.rs, declarations/import/declaration.rs,
     //   state/variable_checking/core.rs,
-    //   state/variable_checking/variable_helpers.rs, state/variable_checking/destructuring.rs,
-    //   state/type_analysis/computed_commonjs.rs, state/type_analysis/computed.rs,
+    //   state/variable_checking/variable_helpers/mod.rs, state/variable_checking/destructuring.rs,
+    //   state/type_analysis/computed_commonjs/mod.rs, state/type_analysis/computed/mod.rs,
     //   state/type_resolution/module.rs,
-    //   jsdoc/params.rs, jsdoc/resolution.rs, symbols/scope_finder.rs,
-    //   assignability/assignment_checker.rs, error_reporter/core.rs,
-    //   error_reporter/call_errors.rs, flow/control_flow/core.rs
+    //   jsdoc/params.rs, jsdoc/resolution/mod.rs, symbols/scope_finder.rs,
+    //   assignability/assignment_checker/mod.rs, error_reporter/core/mod.rs,
+    //   error_reporter/call_errors/mod.rs, flow/control_flow/core.rs
     const FILE_COUNT_CEILING: usize = 35;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
