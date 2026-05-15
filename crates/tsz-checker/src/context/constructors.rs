@@ -69,9 +69,8 @@ impl<'a> CheckerContext<'a> {
             ),
             enum_namespace_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
-            cross_file_declaration_node_types: Arc::new(dashmap::DashMap::new()),
             lib_type_resolution_cache: FxHashMap::default(),
-            lib_delegation_cache: FxHashMap::default(),
+            lib_delegation_cache: crate::context::CrossFileDelegationCache::default(),
             namespace_member_resolution_cache: RefCell::new(FxHashMap::default()),
             export_equals_named_cache: RefCell::new(FxHashMap::default()),
             nested_namespace_candidates_cache: RefCell::new(FxHashMap::default()),
@@ -622,8 +621,6 @@ impl<'a> CheckerContext<'a> {
         ctx.enum_namespace_types = parent.enum_namespace_types.clone();
 
         ctx.lib_delegation_cache = parent.lib_delegation_cache.clone();
-        ctx.cross_file_declaration_node_types =
-            Arc::clone(&parent.cross_file_declaration_node_types);
         // Skip the deep `HashMap::clone` for caches that are empty on the
         // parent: `ctx` was just constructed via `Self::base(...)` so its
         // matching cache is already an empty HashMap, and cloning an empty

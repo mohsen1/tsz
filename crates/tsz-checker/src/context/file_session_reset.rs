@@ -416,7 +416,6 @@ impl<'a> CheckerContext<'a> {
         self.enum_namespace_types.clear();
         self.lib_delegation_cache.clear();
         self.var_decl_types.clear();
-        self.cross_file_declaration_node_types.clear();
         self.merged_value_types.clear();
         // SymbolId↔DefId mapping caches. The forward map is keyed
         // by SymbolId (file-local namespace); the reverse map is

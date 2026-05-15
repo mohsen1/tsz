@@ -753,9 +753,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        let cache_key = (target_arena as *const NodeArena as usize, decl_idx, 1);
-        if let Some(cached) = self.ctx.cross_file_declaration_node_types.get(&cache_key) {
-            let cached = *cached;
+        if let Some(cached) =
+            self.ctx
+                .lib_delegation_cache
+                .declaration_node_type(target_arena, decl_idx, 1)
+        {
             return cached;
         }
 
@@ -821,9 +823,12 @@ impl<'a> CheckerState<'a> {
         let _ = sym_id;
         Self::leave_cross_arena_delegation();
         if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
-            self.ctx
-                .cross_file_declaration_node_types
-                .insert(cache_key, result);
+            self.ctx.lib_delegation_cache.insert_declaration_node_type(
+                target_arena,
+                decl_idx,
+                1,
+                result,
+            );
         }
         result
     }
@@ -932,17 +937,11 @@ impl<'a> CheckerState<'a> {
             return cached_type;
         }
 
-        let value_cache_key = (
-            decl_arena.as_ref() as *const NodeArena as usize,
+        if let Some(cached) = self.ctx.lib_delegation_cache.declaration_node_type(
+            decl_arena.as_ref(),
             decl_idx,
             if apply_module_augmentations { 1 } else { 2 },
-        );
-        if let Some(cached) = self
-            .ctx
-            .cross_file_declaration_node_types
-            .get(&value_cache_key)
-        {
-            let cached = *cached;
+        ) {
             return cached;
         }
 
@@ -1020,9 +1019,12 @@ impl<'a> CheckerState<'a> {
                     .first()
                     .is_some_and(|source_file| source_file.is_declaration_file));
         if cacheable_result {
-            self.ctx
-                .cross_file_declaration_node_types
-                .insert(value_cache_key, result);
+            self.ctx.lib_delegation_cache.insert_declaration_node_type(
+                decl_arena.as_ref(),
+                decl_idx,
+                if apply_module_augmentations { 1 } else { 2 },
+                result,
+            );
         }
         result
     }
@@ -1079,9 +1081,12 @@ impl<'a> CheckerState<'a> {
                 self.get_type_of_node(decl_idx)
             } else {
                 let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena);
-                let cache_key = (decl_arena as *const NodeArena as usize, decl_idx, 0);
-                if let Some(cached) = self.ctx.cross_file_declaration_node_types.get(&cache_key) {
-                    *cached
+                if let Some(cached) = self
+                    .ctx
+                    .lib_delegation_cache
+                    .declaration_node_type(decl_arena, decl_idx, 0)
+                {
+                    cached
                 } else {
                     if !Self::enter_cross_arena_delegation() {
                         continue;
@@ -1120,8 +1125,8 @@ impl<'a> CheckerState<'a> {
                     Self::leave_cross_arena_delegation();
                     if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
                         self.ctx
-                            .cross_file_declaration_node_types
-                            .insert(cache_key, result);
+                            .lib_delegation_cache
+                            .insert_declaration_node_type(decl_arena, decl_idx, 0, result);
                     }
                     result
                 }
