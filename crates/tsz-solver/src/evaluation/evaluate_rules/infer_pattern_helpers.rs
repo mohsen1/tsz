@@ -2214,9 +2214,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 pattern.get(index + 1),
                 Some(TemplateSpan::Type(TypeId::STRING))
             )
-            && self.is_template_infer_span(pattern.get(index + 2))
         {
-            return Self::next_char_end(source, pos).into_iter().collect();
+            if self.is_template_infer_span(pattern.get(index + 2)) {
+                return Self::next_char_end(source, pos).into_iter().collect();
+            }
+
+            return Self::next_char_end(source, pos)
+                .or(Some(pos))
+                .into_iter()
+                .collect();
         }
 
         if pattern

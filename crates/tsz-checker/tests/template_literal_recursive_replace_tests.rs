@@ -220,6 +220,33 @@ const result: T1 = ["", ""];
     );
 }
 
+/// `${infer Sign}${string}` should bind the first character before the
+/// string wildcard consumes the remainder, so nested conditionals can inspect it.
+#[test]
+fn infer_before_trailing_string_wildcard_feeds_nested_conditional() {
+    let diags = check(
+        r#"
+type ParseSign<S extends string> = S extends `${infer Sign}${string}`
+  ? Sign extends "+" | "-"
+    ? Sign
+    : ""
+  : "";
+
+type Test1 = ParseSign<"+100%">;
+type Test2 = ParseSign<"-50%">;
+type Test3 = ParseSign<"100%">;
+
+const t1: Test1 = "+";
+const t2: Test2 = "-";
+const t3: Test3 = "";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "ParseSign should preserve the first-character infer capture; got: {diags:#?}"
+    );
+}
+
 // ─── Recursive path unions ─────────────────────────────────────────────────
 
 /// `K extends ...` distributes over `keyof T`, so branch-local substitutions
