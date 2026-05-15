@@ -2236,6 +2236,8 @@ const KNOWN_EXTENSIONS: [&str; 12] = [
     ".json",
 ];
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
+const PACKAGE_INDEX_FALLBACK_EXTENSIONS: [&str; 3] = ["ts", "tsx", "d.ts"];
+const PACKAGE_INDEX_FALLBACK_ALLOW_JS_EXTENSIONS: [&str; 5] = ["ts", "tsx", "d.ts", "js", "jsx"];
 
 const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
@@ -2791,15 +2793,38 @@ fn resolve_package_root(
         .unwrap_or(false);
     let has_package_json = package_json.is_some();
     if (!is_symlinked_package_root || !has_package_json)
-        && let Some(resolved) = resolve_package_entry(
-            package_root,
-            "index",
-            options,
-            package_type,
-            resolution_cache,
-        )
+        && let Some(resolved) = resolve_package_index_fallback(package_root, options)
     {
         return Some(resolved);
+    }
+
+    None
+}
+
+fn resolve_package_index_fallback(
+    package_root: &Path,
+    options: &ResolvedCompilerOptions,
+) -> Option<PathBuf> {
+    let extensions = if options.allow_js {
+        PACKAGE_INDEX_FALLBACK_ALLOW_JS_EXTENSIONS.as_slice()
+    } else {
+        PACKAGE_INDEX_FALLBACK_EXTENSIONS.as_slice()
+    };
+    let mut default_suffixes: Vec<String> = Vec::new();
+    let suffixes = if options.module_suffixes.is_empty() {
+        default_suffixes.push(String::new());
+        &default_suffixes
+    } else {
+        &options.module_suffixes
+    };
+    let index = package_root.join("index");
+
+    for ext in extensions {
+        for candidate in candidates_with_suffixes_and_extension(&index, ext, suffixes) {
+            if count_is_file(&candidate) && is_valid_module_or_js_file(&candidate) {
+                return Some(normalize_resolved_path(&candidate, options));
+            }
+        }
     }
 
     None
