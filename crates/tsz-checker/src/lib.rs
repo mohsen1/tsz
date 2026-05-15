@@ -399,6 +399,9 @@ mod callable_interface_assignment_tests;
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
+#[path = "tests/class_feature_target_gates_tests.rs"]
+mod class_feature_target_gates_tests;
+#[cfg(test)]
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
 #[cfg(test)]
