@@ -1632,8 +1632,8 @@ fn checker_files_stay_under_loc_limit() {
     // These ceilings represent the current state — they can only shrink, never grow.
     // Removed after dropping below 2000 LOC:
     //   complex.rs (926), variable_checking/core.rs (1606),
-    //   symbol_types.rs (892), error_reporter/core.rs (1576),
-    //   types/computation/call.rs (1805→split), checkers/call_checker.rs (1396),
+    //   symbol_types.rs (892), error_reporter/core/mod.rs (1576),
+    //   types/computation/call.rs (1805→split), checkers/call_checker/mod.rs (1396),
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
         ("state/type_analysis/computed_commonjs.rs", 2787),
@@ -1641,18 +1641,18 @@ fn checker_files_stay_under_loc_limit() {
         ("checkers/jsx/orchestration", 2397),
         ("checkers/call_checker/overload_resolution.rs", 1400),
         ("checkers/call_checker/candidate_collection.rs", 1100),
-        ("types/property_access_helpers.rs", 2104),
+        ("types/property_access_helpers/mod.rs", 2104),
         // Bumped from 2500 to 2501 for TS2532/TS18048 attribution fix in
         // `this: undefined` property access (module top-level arrow). The
         // file-split plan is still pending.
         ("types/property_access_type/resolve.rs", 2501),
-        ("declarations/import/core.rs", 2562),
+        ("declarations/import/core/mod.rs", 2562),
         ("declarations/import/declaration.rs", 2341),
         ("types/computation/call/inner.rs", 2019),
-        ("jsdoc/resolution.rs", 2357),
-        ("assignability/assignment_checker.rs", 2083),
-        ("error_reporter/core.rs", 2358),
-        ("error_reporter/call_errors.rs", 2554),
+        ("jsdoc/resolution/mod.rs", 2357),
+        ("assignability/assignment_checker/mod.rs", 2083),
+        ("error_reporter/core/mod.rs", 2358),
+        ("error_reporter/call_errors/mod.rs", 2554),
         ("error_reporter/core/diagnostic_source.rs", 2069),
         ("types/type_checking/duplicate_identifiers_helpers.rs", 2244),
         ("types/type_checking/duplicate_identifiers.rs", 2060),
