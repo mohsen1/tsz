@@ -22,10 +22,6 @@ struct DirectActualLibAliasBodyProof {
     outcome: DirectActualLibAliasBodyOutcome,
 }
 
-fn is_special_generic_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
-    matches!(name, "IteratorResult")
-}
-
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
     let basename = std::path::Path::new(file_name)
         .file_name()
@@ -365,7 +361,7 @@ impl<'a> CheckerState<'a> {
         let generic_alias_has_admitted_body = !params.is_empty()
             && (common::mapped_type_id(self.ctx.types, body).is_some()
                 || common::contains_conditional_type(self.ctx.types, body)
-                || is_special_generic_direct_actual_lib_alias_body_admitted(name));
+                || common::union_members(self.ctx.types, body).is_some());
         let outcome = if non_generic_alias_has_resolved_body || generic_alias_has_admitted_body {
             DirectActualLibAliasBodyOutcome::Success
         } else if !params.is_empty() {
