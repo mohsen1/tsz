@@ -1431,7 +1431,7 @@ let y = <Poisoned />;
 }
 
 #[test]
-#[ignore] // TODO: needs default lib types (Array, Object, etc.) to avoid TS2318 flood
+#[ignore = "pending: needs default lib types (Array, Object, etc.) to avoid TS2318 flood"]
 fn test_cross_file_react_class_generic_props_emit_errors() {
     let lib_source = r#"
 declare namespace JSX {

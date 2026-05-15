@@ -1873,7 +1873,7 @@ export const timestamp = now();
 }
 
 #[test]
-#[ignore] // TODO: declaration emit should report TS7056 for private import type alias
+#[ignore = "pending: declaration emit should report TS7056 for private import type alias"]
 fn declaration_emit_reports_ts7056_for_private_import_type_alias() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -3157,7 +3157,7 @@ declare module "server" {
 }
 
 #[test]
-#[ignore] // TODO: UMD global class surface should stay unaugmented
+#[ignore = "pending: UMD global class surface should stay unaugmented"]
 fn compile_project_umd_global_class_surface_stays_unaugmented() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -6190,7 +6190,7 @@ const bad: B[] = Array.from(inputA.values());
 }
 
 #[test]
-#[ignore] // TODO: Promise should be assignable to PromiseLike with default libs
+#[ignore = "pending: Promise should be assignable to PromiseLike with default libs"]
 fn merged_program_promise_is_assignable_to_promise_like_with_default_libs() {
     let files = vec![(
         "main.ts".to_string(),
@@ -12830,7 +12830,7 @@ export function wrap<T>(value: T, count: number = 1): T[] {
 }
 
 #[test]
-#[ignore] // TODO: generic utility library classes should compile without errors
+#[ignore = "pending: generic utility library classes should compile without errors"]
 fn compile_generic_utility_library_classes() {
     // Test generic utility classes
     let temp = TempDir::new().expect("temp dir");

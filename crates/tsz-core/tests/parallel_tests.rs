@@ -933,7 +933,7 @@ fn test_check_files_parallel_preserves_same_file_namespace_exports() {
 }
 
 #[test]
-#[ignore] // TODO: Import shadowing type meaning needs parallel checking refinement
+#[ignore = "pending: Import shadowing type meaning needs parallel checking refinement"]
 fn test_check_files_parallel_preserves_import_shadowing_type_meaning() {
     let files = vec![
         ("b.ts".to_string(), "export const zzz = 123;\n".to_string()),
@@ -2267,7 +2267,7 @@ export default function () {
 }
 
 #[test]
-#[ignore] // TODO: Cross-file const/class redeclaration TS2451 needs parallel detection
+#[ignore = "pending: Cross-file const/class redeclaration TS2451 needs parallel detection"]
 fn test_check_files_parallel_cross_file_const_and_class_redeclaration_uses_ts2451() {
     let files = vec![
         ("a.ts".to_string(), "const Bar = 3;\n".to_string()),
@@ -3219,7 +3219,7 @@ class B {
 }
 
 #[test]
-#[ignore] // TODO: Private accessor before field declarations reporting needs parallel handling
+#[ignore = "pending: Private accessor before field declarations reporting needs parallel handling"]
 fn test_check_files_parallel_private_accessor_before_field_reports_both_declarations() {
     // tsc reports TS2300 on BOTH declarations when a private accessor and
     // private field share the same name, so we expect 6 total (2 per class).
