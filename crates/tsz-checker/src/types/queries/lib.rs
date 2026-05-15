@@ -1958,6 +1958,16 @@ impl<'a> CheckerState<'a> {
                 let paren = self.ctx.arena.get_parenthesized(node)?;
                 self.literal_type_from_initializer(paren.expression)
             }
+            k if k == tsz_parser::parser::syntax_kind_ext::AS_EXPRESSION
+                || k == tsz_parser::parser::syntax_kind_ext::TYPE_ASSERTION =>
+            {
+                let assertion = self.ctx.arena.get_type_assertion(node)?;
+                if self.is_const_assertion_type_node(assertion.type_node) {
+                    self.literal_type_from_initializer(assertion.expression)
+                } else {
+                    None
+                }
+            }
             k if k == tsz_parser::parser::syntax_kind_ext::TEMPLATE_EXPRESSION => {
                 let template = self.ctx.arena.get_template_expr(node)?;
                 // Get the head text (text before the first ${})

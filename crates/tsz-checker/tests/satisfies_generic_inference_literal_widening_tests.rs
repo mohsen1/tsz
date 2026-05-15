@@ -35,6 +35,13 @@ fn ts2322_diags(source: &str) -> Vec<(u32, String)> {
     diags(source).into_iter().filter(|d| d.0 == 2322).collect()
 }
 
+fn diagnostics_with_code(source: &str, code: u32) -> Vec<(u32, String)> {
+    diags(source)
+        .into_iter()
+        .filter(|diag| diag.0 == code)
+        .collect()
+}
+
 #[test]
 fn boolean_literal_preserved_through_generic_identity_with_satisfies() {
     // Canonical repro from the issue.
@@ -209,6 +216,82 @@ const f2: true = cfg.flag;
     assert!(
         ds.is_empty(),
         "Expected no TS2322 — typeof of generic call result preserves boolean literal, got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_preserves_const_asserted_property_literal_in_typeof_alias() {
+    let source = r##"
+type Theme = { primary: string };
+
+const theme = {
+  primary: "#ff0000" as const,
+} satisfies Theme;
+
+type PrimaryType = typeof theme.primary;
+const wrong: PrimaryType = "#0000ff";
+"##;
+
+    let all = diags(source);
+    let ds: Vec<_> = all.iter().filter(|diag| diag.0 == 2322).collect();
+    assert_eq!(
+        ds.len(),
+        1,
+        "Expected TS2322 because `as const` property should stay literal through `satisfies`, got: {all:?}",
+    );
+    assert!(
+        ds[0]
+            .1
+            .contains("Type '\"#0000ff\"' is not assignable to type '\"#ff0000\"'"),
+        "Expected TS2322 to compare against the preserved literal, got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_preserves_non_widening_identifier_property_in_typeof_alias() {
+    let source = r#"
+type Limits = { retries: number };
+
+const retryCount = 3 as const;
+const config = {
+  retries: retryCount,
+} satisfies Limits;
+
+type RetryCount = typeof config.retries;
+const wrong: RetryCount = 4;
+"#;
+
+    let ds = ts2322_diags(source);
+    assert_eq!(
+        ds.len(),
+        1,
+        "Expected TS2322 because non-widening identifier property should stay literal through `satisfies`, got: {ds:?}",
+    );
+    assert!(
+        ds[0].1.contains("Type '4' is not assignable to type '3'"),
+        "Expected TS2322 to compare against the preserved numeric literal, got: {ds:?}",
+    );
+}
+
+#[test]
+fn satisfies_accepts_nested_const_asserted_tuple_for_mutable_tuple_target() {
+    let source = r##"
+type ColorConfig = {
+  red?: {
+    hex: string;
+    rgb: [number, number, number];
+  };
+};
+
+const exactPalette = {
+  red: { hex: "#ff0000" as const, rgb: [255, 0, 0] as const },
+} satisfies ColorConfig;
+"##;
+
+    let ts1360 = diagnostics_with_code(source, 1360);
+    assert!(
+        ts1360.is_empty(),
+        "Expected no TS1360 for nested readonly tuple satisfying mutable tuple target, got: {ts1360:?}",
     );
 }
 

@@ -612,8 +612,12 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(assertion_expr)
             .and_then(|node| self.ctx.arena.get_type_assertion(node))
-            .and_then(|assertion| self.ctx.arena.get(assertion.type_node))
-            .is_some_and(|type_node| type_node.kind == SyntaxKind::ConstKeyword as u16);
+            .is_some_and(|assertion| self.is_const_assertion_type_node(assertion.type_node));
+        let initializer_is_satisfies_wrapper = self
+            .ctx
+            .arena
+            .get(assertion_expr)
+            .is_some_and(|node| node.kind == syntax_kind_ext::SATISFIES_EXPRESSION);
         let initializer = self
             .ctx
             .arena
@@ -633,7 +637,10 @@ impl<'a> CheckerState<'a> {
                 {
                     let member_type =
                         self.literal_type_from_const_member_initializer(prop.initializer)?;
-                    return Some(if initializer_is_const_assertion {
+                    let preserve_member_literal = initializer_is_const_assertion
+                        || (initializer_is_satisfies_wrapper
+                            && self.expression_is_const_assertion(prop.initializer));
+                    return Some(if preserve_member_literal {
                         member_type
                     } else {
                         self.widen_literal_type(member_type)
