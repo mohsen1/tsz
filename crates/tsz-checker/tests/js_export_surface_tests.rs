@@ -2043,7 +2043,6 @@ exports.direct = undefined;
 }
 
 #[test]
-#[ignore = "regressed after remote changes: expected 2 TS2322 for same-file CommonJS reassignments, now emits 0"]
 fn test_current_file_exports_reads_use_prior_assignment_types() {
     let diagnostics = check_commonjs_single_file(
         "self.js",
@@ -2071,14 +2070,39 @@ exports.apply = 1;
         "Expected no TS2349 for same-file CommonJS calls after reassignment, got: {ts2349:#?}"
     );
 
-    // After CJS export assignment suppression changes (d322905ff), reassigning
-    // `exports.apply` to incompatible types now correctly emits TS2322 because
-    // the last assignment (`= 1`) widens the property type.
+    // `tsc --allowJs --checkJs --strict --module commonjs` accepts this whole
+    // sequence. CommonJS export-property assignments are declaration-like, and
+    // same-file reads use the most recent prior assignment without checking
+    // every write against the final property shape.
     let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
-    assert_eq!(
-        ts2322.len(),
-        2,
-        "Expected 2 TS2322 for same-file CommonJS reassignments where earlier assignments conflict with the final type, got: {ts2322:#?}"
+    assert!(
+        ts2322.is_empty(),
+        "Expected no TS2322 for same-file CommonJS export-property reassignments, got: {ts2322:#?}"
+    );
+}
+
+#[test]
+fn test_current_file_module_exports_reads_use_prior_assignment_types() {
+    let diagnostics = check_commonjs_single_file(
+        "self.js",
+        r#"
+module.exports.run = undefined;
+function makeRunner() { return 1; }
+module.exports.run = makeRunner;
+module.exports.run();
+module.exports.run = { ok: true };
+var ok = module.exports.run.ok;
+module.exports.run = "done";
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2339 | 2349))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected no assignment/read/call diagnostics for same-file `module.exports` reassignments, got: {relevant:#?}"
     );
 }
 
@@ -2180,7 +2204,6 @@ function f(k) {
 }
 
 #[test]
-#[ignore = "pre-existing regression"]
 fn test_jsdoc_param_type_uses_instance_side_for_destructured_commonjs_named_class() {
     let diagnostics = check_commonjs_two_files(
         "mod1.js",
@@ -2210,6 +2233,39 @@ function f(k) {
     assert!(
         relevant.is_empty(),
         "Expected destructured CommonJS named class JSDoc param to resolve to instance side, got: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_param_type_uses_instance_side_for_renamed_commonjs_named_class() {
+    let diagnostics = check_commonjs_two_files(
+        "mod1.js",
+        r#"
+class Widget {
+    values() {
+        return new Widget();
+    }
+}
+module.exports.Widget = Widget;
+"#,
+        "main.js",
+        r#"
+const { Widget: LocalWidget } = require("./mod1");
+/** @param {LocalWidget} k */
+function f(k) {
+    k.values();
+}
+"#,
+        "./mod1",
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 2322))
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected renamed destructured CommonJS named class JSDoc param to resolve to instance side, got: {relevant:#?}"
     );
 }
 

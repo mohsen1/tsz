@@ -34,6 +34,32 @@ fn test_interface_single_implementor() {
 }
 
 #[test]
+fn test_interface_implementation_respects_namespace_qualification() {
+    let source = "namespace A { export interface Foo {} }\nnamespace B { export interface Foo {} }\nclass C implements B.Foo {}";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        GoToImplementationProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let a_result = provider.get_implementations(root, Position::new(0, 31));
+    assert!(
+        a_result.is_none(),
+        "A.Foo should not pick up a class implementing B.Foo"
+    );
+
+    let b_result = provider.get_implementations(root, Position::new(1, 31));
+    assert!(b_result.is_some(), "B.Foo should find C");
+    let locations = b_result.unwrap();
+    assert_eq!(locations.len(), 1);
+    assert_eq!(locations[0].range.start.line, 2);
+}
+
+#[test]
 fn test_interface_multiple_implementors() {
     let source = "interface Shape {\n  area(): number;\n}\nclass Circle implements Shape {\n  area() { return 0; }\n}\nclass Square implements Shape {\n  area() { return 0; }\n}";
     let (parser, root) = parse_test_source(source);

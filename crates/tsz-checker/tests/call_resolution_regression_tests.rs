@@ -224,6 +224,38 @@ f(1);
 }
 
 #[test]
+fn constructor_overload_arity_gap_emits_ts2575() {
+    let source = r#"
+class Point {
+  x: number;
+  y: number;
+
+  constructor();
+  constructor(x: number, y: number);
+  constructor(x?: number, y?: number) {
+    this.x = x ?? 0;
+    this.y = y ?? 0;
+  }
+}
+
+new Point(1);
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2575
+                && message.contains("No overload expects 1 arguments")
+                && message.contains("either 0 or 2 arguments")
+        }),
+        "Constructor overload arity gap should emit TS2575, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2554),
+        "Constructor overload arity gap should not fall back to TS2554, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn optional_params_no_error() {
     let source = r#"
 function f(x: number, y?: string): void {}

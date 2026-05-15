@@ -818,6 +818,8 @@ pub(crate) fn classify_object_properties(
     use super::common::{intersection_members, is_type_parameter_like, union_members};
     use super::relation_types::PropertyClassification;
 
+    tsz_common::perf_counters::record_property_classification_call();
+
     // Cannot classify if target is a type parameter.
     if is_type_parameter_like(db, target) {
         return Some(PropertyClassification {
@@ -923,7 +925,6 @@ pub(crate) fn classify_object_properties(
                 matching_props.push(source_prop.clone());
             }
         } else if !target_index_signature_accepts_property(db, target, source_prop)
-            && !classification.target_has_index_signature
             && !classification.target_is_empty_object
             && !classification.target_is_global_object_or_function
             && !classification.target_is_type_parameter
@@ -1032,10 +1033,12 @@ impl TargetPropertyIndex {
         db: &dyn TypeDatabase,
         source_prop: &PropertyInfo,
     ) -> Option<TypeId> {
-        self.by_atom
-            .get(&source_prop.name)
-            .copied()
-            .or_else(|| self.matching_type_by_resolved_name(db, source_prop.name))
+        if let Some(target_type) = self.by_atom.get(&source_prop.name).copied() {
+            return Some(target_type);
+        }
+
+        tsz_common::perf_counters::record_property_classification_string_fallback_source_lookup();
+        self.matching_type_by_resolved_name(db, source_prop.name)
     }
 
     fn matching_type_by_resolved_name(
@@ -1047,8 +1050,14 @@ impl TargetPropertyIndex {
         self.fallback_order
             .iter()
             .find_map(|(target_name, target_type)| {
+                tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
                 let target_text = db.resolve_atom_ref(*target_name);
-                (target_text.as_ref() == source_text.as_ref()).then_some(*target_type)
+                if target_text.as_ref() == source_text.as_ref() {
+                    tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
+                    Some(*target_type)
+                } else {
+                    None
+                }
             })
     }
 }

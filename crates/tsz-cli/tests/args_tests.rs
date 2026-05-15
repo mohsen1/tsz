@@ -890,7 +890,7 @@ fn parses_use_define_for_class_fields() {
 // These exhaustively cover every variant of the three CLI enums that are
 // converted to runtime kinds (`ScriptTarget`, `ModuleKind`,
 // `ModuleResolutionKind`) before being threaded into `PrinterOptions` /
-// `CheckerOptions` by `tsz-cli/src/driver/core.rs`. A regression in any one
+// `CheckerOptions` by `crates/tsz-cli/src/driver/core.rs`. A regression in any one
 // arm silently mismaps every flag for that target — the surface is wide and
 // each mismap would be an effectively invisible CLI bug.
 //

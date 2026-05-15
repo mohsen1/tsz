@@ -616,3 +616,53 @@ const _: string = r.extra;
         "r.extra assigned to string must not emit TS2322: {diagnostics:?}"
     );
 }
+
+#[test]
+fn function_call_apply_bind_use_declared_this_parameter_not_host_object() {
+    let source = r#"
+function greet(this: { name: string }, greeting: string): string {
+    return greeting + this.name;
+}
+const obj = { name: "Alice", greet };
+const called: string = obj.greet.call({ name: "Bob" }, "Hello");
+const applied: string = obj.greet.apply({ name: "Bob" }, ["Hello"]);
+const bound: (greeting: string) => string = obj.greet.bind({ name: "Bob" });
+const boundResult: string = bound("Hello");
+export {};
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Function call/apply/bind should accept the function's declared this parameter, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn this_array_push_accepts_this_element_with_lib_array_signature() {
+    let source = r#"
+class State {
+  history: this[] = [];
+
+  save(): void {
+    this.history.push(this);
+  }
+}
+
+const s = new State();
+s.save();
+"#;
+    let libs = tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &libs,
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    assert!(
+        diagnostics.is_empty(),
+        "pushing this into this[] should not produce diagnostics, got: {diagnostics:?}"
+    );
+}
