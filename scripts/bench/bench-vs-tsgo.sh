@@ -683,12 +683,58 @@ const diagnosticDeltas = delta
   .map((line) => line.trim())
   .filter(Boolean)
   .slice(0, 20);
+
+const DIAGNOSTIC_SUBSYSTEM_RULES = [
+  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
+  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
+  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
+  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
+  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
+  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
+  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
+  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
+  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
+];
+
+function subsystemForCode(code) {
+  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
+    if (codes.has(code)) return subsystem;
+  }
+  return "unclassified diagnostic";
+}
+
+function diagnosticSubsystemsFrom(deltas) {
+  const groups = new Map();
+  for (const line of deltas) {
+    const codes = [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
+    const lineCodes = codes.length ? codes : ["uncoded"];
+    for (const code of lineCodes) {
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
+      if (!groups.has(subsystem)) {
+        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+      }
+      const group = groups.get(subsystem);
+      group.count += 1;
+      if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
+        group.codes.push(code);
+      }
+      if (group.examples.length < 3) {
+        group.examples.push(line);
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+const diagnosticSubsystems = diagnosticSubsystemsFrom(diagnosticDeltas);
 const row = {
   name: process.env.COMPAT_NAME || "",
   exit_class: process.env.COMPAT_EXIT_CLASS || "unknown",
   phase: process.env.COMPAT_PHASE || "unknown",
   diagnostic_status: process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown",
   diagnostic_deltas: diagnosticDeltas,
+  diagnostic_subsystems: diagnosticSubsystems,
+  primary_subsystem: diagnosticSubsystems[0]?.subsystem || null,
   exit_codes: {
     tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
     tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
@@ -1388,10 +1434,69 @@ function reductionCandidatesFrom(deltas) {
   return source.slice(0, 5);
 }
 
+const DIAGNOSTIC_SUBSYSTEM_RULES = [
+  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
+  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
+  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
+  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
+  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
+  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
+  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
+  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
+  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
+];
+
+function subsystemForCode(code) {
+  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
+    if (codes.has(code)) return subsystem;
+  }
+  return "unclassified diagnostic";
+}
+
+function diagnosticSubsystemsFrom(deltas) {
+  const groups = new Map();
+  for (const line of deltas) {
+    const codes = [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
+    const lineCodes = codes.length ? codes : ["uncoded"];
+    for (const code of lineCodes) {
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
+      if (!groups.has(subsystem)) {
+        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+      }
+      const group = groups.get(subsystem);
+      group.count += 1;
+      if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
+        group.codes.push(code);
+      }
+      if (group.examples.length < 3) {
+        group.examples.push(line);
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+function normalizedDiagnosticSubsystems(recorded, deltas) {
+  const existing = Array.isArray(recorded.diagnostic_subsystems) ? recorded.diagnostic_subsystems : [];
+  if (existing.length) {
+    return existing
+      .map((group) => ({
+        subsystem: String(group?.subsystem || "unclassified diagnostic"),
+        codes: Array.isArray(group?.codes) ? group.codes.map(String).filter(Boolean).slice(0, 8) : [],
+        count: Number.isFinite(Number(group?.count)) ? Number(group.count) : 0,
+        examples: Array.isArray(group?.examples) ? group.examples.map(String).filter(Boolean).slice(0, 3) : [],
+      }))
+      .filter((group) => group.count > 0 || group.codes.length || group.examples.length)
+      .slice(0, 8);
+  }
+  return diagnosticSubsystemsFrom(deltas).slice(0, 8);
+}
+
 function compatibilityFor(row, compatibilityRows) {
   const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
   if (!recorded) return {};
   const diagnosticDeltas = normalizedDiagnosticDeltas(recorded);
+  const diagnosticSubsystems = normalizedDiagnosticSubsystems(recorded, diagnosticDeltas);
   return {
     compatibility: {
       exit_class: recorded.exit_class || "unknown",
@@ -1399,6 +1504,8 @@ function compatibilityFor(row, compatibilityRows) {
       diagnostic_status: recorded.diagnostic_status || "unknown",
       diagnostic_deltas: diagnosticDeltas,
       diagnostic_codes: diagnosticCodesFrom(diagnosticDeltas),
+      diagnostic_subsystems: diagnosticSubsystems,
+      primary_subsystem: recorded.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
       reduction_candidates: reductionCandidatesFrom(diagnosticDeltas),
       exit_codes: recorded.exit_codes && typeof recorded.exit_codes === "object"
         ? {
