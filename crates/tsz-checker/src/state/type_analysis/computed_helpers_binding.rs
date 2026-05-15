@@ -735,7 +735,7 @@ impl<'a> CheckerState<'a> {
                     .and_then(|n| checker.ctx.arena.get_class(n))
                     .is_some()
                 {
-                    // Phase 1: compute instance type
+                    // first pass: compute instance type
                     let class_ref = checker
                         .ctx
                         .arena
@@ -747,7 +747,7 @@ impl<'a> CheckerState<'a> {
                         .get_class(class_ref)
                         .expect("cross_decl class shape verified by is_some() above");
                     let instance_type = checker.get_class_instance_type(cross_decl_idx, class);
-                    // Phase 2: compute constructor type (re-fetch class reference)
+                    // second pass: compute constructor type (re-fetch class reference)
                     let class_ref = checker
                         .ctx
                         .arena
