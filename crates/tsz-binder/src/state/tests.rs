@@ -4525,6 +4525,49 @@ fn merge_lib_contexts_does_not_overwrite_user_semantic_defs() {
 }
 
 #[test]
+fn type_only_export_clone_preserves_lib_provenance() {
+    let lib_source = "interface LibGlobal {}";
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+
+    let lib_ctx = super::LibContext {
+        arena: Arc::new(lib_parser.get_arena().clone()),
+        binder: Arc::new(lib_binder),
+    };
+
+    let user_source = "export type { LibGlobal };";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+    let export_sym_id = main_binder
+        .file_locals
+        .get("LibGlobal")
+        .expect("expected type-only export clone in file_locals");
+    let export_symbol = main_binder
+        .symbols
+        .get(export_sym_id)
+        .expect("expected type-only export clone symbol");
+
+    assert!(
+        export_symbol.is_type_only,
+        "type-only export clone should remain type-only"
+    );
+    assert!(
+        main_binder.lib_symbol_ids.contains(&export_sym_id),
+        "type-only export clone of a lib global should preserve lib provenance"
+    );
+    assert!(
+        main_binder.symbol_arenas.contains_key(&export_sym_id),
+        "type-only export clone should preserve declaration arena provenance"
+    );
+}
+
+#[test]
 fn semantic_defs_captures_generic_interface() {
     // Generic interfaces should be captured with the same identity
     // regardless of type parameter count. The binder only records
