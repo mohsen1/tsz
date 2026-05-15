@@ -6,16 +6,16 @@
 //!
 //! Three failure surfaces share this rule and are exercised here:
 //! 1. Direct tuple-to-tuple assignment (subtype rule in
-//!    `tsz-solver/src/relations/subtype/rules/tuples.rs`).
+//!    `crates/tsz-solver/src/relations/subtype/rules/tuples.rs`).
 //! 2. Array-literal initializer with contextual tuple type
 //!    (element elaboration in
-//!    `tsz-checker/src/error_reporter/call_errors/elaboration_array_mismatch.rs`).
+//!    `crates/tsz-checker/src/error_reporter/call_errors/elaboration_array_mismatch.rs`).
 //!
 //! 3. Variadic rest argument into a generic tuple-typed rest param
 //!    (e.g. `f<U extends unknown[]>(cb: (...args: U) => T, ...args: U)`
 //!    called with an `undefined` trailing arg) — handled by the
 //!    instantiated contextual parameter types used during generic call
-//!    inference in `tsz-checker/src/types/computation/call_inference.rs`.
+//!    inference in `crates/tsz-checker/src/types/computation/call_inference.rs`.
 
 use tsz_checker::test_utils::check_source_diagnostics;
 

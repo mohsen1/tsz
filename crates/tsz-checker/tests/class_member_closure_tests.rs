@@ -691,6 +691,33 @@ fn mixin_extends_parameter_shadowing_abstract_class_no_ts2653() {
 }
 
 #[test]
+fn generic_mixin_explicit_type_arg_substitutes_return_class_method_param() {
+    let source = r#"
+        type Constructor<T = {}> = new (...args: any[]) => T;
+
+        function WithValue<TBase extends Constructor, T>(Base: TBase) {
+            return class extends Base {
+                value!: T;
+                setValue(v: T) { this.value = v; }
+            };
+        }
+
+        class User {
+            constructor(public name: string) {}
+        }
+
+        const WithNumber = WithValue<typeof User, number>(User);
+        const instance = new WithNumber("Alice");
+        instance.setValue(42);
+    "#;
+    let diags = check_strict(source);
+    assert!(
+        !has_code(&diags, 2345),
+        "Explicit mixin type argument should substitute returned class method parameter, got: {diags:?}",
+    );
+}
+
+#[test]
 fn class_expression_extending_abstract_class_still_emits_ts2653() {
     let source = r#"
         abstract class Base {

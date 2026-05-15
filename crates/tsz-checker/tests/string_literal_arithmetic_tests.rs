@@ -32,6 +32,21 @@ let y = x - 1;  // Should emit TS2362 - this is arithmetic, not string concatena
 }
 
 #[test]
+fn test_generic_constrained_number_string_union_minus_emits_ts2362() {
+    let source = r"
+function f<T extends number | string>(x: T) {
+    return x - 1;
+}
+";
+    let codes = tsz_checker::test_utils::check_source_codes(source);
+    let error_count = codes.iter().filter(|&&c| c == 2362).count();
+    assert!(
+        error_count >= 1,
+        "Expected TS2362 for generic T constrained to number | string in arithmetic, got codes {codes:?}"
+    );
+}
+
+#[test]
 fn test_multiple_string_literals_union_plus_no_error() {
     let source = r#"
 let x: "hello" | "world" | number;

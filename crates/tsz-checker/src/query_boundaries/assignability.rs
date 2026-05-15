@@ -1,3 +1,4 @@
+use tsz_common::Atom;
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
     TypeResolver,
@@ -83,14 +84,32 @@ pub(crate) enum MissingPropertyMode {
 /// Encodes all the policy dimensions that affect how the checker interprets
 /// a relation result. The checker builds a request, invokes the boundary,
 /// and uses the result + failure info for diagnostics.
+///
+/// Current field ownership:
+/// - `source` and `target` are semantic solver inputs and diagnostic inputs.
+/// - `kind` is diagnostic/tracing context today; it does not alter solver flags.
+/// - `allow_erased_generic_signature_retry` is translated to a solver relation flag.
+/// - `source_is_fresh`, `excess_property_mode`, and `missing_property_mode` are
+///   request-level policy descriptors. They are preserved for callers and tests,
+///   but `execute_relation` does not yet branch on them; EPC and missing-property
+///   diagnostics still have caller-side checks.
 #[derive(Debug, Clone)]
 pub(crate) struct RelationRequest {
+    /// Prepared source type for the relation. This feeds the solver query,
+    /// failure analysis, weak-union detection, and property classification.
     pub source: TypeId,
+    /// Prepared target type for the relation. This feeds the same semantic and
+    /// diagnostic paths as `source`.
     pub target: TypeId,
+    /// Relation context for diagnostics and tracing. Currently advisory only.
     pub kind: RelationKind,
+    /// Requested excess-property policy. Currently advisory; object-literal EPC
+    /// emission still happens in caller-side diagnostic paths.
     pub excess_property_mode: ExcessPropertyMode,
+    /// Requested missing-property policy. Currently advisory; failure rendering
+    /// still decides how to present missing-property diagnostics.
     pub missing_property_mode: MissingPropertyMode,
-    /// Whether the source is a fresh object literal.
+    /// Whether the source is a fresh object literal. Currently advisory.
     pub source_is_fresh: bool,
     /// Whether failed contextual generic-signature inference may retry with
     /// erased signatures. This is a targeted interface property compatibility
@@ -602,9 +621,11 @@ pub(crate) struct RelationOutcome {
 /// 2. When not related, collects a structured failure reason.
 /// 3. Detects weak-union violations.
 ///
-/// All policy dimensions (freshness, excess-property mode, missing-property
-/// mode) are encoded in the `request`; the boundary translates them to
-/// solver-level knobs.
+/// The boundary currently translates only `allow_erased_generic_signature_retry`
+/// into solver flags. Freshness, excess-property mode, and missing-property mode
+/// are carried on `RelationRequest` as explicit policy descriptors for follow-up
+/// centralization, but existing caller-side EPC/missing-property diagnostics still
+/// own those decisions.
 pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     request: &RelationRequest,
     db: &dyn QueryDatabase,
@@ -679,8 +700,7 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         classify_object_properties(db.as_type_database(), request.source, request.target);
 
     // Suppress ExcessProperty failure when the target has structural features
-    // that make EPC inapplicable. This centralizes the policy that was previously
-    // duplicated in `analyze_assignability_failure`.
+    // that make EPC inapplicable.
     let failure =
         suppress_excess_property_failure_if_needed(failure, db.as_type_database(), request.target);
 
@@ -705,8 +725,6 @@ fn suppress_excess_property_failure_if_needed(
     db: &dyn TypeDatabase,
     target: TypeId,
 ) -> Option<super::relation_types::RelationFailure> {
-    use super::common::is_type_parameter_like;
-
     let is_excess = matches!(
         &failure,
         Some(super::relation_types::RelationFailure::ExcessProperty { .. })
@@ -715,21 +733,68 @@ fn suppress_excess_property_failure_if_needed(
         return failure;
     }
 
-    // Check for deferred conditional members.
-    if tsz_solver::has_deferred_conditional_member(db, target) {
-        return None;
-    }
-
-    // Check for non-EPC intersection members (primitives/type-params).
-    if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target)
-        && members.iter().any(|member| {
-            tsz_solver::is_primitive_type(db, *member) || is_type_parameter_like(db, *member)
-        })
-    {
+    if target_suppresses_excess_property_failure(db, [target], |member| member) {
         return None;
     }
 
     failure
+}
+
+/// Apply the boundary-owned `ExcessProperty` suppression policy to raw failure
+/// analysis collected outside [`execute_relation`].
+///
+/// Some legacy callers still use [`check_assignable_gate_with_overrides`] for
+/// structured failure analysis. They may need checker-specific type evaluation
+/// before inspecting intersection members, so the boundary owns the decision
+/// while callers provide the member normalization callback.
+pub(crate) fn suppress_raw_excess_property_failure_if_needed<I, F>(
+    mut analysis: AssignabilityFailureAnalysis,
+    db: &dyn TypeDatabase,
+    target_candidates: I,
+    normalize_member: F,
+) -> AssignabilityFailureAnalysis
+where
+    I: IntoIterator<Item = TypeId>,
+    F: FnMut(TypeId) -> TypeId,
+{
+    if matches!(
+        &analysis.failure_reason,
+        Some(SubtypeFailureReason::ExcessProperty { .. })
+    ) && target_suppresses_excess_property_failure(db, target_candidates, normalize_member)
+    {
+        analysis.failure_reason = None;
+    }
+
+    analysis
+}
+
+fn target_suppresses_excess_property_failure<I, F>(
+    db: &dyn TypeDatabase,
+    target_candidates: I,
+    mut normalize_member: F,
+) -> bool
+where
+    I: IntoIterator<Item = TypeId>,
+    F: FnMut(TypeId) -> TypeId,
+{
+    use super::common::is_type_parameter_like;
+
+    for target in target_candidates {
+        if tsz_solver::has_deferred_conditional_member(db, target) {
+            return true;
+        }
+
+        if let Some(members) = tsz_solver::type_queries::data::get_intersection_members(db, target)
+            && members.iter().any(|member| {
+                let member = normalize_member(*member);
+                tsz_solver::is_primitive_type(db, member) || is_type_parameter_like(db, member)
+            })
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -753,6 +818,8 @@ pub(crate) fn classify_object_properties(
     use super::common::{intersection_members, is_type_parameter_like, union_members};
     use super::relation_types::PropertyClassification;
 
+    tsz_common::perf_counters::record_property_classification_call();
+
     // Cannot classify if target is a type parameter.
     if is_type_parameter_like(db, target) {
         return Some(PropertyClassification {
@@ -768,9 +835,6 @@ pub(crate) fn classify_object_properties(
     if source_props.is_empty() {
         return Some(PropertyClassification::default());
     }
-
-    // Collect all target property names from all branches (union/intersection/object).
-    let target_property_names = collect_target_property_names(db, target);
 
     let mut classification = PropertyClassification::default();
 
@@ -838,35 +902,29 @@ pub(crate) fn classify_object_properties(
         }
     }
 
-    // Collect target properties for compatibility checking.
-    let target_props = collect_target_properties(db, target);
+    // Collect target properties for presence and compatibility checking.
+    let target_props = collect_target_property_index(db, target);
 
     // Classify each source property and check compatibility of matching ones.
     let mut all_matching_compatible = true;
     let mut matching_props = Vec::new();
 
     for source_prop in source_props {
-        let name_str = db.resolve_atom_ref(source_prop.name);
-        if target_property_names.contains(name_str.as_ref()) {
+        if let Some(target_prop_type) = target_props.matching_type_for(db, source_prop) {
             // Property exists in target — check type compatibility.
-            if let Some(target_prop_type) = target_props.get(name_str.as_ref()).copied() {
-                // Account for optional properties: target `prop?: T` accepts `T | undefined`.
-                let effective_target_type = target_prop_type;
-                if !tsz_solver::is_subtype_of(db, source_prop.type_id, effective_target_type) {
-                    all_matching_compatible = false;
-                    classification.incompatible_properties.push((
-                        source_prop.name,
-                        source_prop.type_id,
-                        effective_target_type,
-                    ));
-                } else {
-                    matching_props.push(source_prop.clone());
-                }
+            // Account for optional properties: target `prop?: T` accepts `T | undefined`.
+            let effective_target_type = target_prop_type;
+            if !tsz_solver::is_subtype_of(db, source_prop.type_id, effective_target_type) {
+                all_matching_compatible = false;
+                classification.incompatible_properties.push((
+                    source_prop.name,
+                    source_prop.type_id,
+                    effective_target_type,
+                ));
             } else {
                 matching_props.push(source_prop.clone());
             }
         } else if !target_index_signature_accepts_property(db, target, source_prop)
-            && !classification.target_has_index_signature
             && !classification.target_is_empty_object
             && !classification.target_is_global_object_or_function
             && !classification.target_is_type_parameter
@@ -952,24 +1010,71 @@ fn shape_index_signature_accepts_property(
     string_index.is_some()
 }
 
+/// Property-name index for assignability failure classification.
+///
+/// The normal path keys by `Atom`, which is the stable property-name identity
+/// available on `PropertyInfo`. The fallback string scan keeps behavior intact
+/// if a source property arrives with a name identity that cannot be matched by
+/// atom alone.
+#[derive(Default)]
+struct TargetPropertyIndex {
+    by_atom: std::collections::HashMap<Atom, TypeId>,
+    fallback_order: Vec<(Atom, TypeId)>,
+}
+
+impl TargetPropertyIndex {
+    fn insert(&mut self, prop: &PropertyInfo) {
+        self.by_atom.entry(prop.name).or_insert(prop.type_id);
+        self.fallback_order.push((prop.name, prop.type_id));
+    }
+
+    fn matching_type_for(
+        &self,
+        db: &dyn TypeDatabase,
+        source_prop: &PropertyInfo,
+    ) -> Option<TypeId> {
+        if let Some(target_type) = self.by_atom.get(&source_prop.name).copied() {
+            return Some(target_type);
+        }
+
+        tsz_common::perf_counters::record_property_classification_string_fallback_source_lookup();
+        self.matching_type_by_resolved_name(db, source_prop.name)
+    }
+
+    fn matching_type_by_resolved_name(
+        &self,
+        db: &dyn TypeDatabase,
+        source_name: Atom,
+    ) -> Option<TypeId> {
+        let source_text = db.resolve_atom_ref(source_name);
+        self.fallback_order
+            .iter()
+            .find_map(|(target_name, target_type)| {
+                tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
+                let target_text = db.resolve_atom_ref(*target_name);
+                if target_text.as_ref() == source_text.as_ref() {
+                    tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
+                    Some(*target_type)
+                } else {
+                    None
+                }
+            })
+    }
+}
+
 /// Collect all property names and their types from a target type.
 ///
-/// Returns a map from property name to type for type compatibility checking.
 /// For unions, uses the type from the first member that has the property.
 /// For intersections, uses the type from the first member that has the property.
-fn collect_target_properties(
-    db: &dyn TypeDatabase,
-    target: TypeId,
-) -> std::collections::HashMap<String, TypeId> {
+fn collect_target_property_index(db: &dyn TypeDatabase, target: TypeId) -> TargetPropertyIndex {
     use super::common::{intersection_members, union_members};
-    let mut props = std::collections::HashMap::new();
+    let mut props = TargetPropertyIndex::default();
 
     if let Some(shape) =
         crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
     {
         for prop in shape.properties.iter() {
-            let name = db.resolve_atom(prop.name);
-            props.entry(name).or_insert(prop.type_id);
+            props.insert(prop);
         }
     }
 
@@ -979,8 +1084,7 @@ fn collect_target_properties(
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
                 for prop in shape.properties.iter() {
-                    let name = db.resolve_atom(prop.name);
-                    props.entry(name).or_insert(prop.type_id);
+                    props.insert(prop);
                 }
             }
         }
@@ -992,57 +1096,13 @@ fn collect_target_properties(
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
                 for prop in shape.properties.iter() {
-                    let name = db.resolve_atom(prop.name);
-                    props.entry(name).or_insert(prop.type_id);
+                    props.insert(prop);
                 }
             }
         }
     }
 
     props
-}
-
-/// Collect all property names from a target type (handling unions/intersections).
-fn collect_target_property_names(
-    db: &dyn TypeDatabase,
-    target: TypeId,
-) -> std::collections::HashSet<String> {
-    use super::common::{intersection_members, union_members};
-    let mut names = std::collections::HashSet::new();
-
-    if let Some(shape) =
-        crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
-    {
-        for prop in shape.properties.iter() {
-            names.insert(db.resolve_atom(prop.name));
-        }
-    }
-
-    if let Some(members) = union_members(db, target) {
-        for &member in &members {
-            if let Some(shape) =
-                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
-            {
-                for prop in shape.properties.iter() {
-                    names.insert(db.resolve_atom(prop.name));
-                }
-            }
-        }
-    }
-
-    if let Some(members) = intersection_members(db, target) {
-        for &member in members.iter() {
-            if let Some(shape) =
-                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
-            {
-                for prop in shape.properties.iter() {
-                    names.insert(db.resolve_atom(prop.name));
-                }
-            }
-        }
-    }
-
-    names
 }
 
 /// Check if an object shape represents the global Object or Function interface.
@@ -1155,4 +1215,37 @@ pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolv
         policy,
         context,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn target_property_index_uses_first_atom_match() {
+        let db = TypeInterner::new();
+        let name = db.intern_string("renamed");
+        let mut index = TargetPropertyIndex::default();
+
+        index.insert(&PropertyInfo::new(name, TypeId::STRING));
+        index.insert(&PropertyInfo::new(name, TypeId::NUMBER));
+
+        let source = PropertyInfo::new(name, TypeId::BOOLEAN);
+        assert_eq!(index.matching_type_for(&db, &source), Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn target_property_index_keeps_string_fallback() {
+        let db = TypeInterner::new();
+        let name = db.intern_string("fallbackName");
+        let mut index = TargetPropertyIndex::default();
+
+        index.fallback_order.push((name, TypeId::NUMBER));
+
+        assert_eq!(
+            index.matching_type_by_resolved_name(&db, name),
+            Some(TypeId::NUMBER)
+        );
+    }
 }

@@ -1571,6 +1571,71 @@ class C {
 }
 
 #[test]
+fn class_property_initializer_this_uses_ast_owner_during_type_environment() {
+    let diags = check_source(
+        r#"
+type ForwardInstance = Model;
+
+export class Model {
+    method(): string {
+        return "";
+    }
+    alias = this.method;
+}
+
+declare const model: Model;
+model.alias;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2532 | 2683))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected class property initializer `this` to use the AST class owner during early type environment construction, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn static_property_initializer_this_uses_constructor_owner_during_type_environment() {
+    let diags = check_source(
+        r#"
+type ForwardConstructor = typeof Registry;
+
+export class Registry {
+    static build(): number {
+        return 1;
+    }
+    static create = this.build;
+}
+
+Registry.create;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2532 | 2683))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected static property initializer `this` to use the constructor owner during early type environment construction, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn explicit_this_current_class_does_not_use_any_cached_placeholder() {
     let diags = check_source_diagnostics(
         r#"

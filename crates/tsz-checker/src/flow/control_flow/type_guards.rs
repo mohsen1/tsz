@@ -821,10 +821,20 @@ impl<'a> FlowAnalyzer<'a> {
     /// Using `interner.reference(symbol_ref)` creates `Lazy(DefId(symbol_id))`
     /// which is unresolvable; this method returns the correct `Lazy(DefId)`.
     pub(crate) fn resolve_symbol_to_lazy(&self, symbol_ref: SymbolRef) -> Option<TypeId> {
-        let env = self.type_environment.as_ref()?;
-        let env_borrowed = env.borrow();
-        let def_id = env_borrowed.symbol_to_def_id(symbol_ref)?;
-        Some(self.interner.lazy(def_id))
+        if let Some(env) = self.type_environment.as_ref() {
+            let env_borrowed = env.borrow();
+            if let Some(def_id) = env_borrowed.symbol_to_def_id(symbol_ref) {
+                return Some(self.interner.lazy(def_id));
+            }
+        }
+
+        let ctx = self.checker_context?;
+        let def_id = ctx.get_or_create_def_id(tsz_binder::SymbolId(symbol_ref.0));
+        if def_id.is_valid() {
+            Some(self.interner.lazy(def_id))
+        } else {
+            None
+        }
     }
 
     /// Check if a call is `ArrayBuffer.isView(x)` and return a predicate guard.

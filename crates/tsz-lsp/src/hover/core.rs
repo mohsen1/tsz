@@ -811,7 +811,11 @@ impl<'a> HoverProvider<'a> {
 
         if f & symbol_flags::FUNCTION != 0 {
             let merged_with_namespace = self.symbol_has_namespace_merge(symbol);
-            let sig = if merged_with_namespace {
+            let has_overload_declarations = self.symbol_has_overload_declarations(symbol);
+            let sig = if merged_with_namespace
+                || has_overload_declarations
+                || self.is_overload_display(type_string)
+            {
                 self.function_signature_from_symbol(symbol)
                     .unwrap_or_else(|| format::arrow_to_colon(type_string))
             } else {
@@ -1067,68 +1071,84 @@ impl<'a> HoverProvider<'a> {
         })
     }
 
+    fn symbol_has_overload_declarations(&self, symbol: &tsz_binder::Symbol) -> bool {
+        symbol
+            .declarations
+            .iter()
+            .filter(|&&decl_idx| {
+                self.arena.get(decl_idx).is_some_and(|node| {
+                    node.kind == tsz_parser::syntax_kind_ext::FUNCTION_DECLARATION
+                })
+            })
+            .take(2)
+            .count()
+            > 1
+    }
+
+    fn is_overload_display(&self, type_string: &str) -> bool {
+        let trimmed = type_string.trim_start();
+        trimmed.starts_with('{') && trimmed.contains("):")
+    }
+
     fn function_signature_from_symbol(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
         for &decl_idx in &symbol.declarations {
-            let Some(node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(func) = self.arena.get_function(node) else {
-                continue;
-            };
-            let Some(name_node) = self.arena.get(func.name) else {
-                continue;
-            };
-            let Some(name_ident) = self.arena.get_identifier(name_node) else {
-                continue;
-            };
-            let name = self.arena.resolve_identifier_text(name_ident);
-            if name != symbol.escaped_name.as_str() {
-                continue;
+            if let Some(signature) = self.function_signature_from_declaration(decl_idx, symbol) {
+                return Some(signature);
             }
+        }
+        None
+    }
 
-            let start = node.pos as usize;
-            let end = node.end.min(self.source_text.len() as u32) as usize;
-            if start >= end {
-                continue;
-            }
-            let text = &self.source_text[start..end];
-            let Some(open) = text.find('(') else {
-                continue;
-            };
-            let mut depth = 0i32;
-            let mut close = None;
-            for (i, ch) in text[open..].char_indices() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            close = Some(open + i);
-                            break;
-                        }
+    fn function_signature_from_declaration(
+        &self,
+        decl_idx: NodeIndex,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<String> {
+        let node = self.arena.get(decl_idx)?;
+        let func = self.arena.get_function(node)?;
+        let name_node = self.arena.get(func.name)?;
+        let name_ident = self.arena.get_identifier(name_node)?;
+        let name = self.arena.resolve_identifier_text(name_ident);
+        if name != symbol.escaped_name.as_str() {
+            return None;
+        }
+
+        let start = node.pos as usize;
+        let end = node.end.min(self.source_text.len() as u32) as usize;
+        if start >= end {
+            return None;
+        }
+        let text = &self.source_text[start..end];
+        let open = text.find('(')?;
+        let mut depth = 0i32;
+        let mut close = None;
+        for (i, ch) in text[open..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + i);
+                        break;
                     }
-                    _ => {}
                 }
+                _ => {}
             }
-            let Some(close_pos) = close else {
-                continue;
-            };
-            let params = &text[open..=close_pos];
-            let after = text[close_pos + 1..].trim_start();
-            if let Some(rest) = after.strip_prefix(':') {
-                let ret = rest
-                    .trim_start()
-                    .split(['{', ';', '\n'])
-                    .next()
-                    .unwrap_or("")
-                    .trim();
+        }
+        let close_pos = close?;
+        let params = &text[open..=close_pos];
+        if func.type_annotation.is_some() {
+            let type_node = self.arena.get(func.type_annotation)?;
+            let type_start = type_node.pos as usize;
+            let type_end = type_node.end.min(self.source_text.len() as u32) as usize;
+            if type_start < type_end && type_end <= self.source_text.len() {
+                let ret = self.source_text[type_start..type_end].trim();
                 if !ret.is_empty() {
                     return Some(format!("{params}: {ret}"));
                 }
             }
-            return Some(format!("{params}: void"));
         }
-        None
+        Some(format!("{params}: void"))
     }
 
     fn merged_function_initializer_display_type(&self, decl_node_idx: NodeIndex) -> Option<String> {

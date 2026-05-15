@@ -139,6 +139,13 @@ fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
     with_lib_contexts(source, "test.ts", CheckerOptions::default())
 }
 
+fn ts2322_messages(source: &str) -> Vec<String> {
+    get_all_diagnostics(source)
+        .into_iter()
+        .filter_map(|(code, message)| (code == 2322).then_some(message))
+        .collect()
+}
+
 fn diagnostic_count<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> usize {
     diagnostics
         .iter()
@@ -7249,6 +7256,107 @@ fn test_ts2345_concrete_value_to_never_param_errors() {
     );
 }
 
+#[test]
+fn conditional_type_result_object_literal_reports_each_bad_property() {
+    let source = r#"
+interface Dog {
+    type: "dog";
+    breeds: "Hound" | "Shepherd";
+}
+
+type LookUp<U, T> = U extends { type: T } ? U : never;
+type MyDog = LookUp<Dog, "dog">;
+
+const wrong: MyDog = { type: "cat", breeds: "Curl" };
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected one TS2322 for each mismatched property, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"cat\"' is not assignable to type '\"dog\"'")),
+        "expected the discriminant property mismatch, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("Type '\"Curl\"' is not assignable to type '\"Hound\" | \"Shepherd\"'")
+        }),
+        "expected the union-literal property mismatch, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn renamed_conditional_result_object_literal_reports_each_bad_property() {
+    let source = r#"
+interface Cat {
+    kind: "cat";
+    color: "black" | "white";
+}
+
+type Choose<Each, Wanted> = Each extends { kind: Wanted } ? Each : never;
+type PickedCat = Choose<Cat, "cat">;
+
+const wrong: PickedCat = { kind: "dog", color: "orange" };
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected renamed conditional result to report both property mismatches, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"dog\"' is not assignable to type '\"cat\"'")),
+        "expected renamed discriminant property mismatch, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("Type '\"orange\"' is not assignable to type '\"black\" | \"white\"'")
+        }),
+        "expected renamed union-literal property mismatch, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn inline_conditional_result_object_literal_reports_each_bad_property() {
+    let source = r#"
+interface Bird {
+    tag: "bird";
+    wings: 2 | 4;
+}
+
+type Select<Member, Tag> = Member extends { tag: Tag } ? Member : never;
+
+const wrong: Select<Bird, "bird"> = { tag: "fish", wings: 6 };
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected inline conditional result to report both property mismatches, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '\"fish\"' is not assignable to type '\"bird\"'")),
+        "expected inline discriminant property mismatch, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type '6' is not assignable to type '2 | 4'")),
+        "expected inline numeric-union property mismatch, got: {messages:#?}"
+    );
+}
+
 // =============================================================================
 // Intersection source assigned to callable-interface target (issue #6202)
 // =============================================================================
@@ -7256,7 +7364,6 @@ fn test_ts2345_concrete_value_to_never_param_errors() {
 /// Structural rule: when an intersection containing a function member and object
 /// members is assigned to a callable interface with properties, the failure message
 /// must list only properties not supplied by any intersection member.
-
 #[test]
 fn intersection_function_object_satisfies_callable_interface_with_matching_props() {
     // All required call sig and properties are satisfied by the intersection.
@@ -7318,7 +7425,7 @@ const cwp: RequiresAll = cwp2;
         !diagnostics.is_empty(),
         "Expected an error when required property `name` is missing from intersection source."
     );
-    // Should NOT report `version` as missing — it is supplied by the object member.
+    // Should NOT report `version` as missing; it is supplied by the object member.
     for diag in &diagnostics {
         let msg = &diag.message_text;
         assert!(

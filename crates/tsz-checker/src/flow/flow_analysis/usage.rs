@@ -1351,6 +1351,7 @@ impl<'a> CheckerState<'a> {
         .with_flow_cache(&self.ctx.flow_analysis_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(&self.ctx.type_environment)
+        .with_checker_context(&self.ctx)
         .with_destructured_bindings(&self.ctx.destructured_bindings);
 
         // Pre-seed the reference symbol cache when the checker has already

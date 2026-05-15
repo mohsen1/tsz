@@ -151,6 +151,39 @@ impl<'a> CheckerState<'a> {
             .then_some(props_arg)
     }
 
+    pub(super) fn react_component_alias_application_props_arg(
+        &self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+            .or_else(|| {
+                self.ctx.types.get_display_alias(type_id).and_then(|alias| {
+                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                })
+            })?;
+        let has_react_alias_def =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base).is_some_and(
+                |def_id| {
+                    let Some(name_atom) = self.ctx.definition_store.get_name(def_id) else {
+                        return false;
+                    };
+                    let name = self.ctx.types.resolve_atom_ref(name_atom);
+                    matches!(
+                        name.as_ref(),
+                        "ComponentClass"
+                            | "ClassicComponentClass"
+                            | "StatelessComponent"
+                            | "FunctionComponent"
+                            | "SFC"
+                    ) && self.react_component_alias_def_has_react_origin(def_id)
+                },
+            );
+        if !has_react_alias_def {
+            return None;
+        }
+        app.args.first().copied()
+    }
+
     pub(super) fn store_jsx_props_display_alias_if_matching(
         &mut self,
         props_type: TypeId,

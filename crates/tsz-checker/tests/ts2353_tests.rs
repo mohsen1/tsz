@@ -18,6 +18,67 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 #[test]
+fn record_number_rejects_non_numeric_object_literal_key() {
+    let source = r#"
+type NumRecord = Record<number, boolean>;
+
+const good: NumRecord = { 0: true, 1: false };
+const bad: NumRecord = { foo: true };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 for non-numeric key against Record<number, boolean>, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'foo'"),
+        "Expected TS2353 to mention excess key foo, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn numeric_index_signature_rejects_non_numeric_object_literal_key() {
+    let source = r#"
+type NumericIndex = { [key: number]: boolean };
+
+const good: NumericIndex = { 0: true, 1: false };
+const bad: NumericIndex = { bar: true };
+const badInline: { [key: number]: boolean } = { baz: true };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected TS2353 for non-numeric keys against number index signatures, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'bar'"),
+        "Expected TS2353 to mention excess key bar, got: {ts2353:?}",
+    );
+    assert!(
+        ts2353.iter().any(|(_, msg)| msg.contains("'baz'")),
+        "Expected TS2353 to mention excess key baz, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn record_number_allows_quoted_numeric_object_literal_key() {
+    let source = r#"
+type NumRecord = Record<number, boolean>;
+
+const good: NumRecord = { "0": true, "1.5": false };
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Did not expect TS2353 for quoted numeric keys against Record<number, boolean>, got: {diags:?}",
+    );
+}
+
+#[test]
 fn noinfer_union_excess_property_display_orders_object_before_function() {
     let source = r#"
 declare function test1<T extends { x: string }>(
@@ -114,6 +175,22 @@ const point: Point = { x: 1, y: 2, z: 3 } as Point;
     assert!(
         !diags.iter().any(|d| d.0 == 2353),
         "Did not expect TS2353 through plain type assertion, got: {diags:?}",
+    );
+}
+
+#[test]
+fn spread_only_excess_property_does_not_trigger_ts2353() {
+    // A spread source uses explicit-only EPC: properties that arrive only from
+    // the spread operand are not checked as fresh object-literal excess.
+    let source = r#"
+type Point = { x: number, y: number }
+const base = { x: 1, y: 2, z: 3 }
+const point: Point = { ...base }
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353 && d.1.contains("'z'")),
+        "Did not expect TS2353 for spread-only excess property z, got: {diags:?}",
     );
 }
 

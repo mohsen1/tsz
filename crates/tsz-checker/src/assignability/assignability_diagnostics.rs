@@ -1,7 +1,7 @@
 use crate::query_boundaries::assignability::{
     AssignabilityQueryInputs, ExcessPropertiesKind, check_assignable_gate_with_overrides,
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
-    is_type_parameter_like, object_shape_for_type,
+    is_type_parameter_like, object_shape_for_type, suppress_raw_excess_property_failure_if_needed,
 };
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type, type_param_info};
 use crate::state::{CheckerOverrideProvider, CheckerState};
@@ -345,15 +345,7 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        // Get the index signature value type from the target
         let index_value_type = target_shape.string_index.as_ref().map(|sig| sig.value_type);
-
-        let Some(index_value_type) = index_value_type else {
-            // No string index signature — try elaborating against named target properties.
-            // For targets with named properties (like interfaces), check if there are
-            // missing required properties (TS2741 elaboration) — handled elsewhere.
-            return false;
-        };
 
         // Iterate over the object literal's AST properties and check each value
         let Some(lit_data) = self.ctx.arena.get_literal_expr_at(source_idx) else {
@@ -367,30 +359,65 @@ impl<'a> CheckerState<'a> {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
             };
-            if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                continue;
-            }
-            let Some(prop_data) = self.ctx.arena.get_property_assignment(elem_node) else {
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                        continue;
+                    };
+                    (prop.name, prop.initializer)
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
+                        continue;
+                    };
+                    (prop.name, prop.name)
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(elem_node) else {
+                        continue;
+                    };
+                    (method.name, elem_idx)
+                }
+                _ => continue,
+            };
+            let target_prop_type = self
+                .get_property_name(prop_name_idx)
+                .and_then(|name| {
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    target_shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == name_atom)
+                        .map(|prop| {
+                            if prop.write_type == TypeId::NONE {
+                                prop.type_id
+                            } else {
+                                prop.write_type
+                            }
+                        })
+                })
+                .or(index_value_type);
+            let Some(target_prop_type) = target_prop_type else {
                 continue;
             };
 
             // Get the type of the property value (the initializer)
-            let prop_value_type = self.get_type_of_node(prop_data.initializer);
+            let prop_value_type = self.get_type_of_node(prop_value_idx);
             self.ensure_relation_input_ready(prop_value_type);
-            self.ensure_relation_input_ready(index_value_type);
+            self.ensure_relation_input_ready(target_prop_type);
 
             // Check nested object literal excess properties FIRST — tsc prioritizes
             // excess property errors (TS2353) over assignability errors (TS2322).
             // e.g., `{ r: 0, g: 0, d: 0 }` vs `Color` reports "d does not exist" (TS2353)
             // rather than "missing b" (TS2322).
-            if let Some(val_node) = self.ctx.arena.get(prop_data.initializer)
+            if let Some(val_node) = self.ctx.arena.get(prop_value_idx)
                 && val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 let diags_before = self.ctx.diagnostics.len();
                 self.check_object_literal_excess_properties(
                     prop_value_type,
-                    index_value_type,
-                    prop_data.initializer,
+                    target_prop_type,
+                    prop_value_idx,
                 );
                 if self.ctx.diagnostics.len() > diags_before {
                     // Excess property errors were reported — skip assignability check
@@ -398,13 +425,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !self.is_assignable_to(prop_value_type, index_value_type) {
+            if !self.is_assignable_to(prop_value_type, target_prop_type) {
                 // Report TS2322 at the property name (use _with_anchor to avoid
                 // assignment_diagnostic_anchor_idx walking up to the variable declaration)
                 self.error_type_not_assignable_at_with_anchor(
                     prop_value_type,
-                    index_value_type,
-                    prop_data.name,
+                    target_prop_type,
+                    prop_name_idx,
                 );
             }
         }
@@ -2009,11 +2036,6 @@ impl<'a> CheckerState<'a> {
                 failure_reason: None,
             };
         }
-        // ExcessProperty failure suppression (deferred conditionals, non-EPC
-        // intersection members) is now handled by the boundary's
-        // `suppress_excess_property_failure_if_needed` in `execute_relation`.
-        // The raw failure reason here is from `check_assignable_gate_with_overrides`
-        // which doesn't go through that path, so we apply it here too.
         let result = gate.analysis.unwrap_or(
             crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,
@@ -2021,53 +2043,26 @@ impl<'a> CheckerState<'a> {
             },
         );
 
-        // Apply boundary-level excess property suppression to the raw failure reason.
-        let failure_reason = if matches!(
-            &result.failure_reason,
-            Some(tsz_solver::SubtypeFailureReason::ExcessProperty { .. })
-        ) {
-            // Convert to RelationFailure to check, then back. But simpler: just
-            // check the conditions directly using the boundary's logic.
-            let evaluated_target = self.evaluate_type_for_assignability(target);
-            let should_suppress = crate::query_boundaries::common::has_deferred_conditional_member(
-                self.ctx.types,
-                evaluated_target,
-            ) || [target, evaluated_target].into_iter().any(|candidate| {
-                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
-                    .is_some_and(|members| {
-                        members.iter().any(|member| {
-                            let evaluated = self.evaluate_type_for_assignability(*member);
-                            crate::query_boundaries::common::is_primitive_type(
-                                self.ctx.types,
-                                evaluated,
-                            ) || crate::query_boundaries::common::is_type_parameter_like(
-                                self.ctx.types,
-                                evaluated,
-                            )
-                        })
-                    })
-            });
-            if should_suppress {
-                None
-            } else {
-                result.failure_reason
-            }
-        } else {
-            result.failure_reason
-        };
+        let evaluated_target = self.evaluate_type_for_assignability(target);
+        let result = suppress_raw_excess_property_failure_if_needed(
+            result,
+            self.ctx.types,
+            [target, evaluated_target],
+            |member| self.evaluate_type_for_assignability(member),
+        );
 
         // Suppress false TS2559 (NoCommonProperties) for interfaces that extend
         // arrays/tuples. These types inherit non-optional members from Array.prototype
         // (length, push, pop, etc.) that aren't in the ObjectShape's property list,
         // making them appear as weak types when they aren't.
         let failure_reason = if matches!(
-            &failure_reason,
+            &result.failure_reason,
             Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
         ) && self.target_extends_array_or_tuple(target)
         {
             None
         } else {
-            failure_reason
+            result.failure_reason
         };
 
         crate::query_boundaries::assignability::AssignabilityFailureAnalysis {

@@ -1146,6 +1146,10 @@ name = "class_implements_index_signature_tests"
 path = "tests/class_implements_index_signature_tests.rs"
 
 [[test]]
+name = "class_expression_implements_display_tests"
+path = "tests/class_expression_implements_display_tests.rs"
+
+[[test]]
 name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 
@@ -1208,6 +1212,10 @@ path = "tests/ts2344_infer_positional_constraint_tests.rs"
 [[test]]
 name = "satisfies_generic_inference_literal_widening_tests"
 path = "tests/satisfies_generic_inference_literal_widening_tests.rs"
+
+[[test]]
+name = "satisfies_object_property_position_tests"
+path = "tests/satisfies_object_property_position_tests.rs"
 
 [[test]]
 name = "nested_infer_extends_scope_tests"
