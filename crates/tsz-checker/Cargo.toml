@@ -1210,6 +1210,10 @@ name = "satisfies_generic_inference_literal_widening_tests"
 path = "tests/satisfies_generic_inference_literal_widening_tests.rs"
 
 [[test]]
+name = "satisfies_object_property_position_tests"
+path = "tests/satisfies_object_property_position_tests.rs"
+
+[[test]]
 name = "nested_infer_extends_scope_tests"
 path = "tests/nested_infer_extends_scope_tests.rs"
 
