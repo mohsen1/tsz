@@ -3,6 +3,14 @@ use tsz_solver::TypeId;
 use super::{CheckerContext, EnvEvalCacheEntry};
 
 impl<'a> CheckerContext<'a> {
+    fn type_mentions_def(&self, type_id: TypeId, def_id: tsz_solver::DefId) -> bool {
+        crate::query_boundaries::common::lazy_def_id(self.types, type_id) == Some(def_id)
+            || crate::query_boundaries::common::get_application_lazy_def_id(self.types, type_id)
+                == Some(def_id)
+            || crate::query_boundaries::common::collect_lazy_def_ids(self.types, type_id)
+                .contains(&def_id)
+    }
+
     pub(crate) fn lookup_env_eval_cache(&self, type_id: TypeId) -> Option<EnvEvalCacheEntry> {
         self.env_eval_cache.borrow().get(&type_id).copied()
     }
@@ -47,6 +55,24 @@ impl<'a> CheckerContext<'a> {
 
     pub(crate) fn clear_env_eval_cache(&self) {
         self.env_eval_cache.borrow_mut().clear();
+    }
+
+    pub(crate) fn clear_type_evaluation_caches_for_def(&self, def_id: tsz_solver::DefId) {
+        self.env_eval_cache.borrow_mut().retain(|&key, value| {
+            !self.type_mentions_def(key, def_id) && !self.type_mentions_def(value.result, def_id)
+        });
+        self.narrowing_cache
+            .resolve_cache
+            .borrow_mut()
+            .retain(|&key, &mut value| {
+                !self.type_mentions_def(key, def_id) && !self.type_mentions_def(value, def_id)
+            });
+        self.narrowing_cache
+            .contextual_resolve_cache
+            .borrow_mut()
+            .retain(|&key, &mut value| {
+                !self.type_mentions_def(key, def_id) && !self.type_mentions_def(value, def_id)
+            });
     }
 
     pub(crate) fn persist_env_eval_cache_entries(&self, entries: Vec<(TypeId, TypeId)>) {

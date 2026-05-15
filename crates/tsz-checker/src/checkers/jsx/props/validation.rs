@@ -327,6 +327,39 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(normalized)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::DefKind::TypeAlias
+            && let Some(body) = def.body
+        {
+            let body = self.evaluate_type_with_env(body);
+            if body != normalized
+                && let Some(expected) =
+                    self.jsx_concrete_prop_expected_type(body, attr_name, visited)
+            {
+                return Some(expected);
+            }
+        }
+
+        if let Some(def_id) = self.ctx.definition_store.find_def_for_type(normalized)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+            && def.kind == tsz_solver::DefKind::TypeAlias
+            && let Some(body) = def.body
+        {
+            let instantiated_body = self.instantiate_type_alias_body_from_display_name(
+                normalized,
+                &def.type_params,
+                body,
+            );
+            if instantiated_body != normalized
+                && instantiated_body != body
+                && let Some(expected) =
+                    self.jsx_concrete_prop_expected_type(instantiated_body, attr_name, visited)
+            {
+                return Some(expected);
+            }
+        }
+
         if common::is_type_parameter_like(self.ctx.types, normalized)
             || common::contains_type_parameters(self.ctx.types, normalized)
         {
@@ -345,6 +378,162 @@ impl<'a> CheckerState<'a> {
                 })
             }),
         }
+    }
+
+    fn instantiate_type_alias_body_from_display_name(
+        &mut self,
+        alias_type: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+        body: TypeId,
+    ) -> TypeId {
+        if let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, alias_type)
+            && args.len() == type_params.len()
+            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
+        {
+            let (base_body, base_params) = self.type_reference_symbol_type_with_params(sym_id);
+            if base_body != TypeId::ANY
+                && base_body != TypeId::ERROR
+                && base_params.len() == args.len()
+            {
+                let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+                    self.ctx.types,
+                    &base_params,
+                    &args,
+                );
+                return crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    base_body,
+                    &substitution,
+                );
+            }
+        }
+
+        if type_params.is_empty() {
+            return body;
+        }
+        let display = self.format_type(alias_type);
+        let Some(start) = display.find('<') else {
+            return body;
+        };
+        let Some(end) = display.rfind('>') else {
+            return body;
+        };
+        let arg_text = &display[start + 1..end];
+        let mut args = Vec::with_capacity(type_params.len());
+        for part in arg_text.split(',') {
+            let name = part.trim();
+            let Some(param) = self
+                .ctx
+                .type_parameter_scope
+                .get(name)
+                .copied()
+                .or_else(|| self.find_type_parameter_by_name_in_type(alias_type, name))
+            else {
+                return body;
+            };
+            args.push(param);
+        }
+        if args.len() != type_params.len() {
+            return body;
+        }
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            type_params,
+            &args,
+        );
+        crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &substitution)
+    }
+
+    fn find_type_parameter_by_name_in_type(&self, type_id: TypeId, name: &str) -> Option<TypeId> {
+        let target = self.ctx.types.intern_string(name);
+        crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id)
+            .into_iter()
+            .find(|&candidate| {
+                crate::query_boundaries::common::type_param_info(self.ctx.types, candidate)
+                    .is_some_and(|info| info.name == target)
+            })
+    }
+
+    pub(in crate::checkers_domain::jsx) fn jsx_alias_source_has_prop_text(
+        &self,
+        type_id: TypeId,
+        prop_name: &str,
+        prop_type_text: &str,
+    ) -> bool {
+        let alias_name = self.format_type(type_id);
+        let alias_name = alias_name.split('<').next().unwrap_or(alias_name.as_str());
+        if alias_name.is_empty() {
+            return false;
+        }
+
+        for node_idx in 0..self.ctx.arena.nodes.len() {
+            let idx = NodeIndex(node_idx as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                continue;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(node) else {
+                continue;
+            };
+            if self
+                .ctx
+                .arena
+                .get(alias.name)
+                .and_then(|node| self.ctx.arena.get_identifier(node))
+                .map(|ident| self.ctx.arena.resolve_identifier_text(ident))
+                != Some(alias_name)
+            {
+                continue;
+            }
+            if self.type_node_source_has_prop_text(alias.type_node, prop_name, prop_type_text) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn type_node_source_has_prop_text(
+        &self,
+        type_node_idx: NodeIndex,
+        prop_name: &str,
+        prop_type_text: &str,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::INTERSECTION_TYPE
+            && let Some(composite) = self.ctx.arena.get_composite_type(node)
+        {
+            return composite.types.nodes.iter().any(|&member| {
+                self.type_node_source_has_prop_text(member, prop_name, prop_type_text)
+            });
+        }
+        if node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return false;
+        }
+        let Some(type_lit) = self.ctx.arena.get_type_literal(node) else {
+            return false;
+        };
+        type_lit.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(sig.name)
+                .and_then(|node| self.ctx.arena.get_identifier(node))
+                .map(|ident| self.ctx.arena.resolve_identifier_text(ident))
+                == Some(prop_name)
+                && self
+                    .node_text(sig.type_annotation)
+                    .is_some_and(|text| text.trim() == prop_type_text)
+        })
     }
 
     pub(in crate::checkers_domain::jsx) fn jsx_children_display_type(

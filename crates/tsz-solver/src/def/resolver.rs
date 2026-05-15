@@ -969,7 +969,11 @@ impl TypeResolver for TypeEnvironment {
 
         // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
         // where N is the raw SymbolId. Look up the real DefId via symbol_to_def.
-        let real_def = *self.symbol_to_def.get(&def_id.0)?;
+        let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
+            self.definition_store
+                .as_ref()
+                .and_then(|store| store.find_def_by_symbol(def_id.0))
+        })?;
         tracing::trace!(
             target: "tsz::solver::def_id",
             raw_def_id = def_id.0,
@@ -996,8 +1000,12 @@ impl TypeResolver for TypeEnvironment {
         // in the shared store (not the local cache) are found.
         self.get_def_params_owned(def_id).or_else(|| {
             // Fallback: resolve raw SymbolId-based DefIds to real DefIds
-            let real_def = self.symbol_to_def.get(&def_id.0)?;
-            self.get_def_params_owned(*real_def)
+            let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
+                self.definition_store
+                    .as_ref()
+                    .and_then(|store| store.find_def_by_symbol(def_id.0))
+            })?;
+            self.get_def_params_owned(real_def)
         })
     }
 
