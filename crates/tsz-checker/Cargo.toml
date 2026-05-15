@@ -1174,6 +1174,10 @@ name = "template_literal_record_key_tests"
 path = "tests/template_literal_record_key_tests.rs"
 
 [[test]]
+name = "ts7053_template_mapped_tests"
+path = "tests/ts7053_template_mapped_tests.rs"
+
+[[test]]
 name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
 
