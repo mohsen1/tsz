@@ -204,4 +204,90 @@ impl<'a> CheckerState<'a> {
         }
         None
     }
+
+    pub(super) fn symbol_id_for_heritage_type_name(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<tsz_binder::SymbolId> {
+        let name = self.format_type_diagnostic(type_id);
+        let name = name.strip_prefix("globalThis.").unwrap_or(&name);
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+
+        if let Some(index) = &self.ctx.global_file_locals_index
+            && let Some(candidates) = index.get(name)
+        {
+            for &(file_idx, sym_id) in candidates {
+                if self
+                    .ctx
+                    .get_binder_for_file(file_idx)
+                    .and_then(|binder| binder.get_symbol(sym_id))
+                    .is_some()
+                {
+                    self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)
+    }
+
+    pub(super) fn member_has_conflicting_constraint_property(
+        &mut self,
+        member: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let member = self.resolve_lazy_type(member);
+        let member = self.evaluate_type_for_assignability(member);
+        let constraint = self.resolve_lazy_type(constraint);
+        let constraint = self.evaluate_type_for_assignability(constraint);
+        let db = self.ctx.types.as_type_database();
+        let Some(member_shape) = crate::query_boundaries::common::object_shape_for_type(db, member)
+        else {
+            return false;
+        };
+        let Some(constraint_shape) =
+            crate::query_boundaries::common::object_shape_for_type(db, constraint)
+        else {
+            return false;
+        };
+        member_shape.properties.iter().any(|member_prop| {
+            constraint_shape
+                .properties
+                .iter()
+                .find(|constraint_prop| constraint_prop.name == member_prop.name)
+                .is_some_and(|constraint_prop| {
+                    let member_type = self.resolve_lazy_type(member_prop.type_id);
+                    let member_type = self.evaluate_type_for_assignability(member_type);
+                    let constraint_type = self.resolve_lazy_type(constraint_prop.type_id);
+                    let constraint_type = self.evaluate_type_for_assignability(constraint_type);
+                    if crate::query_boundaries::assignability::are_types_structurally_identical(
+                        self.ctx.types,
+                        &self.ctx,
+                        member_type,
+                        constraint_type,
+                    ) {
+                        return false;
+                    }
+                    if self.is_assignable_to(member_type, constraint_type) {
+                        return false;
+                    }
+                    // Some recursive DOM property types are interned through
+                    // different paths and can miss both relation and canonical
+                    // identity checks while still rendering identically. They
+                    // are not genuine merge conflicts.
+                    self.format_type_diagnostic(member_type)
+                        != self.format_type_diagnostic(constraint_type)
+                })
+        })
+    }
 }
