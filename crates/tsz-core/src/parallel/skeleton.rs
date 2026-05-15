@@ -1,4 +1,4 @@
-//! Skeleton extraction and reduction for Phase 2 memory optimization.
+//! Skeleton extraction and reduction optimized for memory reuse.
 //!
 //! The skeleton captures the minimal per-file information needed for global merge
 //! decisions (symbol merging, augmentation stitching, export/re-export graphs)
@@ -98,7 +98,7 @@ pub struct SkeletonAugmentation {
     pub target: String,
     /// Number of augmentation declarations for this target in this file.
     pub declaration_count: u32,
-    /// Per-declaration augmentation entries (Phase 2 step 2 enrichment).
+    /// Per-declaration augmentation entries (skeleton-built enrichment).
     ///
     /// Carries the same per-declaration data as
     /// [`tsz_binder::ModuleAugmentation`] (name + a [`StableLocation`] for the
@@ -108,7 +108,7 @@ pub struct SkeletonAugmentation {
     pub declarations: Vec<SkeletonAugmentationDecl>,
 }
 
-/// Augmentation-target entry as seen from the skeleton layer (Phase 2 step 3).
+/// Augmentation-target entry as seen from the skeleton layer (skeleton-built path).
 ///
 /// One entry per `(symbol, module_spec)` pair recorded by the binder in
 /// [`tsz_binder::BinderState::augmentation_target_modules`]. The
@@ -176,7 +176,7 @@ pub struct FileSkeleton {
     pub global_augmentations: Vec<SkeletonAugmentation>,
     /// Module augmentation targets from `declare module 'x' {}` blocks.
     pub module_augmentations: Vec<SkeletonAugmentation>,
-    /// Per-file augmentation-target entries (Phase 2 step 3).
+    /// Per-file augmentation-target entries (skeleton-built path).
     ///
     /// One entry per `(symbol, module_spec)` pair recorded by the binder in
     /// [`tsz_binder::BinderState::augmentation_target_modules`] — i.e. each
@@ -196,7 +196,7 @@ pub struct FileSkeleton {
     /// (e.g., from `declare module "xxx" { export ... }`).
     pub module_export_specifiers: Vec<String>,
     /// Per-spec list of export names recorded in this file's `module_exports`
-    /// map (Phase 2 step 6).
+    /// map (skeleton-built path).
     ///
     /// Each `(spec, export_names)` entry mirrors the `binder.module_exports`
     /// shape: the inner `Vec<String>` is the sorted list of names from the
@@ -323,7 +323,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
 
     // Global augmentations.
     // The skeleton currently records per-file global augmentations only by name +
-    // count. Phase 2 step 2 extends *module* augmentations with per-declaration
+    // count. skeleton-built extends *module* augmentations with per-declaration
     // `StableLocation` entries so the checker can reconstruct the merged
     // `global_module_augmentations_index` without iterating binders. Global
     // augmentations are reserved for a parallel follow-up.
@@ -378,7 +378,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         .collect();
     module_augmentations.sort_unstable_by(|a, b| a.target.cmp(&b.target));
 
-    // Augmentation targets (Phase 2 step 3): one entry per (symbol, module_spec)
+    // Augmentation targets (skeleton-built path): one entry per (symbol, module_spec)
     // pair recorded by the binder. The `StableLocation` is sourced from the
     // symbol's `stable_value_declaration` when known, falling back to the first
     // `stable_declarations` entry. The location's `file_idx` is left at
@@ -462,7 +462,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
     let mut module_export_specifiers: Vec<String> = result.module_exports.keys().cloned().collect();
     module_export_specifiers.sort();
 
-    // Phase 2 step 6: per-spec export names — captures the export-name set of
+    // skeleton-built: per-spec export names — captures the export-name set of
     // each `binder.module_exports[spec]` SymbolTable. SymbolIds are not stored
     // (pre-merge local IDs are not stable across the merge — see PR #1145).
     // The projection helper resolves SymbolIds at build time from the
@@ -562,7 +562,7 @@ pub struct SkeletonIndex {
     pub module_augmentation_targets: FxHashMap<String, Vec<usize>>,
     /// Per-module-specifier list of (`file_idx`, augmentation) entries.
     ///
-    /// This is the Phase 2 step 2 enrichment over `module_augmentation_targets`:
+    /// This is the skeleton-built enrichment over `module_augmentation_targets`:
     /// the legacy field tells you *which* files contribute augmentations for a
     /// given target, this field carries the per-file [`SkeletonAugmentation`]
     /// (with each augmenting declaration's name + [`StableLocation`]) so the
@@ -573,7 +573,7 @@ pub struct SkeletonIndex {
     /// observes the input skeletons).
     pub module_augmentations_by_spec: FxHashMap<String, Vec<(usize, SkeletonAugmentation)>>,
     /// Per-module-specifier list of `(file_idx, augmentation_target)` entries
-    /// (Phase 2 step 3 enrichment).
+    /// (skeleton-built enrichment).
     ///
     /// Whereas [`Self::module_augmentation_targets`] tracks only which files
     /// declare augmentations for a target, this field carries the per-symbol
@@ -588,7 +588,7 @@ pub struct SkeletonIndex {
     /// (already sorted by `(module_spec, symbol_id)` at extract time).
     pub augmentation_targets_by_spec: FxHashMap<String, Vec<(usize, SkeletonAugmentationTarget)>>,
     /// Per-module-specifier list of file indices that contain a
-    /// `module_exports[module_spec]` entry (Phase 2 step 4).
+    /// `module_exports[module_spec]` entry (skeleton-built path).
     ///
     /// This is the skeleton-only projection of the checker's legacy
     /// `global_module_binder_index` (`module_spec -> Vec<file_idx>`). Each
@@ -604,7 +604,7 @@ pub struct SkeletonIndex {
     /// per matching specifier — same as the legacy loop.
     pub module_binder_index_by_spec: FxHashMap<String, Vec<usize>>,
     /// Per-module-specifier list of `(file_idx, export_name)` entries
-    /// (Phase 2 step 6).
+    /// (skeleton-built path).
     ///
     /// This is the skeleton-only projection of the checker's legacy
     /// `global_module_exports_index` (`spec -> export_name -> Vec<(file_idx,
@@ -705,7 +705,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         Vec<(usize, SkeletonAugmentationTarget)>,
     > = FxHashMap::with_capacity_and_hasher(capacities.augmentation_targets, Default::default());
     let mut module_binder_index_by_spec: FxHashMap<String, Vec<usize>> = FxHashMap::default();
-    // Phase 2 step 6: per-spec, per-export-name list of file indices.
+    // skeleton-built: per-spec, per-export-name list of file indices.
     let mut module_exports_index_by_spec: SkeletonModuleExportsIndex = FxHashMap::default();
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
@@ -747,7 +747,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
                 .or_default()
                 .push(file_idx);
 
-            // Phase 2 step 2: also record the per-declaration entries with
+            // skeleton-built: also record the per-declaration entries with
             // the file index stamped onto each declaration's `StableLocation`.
             // This lets the checker rebuild `global_module_augmentations_index`
             // from skeleton data without iterating per-file binders.
@@ -761,9 +761,9 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
                 .push((file_idx, stamped));
         }
 
-        // Phase 2 step 3: project per-file augmentation-target entries into
+        // skeleton-built: project per-file augmentation-target entries into
         // the cross-file `(file_idx, target)` index. The reducer stamps each
-        // entry's `StableLocation` with the owning file index so post-Phase-5
+        // entry's `StableLocation` with the owning file index so post-eviction
         // consumers can route through `node_at_stable_location` without a
         // separate file_idx arg.
         for target in &skeleton.augmentation_targets {
@@ -777,7 +777,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
                 .push((file_idx, stamped));
         }
 
-        // Phase 2 step 4: project per-file module-export specifiers into the
+        // skeleton-built: project per-file module-export specifiers into the
         // cross-file `module_spec -> [file_idx]` index. Mirrors the legacy
         // per-binder loop in `ProgramContext::build_global_indices` which iterates
         // `binder.module_exports.iter()` and pushes `file_idx` for both the
@@ -796,7 +796,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
             }
         }
 
-        // Phase 2 step 6: project per-file module-export entries into the
+        // skeleton-built: project per-file module-export entries into the
         // cross-file `spec -> export_name -> [file_idx]` index. Mirrors the
         // legacy per-binder loop in `ProgramContext::build_global_indices` which
         // iterates `binder.module_exports[spec].iter()` and pushes
@@ -937,7 +937,7 @@ impl SkeletonIndex {
             index.module_augmentation_targets[*key].hash(&mut hasher);
         }
 
-        // 4b) Per-spec augmentation-target entries (Phase 2 step 3),
+        // 4b) Per-spec augmentation-target entries (skeleton-built path),
         //     sorted by spec for determinism. Each entry contributes its
         //     (file_idx, symbol_id, stable_location) so any change to the
         //     skeleton-projected augmentation-target topology invalidates
@@ -952,7 +952,7 @@ impl SkeletonIndex {
             }
         }
 
-        // 4c) Per-spec module-binder index (Phase 2 step 4), sorted by spec
+        // 4c) Per-spec module-binder index (skeleton-built path), sorted by spec
         //     for determinism. Each entry contributes the (spec, [file_idx])
         //     vector so any change to the skeleton-projected module-binder
         //     topology invalidates downstream caches.
@@ -963,7 +963,7 @@ impl SkeletonIndex {
             index.module_binder_index_by_spec[*key].hash(&mut hasher);
         }
 
-        // 4d) Per-spec module-exports index (Phase 2 step 6), sorted by spec
+        // 4d) Per-spec module-exports index (skeleton-built path), sorted by spec
         //     and by export-name for determinism. Each entry contributes the
         //     (spec, export_name, [file_idx]) tuple so any change to the
         //     skeleton-projected module-exports topology invalidates
@@ -1074,7 +1074,7 @@ impl SkeletonIndex {
             }
         }
 
-        // Augmentation targets by spec (Phase 2 step 3):
+        // Augmentation targets by spec (skeleton-built path):
         // FxHashMap<String, Vec<(usize, SkeletonAugmentationTarget)>>
         for (key, entries) in &self.augmentation_targets_by_spec {
             size += key.capacity();
@@ -1085,7 +1085,7 @@ impl SkeletonIndex {
             }
         }
 
-        // Module binder index by spec (Phase 2 step 4):
+        // Module binder index by spec (skeleton-built path):
         // FxHashMap<String, Vec<usize>>
         for (key, files) in &self.module_binder_index_by_spec {
             size += key.capacity();
@@ -1093,7 +1093,7 @@ impl SkeletonIndex {
             size += std::mem::size_of::<(String, Vec<usize>)>();
         }
 
-        // Module exports index by spec (Phase 2 step 6):
+        // Module exports index by spec (skeleton-built path):
         // FxHashMap<String, FxHashMap<String, Vec<usize>>>
         for (spec, by_name) in &self.module_exports_index_by_spec {
             size += spec.capacity();
@@ -1200,7 +1200,7 @@ impl SkeletonIndex {
     /// augmenting declaration's name + [`StableLocation`]) recorded for
     /// `module_spec`. Empty slice if no augmentations target this specifier.
     ///
-    /// This is the Phase 2 step 2 skeleton-only path for
+    /// This is the skeleton-only path for
     /// `global_module_augmentations_index`: the consumer can rebuild the
     /// merged checker-side index from this accessor alone, without
     /// iterating per-file binders. Once arenas are evictable,
@@ -1220,13 +1220,13 @@ impl SkeletonIndex {
     /// Build the legacy `module_specifier -> Vec<(file_idx, ModuleAugmentation)>`
     /// map from skeleton data and the driver-aligned arena vector.
     ///
-    /// Phase 2 step 2 helper: projects the skeleton-recorded
+    /// helper: projects the skeleton-recorded
     /// `(file_idx, SkeletonAugmentation)` entries into the legacy shape
     /// understood by the checker's `global_module_augmentations_index`
     /// consumers. This lets the build path skip the per-binder
     /// `module_augmentations` loop entirely.
     ///
-    /// While arenas remain resident (Phase 2-4) the augmenting `NodeIndex` is
+    /// While arenas remain resident (the skeleton-only path) the augmenting `NodeIndex` is
     /// rehydrated by scanning the owner file's arena for a node whose
     /// `(pos, end)` matches the stored [`StableLocation`]. Once arenas become
     /// evictable, downstream consumers can defer the rehydration
@@ -1341,7 +1341,7 @@ impl SkeletonIndex {
     /// for `module_spec`. Empty slice if no augmentation targets reference
     /// this specifier.
     ///
-    /// This is the Phase 2 step 3 skeleton-only path for
+    /// This is the skeleton-only path for
     /// `global_augmentation_targets_index`: the consumer can rebuild the
     /// merged checker-side index from this accessor alone, without iterating
     /// per-file binders. Once arenas become evictable the
@@ -1365,7 +1365,7 @@ impl SkeletonIndex {
     /// Build the legacy `module_specifier -> Vec<(SymbolId, file_idx)>` map
     /// from skeleton-recorded augmentation-target entries.
     ///
-    /// Phase 2 step 3 helper: projects the skeleton-recorded
+    /// skeleton-built helper: projects the skeleton-recorded
     /// `(file_idx, SkeletonAugmentationTarget)` entries into the legacy shape
     /// (`Vec<(SymbolId, file_idx)>`) understood by the checker's
     /// `global_augmentation_targets_index` consumers (e.g.
@@ -1515,7 +1515,7 @@ impl SkeletonIndex {
     /// list of files whose `module_exports[module_spec]` is non-empty. Empty
     /// slice if no file declares exports under this specifier.
     ///
-    /// This is the Phase 2 step 4 skeleton-only path for
+    /// This is the skeleton-only path for
     /// `global_module_binder_index`: the consumer can rebuild the merged
     /// checker-side index from this accessor alone, without iterating
     /// per-file binders. Once arenas become evictable the
@@ -1540,7 +1540,7 @@ impl SkeletonIndex {
     /// Build the legacy `module_specifier -> Vec<file_idx>` map from
     /// skeleton-recorded module-export-specifier entries.
     ///
-    /// Phase 2 step 4 helper: projects the skeleton-recorded
+    /// skeleton-built helper: projects the skeleton-recorded
     /// `module_binder_index_by_spec` into the legacy shape understood by
     /// `ProgramContext::global_module_binder_index` consumers (e.g.
     /// `import/declaration.rs`, `module_entity.rs`, `type_resolution/module.rs`).
@@ -1615,7 +1615,7 @@ impl SkeletonIndex {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 step 6: module-exports index served from SkeletonIndex.
+    // skeleton-built: module-exports index served from SkeletonIndex.
     // -------------------------------------------------------------------------
 
     /// Lookup module-exports entries for a given module specifier.
@@ -1636,7 +1636,7 @@ impl SkeletonIndex {
     /// map from skeleton-recorded module-export entries plus the post-merge
     /// `program.module_exports` map.
     ///
-    /// Phase 2 step 6 helper: projects the skeleton-recorded
+    /// skeleton-built helper: projects the skeleton-recorded
     /// `module_exports_index_by_spec` (which carries `[file_idx]` per
     /// `(spec, export_name)`) into the legacy shape understood by
     /// `ProgramContext::global_module_exports_index` consumers (e.g.
@@ -2213,7 +2213,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 step 1: ambient module resolution served from SkeletonIndex alone.
+    // skeleton-built: ambient module resolution served from SkeletonIndex alone.
     //
     // The CLI driver's `module_resolver.lookup` `is_ambient_module` closure used to
     // read `MergedProgram.declared_modules` and `MergedProgram.shorthand_ambient_modules`
@@ -2369,17 +2369,17 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 step 2 / step 3: module-augmentations and augmentation-targets
+    // Skeleton-based module-augmentations and augmentation-targets
     // indexes served from SkeletonIndex.
     //
     // The checker's `global_module_augmentations_index` was previously built
-    // by iterating every binder's `module_augmentations` map. Phase 2 step 2
+    // by iterating every binder's `module_augmentations` map. skeleton-built
     // moves the build to `SkeletonIndex::module_augmentations_for(...)` /
     // `build_module_augmentations_index(...)`.
     //
     // The checker's `global_augmentation_targets_index` was previously built
-    // by iterating every binder's `augmentation_target_modules` map. Phase 2
-    // step 3 moves the build to `SkeletonIndex::augmentation_targets_for(...)` /
+    // by iterating every binder's `augmentation_target_modules` map. The new
+    // build path uses `SkeletonIndex::augmentation_targets_for(...)` /
     // `build_augmentation_targets_index(...)`.
     //
     // Both let the checker rebuild the merged index from skeleton data alone
@@ -2544,7 +2544,7 @@ mod tests {
     #[test]
     fn module_augmentations_stamps_file_idx_into_locations() {
         // The reducer must stamp each declaration's StableLocation with the
-        // owning file index so post-Phase-5 consumers can route through
+        // owning file index so post-eviction consumers can route through
         // `node_at_stable_location` without a separate file_idx arg.
         let skel_a = skeleton_with_module_augmentations(
             "a.ts",
@@ -2675,7 +2675,7 @@ mod tests {
     #[test]
     fn augmentation_targets_stamps_file_idx_into_locations() {
         // The reducer must stamp each entry's StableLocation with the owning
-        // file index so post-Phase-5 consumers can route through
+        // file index so post-eviction consumers can route through
         // `node_at_stable_location` without a separate file_idx arg.
         let skel_a =
             skeleton_with_augmentation_targets("a.ts", vec![(3, "./m".to_string(), 5, 12)]);
@@ -2774,10 +2774,10 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 step 4: module-binder index served from SkeletonIndex.
+    // skeleton-built: module-binder index served from SkeletonIndex.
     //
     // The checker's `global_module_binder_index` was previously built by
-    // iterating every binder's `module_exports` map. Phase 2 step 4 moves the
+    // iterating every binder's `module_exports` map. skeleton-built moves the
     // build to `SkeletonIndex::module_binders_for(...)` /
     // `build_module_binder_index(...)`, letting the checker rebuild the
     // merged index from skeleton data alone — required for arena
@@ -2923,11 +2923,11 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 step 6: module-exports index served from SkeletonIndex.
+    // skeleton-based path: module-exports index served from SkeletonIndex.
     //
     // The checker's `global_module_exports_index` was previously built by
-    // iterating every binder's `module_exports[spec].iter()` map. Phase 2 step
-    // 6 moves the build to `SkeletonIndex::module_exports_for(...)` /
+    // iterating every binder's `module_exports[spec].iter()` map. The new build
+    // path uses `SkeletonIndex::module_exports_for(...)` /
     // `build_module_exports_index(merged_module_exports)`, letting the checker
     // rebuild the merged index from skeleton data plus the post-merge
     // `program.module_exports` map alone — required for arena
