@@ -3299,6 +3299,7 @@ fn apply_cli_overrides_with_config_options(
     }
     if args.downlevel_iteration {
         options.printer.downlevel_iteration = true;
+        options.checker.downlevel_iteration = true;
     }
     if args.no_emit_helpers {
         options.printer.no_emit_helpers = true;

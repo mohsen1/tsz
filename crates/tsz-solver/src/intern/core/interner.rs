@@ -201,11 +201,22 @@ pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 2_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
 
-/// Maximum number of interned types before the interner returns ERROR.
+/// Maximum number of interned types before the interner returns `TypeId::ERROR`.
+///
+/// Native and WASM currently share the same 500k policy. The circuit breaker
+/// was introduced with matching values on both cfg branches; there is no
+/// separate native memory budget yet. Keep both constants visible so any future
+/// target-specific change is reviewed explicitly.
+///
 /// Prevents OOM on pathological inputs (e.g., DOM types + module augmentation
 /// that create millions of intermediate types via heritage merging and
-/// function shape instantiation). With ~200-300 bytes per interned entry
-/// (DashMap overhead, Arc, shapes), 2M types ≈ 400-600MB.
+/// function shape instantiation). With roughly 200-300 bytes per interned entry
+/// (DashMap overhead, `Arc`, shapes), 500k types is roughly a 100-150MB
+/// interner budget before fallback.
+///
+/// When the count is exceeded, new non-intrinsic interning poisons the interner
+/// and returns `TypeId::ERROR`. Already-computed ids remain readable for later
+/// diagnostics.
 #[cfg(target_arch = "wasm32")]
 pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
@@ -225,6 +236,13 @@ pub(crate) const MAX_EVALUATION_FUEL: u32 = 2_000_000;
 pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
 type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InternedTypeLimitContext {
+    pub(crate) current_count: usize,
+    pub(crate) max_interned_types: usize,
+    pub(crate) fallback_type: TypeId,
+}
 
 /// Cached data for a union member, pre-fetched to avoid redundant DashMap/arena
 /// lookups during sort comparisons. Each field corresponds to a lookup that
@@ -1141,10 +1159,8 @@ impl TypeInterner {
         // Circuit breaker 1: type count limit. Returning `TypeId::ERROR` here
         // intentionally does not credit a hit or miss — the residual
         // `calls - hits - misses` exposes circuit-breaker activations.
-        if self.approximate_count() > MAX_INTERNED_TYPES {
-            self.poisoned
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            return TypeId::ERROR;
+        if self.interned_type_limit_exceeded() {
+            return self.poison_due_to_interned_type_limit();
         }
 
         let shard_idx = (hash as usize) & (SHARD_COUNT - 1);
@@ -1858,6 +1874,45 @@ impl TypeInterner {
         self.alloc_counter.load(Ordering::Relaxed) as usize
     }
 
+    #[inline]
+    const fn interned_type_limit_exceeded_for_count(count: usize) -> bool {
+        count > MAX_INTERNED_TYPES
+    }
+
+    #[inline]
+    fn interned_type_limit_exceeded(&self) -> bool {
+        Self::interned_type_limit_exceeded_for_count(self.approximate_count())
+    }
+
+    #[inline]
+    fn interned_type_limit_context(&self) -> InternedTypeLimitContext {
+        InternedTypeLimitContext {
+            current_count: self.approximate_count(),
+            max_interned_types: MAX_INTERNED_TYPES,
+            fallback_type: TypeId::ERROR,
+        }
+    }
+
+    #[inline]
+    fn poison_due_to_interned_type_limit(&self) -> TypeId {
+        let context = self.interned_type_limit_context();
+        if self
+            .poisoned
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            tracing::warn!(
+                target: "tsz::solver::interner",
+                interned_type_count = context.current_count,
+                max_interned_types = context.max_interned_types,
+                fallback_type_id = context.fallback_type.0,
+                fallback_type = "TypeId::ERROR",
+                "interned type limit exceeded; poisoning type interner"
+            );
+        }
+        context.fallback_type
+    }
+
     /// Consume evaluation fuel and return whether fuel is exhausted.
     ///
     /// This is a global budget across all `TypeEvaluator` instances. When exhausted,
@@ -1927,3 +1982,7 @@ impl TypeInterner {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "interner_tests.rs"]
+mod tests;

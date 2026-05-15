@@ -12,7 +12,7 @@ use tsz_checker::CheckerOptions;
 use tsz_checker::test_utils::{check_source_with_libs, load_default_lib_files};
 use tsz_common::common::ScriptTarget;
 
-fn check_with_target(source: &str, target: ScriptTarget) -> Vec<u32> {
+fn check_with_options(source: &str, target: ScriptTarget, downlevel_iteration: bool) -> Vec<u32> {
     static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
     let libs = LIBS.get_or_init(load_default_lib_files);
     check_source_with_libs(
@@ -20,6 +20,7 @@ fn check_with_target(source: &str, target: ScriptTarget) -> Vec<u32> {
         "test.ts",
         CheckerOptions {
             target,
+            downlevel_iteration,
             ..CheckerOptions::default()
         },
         libs,
@@ -29,12 +30,20 @@ fn check_with_target(source: &str, target: ScriptTarget) -> Vec<u32> {
     .collect()
 }
 
+fn check_with_target(source: &str, target: ScriptTarget) -> Vec<u32> {
+    check_with_options(source, target, false)
+}
+
 fn check_es5(source: &str) -> Vec<u32> {
     check_with_target(source, ScriptTarget::ES5)
 }
 
 fn check_es2020(source: &str) -> Vec<u32> {
     check_with_target(source, ScriptTarget::ES2020)
+}
+
+fn check_es5_downlevel_iteration(source: &str) -> Vec<u32> {
+    check_with_options(source, ScriptTarget::ES5, true)
 }
 
 /// Direct repro from #5893. With `target: ES5` and no downlevelIteration,
@@ -56,6 +65,25 @@ fn for_of_custom_iterable_es5_emits_ts2802() {
     assert!(
         diags.contains(&2802),
         "for-of over custom Iterable at target=ES5 must emit TS2802; got: {diags:?}",
+    );
+}
+
+/// Direct repro from #6017: an object with a `[Symbol.iterator]` method is
+/// iterable, but ES5 output needs `downlevelIteration` to consume it.
+#[test]
+fn for_of_object_literal_iterable_es5_emits_ts2802() {
+    let diags = check_es5(
+        "const iterable = {\n\
+             *[Symbol.iterator]() {\n\
+                 yield 1;\n\
+                 yield 2;\n\
+             }\n\
+         };\n\
+         for (const n of iterable) {}\n",
+    );
+    assert!(
+        diags.contains(&2802),
+        "for-of over object-literal iterable at target=ES5 must emit TS2802; got: {diags:?}",
     );
 }
 
@@ -88,6 +116,69 @@ fn for_of_custom_iterable_es2020_no_ts2802() {
     assert!(
         !diags.contains(&2802),
         "TS2802 must NOT fire at ES2020; got: {diags:?}",
+    );
+}
+
+/// Regression guard: ES5 plus `downlevelIteration` supports custom iterables.
+#[test]
+fn for_of_custom_iterable_es5_with_downlevel_iteration_no_ts2802() {
+    let diags = check_es5_downlevel_iteration(
+        "class Range implements Iterable<number> {\n\
+             *[Symbol.iterator](): Iterator<number> { yield 1; }\n\
+         }\n\
+         for (const n of new Range()) {}\n",
+    );
+    assert!(
+        !diags.contains(&2802),
+        "TS2802 must NOT fire when downlevelIteration is enabled; got: {diags:?}",
+    );
+}
+
+/// Regression guard: the #6017 object-literal shape is also allowed with
+/// `downlevelIteration`.
+#[test]
+fn for_of_object_literal_iterable_es5_with_downlevel_iteration_no_ts2802() {
+    let diags = check_es5_downlevel_iteration(
+        "const iterable = {\n\
+             *[Symbol.iterator]() { yield 1; }\n\
+         };\n\
+         for (const n of iterable) {}\n",
+    );
+    assert!(
+        !diags.contains(&2802),
+        "TS2802 must NOT fire for object-literal iterable when downlevelIteration is enabled; got: {diags:?}",
+    );
+}
+
+#[test]
+fn spread_custom_iterable_es5_with_downlevel_iteration_no_iterability_error() {
+    let diags = check_es5_downlevel_iteration(
+        "const iterable = {\n\
+             *[Symbol.iterator]() { yield 1; }\n\
+         };\n\
+         const values = [...iterable];\n",
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|code| [2461, 2488, 2495, 2802].contains(code)),
+        "spread over custom iterable should be allowed with downlevelIteration; got: {diags:?}",
+    );
+}
+
+#[test]
+fn destructuring_custom_iterable_es5_with_downlevel_iteration_no_iterability_error() {
+    let diags = check_es5_downlevel_iteration(
+        "const iterable = {\n\
+             *[Symbol.iterator]() { yield 1; }\n\
+         };\n\
+         const [first] = iterable;\n",
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|code| [2461, 2488, 2495, 2802].contains(code)),
+        "destructuring custom iterable should be allowed with downlevelIteration; got: {diags:?}",
     );
 }
 
