@@ -1991,17 +1991,15 @@ fn test_t_extends_any_distribution_over_never_preserved() {
 }
 
 #[test]
-fn test_equal_any_x_returns_true_branch_via_function_subtype() {
+fn test_equal_any_x_rejects_non_any_extends_identity() {
     // Structural simulation of the type-challenges `Equal<X, Y>` trick:
     //   type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends
     //                      (<T>() => T extends Y ? 1 : 2) ? true : false
     //
     // For X = any, the naked inner conditional stays deferred while the
-    // generic function type is compared. The function-subtype path must then
-    // treat the deferred `any` and Y extends positions as mutually compatible,
-    // mirroring tsc's behavior. The bug was that the outer conditional was
-    // deferred before reaching that function-subtype comparison because it
-    // counted the function's own bound T as a free type parameter.
+    // generic function type is compared. The function-subtype path must use
+    // identity semantics for the conditional extends clauses, so `any` does
+    // not collapse with an arbitrary non-any Y.
     use crate::types::{FunctionShape, ParamInfo};
     let interner = TypeInterner::new();
 
@@ -2069,8 +2067,8 @@ fn test_equal_any_x_returns_true_branch_via_function_subtype() {
         let rhs_to_lhs = checker.is_subtype_of(rhs_fn, lhs_fn);
 
         assert!(
-            lhs_to_rhs && rhs_to_lhs,
-            "<{lhs_name}>() => {lhs_name} extends any ? 1 : 2 must be mutually assignable \
+            !lhs_to_rhs && !rhs_to_lhs,
+            "<{lhs_name}>() => {lhs_name} extends any ? 1 : 2 must not be mutually assignable \
              with <{rhs_name}>() => {rhs_name} extends {y_name} ? 1 : 2 (got lhs_to_rhs={lhs_to_rhs}, \
              rhs_to_lhs={rhs_to_lhs})"
         );
@@ -2078,15 +2076,15 @@ fn test_equal_any_x_returns_true_branch_via_function_subtype() {
 }
 
 #[test]
-fn test_outer_equal_conditional_evaluates_to_true_for_any_lhs() {
+fn test_outer_equal_conditional_evaluates_to_false_for_any_literal() {
     // Top-level reproduction of the type-challenges scenario:
     //
     //   ((<T>() => T extends any ? 1 : 2) extends
     //    (<T>() => T extends true ? 1 : 2)) ? true : false
     //
-    // Should evaluate to `true`, not `false`. This drives the OUTER
-    // conditional through `evaluate_conditional` → function subtype, which
-    // is the path the actual Equal<any, X> use sites take after substitution.
+    // Should evaluate to `false`. This drives the OUTER conditional through
+    // `evaluate_conditional` -> function subtype, which is the path the actual
+    // Equal<any, X> use sites take after substitution.
     use crate::types::{FunctionShape, ParamInfo};
     let interner = TypeInterner::new();
 
@@ -2150,8 +2148,83 @@ fn test_outer_equal_conditional_evaluates_to_true_for_any_lhs() {
     let result = evaluate_type(&interner, outer);
     assert_eq!(
         result,
-        TypeId::BOOLEAN_TRUE,
-        "Equal<any, true>-shaped outer conditional must evaluate to `true`, got {:?}",
+        TypeId::BOOLEAN_FALSE,
+        "Equal<any, true>-shaped outer conditional must evaluate to `false`, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_outer_equal_conditional_evaluates_to_false_for_any_unknown() {
+    // `any` is assignable to `unknown`, but the higher-order Equal trick is
+    // an identity comparison. The nested conditional-extends comparison must
+    // therefore use strict any propagation so `any` and `unknown` do not
+    // collapse to the same extends type.
+    use crate::types::{FunctionShape, ParamInfo};
+    let interner = TypeInterner::new();
+
+    let lhs_t = make_unconstrained_param(&interner, "T");
+    let rhs_t = make_unconstrained_param(&interner, "T");
+
+    let one = interner.literal_number(1.0);
+    let two = interner.literal_number(2.0);
+
+    let cond_lhs = interner.conditional(ConditionalType {
+        check_type: lhs_t,
+        extends_type: TypeId::ANY,
+        true_type: one,
+        false_type: two,
+        is_distributive: true,
+    });
+    let cond_rhs = interner.conditional(ConditionalType {
+        check_type: rhs_t,
+        extends_type: TypeId::UNKNOWN,
+        true_type: one,
+        false_type: two,
+        is_distributive: true,
+    });
+
+    let lhs_info = match interner.lookup(lhs_t) {
+        Some(TypeData::TypeParameter(info)) => info,
+        other => panic!("expected TypeParameter, got {other:?}"),
+    };
+    let rhs_info = match interner.lookup(rhs_t) {
+        Some(TypeData::TypeParameter(info)) => info,
+        other => panic!("expected TypeParameter, got {other:?}"),
+    };
+
+    let lhs_fn = interner.function(FunctionShape {
+        type_params: vec![lhs_info],
+        params: Vec::<ParamInfo>::new(),
+        this_type: None,
+        return_type: cond_lhs,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let rhs_fn = interner.function(FunctionShape {
+        type_params: vec![rhs_info],
+        params: Vec::<ParamInfo>::new(),
+        this_type: None,
+        return_type: cond_rhs,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let outer = interner.conditional(ConditionalType {
+        check_type: lhs_fn,
+        extends_type: rhs_fn,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    });
+
+    let result = evaluate_type(&interner, outer);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<any, unknown>-shaped outer conditional must evaluate to `false`, got {:?}",
         interner.lookup(result)
     );
 }
