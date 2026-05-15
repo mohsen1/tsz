@@ -127,6 +127,10 @@ name = "script_mode_import_equals_interface_alias_tests"
 path = "tests/script_mode_import_equals_interface_alias_tests.rs"
 
 [[test]]
+name = "enum_constant_value_emit_tests"
+path = "tests/enum_constant_value_emit_tests.rs"
+
+[[test]]
 name = "system_top_level_using_env_position_tests"
 path = "tests/system_top_level_using_env_position_tests.rs"
 
