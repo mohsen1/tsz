@@ -969,10 +969,11 @@ impl<'a> FlowAnalyzer<'a> {
         let symbol = self.binder.get_symbol(sym_id)?;
         let symbol_ref = tsz_solver::SymbolRef(sym_id.0);
         if symbol.has_any_flags(symbol_flags::CLASS) {
-            return Some(
-                self.resolve_symbol_to_lazy(symbol_ref)
-                    .unwrap_or_else(|| self.interner.reference(symbol_ref)),
-            );
+            // Class symbols must narrow through a real DefId-backed lazy type.
+            // Falling back to `reference(SymbolRef)` would create Lazy(DefId(symbol_id)),
+            // which can point at an unrelated definition because SymbolId and DefId
+            // are independent identity spaces.
+            return self.resolve_symbol_to_lazy(symbol_ref);
         }
 
         // Global constructor variables (e.g., `declare var Array: ArrayConstructor`)
