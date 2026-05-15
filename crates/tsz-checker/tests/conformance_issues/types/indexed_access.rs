@@ -74,6 +74,27 @@ type BadPropertyType<T extends object, K> = T[K];
 }
 
 #[test]
+fn test_symbol_constrained_key_cannot_index_unconstrained_type_param() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r"
+function getSymbolProp<T, K extends symbol>(obj: T, key: K): T[K] {
+  return obj[key];
+}
+
+function readSymbolProp<T, K extends symbol>(obj: T, key: K) {
+  return obj[key];
+}
+        ",
+    );
+
+    let ts2536_count = diagnostics.iter().filter(|(code, _)| *code == 2536).count();
+    assert!(
+        ts2536_count >= 2,
+        "Should emit TS2536 for T[K] and value-level obj[key] when K extends symbol but T is unconstrained.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_array_element_through_constrained_union_no_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r"
