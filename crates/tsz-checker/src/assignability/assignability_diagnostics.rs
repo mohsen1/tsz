@@ -2124,8 +2124,11 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.analyze_assignability_failure(source, target)
-            .weak_union_violation
+        use crate::query_boundaries::assignability::RelationRequest;
+
+        let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
+        let request = RelationRequest::assign(prepared_source, prepared_target);
+        self.execute_relation_request(&request).weak_union_violation
     }
 
     /// Emit TS2559 ("Type 'X' has no properties in common with type 'Y'")
