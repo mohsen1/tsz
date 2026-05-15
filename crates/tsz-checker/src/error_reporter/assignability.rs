@@ -815,16 +815,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Use one solver-boundary analysis path for TS2322 metadata.
-        let analysis = self.analyze_assignability_failure(source, target);
-        let reason = analysis.failure_reason;
+        use crate::query_boundaries::assignability::RelationRequest;
+
+        let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
+        let request = RelationRequest::assign(prepared_source, prepared_target);
+        let outcome = self.execute_relation_request(&request);
 
         // Trace what's happening with contextualTyping33
         if self.ctx.file_name.contains("contextualTyping33") {
             let _src_str = self.format_type_diagnostic(source);
             let _tgt_str = self.format_type_diagnostic(target);
             tracing::trace!(
-                source = %_src_str, target = %_tgt_str, ?reason,
+                source = %_src_str, target = %_tgt_str, reason = ?outcome.failure,
                 "diagnose_assignment"
             );
         }
@@ -832,186 +834,108 @@ impl<'a> CheckerState<'a> {
         if tracing::enabled!(Level::TRACE) {
             let source_type = self.format_type_diagnostic(source);
             let target_type = self.format_type_diagnostic(target);
-            let reason_ref = reason.as_ref();
             trace!(
                 source = %source_type,
                 target = %target_type,
-                reason = ?reason_ref,
+                reason = ?outcome.failure,
                 node_idx = anchor_idx.0,
                 file = %self.ctx.file_name,
                 "assignability failure diagnostics"
             );
         }
-        match reason {
-            Some(ref failure_reason) => {
-                // ExcessProperty errors need special handling: emit at the property position,
-                // not the statement position. Find the object literal and call the excess
-                // property checker to emit at the correct position.
-                if matches!(
-                    failure_reason,
-                    tsz_solver::SubtypeFailureReason::ExcessProperty { .. }
-                ) {
-                    // Walk through statements and binary expressions to find the object literal
-                    let start_idx = if let Some(node) = self.ctx.arena.get(anchor_idx) {
-                        // If anchor is a return statement, start from its expression
-                        if node.kind == syntax_kind_ext::RETURN_STATEMENT {
-                            self.ctx
-                                .arena
-                                .get_return_statement(node)
-                                .and_then(|ret| {
-                                    if ret.expression.is_some() {
-                                        Some(ret.expression)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(anchor_idx)
-                        } else {
-                            anchor_idx
-                        }
-                    } else {
-                        anchor_idx
-                    };
-                    let literal_idx = self.find_rhs_object_literal(start_idx);
-                    if let Some(obj_idx) = literal_idx {
-                        self.check_object_literal_excess_properties(source, target, obj_idx);
-                    }
-                    // If we can't find an object literal, the solver's excess property
-                    // check may be from a non-literal fresh type (shouldn't happen in
-                    // typical code, but fallback to avoid silent suppression).
+        if let Some(reason) = outcome.failure.as_ref() {
+            self.diagnose_assignment_failure_with_reason(source, target, anchor_idx, reason);
+            return;
+        }
+
+        // Before falling back to generic TS2322, check if there are missing
+        // properties from index signature source. If so, emit TS2741 instead.
+        if let Some(anchor) =
+            self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
+            && let Some(missing_props) =
+                self.missing_required_properties_from_index_signature_source(source, target)
+        {
+            // For TS2739, when the source is a non-generic type alias
+            // whose body is a generic Application (`type B = A<X1, X2, ...>`),
+            // tsc unfolds one level to display the application form
+            // `A<X1, X2, ...>` rather than the wrapper alias name `B`.
+            // See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
+            // line 91, which expects `Type 'NumberTo<number>'` for
+            // `type NumberToNumber = NumberTo<number>` source. The unfold
+            // is scoped to the missing-properties source only — TS2322
+            // target context and TS2339 receiver keep the alias name.
+            let src_str = if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
+            } else {
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+                )
+            };
+            let tgt_str = self.format_type_for_diagnostic_role(
+                target,
+                DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+            );
+            let (message, code) = if missing_props.len() == 1 {
+                let prop_name = self
+                    .ctx
+                    .types
+                    .resolve_atom_ref(missing_props[0])
+                    .to_string();
+                if prop_name.starts_with("__js_ctor_brand_") {
+                    // Synthetic brand from JS constructor functions — TSC
+                    // doesn't report these as missing properties.
+                    self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
                     return;
                 }
-                // Skip MissingProperty for computed symbol expressions (TS2339 emitted separately).
-                if let tsz_solver::SubtypeFailureReason::MissingProperty {
-                    property_name,
-                    source_type,
-                    target_type,
-                } = &failure_reason
-                {
-                    let pn = self.ctx.types.resolve_atom_ref(*property_name);
-                    if pn.starts_with("[Symbol.") || pn.starts_with("__js_ctor_brand_") {
-                        return;
-                    }
-                    if self.missing_property_is_satisfied_by_source(
-                        &[source, *source_type],
-                        &[target, *target_type],
-                        *property_name,
-                    ) {
-                        return;
-                    }
-                }
-                if is_callable_application_type(self.ctx.types, source)
-                    && is_callable_application_type(self.ctx.types, target)
-                    && self.should_suppress_outer_callback_return_assignability(target, anchor_idx)
-                {
+                if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
+                    // Private brand mismatch
+                    self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
                     return;
                 }
-                let mut diag =
-                    self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
-                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
-                    diag.message_text = self
-                        .rewrite_declared_generic_alias_source_in_ts2322_message(
-                            anchor_idx,
-                            diag.message_text,
-                        );
-                }
-                self.ctx.push_diagnostic(diag);
-            }
-            None => {
-                // Before falling back to generic TS2322, check if there are missing
-                // properties from index signature source. If so, emit TS2741 instead.
-                if let Some(anchor) =
-                    self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
-                    && let Some(missing_props) =
-                        self.missing_required_properties_from_index_signature_source(source, target)
-                {
-                    // For TS2739, when the source is a non-generic type alias
-                    // whose body is a generic Application (`type B = A<X1, X2, ...>`),
-                    // tsc unfolds one level to display the application form
-                    // `A<X1, X2, ...>` rather than the wrapper alias name `B`.
-                    // See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
-                    // line 91, which expects `Type 'NumberTo<number>'` for
-                    // `type NumberToNumber = NumberTo<number>` source. The unfold
-                    // is scoped to the missing-properties source only — TS2322
-                    // target context and TS2339 receiver keep the alias name.
-                    let src_str = if let Some(display) =
-                        self.ts2739_alias_of_application_source_display_text(source)
-                    {
-                        display
-                    } else {
-                        self.format_type_for_diagnostic_role(
-                            source,
-                            DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
-                        )
-                    };
-                    let tgt_str = self.format_type_for_diagnostic_role(
-                        target,
-                        DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
-                    );
-                    let (message, code) = if missing_props.len() == 1 {
-                        let prop_name = self
-                            .ctx
-                            .types
-                            .resolve_atom_ref(missing_props[0])
-                            .to_string();
-                        if prop_name.starts_with("__js_ctor_brand_") {
-                            // Synthetic brand from JS constructor functions — TSC
-                            // doesn't report these as missing properties.
-                            self.error_type_not_assignable_generic_with_anchor(
-                                source, target, anchor_idx,
-                            );
-                            return;
-                        }
-                        if tsz_solver::utils::is_synthetic_private_brand_name(&prop_name) {
-                            // Private brand mismatch
-                            self.error_type_not_assignable_generic_with_anchor(
-                                source, target, anchor_idx,
-                            );
-                            return;
-                        }
-                        (
-                                format_message(
-                                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                                    &[&prop_name, &src_str, &tgt_str],
-                                ),
-                                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                            )
-                    } else {
-                        let prop_list: Vec<String> = missing_props
-                            .iter()
-                            .take(4)
-                            .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
-                            .collect();
-                        let props_joined = prop_list.join(", ");
-                        if missing_props.len() > 4 {
-                            let more_count = (missing_props.len() - 4).to_string();
-                            (
+                (
+                    format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[&prop_name, &src_str, &tgt_str],
+                    ),
+                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                )
+            } else {
+                let prop_list: Vec<String> = missing_props
+                    .iter()
+                    .take(4)
+                    .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                    .collect();
+                let props_joined = prop_list.join(", ");
+                if missing_props.len() > 4 {
+                    let more_count = (missing_props.len() - 4).to_string();
+                    (
                                     format_message(
                                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                                         &[&src_str, &tgt_str, &props_joined, &more_count],
                                     ),
                                     diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                                 )
-                        } else {
-                            (
-                                    format_message(
-                                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                                        &[&src_str, &tgt_str, &props_joined],
-                                    ),
-                                    diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
-                                )
-                        }
-                    };
-                    self.emit_render_request_at_anchor(
-                        anchor,
-                        DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
-                    );
-                    return;
+                } else {
+                    (
+                        format_message(
+                            diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                            &[&src_str, &tgt_str, &props_joined],
+                        ),
+                        diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                    )
                 }
-                // Fallback to generic message
-                self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
-            }
+            };
+            self.emit_render_request_at_anchor(
+                anchor,
+                DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message),
+            );
+            return;
         }
+        // Fallback to generic message
+        self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
     }
 
     /// Narrow the TS2412 source display to the offending member when the

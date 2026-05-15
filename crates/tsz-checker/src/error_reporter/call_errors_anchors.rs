@@ -388,7 +388,10 @@ impl<'a> CheckerState<'a> {
             Some(
                 RelationFailure::MissingProperty { .. }
                 | RelationFailure::MissingProperties { .. }
-                | RelationFailure::PropertyModifierMismatch { .. },
+                | RelationFailure::OptionalPropertyRequired { .. }
+                | RelationFailure::ReadonlyPropertyMismatch { .. }
+                | RelationFailure::PropertyVisibilityMismatch { .. }
+                | RelationFailure::PropertyNominalMismatch { .. },
             ) => Some(arg_idx),
             _ => None,
         }
