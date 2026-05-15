@@ -6189,7 +6189,6 @@ const bad: B[] = Array.from(inputA.values());
 }
 
 #[test]
-#[ignore] // TODO: Promise should be assignable to PromiseLike with default libs
 fn merged_program_promise_is_assignable_to_promise_like_with_default_libs() {
     let files = vec![(
         "main.ts".to_string(),

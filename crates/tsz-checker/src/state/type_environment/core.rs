@@ -1811,6 +1811,15 @@ impl<'a> CheckerState<'a> {
                 && cached
                     .iter()
                     .all(|param| param.constraint.is_none() && param.default.is_none());
+            if cached_is_placeholder && self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
+                self.prime_lib_type_params(&sym_escaped_name);
+                if let Some(params) = self.ctx.def_type_params.borrow().get(&def_id).cloned()
+                    && !params.is_empty()
+                {
+                    self.ctx.leave_recursion();
+                    return params;
+                }
+            }
             if !cached_is_placeholder {
                 self.ctx.leave_recursion();
                 return cached;
