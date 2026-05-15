@@ -868,7 +868,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 self.rest_type_needs_aggregate_argument_check(inner)
             }
-            Some(TypeData::Array(_)) => false,
             Some(TypeData::Union(members)) => {
                 let members: Vec<_> = self.interner.type_list(members).iter().copied().collect();
                 members.into_iter().any(|member| {
