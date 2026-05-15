@@ -830,7 +830,7 @@ impl<'a> LoweringPass<'a> {
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
                 directives.push(TransformDirective::ES5GeneratorFunction { function_node });
-            } else if self.function_parameters_need_es5_transform(&func.parameters) {
+            } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
                 // Mark rest helper if parameters have rest
                 if self.function_parameters_need_rest_helper(&func.parameters) {
                     self.transforms.helpers_mut().rest = true;
@@ -847,6 +847,11 @@ impl<'a> LoweringPass<'a> {
                 // ES2015/ES2016: async functions need __awaiter (generators are native)
                 self.mark_async_helpers();
             }
+        } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
+            if self.function_parameters_need_rest_helper(&func.parameters) {
+                self.transforms.helpers_mut().rest = true;
+            }
+            directives.push(TransformDirective::ES5FunctionParameters { function_node });
         }
 
         directives.push(TransformDirective::CommonJSExportDefaultExpr);
@@ -1203,9 +1208,7 @@ impl<'a> LoweringPass<'a> {
         } else if self.ctx.target_es5 && func.asterisk_token {
             self.transforms.helpers_mut().generator = true;
             TransformDirective::ES5GeneratorFunction { function_node: idx }
-        } else if self.ctx.target_es5
-            && self.function_parameters_need_es5_transform(&func.parameters)
-        {
+        } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
             // Mark rest helper if parameters have rest
             if self.function_parameters_need_rest_helper(&func.parameters) {
                 self.transforms.helpers_mut().rest = true;
@@ -1840,7 +1843,7 @@ impl<'a> LoweringPass<'a> {
                     idx,
                     TransformDirective::ES5GeneratorFunction { function_node: idx },
                 );
-            } else if self.function_parameters_need_es5_transform(&func.parameters) {
+            } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
                 if self.function_parameters_need_rest_helper(&func.parameters) {
                     self.transforms.helpers_mut().rest = true;
                 }
@@ -1860,6 +1863,14 @@ impl<'a> LoweringPass<'a> {
                 // ES2015/ES2016: non-generator async functions need __awaiter
                 self.mark_async_helpers();
             }
+        } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
+            if self.function_parameters_need_rest_helper(&func.parameters) {
+                self.transforms.helpers_mut().rest = true;
+            }
+            self.transforms.insert(
+                idx,
+                TransformDirective::ES5FunctionParameters { function_node: idx },
+            );
         }
 
         for &param_idx in &func.parameters.nodes {

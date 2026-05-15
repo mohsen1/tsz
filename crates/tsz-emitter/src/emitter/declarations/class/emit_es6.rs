@@ -1202,7 +1202,10 @@ impl<'a> Printer<'a> {
             });
         let needs_static_comma_expr =
             is_class_expression && (has_static_field_comma_expr || has_static_block_comma_expr);
-        let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
+        let needs_computed_prop_comma_expr =
+            is_class_expression && !computed_prop_entries.is_empty();
+        let needs_any_comma_expr =
+            needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
             && self
                 .arena
@@ -2645,6 +2648,20 @@ impl<'a> Printer<'a> {
                 if emitted_entry {
                     self.write(";");
                 }
+            }
+            if needs_computed_prop_comma_expr
+                && !needs_static_comma_expr
+                && !needs_private_comma_expr
+                && let Some(temp) = class_expr_temp.as_ref()
+            {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(temp);
+                if class_expr_comma_needs_parens {
+                    self.write(")");
+                }
+                self.decrease_indent();
             }
         } else if !computed_side_effects_emitted_in_static_block {
             // Emit computed property name side-effect statements for erased members
