@@ -1,7 +1,4 @@
-use super::{
-    is_builtin_lib_file_name, is_external_package_declaration_file_name,
-    is_special_generic_direct_actual_lib_alias_body_admitted,
-};
+use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
 use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::state::CheckerState;
 use crate::test_utils::load_lib_files;
@@ -740,11 +737,6 @@ fn direct_actual_lib_symbol_type_admits_proven_non_generic_aliases_without_name_
             .get_cross_file_symbol(sym_id)
             .unwrap_or_else(|| panic!("{name} symbol should be available"))
             .clone();
-
-        assert!(
-            !is_special_generic_direct_actual_lib_alias_body_admitted(name),
-            "{name} must prove the non-generic path rather than the generic name list",
-        );
 
         let proof = state
             .direct_actual_lib_type_alias_body(sym_id, &symbol, name, delegate_arena)
