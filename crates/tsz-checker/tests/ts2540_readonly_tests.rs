@@ -377,6 +377,31 @@ v[0] = 1;
 }
 
 #[test]
+fn test_readonly_tuple_fixed_element_suppresses_type_mismatch() {
+    // Fixed readonly tuple elements are named properties. When the write is
+    // invalid both because the element is readonly and because the assigned
+    // literal has the wrong type, tsc reports only TS2540 for that assignment.
+    let source = r#"
+const arr = [1, 2, 3] as const;
+arr[0] = 999;
+
+const nested = { a: [1, 2] as const };
+nested.a[0] = 999;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    let ts2322_count = diags.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected TS2540 for direct and nested readonly tuple fixed elements, got: {diags:?}"
+    );
+    assert_eq!(
+        ts2322_count, 0,
+        "TS2322 should be suppressed when TS2540 already reports the readonly fixed element write, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_readonly_tuple_rest_element_emits_ts2542() {
     // Assigning to a rest-range index of a readonly tuple should emit TS2542
     // (index signature only permits reading).
