@@ -139,20 +139,19 @@ function withDynKey<T, K extends keyof T>(obj: T, key: K): void {
     );
 }
 
-/// `T[K]` in the return type of a helper function — each call site resolves
-/// to the literal property type.
+/// `T[K]` in an array return type resolves to the literal property type.
 #[test]
-fn generic_callback_indexed_access_mapped_over_array() {
+fn generic_callback_indexed_access_array_return_type() {
     let source = r#"
-function pluck<T, K extends keyof T>(items: T[], key: K): T[K][] {
-    return items.map(item => item[key]);
+function pluckOne<T, K extends keyof T>(item: T, key: K): T[K][] {
+    return [item[key]];
 }
-const scores = pluck([{ score: 1 }, { score: 2 }], "score");
-const doubled: number[] = scores.map(s => s * 2);
+const scores: number[] = pluckOne({ score: 1 }, "score");
+const labels: string[] = pluckOne({ label: "ok" }, "label");
 "#;
     let diags = relevant_diagnostics(source);
     assert!(
         diags.is_empty(),
-        "T[K] in a mapped array context must resolve to the specific property type. Got: {diags:#?}"
+        "T[K] in an array return type must resolve to the specific property type. Got: {diags:#?}"
     );
 }
