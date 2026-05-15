@@ -162,6 +162,18 @@ impl<'a> CheckerState<'a> {
         element_idx: Option<NodeIndex>,
     ) -> Option<(TypeId, bool)> {
         let raw_component_type = component_type;
+        if let Some(props_type) =
+            self.react_component_alias_application_props_arg(raw_component_type)
+        {
+            let raw_has_type_params = crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                props_type,
+            );
+            let props_type =
+                self.apply_jsx_library_managed_attributes(raw_component_type, props_type);
+            return Some((props_type, raw_has_type_params));
+        }
+
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
