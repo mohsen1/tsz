@@ -631,6 +631,14 @@ impl<'a> CheckerState<'a> {
 
         let (base, args) = application_info(self.ctx.types, object_type)?;
         let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+        if !self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+        {
+            return None;
+        }
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
         let mapped_id = crate::query_boundaries::common::mapped_type_id(self.ctx.types, body_type)?;
         let mapped = self.ctx.types.mapped_type(mapped_id);
@@ -677,6 +685,14 @@ impl<'a> CheckerState<'a> {
         if let Some((base, args)) = application_info(self.ctx.types, object_type)
             && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
         {
+            if !self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+            {
+                return Vec::new();
+            }
             let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
             if let Some(mapped_id) =
                 crate::query_boundaries::common::mapped_type_id(self.ctx.types, body_type)
