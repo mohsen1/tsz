@@ -3399,6 +3399,8 @@ fn test_relation_failure_covers_semantic_families() {
         "IncompatiblePropertyValue",
         "NoApplicableSignature",
         "TupleArityMismatch",
+        "TupleElementTypeMismatch",
+        "ArrayElementMismatch",
         "ReturnTypeMismatch",
         "ParameterTypeMismatch",
         "ParameterCountMismatch",
@@ -3466,15 +3468,13 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
     );
     assert!(
         source.contains("SubtypeFailureReason::ArrayElementMismatch {")
-            && source.contains("source_type: source_element,")
-            && source.contains("target_type: target_element,")
+            && source.contains("=> Self::ArrayElementMismatch")
+            && source.contains("SubtypeFailureReason::TupleElementTypeMismatch {")
+            && source.contains("=> Self::TupleElementTypeMismatch")
             && source.contains("SubtypeFailureReason::IndexSignatureMismatch {")
             && source.contains("source_type: source_value_type,")
-            && source.contains("target_type: target_value_type,")
-            && source.contains("SubtypeFailureReason::TupleElementTypeMismatch {")
-            && source.contains("source_type: source_element,")
-            && source.contains("target_type: target_element,"),
-        "element/index-specific solver mismatches must normalize through TypeMismatch using the concrete element/value types"
+            && source.contains("target_type: target_value_type,"),
+        "array/tuple element mismatches must retain element detail, while index-signature mismatches normalize through TypeMismatch"
     );
 }
 

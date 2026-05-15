@@ -165,8 +165,12 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        if self.try_elaborate_array_literal_mismatch_from_failure_reason(idx, arg_type, param_type)
-        {
+        if self.try_elaborate_array_literal_mismatch_with_relation_failure(
+            idx,
+            arg_type,
+            param_type,
+            relation_failure,
+        ) {
             return;
         }
         if self.try_elaborate_callback_body_diagnostics(idx, param_type) {

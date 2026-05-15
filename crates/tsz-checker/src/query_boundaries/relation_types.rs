@@ -87,6 +87,17 @@ pub(crate) enum RelationFailure {
         source_count: usize,
         target_count: usize,
     },
+    /// Tuple element type mismatch at a specific element index.
+    TupleElementTypeMismatch {
+        index: usize,
+        source_element: TypeId,
+        target_element: TypeId,
+    },
+    /// Array element type mismatch.
+    ArrayElementMismatch {
+        source_element: TypeId,
+        target_element: TypeId,
+    },
     /// Return type incompatibility.
     ReturnTypeMismatch {
         source_return: TypeId,
@@ -180,6 +191,22 @@ impl RelationFailure {
             } => SubtypeFailureReason::TupleElementMismatch {
                 source_count: *source_count,
                 target_count: *target_count,
+            },
+            Self::TupleElementTypeMismatch {
+                index,
+                source_element,
+                target_element,
+            } => SubtypeFailureReason::TupleElementTypeMismatch {
+                index: *index,
+                source_element: *source_element,
+                target_element: *target_element,
+            },
+            Self::ArrayElementMismatch {
+                source_element,
+                target_element,
+            } => SubtypeFailureReason::ArrayElementMismatch {
+                source_element: *source_element,
+                target_element: *target_element,
             },
             Self::ReturnTypeMismatch {
                 source_return,
@@ -341,9 +368,9 @@ impl RelationFailure {
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
                 target_element,
-            } => Self::TypeMismatch {
-                source_type: source_element,
-                target_type: target_element,
+            } => Self::ArrayElementMismatch {
+                source_element,
+                target_element,
             },
             SubtypeFailureReason::IndexSignatureMismatch {
                 source_value_type,
@@ -373,12 +400,13 @@ impl RelationFailure {
                 Self::PropertyModifierMismatch { property_name }
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
+                index,
                 source_element,
                 target_element,
-                ..
-            } => Self::TypeMismatch {
-                source_type: source_element,
-                target_type: target_element,
+            } => Self::TupleElementTypeMismatch {
+                index,
+                source_element,
+                target_element,
             },
             SubtypeFailureReason::MissingIndexSignature { .. }
             | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
