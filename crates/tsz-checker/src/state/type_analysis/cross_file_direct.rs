@@ -1,5 +1,6 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
 
+use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
@@ -21,11 +22,8 @@ struct DirectActualLibAliasBodyProof {
     outcome: DirectActualLibAliasBodyOutcome,
 }
 
-fn is_generic_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
-    matches!(
-        name,
-        "FlatArray" | "IteratorResult" | "Partial" | "Readonly" | "Record"
-    )
+fn is_special_generic_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
+    matches!(name, "FlatArray" | "IteratorResult")
 }
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
@@ -368,9 +366,10 @@ impl<'a> CheckerState<'a> {
                 body,
                 TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
             );
-        let outcome = if non_generic_alias_has_resolved_body
-            || is_generic_direct_actual_lib_alias_body_admitted(name)
-        {
+        let generic_alias_has_admitted_body = !params.is_empty()
+            && (common::mapped_type_id(self.ctx.types, body).is_some()
+                || is_special_generic_direct_actual_lib_alias_body_admitted(name));
+        let outcome = if non_generic_alias_has_resolved_body || generic_alias_has_admitted_body {
             DirectActualLibAliasBodyOutcome::Success
         } else if !params.is_empty() {
             DirectActualLibAliasBodyOutcome::GenericAlias

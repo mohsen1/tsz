@@ -1,6 +1,6 @@
 use super::{
     is_builtin_lib_file_name, is_external_package_declaration_file_name,
-    is_generic_direct_actual_lib_alias_body_admitted,
+    is_special_generic_direct_actual_lib_alias_body_admitted,
 };
 use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::state::CheckerState;
@@ -742,7 +742,7 @@ fn direct_actual_lib_symbol_type_admits_proven_non_generic_aliases_without_name_
             .clone();
 
         assert!(
-            !is_generic_direct_actual_lib_alias_body_admitted(name),
+            !is_special_generic_direct_actual_lib_alias_body_admitted(name),
             "{name} must prove the non-generic path rather than the generic name list",
         );
 
@@ -1043,6 +1043,8 @@ fn direct_actual_lib_alias_proof_matches_mapped_utility_fallback_bodies() {
         ),
         ("Record", 2, DirectActualLibAliasBodyOutcome::Success),
         ("Partial", 1, DirectActualLibAliasBodyOutcome::Success),
+        ("Pick", 2, DirectActualLibAliasBodyOutcome::Success),
+        ("Required", 1, DirectActualLibAliasBodyOutcome::Success),
         ("Readonly", 1, DirectActualLibAliasBodyOutcome::Success),
     ] {
         let sym_id = state
