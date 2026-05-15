@@ -336,6 +336,25 @@ capture_diagnostic_lines() {
         '
 }
 
+diagnostic_lines_from_file() {
+    local label="$1"
+    local file="$2"
+
+    awk -v label="$label" '
+        {
+            sub(/\r$/, "")
+            if ($0 ~ /^[[:space:]]*$/) {
+                next
+            }
+            print label ": " $0
+            seen += 1
+            if (seen >= 20) {
+                exit
+            }
+        }
+    ' "$file" 2>/dev/null || true
+}
+
 append_diagnostic_delta() {
     local existing="$1"
     local addition="$2"
@@ -1101,6 +1120,12 @@ run_project_benchmark() {
     local tsconfig="$2"
     local src_dir="$3"
     local peak_memory_bytes=""
+    local check_log_dir="${TEMP_DIR:-${TMPDIR:-/tmp}}"
+    local check_log_prefix
+    check_log_prefix="$(printf '%s' "$name" | tr -c '[:alnum:]_.-' '_')"
+    local tsc_check_log="$check_log_dir/${check_log_prefix}.tsc-check.log"
+    local tsz_check_log="$check_log_dir/${check_log_prefix}.tsz-check.log"
+    local tsgo_check_log="$check_log_dir/${check_log_prefix}.tsgo-check.log"
 
     update_project_peak_memory() {
         local observed="${LAST_PEAK_RSS_BYTES:-0}"
@@ -1155,10 +1180,10 @@ run_project_benchmark() {
         project_tsc_timeout=$((BENCH_TIMEOUT * 2))
         local tsc_check=0
         if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-            run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+            run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" >"$tsc_check_log" 2>&1 || tsc_check=$?
             update_project_peak_memory
         else
-            run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+            run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >"$tsc_check_log" 2>&1 || tsc_check=$?
             update_project_peak_memory
         fi
         tsc_exit_codes="$tsc_check"
@@ -1171,11 +1196,7 @@ run_project_benchmark() {
                 tsc_error="tsc timed out after ${project_tsc_timeout}s"
             else
                 status="tsc fixture error"
-                if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-                    tsc_error="$(capture_diagnostic_lines "tsc" "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig")"
-                else
-                    tsc_error="$(capture_diagnostic_lines "tsc" "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig")"
-                fi
+                tsc_error="$(diagnostic_lines_from_file "tsc" "$tsc_check_log")"
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $(printf '%s' "$tsc_error" | head -1)" >&2
             fi
@@ -1195,17 +1216,17 @@ run_project_benchmark() {
     local tsgo_check=0
     if [ "$name" != "large-ts-repo" ]; then
         if [ "${#tsz_prefix[@]}" -gt 0 ]; then
-            run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+            run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" >"$tsz_check_log" 2>&1 || tsz_check=$?
             update_project_peak_memory
         else
-            run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+            run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" >"$tsz_check_log" 2>&1 || tsz_check=$?
             update_project_peak_memory
         fi
         if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-            run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+            run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" >"$tsgo_check_log" 2>&1 || tsgo_check=$?
             update_project_peak_memory
         else
-            run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+            run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" >"$tsgo_check_log" 2>&1 || tsgo_check=$?
             update_project_peak_memory
         fi
     fi
@@ -1236,11 +1257,7 @@ run_project_benchmark() {
             status="tsz error"
             tsz_ms="ERR"
             local tsz_error
-            if [ "${#tsz_prefix[@]}" -gt 0 ]; then
-                tsz_error="$(capture_diagnostic_lines "tsz" "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig")"
-            else
-                tsz_error="$(capture_diagnostic_lines "tsz" "$project_timeout" "$TSZ" --noEmit -p "$tsconfig")"
-            fi
+            tsz_error="$(diagnostic_lines_from_file "tsz" "$tsz_check_log")"
             diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsz_error")"
             echo -e "  ${CYAN}tsz error:${NC} $(printf '%s' "$tsz_error" | head -1)" >&2
         fi
@@ -1254,11 +1271,7 @@ run_project_benchmark() {
             status="${status:+${status}; }tsgo error"
             tsgo_ms="ERR"
             local tsgo_error
-            if [ "${#project_node_prefix[@]}" -gt 0 ]; then
-                tsgo_error="$(capture_diagnostic_lines "tsgo" "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig")"
-            else
-                tsgo_error="$(capture_diagnostic_lines "tsgo" "$project_timeout" "$TSGO" --noEmit -p "$tsconfig")"
-            fi
+            tsgo_error="$(diagnostic_lines_from_file "tsgo" "$tsgo_check_log")"
             diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsgo_error")"
             echo -e "  ${CYAN}tsgo error:${NC} $(printf '%s' "$tsgo_error" | head -1)" >&2
         fi
