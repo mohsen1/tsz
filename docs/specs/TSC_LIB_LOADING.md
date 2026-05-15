@@ -755,7 +755,7 @@ tsz currently loads **core libs only** (e.g., `es5.d.ts` instead of `lib.d.ts`).
 
 This was intentional for conformance testing but doesn't match tsc's actual behavior for real-world usage.
 
-From `src/cli/config.rs`:
+From `crates/tsz-core/src/config/mod.rs`:
 ```rust
 /// Returns the core lib name (without DOM) - matches tsc conformance test behavior.
 pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
@@ -770,7 +770,7 @@ pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
 
 ### Recommended Fix
 
-To match tsc behavior, change `default_lib_name_for_target()` in `src/cli/config.rs`:
+To match tsc behavior, change `default_lib_name_for_target()` in `crates/tsz-core/src/config/mod.rs`:
 
 | Target | Current (tsz) | Correct (tsc) |
 |--------|--------------|---------------|

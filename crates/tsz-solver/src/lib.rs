@@ -285,7 +285,7 @@ mod bidirectional_tests;
 // evaluate_tests: loaded from evaluation/evaluate.rs
 // index_signature_tests: loaded from relations/subtype/core.rs
 // infer_tests: loaded from inference/infer.rs
-// instantiate_tests: loaded from instantiation/instantiate.rs
+// instantiate_tests: loaded from caches/instantiation_cache.rs
 #[cfg(test)]
 #[path = "../tests/integration_tests.rs"]
 mod integration_tests;

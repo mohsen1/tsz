@@ -726,7 +726,7 @@ impl ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectOutcome {
 }
 
 /// Why a cross-file cache reader (`cached_cross_file_*` in
-/// `tsz-checker/src/context/cross_file_query.rs`) returned `None`.
+/// `crates/tsz-checker/src/context/cross_file_query.rs`) returned `None`.
 ///
 /// The 2026-05-11 attribution decision record locked in
 /// `delegate.cache_hits_cross_file = 0` on the cliff (1107 calls,
@@ -2005,7 +2005,7 @@ pub fn record_interner_application_intern_call() {
 }
 
 /// Record one `ModuleResolver::lookup()` call from
-/// `tsz-cli/src/driver/sources.rs` — the entry point for per-import
+/// `crates/tsz-cli/src/driver/sources.rs` — the entry point for per-import
 /// module resolution. Sibling to the fs-probe `record_resolver_*`
 /// helpers but lives in a different file (sources.rs vs resolution.rs)
 /// because resolution caching happens at the lookup level, above the
@@ -2021,7 +2021,7 @@ pub fn record_resolver_lookup_call() {
 }
 
 /// Record one `Path::is_file()` probe from the resolver fast path.
-/// Used by the `count_is_file` wrapper in `tsz-cli/src/driver/resolution.rs`,
+/// Used by the `count_is_file` wrapper in `crates/tsz-cli/src/driver/resolution.rs`,
 /// which bundles the syscall and the counter in one place. Gate once,
 /// deref `counters()` once, increment.
 #[inline]
@@ -2062,7 +2062,7 @@ pub fn record_resolver_read_dir() {
 /// Record one candidate path examined during module resolution
 /// (path-mapping virtual roots and suffix-extension expansion).
 /// Lifted into a helper so the two emit sites in
-/// `tsz-cli/src/driver/resolution.rs` don't re-pay the `counters()`
+/// `crates/tsz-cli/src/driver/resolution.rs` don't re-pay the `counters()`
 /// `OnceLock` deref.
 #[inline]
 pub fn record_resolver_candidate_path() {
@@ -2091,7 +2091,7 @@ pub fn record_resolver_read_package_json() {
 
 /// Record a root `CheckerState` construction. Called from each of the
 /// nine `CheckerState::new` / `with_*` constructors in
-/// `tsz-checker/src/state/state.rs`. Sibling to the other `record_*`
+/// `crates/tsz-checker/src/state/state.rs`. Sibling to the other `record_*`
 /// helpers — gate once, look up `counters()` once, increment.
 #[inline]
 pub fn record_checker_state_constructed() {

@@ -2,7 +2,8 @@
 //!
 //! Storage and key types for the `instantiate_type` memoization cache. The
 //! cache is active when callers use the cache-aware entry points in
-//! `instantiation/instantiate.rs` and pass `Some(&dyn QueryDatabase)`.
+//! `crates/tsz-solver/src/caches/instantiation_cache.rs` and pass
+//! `Some(&dyn QueryDatabase)`.
 //! Plain `instantiate_type` and `substitute_this_type` calls intentionally
 //! pass `None`, preserving the no-cache compatibility path for raw
 //! `TypeDatabase` callers.
