@@ -1552,6 +1552,16 @@ impl<'a> LoweringPass<'a> {
         } else if self.ctx.needs_async_lowering && arrow.is_async {
             // ES2015/ES2016: arrow syntax is native but async needs lowering
             self.mark_async_helpers();
+        } else if !arrow.is_async
+            && self.function_parameters_need_body_prologue_transform(&arrow.parameters)
+        {
+            if self.function_parameters_need_rest_helper(&arrow.parameters) {
+                self.transforms.helpers_mut().rest = true;
+            }
+            self.transforms.insert(
+                idx,
+                TransformDirective::ES5FunctionParameters { function_node: idx },
+            );
         }
 
         for &param_idx in &arrow.parameters.nodes {
