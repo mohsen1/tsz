@@ -1106,7 +1106,7 @@ impl<'a> CheckerState<'a> {
         ) = {
             use tsz_parser::parser::syntax_kind_ext;
 
-            // Phase 1: collect heritage expression NodeIndices via immutable arena reads only.
+            // first pass: collect heritage expression NodeIndices via immutable arena reads only.
             let heritage_expr_idxs: Vec<NodeIndex> = {
                 let mut idxs = Vec::new();
                 let clause_type_lists: Option<Vec<Vec<NodeIndex>>> =

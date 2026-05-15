@@ -129,7 +129,7 @@ impl BinderState {
             return;
         }
 
-        // Phase 1: Clone all lib symbols into local arena, building remap maps
+        // first pass: Clone all lib symbols into local arena, building remap maps
         // Maps: (lib_binder_ptr, old_id) -> new_id
         let mut lib_symbol_remap: FxHashMap<(usize, SymbolId), SymbolId> = FxHashMap::default();
         // Maps: interned symbol name -> new_id (for merging same-name symbols)
@@ -368,7 +368,7 @@ impl BinderState {
                             sym.exports = Some(Box::new(remapped_exports));
                         } else if let Some(existing) = sym.exports.as_mut() {
                             for (name, id) in remapped_exports.iter() {
-                                // Always overwrite: Phase 1's alloc_from copies exports
+                                // Always overwrite: first pass's alloc_from copies exports
                                 // with un-remapped SymbolIds. We must replace them with
                                 // the remapped IDs from lib_symbol_remap.
                                 existing.set(name.clone(), *id);
@@ -435,7 +435,7 @@ impl BinderState {
         // Phase 4: Propagate semantic_defs from lib binders with remapped SymbolIds.
         //
         // Lib binders record `semantic_defs` for their top-level declarations during
-        // binding (TypeAlias, Interface, Class, Enum, Namespace). After Phase 1
+        // binding (TypeAlias, Interface, Class, Enum, Namespace). After first pass
         // remaps SymbolIds, the main binder's `semantic_defs` doesn't know about
         // these merged lib symbols. Without this, `pre_populate_def_ids_from_binder`
         // only covers user-declared types, and lib symbols fall through to the

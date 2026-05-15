@@ -1373,7 +1373,7 @@ impl<'a> CheckerState<'a> {
         let comments = &sf.comments;
         let mut results = Vec::new();
         let mut handled_comment_positions = Vec::new();
-        // Phase 1: Check each top-level statement's leading JSDoc
+        // first pass: Check each top-level statement's leading JSDoc
         for &stmt_idx in statements {
             let Some(node) = self.ctx.arena.get(stmt_idx) else {
                 continue;

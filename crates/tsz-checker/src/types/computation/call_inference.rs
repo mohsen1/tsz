@@ -2864,7 +2864,7 @@ impl<'a> CheckerState<'a> {
                 if Self::should_preserve_speculative_call_diagnostic(diag) {
                     return true;
                 }
-                // --- Phase 1: dedup by (code, start) against pre-existing + already-kept ---
+                // --- first pass: dedup by (code, start) against pre-existing + already-kept ---
                 let key = (diag.code, diag.start);
                 if !seen_new_diags.insert(key) {
                     return false;

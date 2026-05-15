@@ -592,7 +592,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Compute max_allowed using tsc's Phase 1 matching semantics:
+        // Compute max_allowed using tsc's first pass matching semantics:
         // The member(s) with the highest min_required become the "base" of the
         // combined signature (all other members' signatures partially match them
         // because their min ≤ base.min). The combined inherits the base member's
@@ -1138,7 +1138,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // and intersected parameter types with unioned return types.
         let combined = self.try_compute_combined_union_signature(&members);
 
-        // Phase 1: Argument count validation using combined signature.
+        // first pass: Argument count validation using combined signature.
         // This catches cases where members have different param counts —
         // the combined signature requires the maximum number of params.
         if let Some(ref combined) = combined {

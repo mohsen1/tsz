@@ -7,7 +7,7 @@
 //!
 //! # Architecture
 //!
-//! ## Phase 1: Lowering Pass
+//! ## first pass: Lowering Pass
 //! The `LoweringPass` walks the AST and produces `TransformDirective`s for nodes that
 //! need transformation (ES5 classes, module exports, etc.). These directives are stored
 //! in a `TransformContext`.

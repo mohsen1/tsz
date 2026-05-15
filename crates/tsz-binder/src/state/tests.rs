@@ -4066,7 +4066,7 @@ interface Foo {
 }
 
 // =============================================================================
-// Phase 1 DefId-First Stable Identity Tests
+// first pass DefId-First Stable Identity Tests
 // =============================================================================
 
 /// Helper: parse + bind a source file and return the binder state.
@@ -7290,7 +7290,7 @@ fn flow_nodes_arc_share_is_zero_copy() {
 }
 
 // =============================================================================
-// Phase 1 — `StableLocation` plumbing
+// first pass — `StableLocation` plumbing
 //
 // These tests verify the binder populates arena-free declaration locations
 // in lockstep with the existing `NodeIndex` fields. See
@@ -7351,7 +7351,7 @@ fn stable_location_set_file_idx_if_unassigned_is_latching() {
 fn binder_populates_stable_declarations_in_lockstep() {
     // Every `NodeIndex` on `Symbol::declarations` must have a sibling entry
     // on `Symbol::stable_declarations`, and its `(pos, end)` must equal the
-    // declaration node's source span. This is the core Phase 1 invariant.
+    // declaration node's source span. This is the core first pass invariant.
     let source = r"
 function foo() {}
 interface Bar { x: number }

@@ -313,7 +313,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// Uses the same three-phase approach as `resolve_union_call`:
     ///
-    /// Phase 1: Arity check against the combined signature (max of all members'
+    /// first pass: Arity check against the combined signature (max of all members'
     ///          required counts, intersection of param types, union of return types).
     /// Second pass: Per-member resolution to collect actual return types.
     /// Phase 3: Validate arg types against the combined (intersected) param types.
@@ -334,7 +334,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // and unions return types.
         let combined = self.try_compute_combined_union_construct_signature(&members);
 
-        // Phase 1: Argument count validation using combined signature.
+        // first pass: Argument count validation using combined signature.
         if let Some(ref combined) = combined {
             if arg_types.len() < combined.min_required {
                 return CallResult::ArgumentCountMismatch {

@@ -556,7 +556,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Phase 1: Try to find matching signatures across all lists
+        // first pass: Try to find matching signatures across all lists
         // For each signature in each member's list, check if there's a compatible
         // signature in every other member's list.
         for (list_idx, (_, sigs)) in sig_lists.iter().enumerate() {

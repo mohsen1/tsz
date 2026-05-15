@@ -546,7 +546,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Phase 1: Process all non-method members (properties, accessors, constructors, index sigs).
+        // first pass: Process all non-method members (properties, accessors, constructors, index sigs).
         // Methods are deferred to second pass so that a partial instance type (with property types)
         // can be pushed as `this`, allowing method body inference to resolve `this.x` references.
         let mut deferred_methods: Vec<(NodeIndex, &tsz_parser::parser::node::MethodDeclData, u32)> =

@@ -1269,7 +1269,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Pre-populate `symbol_to_def` and `def_to_symbol` from the binder's
-    /// `semantic_defs` index (Phase 1 DefId-first stable identity).
+    /// `semantic_defs` index (first pass DefId-first stable identity).
     ///
     /// Called once during checker construction so that `get_or_create_def_id`
     /// finds stable `DefIds` already present for top-level declarations. This
