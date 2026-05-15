@@ -42,7 +42,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let saved_strict_readonly = self.strict_readonly_identity;
         self.exact_optional_property_types = true;
         self.strict_readonly_identity = true;
-        let result = f(self);
+        let result = self.with_identity_check_mode(f);
         self.exact_optional_property_types = saved_exact_optional;
         self.strict_readonly_identity = saved_strict_readonly;
         result
