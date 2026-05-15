@@ -1142,6 +1142,10 @@ name = "class_implements_index_signature_tests"
 path = "tests/class_implements_index_signature_tests.rs"
 
 [[test]]
+name = "class_expression_implements_display_tests"
+path = "tests/class_expression_implements_display_tests.rs"
+
+[[test]]
 name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
 
