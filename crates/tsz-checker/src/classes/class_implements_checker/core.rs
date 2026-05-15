@@ -109,45 +109,6 @@ impl<'a> CheckerState<'a> {
             .any(|&member_idx| self.class_member_name_is_computed(member_idx))
     }
 
-    fn class_declaration_display_name(
-        &self,
-        class_data: &tsz_parser::parser::node::ClassData,
-    ) -> String {
-        let base_name = if class_data.name.is_some() {
-            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
-                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    ident.escaped_text.clone()
-                } else {
-                    String::from("<anonymous>")
-                }
-            } else {
-                String::from("<anonymous>")
-            }
-        } else {
-            String::from("<anonymous>")
-        };
-
-        let Some(type_params) = class_data.type_parameters.as_ref() else {
-            return base_name;
-        };
-
-        let param_names: Vec<&str> = type_params
-            .nodes
-            .iter()
-            .filter_map(|&idx| {
-                let tp = self.ctx.arena.get_type_parameter_at(idx)?;
-                let ident = self.ctx.arena.get_identifier_at(tp.name)?;
-                Some(ident.escaped_text.as_str())
-            })
-            .collect();
-
-        if param_names.is_empty() {
-            base_name
-        } else {
-            format!("{base_name}<{}>", param_names.join(", "))
-        }
-    }
-
     fn implemented_interface_members(
         &mut self,
         interface_name: &str,
@@ -892,7 +853,7 @@ impl<'a> CheckerState<'a> {
         self.collect_inherited_non_public_members(class_data, &mut inherited_non_public_members);
 
         // Get the class name for error messages
-        let class_name = self.class_declaration_display_name(class_data);
+        let class_name = self.get_class_name_with_type_params_from_decl(class_idx);
         let class_error_idx = if class_data.name.is_some() {
             class_data.name
         } else {
