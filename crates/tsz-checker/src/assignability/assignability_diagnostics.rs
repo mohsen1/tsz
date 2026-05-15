@@ -1110,16 +1110,6 @@ impl<'a> CheckerState<'a> {
             use crate::query_boundaries::assignability::RelationRequest;
             let (prepared_source, prepared_target) =
                 self.prepare_assignability_inputs(source, target);
-            let cached_outcome = self
-                .ctx
-                .call_relation_outcomes
-                .borrow()
-                .get(&(prepared_source, prepared_target))
-                .cloned();
-            if let Some(outcome) = cached_outcome {
-                return self
-                    .report_argument_assignability_with_outcome(source, target, arg_idx, outcome);
-            }
             RelationRequest::call_arg(prepared_source, prepared_target)
                 .with_property_classification()
         };
@@ -1127,7 +1117,7 @@ impl<'a> CheckerState<'a> {
         self.report_argument_assignability_with_outcome(source, target, arg_idx, outcome)
     }
 
-    fn report_argument_assignability_with_outcome(
+    pub(crate) fn report_argument_assignability_with_outcome(
         &mut self,
         source: TypeId,
         target: TypeId,

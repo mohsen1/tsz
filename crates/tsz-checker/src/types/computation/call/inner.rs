@@ -715,6 +715,7 @@ impl<'a> CheckerState<'a> {
                     is_super_call: false,
                     is_optional_chain: nullish_cause.is_some(),
                     allow_contextual_mismatch_deferral: false,
+                    relation_evidence: &[],
                 },
             );
         }
@@ -2470,36 +2471,53 @@ impl<'a> CheckerState<'a> {
             contextual_type
         };
 
-        let (mut result, mut instantiated_predicate, mut generic_instantiated_params) =
-            if is_super_call {
-                (
-                    self.resolve_new_with_checker_adapter(
-                        callee_type_for_call,
-                        &generic_inference_arg_types,
-                        force_bivariant_callbacks,
-                        call_resolution_contextual_type,
-                    ),
-                    None,
-                    None,
-                )
-            } else if generic_inference_arg_source_markers.iter().any(|&m| m) {
-                self.resolve_call_with_checker_adapter_and_arg_sources(
+        let (
+            mut result,
+            mut instantiated_predicate,
+            mut generic_instantiated_params,
+            mut relation_evidence,
+        ) = if is_super_call {
+            (
+                self.resolve_new_with_checker_adapter(
                     callee_type_for_call,
                     &generic_inference_arg_types,
                     force_bivariant_callbacks,
                     call_resolution_contextual_type,
-                    actual_this_type,
-                    &generic_inference_arg_source_markers,
-                )
-            } else {
-                self.resolve_call_with_checker_adapter(
-                    callee_type_for_call,
-                    &generic_inference_arg_types,
-                    force_bivariant_callbacks,
-                    call_resolution_contextual_type,
-                    actual_this_type,
-                )
-            };
+                ),
+                None,
+                None,
+                Vec::new(),
+            )
+        } else if generic_inference_arg_source_markers.iter().any(|&m| m) {
+            let resolution = self.resolve_call_with_checker_adapter_and_arg_sources_evidence(
+                callee_type_for_call,
+                &generic_inference_arg_types,
+                force_bivariant_callbacks,
+                call_resolution_contextual_type,
+                actual_this_type,
+                &generic_inference_arg_source_markers,
+            );
+            (
+                resolution.result,
+                resolution.selected_type_predicate,
+                resolution.instantiated_params,
+                resolution.relation_evidence,
+            )
+        } else {
+            let resolution = self.resolve_call_with_checker_adapter_evidence(
+                callee_type_for_call,
+                &generic_inference_arg_types,
+                force_bivariant_callbacks,
+                call_resolution_contextual_type,
+                actual_this_type,
+            );
+            (
+                resolution.result,
+                resolution.selected_type_predicate,
+                resolution.instantiated_params,
+                resolution.relation_evidence,
+            )
+        };
         // When the checker's intra-expression Round 2 produced a substitution that
         // pins type parameters the solver could not (the solver's single-pass
         // inference dropped the binding because the same parameter appears in a
@@ -2697,23 +2715,36 @@ impl<'a> CheckerState<'a> {
                     ),
                     None,
                     None,
+                    Vec::new(),
                 )
             } else if retry_arg_source_markers.iter().any(|&m| m) {
-                self.resolve_call_with_checker_adapter_and_arg_sources(
+                let resolution = self.resolve_call_with_checker_adapter_and_arg_sources_evidence(
                     callee_type_for_call,
                     &retry_generic_arg_types,
                     force_bivariant_callbacks,
                     contextual_type,
                     actual_this_type,
                     &retry_arg_source_markers,
+                );
+                (
+                    resolution.result,
+                    resolution.selected_type_predicate,
+                    resolution.instantiated_params,
+                    resolution.relation_evidence,
                 )
             } else {
-                self.resolve_call_with_checker_adapter(
+                let resolution = self.resolve_call_with_checker_adapter_evidence(
                     callee_type_for_call,
                     &retry_generic_arg_types,
                     force_bivariant_callbacks,
                     contextual_type,
                     actual_this_type,
+                );
+                (
+                    resolution.result,
+                    resolution.selected_type_predicate,
+                    resolution.instantiated_params,
+                    resolution.relation_evidence,
                 )
             };
             // Apply the same checker-side substitution refinement to the retry's
@@ -2758,6 +2789,7 @@ impl<'a> CheckerState<'a> {
             };
             instantiated_predicate = retry.1;
             generic_instantiated_params = retry.2;
+            relation_evidence = retry.3;
         }
 
         if is_generic_call
@@ -3127,6 +3159,7 @@ impl<'a> CheckerState<'a> {
             is_super_call,
             is_optional_chain: nullish_cause.is_some(),
             allow_contextual_mismatch_deferral,
+            relation_evidence: &relation_evidence,
         };
         // Pop the shape_this_type that was kept on the stack since the
         // argument collection phase.
