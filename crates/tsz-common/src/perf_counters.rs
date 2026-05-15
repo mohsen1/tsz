@@ -835,6 +835,7 @@ impl SourceFileSymbolArenaCacheEligibilityOutcome {
 }
 
 pub const DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT: usize = 128;
+pub const DELEGATE_SOURCE_FILE_MISS_RESIDUE_LIMIT: usize = 128;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DelegateDeclarationFileMissResidue {
@@ -845,13 +846,28 @@ pub struct DelegateDeclarationFileMissResidue {
     pub count: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DelegateSourceFileMissResidue {
+    pub name: String,
+    pub kind: &'static str,
+    pub source: &'static str,
+    pub target_file: Option<String>,
+    pub count: u64,
+}
+
 static DELEGATE_DECLARATION_FILE_MISS_RESIDUES: OnceLock<
     Mutex<Vec<DelegateDeclarationFileMissResidue>>,
 > = OnceLock::new();
+static DELEGATE_SOURCE_FILE_MISS_RESIDUES: OnceLock<Mutex<Vec<DelegateSourceFileMissResidue>>> =
+    OnceLock::new();
 
 fn delegate_declaration_file_miss_residues()
 -> &'static Mutex<Vec<DelegateDeclarationFileMissResidue>> {
     DELEGATE_DECLARATION_FILE_MISS_RESIDUES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn delegate_source_file_miss_residues() -> &'static Mutex<Vec<DelegateSourceFileMissResidue>> {
+    DELEGATE_SOURCE_FILE_MISS_RESIDUES.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT:
@@ -1046,6 +1062,10 @@ pub struct PerfCounters {
         COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_NON_PRIMITIVE_ANNOTATION_KIND_COUNT],
     pub compute_type_of_symbol_interface_simple_object_type_reference_reject_outcome: [AtomicU64;
         COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT],
+    pub property_classification_calls: AtomicU64,
+    pub property_classification_string_fallback_source_lookups: AtomicU64,
+    pub property_classification_string_fallback_target_names: AtomicU64,
+    pub property_classification_string_fallback_target_types: AtomicU64,
 
     // ─── resolver / VFS ──────────────────────────────────────────────────
     pub resolver_lookup_calls: AtomicU64,
@@ -1138,6 +1158,10 @@ impl PerfCounters {
                 AtomicU64::new(0)
             };
                 COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_OUTCOME_COUNT],
+            property_classification_calls: AtomicU64::new(0),
+            property_classification_string_fallback_source_lookups: AtomicU64::new(0),
+            property_classification_string_fallback_target_names: AtomicU64::new(0),
+            property_classification_string_fallback_target_types: AtomicU64::new(0),
             resolver_lookup_calls: AtomicU64::new(0),
             resolver_is_file_calls: AtomicU64::new(0),
             resolver_is_dir_calls: AtomicU64::new(0),
@@ -1462,6 +1486,60 @@ pub fn record_cross_arena_declaration_file_miss_residue(
         row.count += 1;
     } else {
         rows.push(DelegateDeclarationFileMissResidue {
+            name: "__truncated__".to_string(),
+            kind: "overflow",
+            source: "overflow",
+            target_file: None,
+            count: 1,
+        });
+    }
+}
+
+#[inline]
+pub fn record_cross_arena_source_file_miss_residue(
+    source: CrossArenaSymbolMissSource,
+    kind: CrossArenaSymbolMissKind,
+    name: &str,
+    target_file: Option<&str>,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let source_name = CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES[source.as_index()];
+    let kind_name = CROSS_ARENA_SYMBOL_MISS_KIND_NAMES[kind.as_index()];
+    let target_file = target_file.map(|file| {
+        std::path::Path::new(file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file)
+            .to_owned()
+    });
+    let mut rows = delegate_source_file_miss_residues()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.name == name
+            && row.kind == kind_name
+            && row.source == source_name
+            && row.target_file == target_file
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len() < DELEGATE_SOURCE_FILE_MISS_RESIDUE_LIMIT {
+        rows.push(DelegateSourceFileMissResidue {
+            name: name.to_owned(),
+            kind: kind_name,
+            source: source_name,
+            target_file,
+            count: 1,
+        });
+    } else if let Some(row) = rows.iter_mut().find(|row| row.name == "__truncated__") {
+        row.count += 1;
+    } else {
+        rows.push(DelegateSourceFileMissResidue {
             name: "__truncated__".to_string(),
             kind: "overflow",
             source: "overflow",
@@ -1880,6 +1958,22 @@ pub fn record_compute_type_of_symbol_interface_simple_object_type_reference_reje
     }
 }
 
+pub fn record_property_classification_call() {
+    inc(&counters().property_classification_calls);
+}
+
+pub fn record_property_classification_string_fallback_source_lookup() {
+    inc(&counters().property_classification_string_fallback_source_lookups);
+}
+
+pub fn record_property_classification_string_fallback_target_name() {
+    inc(&counters().property_classification_string_fallback_target_names);
+}
+
+pub fn record_property_classification_string_fallback_target_type() {
+    inc(&counters().property_classification_string_fallback_target_types);
+}
+
 /// Record a `TypeInterner::intern_string` call. Mirrors the existing
 /// `record_compute_type_of_symbol_*` shape: gate once, one `counters()`
 /// lookup, increment exactly the named field.
@@ -2173,6 +2267,11 @@ impl PerfCounters {
              total calls                {:>12}\n  \
              cache hits                 {:>12}\n  \
              simple-object hits         {:>12}\n\
+             property classification:\n  \
+             calls                      {:>12}\n  \
+             string source lookups      {:>12}\n  \
+             string target names        {:>12}\n  \
+             string target type entries {:>12}\n\
              TypeInterner:\n  \
              intern calls (total)       {:>12}\n  \
              intern hits                {:>12}\n  \
@@ -2211,6 +2310,13 @@ impl PerfCounters {
             snap.checker.compute_type_of_symbol_cache_hits,
             snap.checker
                 .compute_type_of_symbol_interface_simple_object_fastpath_hits,
+            snap.checker.property_classification_calls,
+            snap.checker
+                .property_classification_string_fallback_source_lookups,
+            snap.checker
+                .property_classification_string_fallback_target_names,
+            snap.checker
+                .property_classification_string_fallback_target_types,
             snap.interner.intern_calls.unwrap_or(0),
             snap.interner.intern_hits.unwrap_or(0),
             snap.interner.intern_misses.unwrap_or(0),
@@ -2245,6 +2351,9 @@ impl PerfCounters {
             + &Self::dump_direct_actual_lib_intl_interface_outcomes()
             + &Self::dump_delegate_declaration_file_miss_residues(
                 &snap.delegate_declaration_file_miss_residues,
+            )
+            + &Self::dump_delegate_source_file_miss_residues(
+                &snap.delegate_source_file_miss_residues,
             )
             + &Self::dump_source_file_symbol_arena_cache_eligibility_outcomes()
             + &Self::dump_by_reason()
@@ -2513,6 +2622,22 @@ impl PerfCounters {
         out
     }
 
+    fn dump_delegate_source_file_miss_residues(rows: &[DelegateSourceFileMissResidue]) -> String {
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDelegateCrossArenaSymbol source-file miss residues:\n");
+        for row in rows {
+            let file = row.target_file.as_deref().unwrap_or("<unknown>");
+            out.push_str(&format!(
+                "  {:<32} {:<12} {:<20} {:>8}  {file}\n",
+                row.name, row.kind, row.source, row.count,
+            ));
+        }
+        out
+    }
+
     fn dump_cross_arena_alias_shortcut_outcomes() -> String {
         let c = counters();
         let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
@@ -2683,7 +2808,7 @@ impl PerfCounters {
 
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -2734,6 +2859,14 @@ pub struct PerfCounterSnapshot {
     /// This turns the remaining declaration-file residue from an aggregate
     /// count into the exact APIs the next T2.2 PR needs to prove safe.
     pub delegate_declaration_file_miss_residues: Vec<DelegateDeclarationFileMissResidue>,
+    /// Bounded symbol-level attribution for source-file targets that still
+    /// construct a `DelegateCrossArenaSymbol` child checker.
+    ///
+    /// Captures at most `DELEGATE_SOURCE_FILE_MISS_RESIDUE_LIMIT` distinct
+    /// `(name, kind, source, target_file)` rows in perf-counter mode. This
+    /// keeps source-project residue visible after declaration-file fast paths
+    /// have removed most lib misses.
+    pub delegate_source_file_miss_residues: Vec<DelegateSourceFileMissResidue>,
     /// Outcome buckets for the no-child alias shortcut attempted before
     /// constructing a `DelegateCrossArenaSymbol` child checker.
     ///
@@ -2879,6 +3012,7 @@ pub struct PerfCounterSnapshot {
 pub struct WiredCounters {
     pub delegate_cross_arena: bool,
     pub checker_construction: bool,
+    pub property_classification: bool,
     pub overlay_copy: bool,
     pub interner_intern_calls: bool,
     pub interner_per_kind: bool,
@@ -2913,6 +3047,10 @@ pub struct CheckerCounters {
     pub compute_type_of_symbol_calls: u64,
     pub compute_type_of_symbol_cache_hits: u64,
     pub compute_type_of_symbol_interface_simple_object_fastpath_hits: u64,
+    pub property_classification_calls: u64,
+    pub property_classification_string_fallback_source_lookups: u64,
+    pub property_classification_string_fallback_target_names: u64,
+    pub property_classification_string_fallback_target_types: u64,
 }
 
 /// One `(name, count)` row in a named-counter JSON array.
@@ -3056,6 +3194,7 @@ impl PerfCounters {
             wired: WiredCounters {
                 delegate_cross_arena: true,
                 checker_construction: true,
+                property_classification: true,
                 overlay_copy: true,
                 interner_intern_calls: true,
                 interner_per_kind: true,
@@ -3081,6 +3220,16 @@ impl PerfCounters {
                 compute_type_of_symbol_cache_hits: load(&c.compute_type_of_symbol_cache_hits),
                 compute_type_of_symbol_interface_simple_object_fastpath_hits: load(
                     &c.compute_type_of_symbol_interface_simple_object_fastpath_hits,
+                ),
+                property_classification_calls: load(&c.property_classification_calls),
+                property_classification_string_fallback_source_lookups: load(
+                    &c.property_classification_string_fallback_source_lookups,
+                ),
+                property_classification_string_fallback_target_names: load(
+                    &c.property_classification_string_fallback_target_names,
+                ),
+                property_classification_string_fallback_target_types: load(
+                    &c.property_classification_string_fallback_target_types,
                 ),
             },
             overlay: OverlayCounters {
@@ -3152,6 +3301,7 @@ impl PerfCounters {
             },
             delegate_declaration_file_miss_residues:
                 Self::snapshot_delegate_declaration_file_miss_residues(),
+            delegate_source_file_miss_residues: Self::snapshot_delegate_source_file_miss_residues(),
             alias_shortcut_outcomes: (0..CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT)
                 .map(|i| NamedCount {
                     name: CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES[i],
@@ -3272,6 +3422,23 @@ impl PerfCounters {
         rows
     }
 
+    fn snapshot_delegate_source_file_miss_residues() -> Vec<DelegateSourceFileMissResidue> {
+        let mut rows = delegate_source_file_miss_residues()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        rows.sort_by(|a, b| {
+            b.count.cmp(&a.count).then_with(|| {
+                a.name
+                    .cmp(&b.name)
+                    .then_with(|| a.kind.cmp(b.kind))
+                    .then_with(|| a.source.cmp(b.source))
+                    .then_with(|| a.target_file.cmp(&b.target_file))
+            })
+        });
+        rows
+    }
+
     fn snapshot_compute_type_of_symbol_interface_simple_object_type_reference_reject_residues()
     -> Vec<ComputeTypeOfSymbolInterfaceSimpleObjectTypeReferenceRejectResidue> {
         let mut rows =
@@ -3341,10 +3508,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_one() {
+    fn schema_version_is_two() {
         // Bumping schema_version is a breaking change for the bench harness;
         // make the intent explicit.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 1);
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 2);
     }
 
     #[test]
@@ -3383,7 +3550,7 @@ mod json_tests {
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["schema_version"], 2);
     }
 
     #[test]
@@ -3521,6 +3688,7 @@ mod json_tests {
         let expected_keys: std::collections::BTreeSet<&str> = [
             "delegate_cross_arena",
             "checker_construction",
+            "property_classification",
             "overlay_copy",
             "interner_intern_calls",
             "interner_per_kind",
@@ -3588,6 +3756,10 @@ mod json_tests {
                 "compute_type_of_symbol_calls",
                 "compute_type_of_symbol_cache_hits",
                 "compute_type_of_symbol_interface_simple_object_fastpath_hits",
+                "property_classification_calls",
+                "property_classification_string_fallback_source_lookups",
+                "property_classification_string_fallback_target_names",
+                "property_classification_string_fallback_target_types",
             ],
         );
     }
@@ -3751,6 +3923,47 @@ mod json_tests {
         assert_eq!(row["source"], "symbol_arenas");
         assert_eq!(row["target_file"], "lib.test.d.ts");
         assert_eq!(row["count"], 7);
+    }
+
+    #[test]
+    fn delegate_source_file_miss_residues_lock_field_shape() {
+        let unique_name = format!("__test_source_residue_{}__", std::process::id());
+        {
+            let mut rows = delegate_source_file_miss_residues()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(DelegateSourceFileMissResidue {
+                name: unique_name.clone(),
+                kind: "type_alias",
+                source: "symbol_arenas",
+                target_file: Some("mapped-types.ts".to_string()),
+                count: 11,
+            });
+        }
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["delegate_source_file_miss_residues"]
+            .as_array()
+            .expect("delegate_source_file_miss_residues is array");
+        let row = rows
+            .iter()
+            .find(|row| row["name"] == unique_name)
+            .expect("test residue row is present");
+        let obj = row.as_object().expect("row is object");
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> =
+            ["name", "kind", "source", "target_file", "count"]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            actual, expected,
+            "delegate_source_file_miss_residues row field shape drifted",
+        );
+        assert_eq!(row["kind"], "type_alias");
+        assert_eq!(row["source"], "symbol_arenas");
+        assert_eq!(row["target_file"], "mapped-types.ts");
+        assert_eq!(row["count"], 11);
     }
 
     #[test]
@@ -4432,6 +4645,17 @@ mod json_tests {
         let before_ctos_simple_object_hits = c
             .compute_type_of_symbol_interface_simple_object_fastpath_hits
             .load(Ordering::Relaxed);
+        let before_property_classification_calls =
+            c.property_classification_calls.load(Ordering::Relaxed);
+        let before_property_classification_source_lookups = c
+            .property_classification_string_fallback_source_lookups
+            .load(Ordering::Relaxed);
+        let before_property_classification_target_names = c
+            .property_classification_string_fallback_target_names
+            .load(Ordering::Relaxed);
+        let before_property_classification_target_types = c
+            .property_classification_string_fallback_target_types
+            .load(Ordering::Relaxed);
         let before_ctos_simple_object_non_primitive_annotation_kind = c
             .compute_type_of_symbol_interface_simple_object_non_primitive_annotation_kind
             [ctos_simple_object_non_primitive_annotation_kind_idx]
@@ -4466,6 +4690,14 @@ mod json_tests {
             [ctos_simple_object_type_reference_reject_outcome_idx]
             .fetch_add(1, Ordering::Relaxed);
         c.compute_type_of_symbol_interface_simple_object_fastpath_hits
+            .fetch_add(1, Ordering::Relaxed);
+        c.property_classification_calls
+            .fetch_add(1, Ordering::Relaxed);
+        c.property_classification_string_fallback_source_lookups
+            .fetch_add(1, Ordering::Relaxed);
+        c.property_classification_string_fallback_target_names
+            .fetch_add(1, Ordering::Relaxed);
+        c.property_classification_string_fallback_target_types
             .fetch_add(1, Ordering::Relaxed);
 
         let snap = PerfCounters::snapshot();
@@ -4649,6 +4881,34 @@ mod json_tests {
                 > before_ctos_simple_object_hits,
             "checker.compute_type_of_symbol_interface_simple_object_fastpath_hits did not reflect the bump",
         );
+        assert!(
+            json["checker"]["property_classification_calls"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_property_classification_calls,
+            "checker.property_classification_calls did not reflect the bump",
+        );
+        assert!(
+            json["checker"]["property_classification_string_fallback_source_lookups"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_property_classification_source_lookups,
+            "checker.property_classification_string_fallback_source_lookups did not reflect the bump",
+        );
+        assert!(
+            json["checker"]["property_classification_string_fallback_target_names"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_property_classification_target_names,
+            "checker.property_classification_string_fallback_target_names did not reflect the bump",
+        );
+        assert!(
+            json["checker"]["property_classification_string_fallback_target_types"]
+                .as_u64()
+                .unwrap_or(0)
+                > before_property_classification_target_types,
+            "checker.property_classification_string_fallback_target_types did not reflect the bump",
+        );
     }
 
     #[test]
@@ -4661,7 +4921,7 @@ mod json_tests {
         let raw = std::fs::read_to_string(&path).expect("read back");
         // Round-trip through serde to confirm structure.
         let value: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["schema_version"], 2);
         assert!(value["wired"].is_object());
         // The atomic-rename `.json.tmp` should not be left behind.
         let tmp = path.with_extension("json.tmp");
