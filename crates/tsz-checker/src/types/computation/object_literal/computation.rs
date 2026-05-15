@@ -1101,6 +1101,14 @@ impl<'a> CheckerState<'a> {
                         }
                         declared_type
                     } else {
+                        let value_has_non_widening_source = self
+                            .expression_is_type_assertion(prop.initializer)
+                            || self.identifier_refers_to_non_widening_declared_value_type(
+                                prop.initializer,
+                            )
+                            || self
+                                .object_literal_property_access_literal_type(prop.initializer)
+                                .is_some();
                         // Apply bidirectional type inference - use contextual type to narrow
                         // the value type, except for function-like values with explicit
                         // signature annotations. For those, tsc preserves the explicit
@@ -1110,6 +1118,14 @@ impl<'a> CheckerState<'a> {
                                 .function_like_has_explicit_signature_annotations(prop.initializer)
                         {
                             value_type
+                        } else if value_has_non_widening_source {
+                            self.literal_type_from_initializer(prop.initializer)
+                                .or_else(|| {
+                                    self.object_literal_property_access_literal_type(
+                                        prop.initializer,
+                                    )
+                                })
+                                .unwrap_or(value_type)
                         } else {
                             let applied = crate::query_boundaries::common::apply_contextual_type(
                                 self.ctx.types,
@@ -1128,14 +1144,6 @@ impl<'a> CheckerState<'a> {
                         // - A contextual type narrows the property to a literal
                         // - The value is a type assertion (`as T` / `<T>expr`) or an identifier
                         //   whose declaration is non-widening (const-asserted or literal-annotated).
-                        let value_has_non_widening_source = self
-                            .expression_is_type_assertion(prop.initializer)
-                            || self.identifier_refers_to_non_widening_declared_value_type(
-                                prop.initializer,
-                            )
-                            || self
-                                .object_literal_property_access_literal_type(prop.initializer)
-                                .is_some();
                         let final_type = if self.should_widen_object_property_literal(
                             value_type,
                             property_context_type,
