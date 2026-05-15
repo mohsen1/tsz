@@ -1142,6 +1142,25 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|arg_idx| self.argument_supports_literal_elaboration(arg_idx));
                 if let Some(arg_idx) = arg_idx {
                     self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
+                    let arg_is_object_literal = self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    });
+                    let evaluated_expected = self.evaluate_type_with_env(expected);
+                    if arg_is_object_literal
+                        && (common::type_is_conditional_type_result_with_unresolved_inference(
+                            self.ctx.types,
+                            expected,
+                        ) || common::type_is_conditional_type_result_with_unresolved_inference(
+                            self.ctx.types,
+                            evaluated_expected,
+                        ))
+                    {
+                        return if fallback_return != TypeId::ERROR {
+                            fallback_return
+                        } else {
+                            TypeId::ERROR
+                        };
+                    }
                     // When a callback has a block body, TSC reports TS2345 at the
                     // argument level rather than elaborating with an inner TS2322
                     // on return statements. Compute this BEFORE the elaboration
@@ -1970,29 +1989,5 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    /// Check if a type is an intersection containing an Application of a conditional
-    /// type alias (like Extract, Exclude, `NonNullable`). These types arise from type
-    /// predicate narrowing and should not be treated as constructor types.
-    fn is_intersection_with_conditional_application(&self, type_id: TypeId) -> bool {
-        let Some(members) = common::intersection_members(self.ctx.types, type_id) else {
-            return false;
-        };
-
-        members.iter().any(|&member| {
-            let Some(app_id) = common::application_id(self.ctx.types, member) else {
-                return false;
-            };
-            let app = self.ctx.types.type_application(app_id);
-            let Some(def_id) = common::lazy_def_id(self.ctx.types, app.base) else {
-                return false;
-            };
-
-            self.ctx
-                .def_to_symbol_id(def_id)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
-        })
     }
 }

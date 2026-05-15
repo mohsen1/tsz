@@ -327,6 +327,34 @@ fn test_ts2304_emitted_for_console_without_lib() {
     );
 }
 
+#[test]
+fn test_ts2304_emitted_for_unclassified_known_globals_without_lib() {
+    let diagnostics = check_without_lib(
+        r#"
+queueMicrotask(() => {});
+structuredClone({});
+atob("x");
+performance.now();
+crypto.getRandomValues(new Uint8Array(1));
+"#,
+    );
+
+    for name in [
+        "queueMicrotask",
+        "structuredClone",
+        "atob",
+        "performance",
+        "crypto",
+    ] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == 2304 && d.message_text.contains(name)),
+            "Expected TS2304 for missing known global `{name}` under ES5-only libs, got: {diagnostics:?}"
+        );
+    }
+}
+
 /// Test that var declarations in function bodies are hoisted to function scope.
 /// Regression test for fix where var inside loop bodies wasn't accessible after the loop.
 #[test]

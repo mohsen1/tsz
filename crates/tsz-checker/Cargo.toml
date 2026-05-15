@@ -734,6 +734,10 @@ name = "imported_companion_value_type_tests"
 path = "tests/imported_companion_value_type_tests.rs"
 
 [[test]]
+name = "import_type_utility_identity_tests"
+path = "tests/import_type_utility_identity_tests.rs"
+
+[[test]]
 name = "json_namespace_import_tests"
 path = "tests/json_namespace_import_tests.rs"
 
