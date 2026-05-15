@@ -1531,7 +1531,7 @@ impl BinderState {
     /// `stable_declarations` and `stable_value_declaration`. During single-
     /// file binding these stable locations are recorded with
     /// `file_idx = u32::MAX`; this pass promotes them to the driver-assigned
-    /// index. This is Phase 1 plumbing for the
+    /// index. This is the stable plumbing for the
     /// [global query graph architecture][plan]; the parallel `NodeIndex`
     /// fields remain authoritative for existing consumers.
     ///

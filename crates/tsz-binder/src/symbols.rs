@@ -112,8 +112,8 @@ pub mod symbol_flags {
 /// `NodeIndex` values currently stored on `Symbol`, whose meaning depends on
 /// the exact arena that produced them.
 ///
-/// This is the Phase 1 foundation for the
-/// [global query graph architecture][plan]: it lets future work resolve
+/// This is the foundational [global query graph architecture][plan] plumbing: it lets
+/// future work resolve
 /// symbols, `DefId`s, and cross-file references by `(file_idx, span)` pairs
 /// instead of cloned `Arc<NodeArena>` handles. Consumers continue to use the
 /// parallel `NodeIndex` fields today; migrating them is handled by follow-up
@@ -250,7 +250,7 @@ pub struct Symbol {
     /// File-stable locations parallel to [`Self::declarations`].
     ///
     /// Each entry is a `(file_idx, pos, end)` triple that survives arena
-    /// drop/rehydrate. This is the Phase 1 plumbing for the
+    /// drop/rehydrate. This is the stable plumbing for the
     /// [global query graph architecture][plan]; consumers still read
     /// `declarations` (of `NodeIndex`) today. Populated in lockstep with
     /// `declarations` at every binding site, so `stable_declarations.len()
@@ -264,7 +264,7 @@ pub struct Symbol {
     pub value_declaration: NodeIndex,
     /// File-stable location parallel to [`Self::value_declaration`].
     ///
-    /// Phase 1 plumbing for re-parse-safe identity. Populated whenever
+    /// Stable plumbing for re-parse-safe identity. Populated whenever
     /// `value_declaration` is set. Defaults to [`StableLocation::NONE`] when
     /// no value declaration has been recorded.
     pub stable_value_declaration: StableLocation,
@@ -339,7 +339,7 @@ impl Symbol {
     /// Record a declaration and its stable source span.
     ///
     /// Also populates the parallel [`Self::stable_declarations`] entry so
-    /// that arena-less consumers (see Phase 1 of the
+    /// that arena-less consumers can
     /// [global query graph plan][plan]) can identify the declaration by
     /// `(file_idx, pos, end)`. At bind time the file index is left
     /// unassigned (`u32::MAX`); the driver later stamps it via
