@@ -1839,6 +1839,30 @@ choose([1, 2], 3);
 }
 
 #[test]
+fn generic_callback_return_accepts_widened_numeric_array_inference() {
+    let source = r#"
+declare function process<T>(arr: T[], fn: (x: T) => T): T[];
+
+const result = process([1, 2, 3], x => x * 2);
+const check: number[] = result;
+const literalOnly: (1 | 2 | 3)[] = result;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'number' is not assignable to type '1 | 2 | 3'")
+        }),
+        "numeric array inference should widen T before checking callback return. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2322 && message.contains("number[]")),
+        "result should be number[], not a literal-only array. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn noinfer_array_of_inferred_literal_accepts_same_literal() {
     let source = r#"
 function test<T extends string>(value: T, options: NoInfer<T>[]): T {
