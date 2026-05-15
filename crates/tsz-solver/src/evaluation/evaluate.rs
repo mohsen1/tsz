@@ -716,6 +716,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Save any apparent branch set by an outer conditional evaluator,
             // so nested evaluate_application calls don't steal the signal.
             let _saved_apparent = self.apparent_conditional_branch.take();
+
+            // Early cache lookup with the raw (unexpanded) args.
+            //
+            // The normal cache lookup (below) uses `expanded_args` and only runs
+            // when `type_params` is `Some`.  In contexts where the resolver is
+            // "lite" (e.g. inside `SubtypeChecker`) it often returns `None` for
+            // `get_lazy_type_params`, so the normal lookup is never reached even
+            // though the result is already in the shared `QueryDatabase` from an
+            // earlier full-resolver evaluation.
+            //
+            // By trying `app.args` first we let every evaluation context benefit
+            // from previously-computed results without re-doing the work.
+            if let Some(db) = self.query_db {
+                let no_unchecked = self.no_unchecked_indexed_access;
+                if let Some(cached) =
+                    db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
+                {
+                    if let Some(d) = self.def_depth.get_mut(&def_id) {
+                        *d = d.saturating_sub(1);
+                    }
+                    return cached;
+                }
+            }
+
             let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
