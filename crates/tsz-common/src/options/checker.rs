@@ -104,6 +104,9 @@ pub struct CheckerOptions {
     pub no_unchecked_side_effect_imports: bool,
     /// When true, require 'override' modifier on members that override base class members (TS4114).
     pub no_implicit_override: bool,
+    /// When true, allow iterable protocol consumption under ES5/ES3 targets.
+    /// This corresponds to the --downlevelIteration compiler flag.
+    pub downlevel_iteration: bool,
     /// JSX factory function (e.g. `React.createElement`)
     pub jsx_factory: String,
     /// Whether `jsxFactory` was explicitly set via compiler options.
@@ -231,6 +234,7 @@ impl Default for CheckerOptions {
             // TSC 6.0 defaults `noUncheckedSideEffectImports` to true.
             no_unchecked_side_effect_imports: true,
             no_implicit_override: false,
+            downlevel_iteration: false,
             jsx_factory: "React.createElement".to_string(),
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),

@@ -17,6 +17,10 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    const fn requires_array_like_iteration_for_es5_target(&self) -> bool {
+        self.ctx.compiler_options.target.is_es5() && !self.ctx.compiler_options.downlevel_iteration
+    }
+
     // =========================================================================
     // Iterable Protocol Checking
     // =========================================================================
@@ -935,7 +939,7 @@ impl<'a> CheckerState<'a> {
         // - Emit TS2461 if the type contains a string constituent but the remaining non-string
         //   type is not array-like (TSC strips strings from union before checking array-likeness).
         // - Emit TS2495 if the type is neither an array nor a string (not iterable at all).
-        if self.ctx.compiler_options.target.is_es5() {
+        if self.requires_array_like_iteration_for_es5_target() {
             if self.is_array_or_tuple_or_string(expr_type) {
                 return true;
             }
@@ -981,7 +985,7 @@ impl<'a> CheckerState<'a> {
     pub fn check_spread_iterability(&mut self, spread_type: TypeId, expr_idx: NodeIndex) -> bool {
         // In ES5 without downlevel iteration, spread requires an array/tuple source.
         // Match tsc by emitting TS2461 for non-array spread arguments.
-        if self.ctx.compiler_options.target.is_es5() {
+        if self.requires_array_like_iteration_for_es5_target() {
             if spread_type == TypeId::ANY || spread_type == TypeId::UNKNOWN {
                 return true;
             }
@@ -1169,7 +1173,7 @@ impl<'a> CheckerState<'a> {
         // In ES5 mode (without downlevelIteration), array destructuring requires actual arrays.
         // - Emit TS2802 if the type has Symbol.iterator (iterable but requires ES2015/downlevelIteration).
         // - Emit TS2461 if the type is not an array type.
-        if self.ctx.compiler_options.target.is_es5() && !is_assignment_array_target {
+        if self.requires_array_like_iteration_for_es5_target() && !is_assignment_array_target {
             // Nested binding patterns can be fed an over-widened union from positional
             // destructuring inference (e.g. `[a, [b]] = [1, ["x"]]`). tsc does not report
             // TS2461 for these cases.
