@@ -1652,7 +1652,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   type structure. This happens recursively: if the array's methods reference <code>T</code>,
   those get substituted too. The solver caches instantiation results so that
   <code>Array&lt;string&gt;</code> used in two different places produces the same
-  <code>TypeId</code>. Implemented in <code>tsz-solver/src/instantiation/</code>.
+  <code>TypeId</code>. Implemented in <code>crates/tsz-solver/src/caches/instantiation_cache.rs</code>.
 </p>
 
 <h3 id="g-interner">Interner (String Interner / Type Interner)</h3>
