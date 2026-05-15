@@ -330,11 +330,11 @@ pub(crate) fn emit_outputs(
             // Enable auto-detect module: when module is None and file has imports/exports,
             // the emitter should switch to CommonJS (matching tsc behavior)
             ctx.auto_detect_module = true;
-            let transforms =
-                tsz::lowering::LoweringPass::new(&file.arena, &ctx).run(file.source_file);
+            let emit_plan =
+                tsz::lowering::LoweringPass::new(&file.arena, &ctx).run_plan(file.source_file);
 
             let mut printer =
-                Printer::with_transforms_and_options(&file.arena, transforms, printer_options);
+                Printer::with_emit_plan_and_options(&file.arena, emit_plan, printer_options);
             printer.set_auto_detect_module(true);
             // Always set source text for comment preservation and single-line detection
             if let Some(source_text) = file
