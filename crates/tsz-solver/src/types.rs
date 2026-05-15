@@ -801,11 +801,10 @@ pub enum TypeData {
     /// - `BoundParameter(n)` = the (n+1)th-most recently bound type parameter
     BoundParameter(u32),
 
-    /// Reference to a named type (interface, class, type alias)
-    /// Uses `SymbolId` to break infinite recursion
-    /// DEPRECATED: Use `Lazy(DefId)` for new code. This is kept for backward compatibility
-    /// during the migration from `SymbolRef` to `DefId`.
-    /// PHASE 4.2: REMOVED - Migration complete, all types now use Lazy(DefId)
+    /// Reference to a named type (interface, class, type alias).
+    /// Uses `SymbolId` to break infinite recursion.
+    /// The active representation is `TypeData::Lazy(DefId)`; this is retained
+    /// for migration history only.
     // Ref(SymbolRef),
 
     /// Lazy reference to a type definition.
@@ -1823,7 +1822,7 @@ pub fn process_template_escape_sequences(input: &str) -> String {
 /// ## Built-in vs Referenced Types
 ///
 /// **Built-in types** (managed by the compiler) are represented directly by their
-/// structure (e.g., `TypeData::Array`) rather than by symbol reference (`TypeData::Ref`).
+/// structure (e.g., `TypeData::Array`) rather than by symbol reference (`SymbolRef`).
 /// This ensures canonicalization: `Array<number>` and `number[]` resolve to the same type.
 ///
 /// **Referenced types** (user-defined and lib types) are represented as

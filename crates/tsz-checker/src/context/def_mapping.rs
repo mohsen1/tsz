@@ -791,9 +791,9 @@ impl<'a> CheckerContext<'a> {
 
     /// Create a Lazy type reference from a symbol.
     ///
-    /// This returns `TypeData::Lazy(DefId)` for use in the new `DefId` system.
-    /// During migration, this is called alongside or instead of creating
-    /// `TypeData::Ref(SymbolRef)`.
+    /// This returns `TypeData::Lazy(DefId)` for use in the `DefId` system.
+    /// During migration, this is called to normalize symbol-owned references into
+    /// canonical lazy definitions.
     pub fn create_lazy_type_ref(&mut self, sym_id: SymbolId) -> TypeId {
         let def_id = self.get_or_create_def_id(sym_id);
         self.types.lazy(def_id)
@@ -1217,10 +1217,11 @@ impl<'a> CheckerContext<'a> {
             .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
     }
 
-    /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.
+    /// Register a resolved type in the `TypeEnvironment` for both symbol- and
+    /// `DefId`-based lookups.
     ///
-    /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`
-    /// paths can resolve the type during evaluation.
+    /// This ensures both `SymbolRef` and `DefId` resolution paths can find the
+    /// type during evaluation.
     ///
     /// The `SymbolRef` mapping is written to `type_environment` only (legacy flow-analyzer
     /// path). The DefId mapping is written to **both** environments via the dual-env
