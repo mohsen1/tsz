@@ -1839,6 +1839,30 @@ choose([1, 2], 3);
 }
 
 #[test]
+fn generic_callback_return_accepts_widened_numeric_array_inference() {
+    let source = r#"
+declare function process<T>(arr: T[], fn: (x: T) => T): T[];
+
+const result = process([1, 2, 3], x => x * 2);
+const check: number[] = result;
+const literalOnly: (1 | 2 | 3)[] = result;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'number' is not assignable to type '1 | 2 | 3'")
+        }),
+        "numeric array inference should widen T before checking callback return. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2322 && message.contains("number[]")),
+        "result should be number[], not a literal-only array. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn noinfer_array_of_inferred_literal_accepts_same_literal() {
     let source = r#"
 function test<T extends string>(value: T, options: NoInfer<T>[]): T {
@@ -3118,6 +3142,42 @@ class Container<T> {
     assert!(
         diags.iter().all(|(code, _)| *code != 2322),
         "constructor inference inside a generic static method should preserve the method type parameter. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_class_expression_method_contextualizes_callback_parameter() {
+    let source = r#"
+const Container = class<T> {
+    constructor(public value: T) {}
+
+    map<U>(fn: (v: T) => U): InstanceType<typeof Container<U>> {
+        return null as any;
+    }
+};
+
+const numContainer = new Container(42);
+const checkNumber: number = numContainer.value;
+const checkString: string = numContainer.value;
+numContainer.map(n => n.toString());
+numContainer.map((n: string) => n);
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "generic class expression method should contextually type callback parameter from instantiated class type. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2322 && message.contains("number")),
+        "generic class expression constructor inference should preserve `value: number`. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("string")),
+        "generic class expression method should reject callback parameter annotations incompatible with number. Got: {diags:#?}"
     );
 }
 

@@ -2044,3 +2044,97 @@ type Bad<T> =
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn infer_extends_constraint_on_tuple_length() {
+    let source = r#"
+type GetLength<T> = T extends { length: infer L extends number } ? L : never;
+
+type Len1 = GetLength<[1, 2, 3]>;
+const l1: Len1 = 3;
+const l1bad: Len1 = 4;
+
+type LenArr = GetLength<number[]>;
+const larr: LenArr = 42;
+
+type LenObj = GetLength<{ length: 5 }>;
+const lobj: LenObj = 5;
+const lobjbad: LenObj = 6;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.as_str()))
+        .collect();
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 2322).count(),
+        2,
+        "Expected exactly 2 TS2322 errors (l1bad and lobjbad); got: {codes:?}"
+    );
+}
+
+#[test]
+fn infer_extends_constraint_on_string_literal_length() {
+    // String types have `length: number` from the String interface.
+    // tsc infers `number` (not a literal count) for string literal length.
+    // The bug: tsz returned `never` because string types weren't handled in
+    // the conditional infer property resolver.
+    let source = r#"
+type GetStringLength<T> = T extends { length: infer L extends number } ? L : never;
+
+type L1 = GetStringLength<"hi">;
+type L2 = GetStringLength<"hello">;
+type L3 = GetStringLength<"">;
+type L4 = GetStringLength<string>;
+
+const l1: L1 = 2;
+const l2: L2 = 5;
+const l3: L3 = 0;
+const l4: L4 = 42;
+
+const l1bad: L1 = "oops";
+const l4bad: L4 = "also_oops";
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.as_str()))
+        .collect();
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 2322).count(),
+        2,
+        "Expected exactly 2 TS2322 errors (l1bad and l4bad — string to number); got: {codes:?}"
+    );
+}
+
+#[test]
+fn infer_extends_constraint_on_string_length_with_infer_name_variants() {
+    // The fix must work regardless of the infer variable name.
+    // Structural rule: string sources match { length: infer X extends number }
+    // for any bound name X or Y.
+    let source_x = r#"
+type GetLen<T> = T extends { length: infer X extends number } ? X : never;
+type R1 = GetLen<"abc">;
+const ok: R1 = 3;
+const bad: R1 = "nope";
+"#;
+    let source_y = r#"
+type GetLen<T> = T extends { length: infer Y extends number } ? Y : never;
+type R1 = GetLen<"abc">;
+const ok: R1 = 3;
+const bad: R1 = "nope";
+"#;
+    for (name, src) in [("X-bound", source_x), ("Y-bound", source_y)] {
+        let diagnostics = tsz_checker::test_utils::check_source_strict(src);
+        let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+        assert_eq!(
+            ts2322.len(),
+            1,
+            "{name}: expected exactly 1 TS2322 (string-to-number); got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, d.message_text.as_str()))
+                .collect::<Vec<_>>()
+        );
+    }
+}

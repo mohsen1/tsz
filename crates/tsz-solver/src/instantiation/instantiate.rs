@@ -154,6 +154,14 @@ impl TypeSubstitution {
                 Some(default) => {
                     let subst = Self { map: map.clone() };
                     let resolved = instantiate_type(interner, default, &subst);
+                    // When the instantiated default is a conditional type whose check_type
+                    // and extends_type are both concrete (no remaining type parameters),
+                    // evaluate it immediately. This ensures that defaults like
+                    // `K extends string ? Map<K, V> : Map<string, V>` (with K=string, V=number)
+                    // become `Map<string, number>` in the substitution rather than remaining
+                    // as a deferred conditional, which would later compare as a different
+                    // TypeId from the inferred Map<string, number>.
+                    let resolved = maybe_evaluate_concrete_conditional(interner, resolved);
                     // Circular default detection: if the resolved default is (or
                     // contains) the type parameter itself, fall back to `any`.
                     // This matches tsc behavior for `type T<X extends C = X>`.
@@ -2643,6 +2651,63 @@ fn index_access_operand_needs_resolver(interner: &dyn TypeDatabase, type_id: Typ
                 | TypeData::Mapped(_)
         )
     })
+}
+
+/// Evaluate a conditional type immediately if its `check_type` and `extends_type`
+/// are both concrete (contain no type parameters and no infer types).
+///
+/// When a generic default like `K extends string ? Map<K, V> : Map<string, V>`
+/// is instantiated with K=string, V=number, the result is a `ConditionalType`
+/// `string extends string ? Map<string,number> : Map<string,number>`. Since
+/// both sides are concrete, we can pick the branch directly without evaluating
+/// it, preserving the `Application` `TypeId` identity of the branch. Returning
+/// the branch unevaluated ensures that the substitution carries the same interned
+/// `Map<string,number>` `Application` `TypeId` that the checker produces for the
+/// source expression, so the subtype comparison succeeds without structural expansion.
+fn maybe_evaluate_concrete_conditional(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    let Some(TypeData::Conditional(cond_id)) = interner.lookup(type_id) else {
+        return type_id;
+    };
+    let cond = interner.get_conditional(cond_id);
+    // Only pick a branch when neither side contains type parameters or infer types.
+    if crate::visitor::contains_type_parameters(interner, cond.check_type)
+        || crate::visitor::contains_type_parameters(interner, cond.extends_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.extends_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.true_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.false_type)
+    {
+        return type_id;
+    }
+    // For distributive conditionals where check_type is a union, distributing
+    // would produce a union of branch results which requires the full evaluator.
+    if cond.is_distributive && matches!(interner.lookup(cond.check_type), Some(TypeData::Union(_)))
+    {
+        return type_id;
+    }
+    // Both check and extends are concrete. Use a subtype check to pick the branch
+    // and return it DIRECTLY (not evaluated) so Application TypeIds are preserved.
+    let branch = if crate::relations::subtype::core::is_subtype_of(
+        interner,
+        cond.check_type,
+        cond.extends_type,
+    ) {
+        cond.true_type
+    } else {
+        cond.false_type
+    };
+    tracing::trace!(
+        type_id = type_id.0,
+        check = cond.check_type.0,
+        extends = cond.extends_type.0,
+        true_type = cond.true_type.0,
+        false_type = cond.false_type.0,
+        branch = branch.0,
+        "maybe_evaluate_concrete_conditional: picked branch"
+    );
+    branch
 }
 
 /// Check whether `type_id` references a type parameter with the given `name`.
