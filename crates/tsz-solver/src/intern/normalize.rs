@@ -175,7 +175,6 @@ impl TypeInterner {
         // NOTE: We do NOT check `has_primitive && has_non_primitive` here.
         // TypeScript allows branded types like `string & { __brand: "UserId" }`.
         // This pattern is used for nominal typing and should NOT reduce to never.
-        // The check was removed because it incorrectly broke valid branded types.
 
         false
     }
