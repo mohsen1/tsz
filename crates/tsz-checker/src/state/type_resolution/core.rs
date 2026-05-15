@@ -182,7 +182,8 @@ impl<'a> CheckerState<'a> {
                 // which silently disappears from downstream object spread
                 // and intersection reduction.
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                         .or_else(|| {
                             crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
                                 type_name,
@@ -794,7 +795,8 @@ impl<'a> CheckerState<'a> {
                 // Name-based DefId fallback (see sibling lowering above for
                 // rationale).
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                         .or_else(|| {
                             crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
                                 type_name,
