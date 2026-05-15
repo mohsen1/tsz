@@ -807,19 +807,23 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> bool {
-        use crate::query_boundaries::common::SubtypeFailureReason;
+        use crate::query_boundaries::assignability::RelationRequest;
+        use crate::query_boundaries::relation_types::RelationFailure;
 
-        let analysis = self.analyze_assignability_failure(source_type, target_type);
-        let Some(reason) = analysis.failure_reason else {
+        let (prepared_source, prepared_target) =
+            self.prepare_assignability_inputs(source_type, target_type);
+        let request = RelationRequest::assign(prepared_source, prepared_target);
+        let outcome = self.execute_relation_request(&request);
+        let Some(reason) = outcome.failure.as_ref() else {
             return false;
         };
 
         match reason {
-            SubtypeFailureReason::MissingProperty { property_name, .. } => {
-                let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+            RelationFailure::MissingProperty { property_name, .. } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 is_object_prototype_method(&prop_name)
             }
-            SubtypeFailureReason::MissingProperties { property_names, .. } => {
+            RelationFailure::MissingProperties { property_names, .. } => {
                 !property_names.is_empty()
                     && property_names.iter().all(|property_name| {
                         let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
