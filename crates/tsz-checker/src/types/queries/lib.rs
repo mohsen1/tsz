@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
         // Array is merged across lib.es5/lib.es2015.iterable/etc.; cross-checker
         // shared TypeIds expose property-order races to the type printer
         // (e.g. mappedTypeWithAsClauseAndLateBoundProperty).
-        if name == "Array" {
+        if name == "Array" || name.starts_with("Intl.") {
             return true;
         }
         self.lib_name_has_local_augmentation(name)

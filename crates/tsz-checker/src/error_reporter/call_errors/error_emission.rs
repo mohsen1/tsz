@@ -111,6 +111,11 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        if self
+            .should_suppress_promise_then_nullable_callback_arg_mismatch(arg_type, param_type, idx)
+        {
+            return;
+        }
         if self.is_callback_like_argument(idx)
             && self.is_assignable_via_generator_never_yield_callback(arg_type, param_type)
         {
@@ -288,6 +293,102 @@ impl<'a> CheckerState<'a> {
         };
 
         self.emit_render_request(idx, request);
+    }
+
+    fn should_suppress_promise_then_nullable_callback_arg_mismatch(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        idx: NodeIndex,
+    ) -> bool {
+        if !self.is_callback_like_argument(idx)
+            || !self.type_is_nullish_only(param_type)
+            || matches!(arg_type, TypeId::ERROR | TypeId::ANY)
+        {
+            return false;
+        }
+
+        let Some(call_idx) = self.parent_call_containing_argument(idx) else {
+            return false;
+        };
+        let Some(call_node) = self.ctx.arena.get(call_idx) else {
+            return false;
+        };
+        let Some(call) = self.ctx.arena.get_call_expr(call_node) else {
+            return false;
+        };
+        let callee_idx = self.ctx.arena.skip_parenthesized(call.expression);
+        let Some(callee_node) = self.ctx.arena.get(callee_idx) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(name) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if name.escaped_text != "then" {
+            return false;
+        }
+
+        let receiver_type = self.get_type_of_node(access.expression);
+        let evaluated_receiver = self.evaluate_type_with_env(receiver_type);
+        self.type_ref_is_promise_like(receiver_type)
+            || self.type_ref_is_promise_like(evaluated_receiver)
+    }
+
+    fn type_is_nullish_only(&self, type_id: TypeId) -> bool {
+        match type_id {
+            TypeId::NULL | TypeId::UNDEFINED => true,
+            _ => crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+                .is_some_and(|members| {
+                    !members.is_empty()
+                        && members
+                            .iter()
+                            .all(|&member| matches!(member, TypeId::NULL | TypeId::UNDEFINED))
+                }),
+        }
+    }
+
+    fn parent_call_containing_argument(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        for _ in 0..100 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent_idx = ext.parent;
+            let parent = self.ctx.arena.get(parent_idx)?;
+            match parent.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    current = parent_idx;
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION =>
+                {
+                    return self
+                        .ctx
+                        .arena
+                        .get_call_expr(parent)
+                        .and_then(|call| call.arguments.as_ref())
+                        .is_some_and(|args| args.nodes.contains(&current))
+                        .then_some(parent_idx);
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 
     fn should_suppress_constraint_cascade_constructor_argument(

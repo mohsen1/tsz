@@ -8,6 +8,72 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn target_index_signature_accepts_source_property_with_env(
+        &self,
+        target: TypeId,
+        source_prop: &tsz_solver::PropertyInfo,
+    ) -> bool {
+        if crate::query_boundaries::assignability::target_index_signature_accepts_source_property(
+            self.ctx.types,
+            target,
+            source_prop,
+        ) {
+            return true;
+        }
+        if !source_prop.is_symbol_named {
+            return false;
+        }
+
+        if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(
+            self.ctx.types,
+            target,
+        ) {
+            return shape.string_index.as_ref().is_some_and(|idx| {
+                let key_type = self.resolve_index_signature_key_type_via_env(idx.key_type);
+                key_type != idx.key_type
+                    && crate::query_boundaries::assignability::index_signature_key_type_accepts_symbol(
+                        self.ctx.types,
+                        key_type,
+                    )
+            });
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target)
+        {
+            return members.iter().any(|&member| {
+                self.target_index_signature_accepts_source_property_with_env(member, source_prop)
+            });
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+        {
+            return members.iter().any(|&member| {
+                self.target_index_signature_accepts_source_property_with_env(member, source_prop)
+            });
+        }
+
+        false
+    }
+
+    fn resolve_index_signature_key_type_via_env(&self, key_type: TypeId) -> TypeId {
+        let mut current = key_type;
+        for _ in 0..8 {
+            let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, current)
+            else {
+                break;
+            };
+            let resolved = self.ctx.type_env.borrow().get_def(def_id);
+            match resolved {
+                Some(next) if next != current => current = next,
+                _ => break,
+            }
+        }
+        current
+    }
+
     fn report_excess_function_like_implicit_any(&mut self, func_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(func_idx) else {
             return false;
@@ -197,6 +263,16 @@ impl<'a> CheckerState<'a> {
         let object_literal_idx = const_assertion_object_literal.unwrap_or(idx);
         let evaluated_target = self.evaluate_type_with_env(target);
 
+        if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+            self.ctx.types,
+            target,
+        ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+            self.ctx.types,
+            evaluated_target,
+        ) {
+            return;
+        }
+
         // Run named-property value checks before excess-property reporting. When
         // a known property is already invalid, tsc reports that assignability
         // error instead of additionally reporting an excess property from the
@@ -316,6 +392,13 @@ impl<'a> CheckerState<'a> {
 
                 for &member in &members {
                     let resolved_member = self.resolve_type_for_property_access(member);
+                    if self.target_index_signature_accepts_source_property_with_env(
+                        resolved_member,
+                        source_prop,
+                    ) {
+                        accepted = true;
+                        break;
+                    }
                     if self
                         .generic_mapped_receiver_lacks_explicit_property(member, prop_name.as_ref())
                         || self.generic_mapped_receiver_lacks_explicit_property(
@@ -1036,6 +1119,14 @@ impl<'a> CheckerState<'a> {
                 let boundary_marks_excess = classification
                     .as_ref()
                     .is_some_and(|cls| cls.excess_properties.contains(&source_prop.name));
+                if boundary_marks_excess
+                    && self.target_index_signature_accepts_source_property_with_env(
+                        resolved_target,
+                        source_prop,
+                    )
+                {
+                    continue;
+                }
                 let boundary_excess_is_authoritative = classification
                     .as_ref()
                     .is_some_and(|cls| cls.trimmed_source_assignable);
@@ -1690,6 +1781,16 @@ impl<'a> CheckerState<'a> {
 
             let target_value_type =
                 tsz_solver::utils::union_or_single(self.ctx.types, applicable_index_value_types);
+            let evaluated_target_value_type = self.evaluate_type_with_env(target_value_type);
+            if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                self.ctx.types,
+                target_value_type,
+            ) || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                self.ctx.types,
+                evaluated_target_value_type,
+            ) {
+                continue;
+            }
             if self.is_assignable_to(source_prop.type_id, target_value_type) {
                 continue;
             }

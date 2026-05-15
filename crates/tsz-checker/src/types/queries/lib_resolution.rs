@@ -117,6 +117,14 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
 ) -> Option<tsz_solver::DefId> {
     let sym_id =
         resolve_lib_node_in_lib_contexts(node_idx, decl_arenas, fallback_arena, lib_contexts)?;
+    if lib_contexts.iter().any(|ctx| {
+        ctx.binder
+            .get_symbol_with_libs(sym_id, &[])
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER))
+    }) {
+        return Some(ctx.get_lib_def_id(sym_id));
+    }
+
     let name = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena)?;
     let expected_name = name
         .strip_prefix("globalThis.")

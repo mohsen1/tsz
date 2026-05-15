@@ -109,8 +109,8 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .is_some_and(|source_file| !source_file.is_declaration_file)
 }
 
-fn allow_iterator_symbol_direct_fallback(name: &str) -> bool {
-    matches!(name, "Iterator")
+fn allow_generic_actual_lib_direct_fallback(name: &str) -> bool {
+    matches!(name, "Iterator" | "Promise" | "PromiseLike")
 }
 
 fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
@@ -513,11 +513,14 @@ impl<'a> CheckerState<'a> {
         let mut intl_success_outcome = None;
         let has_interface_type_params =
             self.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol);
+        if has_interface_type_params && !allow_generic_actual_lib_direct_fallback(&name) {
+            return None;
+        }
         let (direct_type, params) = if has_interface_type_params {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
             if let Some(direct_type) = direct_type {
                 (direct_type, params)
-            } else if allow_iterator_symbol_direct_fallback(&name) {
+            } else if allow_generic_actual_lib_direct_fallback(&name) {
                 let direct_type = self.resolve_lib_interface_type_by_symbol(&name, sym_id)?;
                 let params = self.get_type_params_for_symbol(sym_id);
                 (direct_type, params)
@@ -525,15 +528,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
         } else {
-            let direct_type = if let Some(direct_type) = self.resolve_lib_type_by_name(&name) {
-                if intl_namespace_export {
-                    intl_success_outcome = Some(DirectActualLibIntlInterfaceOutcome::SuccessByName);
-                }
-                direct_type
-            } else {
-                if !intl_namespace_export {
-                    return None;
-                }
+            let direct_type = if intl_namespace_export {
                 let Some(namespace_sym_id) =
                     self.resolve_lib_namespace_export_symbol("Intl", &name)
                 else {
@@ -560,6 +555,8 @@ impl<'a> CheckerState<'a> {
                 intl_success_outcome =
                     Some(DirectActualLibIntlInterfaceOutcome::SuccessNamespaceExport);
                 direct_type
+            } else {
+                self.resolve_lib_type_by_name(&name)?
             };
             let params = self.get_type_params_for_symbol(sym_id);
             (direct_type, params)
@@ -570,12 +567,6 @@ impl<'a> CheckerState<'a> {
                     DirectActualLibIntlInterfaceOutcome::UnknownOrError,
                 );
             }
-            return None;
-        }
-        if has_interface_type_params
-            && self.symbol_has_direct_actual_lib_iterator_object_heritage(sym_id, &symbol)
-            && !common::has_property_by_str(self.ctx.types, direct_type, "next")
-        {
             return None;
         }
         if let Some(outcome) = intl_success_outcome {

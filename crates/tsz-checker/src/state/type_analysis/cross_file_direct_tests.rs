@@ -270,8 +270,8 @@ fn direct_actual_lib_delegation_cache_preserves_type_params() {
         .ctx
         .binder
         .file_locals
-        .get("IteratorObject")
-        .expect("IteratorObject should resolve to a lib symbol");
+        .get("Iterator")
+        .expect("Iterator should resolve to a lib symbol");
     let delegate_arena = state
         .ctx
         .binder
@@ -286,14 +286,14 @@ fn direct_actual_lib_delegation_cache_preserves_type_params() {
             delegate_arena,
             false,
         )
-        .expect("IteratorObject should lower through the direct lib path");
+        .expect("Iterator should lower through the direct lib path");
 
     assert_ne!(ty, TypeId::UNKNOWN);
     assert_ne!(ty, TypeId::ERROR);
     assert_eq!(
         params.len(),
         3,
-        "IteratorObject should expose T, TReturn, and TNext"
+        "Iterator should expose T, TReturn, and TNext"
     );
 
     let (cached_ty, cached_params) = state
@@ -344,6 +344,8 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
         "Function",
         "Locale",
         "LocaleOptions",
+        "NumberFormat",
+        "NumberFormatConstructor",
         "NumberFormatOptions",
         "NumberFormatOptionsCurrencyDisplayRegistry",
         "NumberFormatOptionsSignDisplayRegistry",
@@ -352,6 +354,7 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
         "Object",
         "RegExp",
         "RelativeTimeFormatOptions",
+        "ResolvedNumberFormatOptions",
         "ResolvedRelativeTimeFormatOptions",
     ] {
         let sym_id = state
@@ -400,6 +403,79 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
 
         assert_ne!(ty, TypeId::UNKNOWN, "{name} must not lower to unknown");
         assert_ne!(ty, TypeId::ERROR, "{name} must not lower to error");
+        if name == "ResolvedNumberFormatOptions" {
+            let notation = state.ctx.types.intern_string("notation");
+            assert!(
+                crate::query_boundaries::common::raw_property_type(
+                    state.ctx.types.as_type_database(),
+                    ty,
+                    notation,
+                )
+                .is_some(),
+                "Intl.ResolvedNumberFormatOptions should include es2020 merged members",
+            );
+        }
+        if name == "NumberFormat" {
+            let result = state.resolve_property_access_with_env(ty, "resolvedOptions");
+            let tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: method_type,
+                ..
+            } = result
+            else {
+                panic!("Intl.NumberFormat.resolvedOptions should resolve, got {result:?}");
+            };
+            let return_type = crate::query_boundaries::common::return_type_for_type(
+                state.ctx.types.as_type_database(),
+                method_type,
+            )
+            .expect("resolvedOptions should have a return type");
+            let resolved_return = state.resolve_lazy_type(return_type);
+            let notation = state.ctx.types.intern_string("notation");
+            assert!(
+                crate::query_boundaries::common::raw_property_type(
+                    state.ctx.types.as_type_database(),
+                    resolved_return,
+                    notation,
+                )
+                .is_some(),
+                "Intl.NumberFormat.resolvedOptions should return merged ResolvedNumberFormatOptions",
+            );
+        }
+        if name == "NumberFormatConstructor" {
+            let instance_type = crate::query_boundaries::common::construct_return_type_for_type(
+                state.ctx.types.as_type_database(),
+                ty,
+            )
+            .expect("Intl.NumberFormatConstructor should construct NumberFormat");
+            let resolved_instance = state.resolve_lazy_type(instance_type);
+            let result =
+                state.resolve_property_access_with_env(resolved_instance, "resolvedOptions");
+            let tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: method_type,
+                ..
+            } = result
+            else {
+                panic!(
+                    "constructed Intl.NumberFormat.resolvedOptions should resolve, got {result:?}"
+                );
+            };
+            let return_type = crate::query_boundaries::common::return_type_for_type(
+                state.ctx.types.as_type_database(),
+                method_type,
+            )
+            .expect("constructed resolvedOptions should have a return type");
+            let resolved_return = state.resolve_lazy_type(return_type);
+            let notation = state.ctx.types.intern_string("notation");
+            assert!(
+                crate::query_boundaries::common::raw_property_type(
+                    state.ctx.types.as_type_database(),
+                    resolved_return,
+                    notation,
+                )
+                .is_some(),
+                "constructed Intl.NumberFormat.resolvedOptions should return merged ResolvedNumberFormatOptions",
+            );
+        }
         assert!(
             state.ctx.lib_delegation_cache.contains_symbol_type(sym_id),
             "{name} should populate the delegation cache",
@@ -414,7 +490,9 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
 #[test]
 fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
     let lib_files = load_lib_files(&[
+        "es5.d.ts",
         "es2015.iterable.d.ts",
+        "es2015.promise.d.ts",
         "es2020.symbol.wellknown.d.ts",
         "esnext.iterator.d.ts",
     ]);
@@ -443,7 +521,7 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
     state.ctx.set_lib_contexts(lib_contexts);
     state.ctx.set_actual_lib_file_count(lib_files.len());
 
-    for name in ["Iterator", "IteratorObject"] {
+    for name in ["Iterator", "IteratorObject", "Promise", "PromiseLike"] {
         let sym_id = state
             .ctx
             .binder
@@ -464,24 +542,30 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
             .map(std::convert::AsRef::as_ref);
         assert!(
             state.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol),
-            "{name} should be admitted to the param-preserving direct path by lib declaration shape",
+            "{name} should expose actual-lib interface type parameters",
         );
 
-        let (ty, params) = state
-            .direct_actual_lib_symbol_type(
-                sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                delegate_arena,
-                false,
-            )
-            .unwrap_or_else(|| panic!("{name} should lower through the direct lib path"));
-
-        assert_ne!(ty, TypeId::UNKNOWN, "{name} should not lower to UNKNOWN");
-        assert_ne!(ty, TypeId::ERROR, "{name} should not lower to ERROR");
-        assert!(
-            !params.is_empty(),
-            "{name} should preserve generic type parameters",
+        let lowered = state.direct_actual_lib_symbol_type(
+            sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            delegate_arena,
+            false,
         );
+        if matches!(name, "Iterator" | "Promise" | "PromiseLike") {
+            let (ty, params) = lowered
+                .unwrap_or_else(|| panic!("{name} should lower through the direct lib path"));
+            assert_ne!(ty, TypeId::UNKNOWN, "{name} should not lower to UNKNOWN");
+            assert_ne!(ty, TypeId::ERROR, "{name} should not lower to ERROR");
+            assert!(
+                !params.is_empty(),
+                "{name} should preserve generic type parameters",
+            );
+        } else {
+            assert!(
+                lowered.is_none(),
+                "{name} should fall back instead of directly lowering a generic actual-lib interface",
+            );
+        }
     }
 }
 
