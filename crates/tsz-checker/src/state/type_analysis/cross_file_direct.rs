@@ -122,25 +122,21 @@ fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
     matches!(name, "Iterator")
 }
 
-fn is_direct_actual_intl_lib_interface_name(name: &str) -> bool {
-    matches!(
-        name,
-        "CollatorOptions"
-            | "DateTimeFormatOptions"
-            | "Locale"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsSignDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
-    )
-}
-
 fn is_direct_actual_intl_interface_candidate_name(name: &str) -> bool {
-    is_direct_actual_intl_lib_interface_name(name) || name.ends_with("Info")
+    name.ends_with("Info")
 }
 
 impl<'a> CheckerState<'a> {
+    fn symbol_is_actual_lib_namespace_export(
+        &self,
+        namespace: &str,
+        export_name: &str,
+        sym_id: SymbolId,
+    ) -> bool {
+        self.resolve_lib_namespace_export_symbol(namespace, export_name)
+            .is_some_and(|export_sym_id| export_sym_id == sym_id)
+    }
+
     fn symbol_is_proven_direct_actual_lib_value_interface(
         &self,
         sym_id: SymbolId,
@@ -407,7 +403,10 @@ impl<'a> CheckerState<'a> {
 
         let symbol = self.get_cross_file_symbol(sym_id)?.clone();
         let name = symbol.escaped_name.clone();
-        let intl_candidate = is_direct_actual_intl_interface_candidate_name(&name);
+        let intl_namespace_export =
+            self.symbol_is_actual_lib_namespace_export("Intl", &name, sym_id);
+        let intl_candidate =
+            intl_namespace_export || is_direct_actual_intl_interface_candidate_name(&name);
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
@@ -470,12 +469,12 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             let direct_type = if let Some(direct_type) = self.resolve_lib_type_by_name(&name) {
-                if is_direct_actual_intl_lib_interface_name(&name) {
+                if intl_namespace_export {
                     intl_success_outcome = Some(DirectActualLibIntlInterfaceOutcome::SuccessByName);
                 }
                 direct_type
             } else {
-                if !is_direct_actual_intl_lib_interface_name(&name) {
+                if !intl_namespace_export {
                     if intl_candidate {
                         record_direct_actual_lib_intl_interface_outcome(
                             DirectActualLibIntlInterfaceOutcome::IntlNameNotAdmitted,
@@ -514,7 +513,7 @@ impl<'a> CheckerState<'a> {
             (direct_type, params)
         };
         if direct_type == TypeId::UNKNOWN || direct_type == TypeId::ERROR {
-            if is_direct_actual_intl_lib_interface_name(&name) {
+            if intl_namespace_export {
                 record_direct_actual_lib_intl_interface_outcome(
                     DirectActualLibIntlInterfaceOutcome::UnknownOrError,
                 );
