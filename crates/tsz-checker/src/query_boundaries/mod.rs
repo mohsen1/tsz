@@ -120,6 +120,7 @@ pub(crate) mod intersection_display;
     clippy::manual_map
 )]
 pub(crate) mod js_exports;
+pub(crate) mod key_constraints;
 #[allow(dead_code)]
 pub(crate) mod name_resolution;
 #[allow(
