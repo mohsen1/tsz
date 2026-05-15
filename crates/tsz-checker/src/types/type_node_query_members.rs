@@ -111,6 +111,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         {
             return Some(false);
         }
+        if self.ctx.arena.get(assertion_expr).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            )
+        }) {
+            return Some(false);
+        }
 
         let initializer = self
             .ctx
