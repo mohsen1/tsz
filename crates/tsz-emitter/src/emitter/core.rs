@@ -1,4 +1,5 @@
 use crate::context::emit::EmitContext;
+use crate::context::plan::EmitPlan;
 use crate::context::transform::{TransformContext, TransformDirective};
 use crate::enums::evaluator::EnumValue;
 use crate::output::source_writer::{
@@ -286,7 +287,8 @@ const MAX_EMIT_RECURSION_DEPTH: u32 = 10_000;
 ///
 /// Uses `SourceWriter` for output generation (enables source map support).
 /// Uses `EmitContext` for transform-specific state management.
-/// Uses `TransformContext` for directive-based transforms (Phase 2 architecture).
+/// Uses `EmitPlan` for direct-to-target planning and `TransformContext` for the
+/// current directive compatibility bridge.
 pub struct Printer<'a> {
     /// The `NodeArena` containing the AST.
     pub(crate) arena: &'a NodeArena,
@@ -299,6 +301,9 @@ pub struct Printer<'a> {
 
     /// Transform directives from lowering pass (optional, defaults to empty)
     pub(crate) transforms: TransformContext,
+
+    /// File-level direct-to-target emit plan.
+    pub(crate) emit_plan: EmitPlan,
 
     /// Emit `void 0` for missing initializers during recovery.
     pub(crate) emit_missing_initializer_as_void_0: bool,
@@ -926,14 +931,16 @@ impl<'a> Printer<'a> {
         let mut writer = SourceWriter::with_capacity(capacity);
         writer.set_new_line_kind(options.new_line);
 
-        // Create EmitContext from options (target controls ES5 vs ESNext)
+        // Create EmitContext from options (target controls feature gates)
         let ctx = EmitContext::with_options(options);
+        let emit_plan = EmitPlan::empty(&ctx.options);
 
         Printer {
             arena,
             writer,
             ctx,
             transforms: TransformContext::new(), // Empty by default, can be set later
+            emit_plan,
             emit_missing_initializer_as_void_0: false,
             source_text: None,
             source_map_text: None,
@@ -1125,7 +1132,7 @@ impl<'a> Printer<'a> {
     /// This is the Phase 2 constructor that accepts pre-computed transforms.
     pub fn with_transforms(arena: &'a NodeArena, transforms: TransformContext) -> Self {
         let mut printer = Self::new(arena);
-        printer.transforms = transforms;
+        printer.set_emit_plan(EmitPlan::from_transforms(&printer.ctx.options, transforms));
         printer
     }
 
@@ -1136,8 +1143,29 @@ impl<'a> Printer<'a> {
         options: PrinterOptions,
     ) -> Self {
         let mut printer = Self::with_options(arena, options);
-        printer.transforms = transforms;
+        printer.set_emit_plan(EmitPlan::from_transforms(&printer.ctx.options, transforms));
         printer
+    }
+
+    /// Create a new Printer with an explicit emit plan and options.
+    pub fn with_emit_plan_and_options(
+        arena: &'a NodeArena,
+        plan: EmitPlan,
+        options: PrinterOptions,
+    ) -> Self {
+        let mut printer = Self::with_options(arena, options);
+        printer.set_emit_plan(plan);
+        printer
+    }
+
+    fn set_emit_plan(&mut self, plan: EmitPlan) {
+        self.transforms = plan.transforms.clone();
+        self.emit_plan = plan;
+    }
+
+    #[must_use]
+    pub const fn emit_plan(&self) -> &EmitPlan {
+        &self.emit_plan
     }
 
     /// Set whether to target ES5 behavior.
