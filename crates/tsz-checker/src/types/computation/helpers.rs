@@ -1848,7 +1848,7 @@ mod tests {
     use crate::test_utils::check_source_codes;
 
     #[test]
-    #[ignore = "pending"]
+    #[ignore = "pending: follow-up required"]
     fn template_expr_contextual_type_no_false_positive() {
         // Template expression `\`${scope}:${event}\`` passed to a parameter expecting
         // a template literal type should NOT produce TS2345

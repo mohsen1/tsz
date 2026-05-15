@@ -153,7 +153,7 @@ json1.b;
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn check_js_require_of_commonjs_preserves_property_presence_and_assignment() {
     let diagnostics = check_js_require_value_diagnostics(
         r#"{ "a": 0 }"#,

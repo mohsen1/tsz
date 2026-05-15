@@ -728,7 +728,7 @@ export interface Box {
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn test_returned_object_literal_member_comments_are_preserved() {
     let output = emit_dts(
         r#"
@@ -953,7 +953,7 @@ class C {
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn test_computed_methods_emit_as_property_signatures() {
     let output = emit_dts(
         r#"

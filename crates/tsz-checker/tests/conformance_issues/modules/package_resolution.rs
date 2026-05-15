@@ -72,7 +72,7 @@ export const x = 1;
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn test_module_augmentation_global_imported_return_type_keeps_augmented_array_method() {
     if load_lib_files_for_test().is_empty() {
         return;

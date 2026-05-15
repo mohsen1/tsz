@@ -6088,7 +6088,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn direct_checker_with_real_default_libs_contextually_types_constructor_parameters_rest() {
     let source = r#"
 declare function createInstance<Ctor extends new (...args: any[]) => any, R extends InstanceType<Ctor>>(ctor: Ctor, ...args: ConstructorParameters<Ctor>): R;

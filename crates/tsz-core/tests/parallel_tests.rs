@@ -1154,7 +1154,7 @@ const text: string = outputValue;
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn test_check_files_parallel_zod_issue_data_cross_file_spread() {
     let files = vec![
         (

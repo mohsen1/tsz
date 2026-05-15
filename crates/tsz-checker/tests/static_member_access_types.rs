@@ -257,7 +257,7 @@ const staticZ = StaticC.z;
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn object_entries_computed_object_literal_keeps_string_any_shape() {
     let source = r#"
 type ArrayLike<T> = {

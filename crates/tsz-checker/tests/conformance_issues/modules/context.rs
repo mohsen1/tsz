@@ -159,7 +159,7 @@ export {};
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn module_augmentation_enum_merges_value_side_of_reexported_namespace() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[

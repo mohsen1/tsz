@@ -2180,7 +2180,7 @@ function f(k) {
 }
 
 #[test]
-#[ignore = "pending"]
+#[ignore = "pending: follow-up required"]
 fn test_jsdoc_param_type_uses_instance_side_for_destructured_commonjs_named_class() {
     let diagnostics = check_commonjs_two_files(
         "mod1.js",
