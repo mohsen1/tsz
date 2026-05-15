@@ -687,7 +687,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::TYPE_OF_EXPRESSION => TypeId::STRING,
             // void expression
             k if k == syntax_kind_ext::VOID_EXPRESSION => TypeId::UNDEFINED,
-            // await expression - unwrap Promise<T> to get T, with contextual typing (Phase 6 - tsz-3)
+            // await expression - unwrap Promise<T> to get T, with contextual typing
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => self
                 .checker
                 .get_type_of_await_expression_with_request(idx, request),

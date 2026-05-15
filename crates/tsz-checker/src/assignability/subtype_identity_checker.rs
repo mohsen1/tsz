@@ -319,8 +319,8 @@ impl<'a> CheckerState<'a> {
     /// Check if variable declaration types are compatible (used for multiple declarations).
     ///
     /// Delegates to the Solver's `CompatChecker` to determine if two types are
-    /// compatible for redeclaration (TS2403). This moves enum comparison logic
-    /// from Checker to Solver per Phase 5 Anti-Pattern 8.1 removal.
+    /// compatible for redeclaration (TS2403). This keeps enum comparison logic
+    /// in the Solver, where the relation logic is centralized.
     pub(crate) fn are_var_decl_types_compatible(
         &mut self,
         prev_type: TypeId,

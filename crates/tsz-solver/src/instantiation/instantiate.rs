@@ -125,14 +125,14 @@ impl TypeSubstitution {
     ) -> Self {
         let mut map = FxHashMap::with_capacity_and_hasher(type_params.len(), Default::default());
 
-        // Phase 1: Insert explicitly-provided type arguments.
+        // First, insert explicitly-provided type arguments.
         for (i, param) in type_params.iter().enumerate() {
             if i < type_args.len() {
                 map.insert(param.name, type_args[i]);
             }
         }
 
-        // Phase 2: Pre-fill unsupplied type parameters with `any` so that
+        // Next, pre-fill unsupplied type parameters with `any` so that
         // circular and forward references in defaults become any-like instead
         // of leaking unresolved placeholders into the instantiated type.
         for (i, param) in type_params.iter().enumerate() {
@@ -141,7 +141,7 @@ impl TypeSubstitution {
             }
         }
 
-        // Phase 3: Process defaults in declaration order. Each default is
+        // Then process defaults in declaration order. Each default is
         // instantiated with the substitution built so far (which includes
         // explicitly provided args, already-resolved defaults, and `any` for
         // not-yet-resolved params). This means a forward reference like `U = V`
