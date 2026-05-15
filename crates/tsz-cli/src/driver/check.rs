@@ -3485,11 +3485,13 @@ fn affected_lib_interface_names(
         }
     }
 
-    if relevant.is_empty() {
+    let mut result = if relevant.is_empty() {
         affected
     } else {
         relevant
-    }
+    };
+    result.retain(|name| inheritance_graph.contains_key(name));
+    result
 }
 
 fn affected_lib_extension_interface_names(
@@ -3932,6 +3934,62 @@ mod tests {
             files,
             contexts: std::sync::Arc::new(contexts),
         }
+    }
+
+    #[test]
+    fn user_only_global_interfaces_do_not_trigger_lib_recheck() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.test.d.ts",
+            r#"
+interface Window {
+    document: object;
+}
+"#,
+        )]);
+
+        let program = merged_program_from_owned_files(vec![(
+            "file.ts".to_string(),
+            r#"
+interface Result<T> {
+    value?: T;
+}
+"#
+            .to_string(),
+        )]);
+
+        let affected = affected_lib_interface_names(&program, &checker_libs);
+        assert!(
+            affected.is_empty(),
+            "user-only global interfaces should not request default-lib recheck, got: {affected:?}"
+        );
+    }
+
+    #[test]
+    fn user_global_interfaces_matching_lib_names_still_trigger_lib_recheck() {
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.test.d.ts",
+            r#"
+interface Window {
+    document: object;
+}
+"#,
+        )]);
+
+        let program = merged_program_from_owned_files(vec![(
+            "file.ts".to_string(),
+            r#"
+interface Window {
+    custom: string;
+}
+"#
+            .to_string(),
+        )]);
+
+        let affected = affected_lib_interface_names(&program, &checker_libs);
+        assert!(
+            affected.contains("Window"),
+            "lib-matching global interfaces must still request default-lib recheck, got: {affected:?}"
+        );
     }
 
     fn collect_test_diagnostics_with_checker_libs(
