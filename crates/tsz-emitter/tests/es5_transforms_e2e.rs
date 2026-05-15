@@ -306,6 +306,40 @@ console.log(value);
 }
 
 #[test]
+fn object_rest_es2017_computed_key_with_nested_pattern_lowers_nested_binding() {
+    let output = emit_with_target(
+        r#"
+declare function order(n: number): any;
+let { [order(0)]: { [order(2)]: z } = order(1), ...w } = {} as any;
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        !output.contains(",  ="),
+        "Nested binding pattern under computed object-rest key must not emit an empty binding name.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("order(0)").count(),
+        1,
+        "Outer computed key should be evaluated once.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("order(2)").count(),
+        1,
+        "Nested computed key should be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("z = _"),
+        "Nested computed binding should decompose from the defaulted value temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__rest("),
+        "Outer object rest should still lower to __rest.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn object_rest_assignment_es2017_computed_exclusion_reuses_key_temp() {
     let output = emit_with_target(
         r#"
@@ -339,6 +373,33 @@ console.log(value);
     assert!(
         !output.contains("__rest(source, [])") && !output.contains("__rest(source, [getKey()])"),
         "ES2017 assignment lowering must not drop or re-evaluate the computed key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn array_object_rest_es2017_defers_later_default_until_after_rest_binding() {
+    let output = emit_with_target(
+        "let [{ ...a }, b = a]: any[] = [{ x: 1 }];",
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        output.contains("__rest("),
+        "Nested object rest inside an array binding should lower to __rest.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ ...a }") && !output.contains("b = a] ="),
+        "Lowering must remove object rest and defer the later default out of the array head.\nOutput:\n{output}"
+    );
+    let rest_pos = output
+        .find("a = __rest")
+        .expect("expected a deferred object-rest binding");
+    let default_pos = output
+        .find("b = _")
+        .expect("expected a deferred default binding");
+    assert!(
+        rest_pos < default_pos,
+        "Default initializer that references the rest binding must run after the rest binding.\nOutput:\n{output}"
     );
 }
 
