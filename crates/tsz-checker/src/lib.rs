@@ -435,6 +435,9 @@ mod dispatch_tests;
 #[path = "../tests/dynamic_import_ts2307_per_callsite_tests.rs"]
 mod dynamic_import_ts2307_per_callsite_tests;
 #[cfg(test)]
+#[path = "../tests/enum_indexed_access_tests.rs"]
+mod enum_indexed_access_tests;
+#[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
