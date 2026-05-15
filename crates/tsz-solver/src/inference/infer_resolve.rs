@@ -643,8 +643,8 @@ impl<'a> InferenceContext<'a> {
                 .iter()
                 .any(|c| c.from_array_element && c.is_fresh_literal);
             let has_non_fresh = filtered_no_never.iter().any(|c| {
-                !c.is_fresh_literal
-                    && !(has_fresh_array_element_candidate && c.type_id.is_any_unknown_or_error())
+                !(c.is_fresh_literal
+                    || has_fresh_array_element_candidate && c.type_id.is_any_unknown_or_error())
             });
             // Mirror tsc's `widenLiteralTypes` gate in `getCovariantInference`:
             // when the type parameter is at top level in the return type AND has
@@ -724,8 +724,8 @@ impl<'a> InferenceContext<'a> {
             .iter()
             .any(|c| c.from_array_element && c.is_fresh_literal);
         let has_non_fresh = filtered_no_never.iter().any(|c| {
-            !c.is_fresh_literal
-                && !(has_fresh_array_element_candidate && c.type_id.is_any_unknown_or_error())
+            !(c.is_fresh_literal
+                || has_fresh_array_element_candidate && c.type_id.is_any_unknown_or_error())
         });
         let resolved =
             if !preserve_literals && !is_const && !has_non_fresh && !skip_literal_widening {
