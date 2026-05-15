@@ -37,7 +37,6 @@ use tsz_common::interner::{Atom, ShardedInterner};
 
 const LOOKUP_CACHE_BITS: u32 = 10;
 const LOOKUP_CACHE_SIZE: usize = 1 << LOOKUP_CACHE_BITS; // 1024
-#[allow(dead_code)]
 const LOOKUP_CACHE_MASK: u32 = (LOOKUP_CACHE_SIZE as u32) - 1;
 
 /// A single cache entry: (tag = TypeId raw value, cached TypeData, owning
@@ -68,7 +67,6 @@ struct LookupCacheEntry {
 
 const INTERN_CACHE_BITS: u32 = 9;
 const INTERN_CACHE_SIZE: usize = 1 << INTERN_CACHE_BITS; // 512
-#[allow(dead_code)]
 const INTERN_CACHE_MASK: u64 = (INTERN_CACHE_SIZE as u64) - 1;
 
 #[derive(Clone, Copy)]
@@ -107,7 +105,6 @@ const EMPTY_INTERN_ENTRY: InternCacheEntry = InternCacheEntry {
     result: TypeId::NONE,
 };
 
-#[allow(dead_code)]
 impl TypeInternerCache {
     const fn new() -> Self {
         Self {
