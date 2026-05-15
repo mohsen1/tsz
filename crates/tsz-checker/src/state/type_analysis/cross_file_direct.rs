@@ -448,7 +448,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.symbol_types.insert(sym_id, alias_type);
             self.ctx
                 .lib_delegation_cache
-                .insert(sym_id, (alias_type, params.clone()));
+                .insert_symbol_type(sym_id, (alias_type, params.clone()));
             return Some((alias_type, params));
         }
         if !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
@@ -532,7 +532,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.symbol_types.insert(sym_id, direct_type);
         self.ctx
             .lib_delegation_cache
-            .insert(sym_id, (direct_type, params.clone()));
+            .insert_symbol_type(sym_id, (direct_type, params.clone()));
         Some((direct_type, params))
     }
 
@@ -1326,9 +1326,9 @@ mod tests {
         let (cached_ty, cached_params) = state
             .ctx
             .lib_delegation_cache
-            .get(&sym_id)
+            .symbol_type(sym_id)
             .expect("direct lib path should populate the delegation cache");
-        assert_eq!(*cached_ty, ty);
+        assert_eq!(cached_ty, ty);
         assert_eq!(
             cached_params.len(),
             params.len(),
@@ -1413,7 +1413,7 @@ mod tests {
                 "{name} should preserve type-parameter arity",
             );
             assert!(
-                state.ctx.lib_delegation_cache.contains_key(&sym_id),
+                state.ctx.lib_delegation_cache.contains_symbol_type(sym_id),
                 "{name} should populate the delegation cache",
             );
         }
@@ -1608,9 +1608,9 @@ mod tests {
         let (cached_ty, cached_params) = state
             .ctx
             .lib_delegation_cache
-            .get(&sym_id)
+            .symbol_type(sym_id)
             .expect("direct alias path should populate the delegation cache");
-        assert_eq!(*cached_ty, ty);
+        assert_eq!(cached_ty, ty);
         assert!(cached_params.is_empty());
     }
 
@@ -1894,9 +1894,9 @@ mod tests {
         let (cached_ty, cached_params) = state
             .ctx
             .lib_delegation_cache
-            .get(&sym_id)
+            .symbol_type(sym_id)
             .expect("direct alias path should populate the delegation cache");
-        assert_eq!(*cached_ty, ty);
+        assert_eq!(cached_ty, ty);
         assert_eq!(
             cached_params.len(),
             params.len(),
