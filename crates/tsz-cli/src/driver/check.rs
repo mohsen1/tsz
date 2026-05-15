@@ -582,13 +582,13 @@ pub(super) fn collect_diagnostics(
         ),
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
-    // Phase 2 step 1: route the module-resolver's ambient-module check through
-    // `SkeletonIndex` when present. The skeleton already captured both
-    // `declared_modules` and `shorthand_ambient_modules` during the parallel
-    // bind phase (see `crates/tsz-core/src/parallel/skeleton.rs`), so this
-    // consumer no longer needs `MergedProgram.{declared,shorthand_ambient}_modules`
-    // to answer the lookup. The legacy fields remain as a fallback for the
-    // small-project / sequential path where no skeleton is computed.
+    // Route the module-resolver's ambient-module check through `SkeletonIndex`
+    // when present. The skeleton already captured both `declared_modules` and
+    // `shorthand_ambient_modules` during the parallel bind phase (see
+    // `crates/tsz-core/src/parallel/skeleton.rs`), so this consumer no longer
+    // needs `MergedProgram.{declared,shorthand_ambient}_modules` to answer the
+    // lookup. The legacy fields remain as a fallback for the small-project /
+    // sequential path where no skeleton is computed.
     //
     // This is consumer-side only: `MergedProgram` retains both fields unchanged.
     let skeleton_for_ambient: Option<&tsz::parallel::SkeletonIndex> =
@@ -1138,8 +1138,8 @@ pub(super) fn collect_diagnostics(
         .as_ref()
         .map(|skel| Arc::clone(&skel.expando_properties));
 
-    // Phase 2 step 2: pre-compute the merged module-augmentations index from
-    // skeleton data. The skeleton recorded each augmenting declaration's name
+    // Pre-compute the merged module-augmentations index from skeleton data. The
+    // skeleton recorded each augmenting declaration's name
     // + StableLocation at extract time; this projection rehydrates them into
     // the legacy `Vec<(file_idx, ModuleAugmentation)>` shape so checker
     // consumers (`module_augmentation.rs`, `property_access_augmentation.rs`)
@@ -1152,8 +1152,8 @@ pub(super) fn collect_diagnostics(
         .as_ref()
         .map(|skel| Arc::new(skel.build_module_augmentations_index(&all_arenas)));
 
-    // Phase 2 step 3: pre-compute the merged augmentation-targets index from
-    // skeleton data. The skeleton recorded each `(symbol, module_spec)` pair
+    // Pre-compute the merged augmentation-targets index from skeleton data. The
+    // skeleton recorded each `(symbol, module_spec)` pair
     // (with a StableLocation) at extract time; this projection rehydrates
     // them into the legacy `Vec<(SymbolId, file_idx)>` shape so checker
     // consumers (`module_augmentation.rs`) see no behavior change. The legacy
@@ -1166,8 +1166,8 @@ pub(super) fn collect_diagnostics(
         .as_ref()
         .map(|skel| Arc::new(skel.build_augmentation_targets_index()));
 
-    // Phase 2 step 4: pre-compute the merged module-binder index from
-    // skeleton data. The skeleton recorded each file's `module_exports` keys
+    // Pre-compute the merged module-binder index from skeleton data. The
+    // skeleton recorded each file's `module_exports` keys
     // at extract time; this projection rebuilds the legacy
     // `module_spec -> Vec<file_idx>` map (including the de-quoted normalized
     // variant) so checker consumers (`import/declaration.rs`,
@@ -1180,8 +1180,8 @@ pub(super) fn collect_diagnostics(
         .as_ref()
         .map(|skel| Arc::new(skel.build_module_binder_index()));
 
-    // Phase 2 step 6: pre-compute the merged module-exports index from
-    // skeleton data + the post-merge `program.module_exports` map. The
+    // Pre-compute the merged module-exports index from skeleton data and the
+    // post-merge `program.module_exports` map. The
     // skeleton recorded each file's `(spec, [export_name])` entries at
     // extract time; this projection rebuilds the legacy
     // `spec -> export_name -> Vec<(file_idx, SymbolId)>` map by resolving

@@ -170,10 +170,9 @@ impl Server {
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         let resolved_modules_arc = Arc::new(resolved_modules);
 
-        // Build skeleton indices if available (Phase 2 step 2 added the
-        // module-augmentations index, Phase 2 step 3 added the
-        // augmentation-targets index, Phase 2 step 4 added the module-binder
-        // index).
+        // Build skeleton indices when available. The pre-computed
+        // module-augmentations, augmentation-targets, and module-binder
+        // indices are projected here from the skeleton records.
         let (
             skeleton_declared_modules,
             skeleton_expando_index,
@@ -437,10 +436,9 @@ impl Server {
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         let resolved_modules_arc = Arc::new(resolved_modules);
 
-        // Build skeleton indices if available (Phase 2 step 2 added the
-        // module-augmentations index, Phase 2 step 3 added the
-        // augmentation-targets index, Phase 2 step 4 added the module-binder
-        // index).
+        // Build skeleton indices when available. The pre-computed
+        // module-augmentations, augmentation-targets, and module-binder
+        // indices are projected here from the skeleton records.
         let (
             skeleton_declared_modules,
             skeleton_expando_index,

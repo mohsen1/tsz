@@ -1401,41 +1401,36 @@ pub struct ProgramContext {
     pub skeleton_expando_index: Option<Arc<FxHashMap<String, FxHashSet<String>>>>,
     /// Pre-computed module-augmentations index built from `SkeletonIndex`.
     ///
-    /// Phase 2 step 2: when set, [`Self::build_global_indices`] skips the
-    /// per-binder `module_augmentations` loop and reuses this `Arc` for the
+    /// When set, [`Self::build_global_indices`] skips the per-binder
+    /// `module_augmentations` loop and reuses this `Arc` for the
     /// `global_module_augmentations_index` slot. Drivers populate this from
-    /// `SkeletonIndex::module_augmentations_for(...)` so that — once arenas
-    /// become evictable in Phase 5 — the merged augmentations index can be
-    /// built without retaining per-file binder state.
+    /// `SkeletonIndex::module_augmentations_for(...)` so the merged
+    /// augmentations index can be built without retaining per-file binder state.
     pub skeleton_module_augmentations_index: Option<GlobalModuleAugmentationsIndex>,
     /// Pre-computed augmentation-targets index built from `SkeletonIndex`
-    /// (Phase 2 step 3).
+    ///.
     ///
     /// When set, [`Self::build_global_indices`] skips the per-binder
     /// `augmentation_target_modules` loop and reuses this `Arc` for the
     /// `global_augmentation_targets_index` slot. Drivers populate this from
-    /// `SkeletonIndex::build_augmentation_targets_index(...)` so that — once
-    /// arenas become evictable in Phase 5 — the merged augmentation-targets
-    /// index can be built without retaining per-file binder state.
+    /// `SkeletonIndex::build_augmentation_targets_index(...)` so the merged
+    /// augmentation-targets index can still be built without per-file state.
     pub skeleton_augmentation_targets_index: Option<GlobalAugmentationTargetsIndex>,
-    /// Pre-computed module-binder index built from `SkeletonIndex`
-    /// (Phase 2 step 4).
+    /// Pre-computed module-binder index built from `SkeletonIndex`.
     ///
     /// When set, [`Self::build_global_indices`] skips the per-binder
     /// `module_binder_index.entry(...).push(file_idx)` lines in the
     /// `binder.module_exports.iter()` loop and reuses this `Arc` for the
     /// `global_module_binder_index` slot. Drivers populate this from
-    /// `SkeletonIndex::build_module_binder_index(...)` so that — once arenas
-    /// become evictable in Phase 5 — the merged module-binder index can be
-    /// built without retaining per-file binder state.
+    /// `SkeletonIndex::build_module_binder_index(...)` so that the merged
+    /// module-binder index can be built without retaining per-file binder state.
     ///
     /// Note: the surrounding loop also builds `module_exports_index` and the
     /// `declared_modules` projection from the same iteration, so only the
     /// `module_binder_index` portion is skipped — the rest of the loop body
     /// continues to run.
     pub skeleton_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
-    /// Pre-computed module-exports index built from `SkeletonIndex`
-    /// (Phase 2 step 6).
+    /// Pre-computed module-exports index built from `SkeletonIndex`.
     ///
     /// When set, [`Self::build_global_indices`] skips the per-binder
     /// `for (export_name, &sym_id) in exports.iter()` inner loop in the
@@ -1444,8 +1439,8 @@ pub struct ProgramContext {
     /// `SkeletonIndex::build_module_exports_index(&program.module_exports)`
     /// — note the projection consumes the post-merge `program.module_exports`
     /// (which holds globally-remapped `SymbolIds`), NOT per-binder data, so
-    /// once arenas become evictable in Phase 5 the merged module-exports
-    /// index can still be built without retaining per-file binder state.
+    /// the merged module-exports index can still be built without retaining
+    /// per-file binder state.
     ///
     /// SymbolId-coupling rationale: the projection passes through globally-
     /// remapped `SymbolIds` — exactly what consumers (e.g. `type_only.rs`,
@@ -1704,30 +1699,30 @@ impl ProgramContext {
     pub fn build_global_indices(&mut self) {
         self.source_file_symbol_type_cache_scope = next_source_file_symbol_type_cache_scope();
 
-        // Phase 2 step 2: when the driver pre-built
+        // When the driver pre-built
         // `skeleton_module_augmentations_index` from `SkeletonIndex`, skip the
         // per-binder `module_augmentations` loop entirely and reuse the
-        // pre-built map. This unblocks Phase 5 — the merged augmentations
-        // index no longer needs per-file binder state.
+        // pre-built map. This means the merged augmentations index no longer
+        // needs per-file binder state.
         let has_skeleton_module_augmentations = self.skeleton_module_augmentations_index.is_some();
-        // Phase 2 step 3: when the driver pre-built
+        // When the driver pre-built
         // `skeleton_augmentation_targets_index` from `SkeletonIndex`, skip the
         // per-binder `augmentation_target_modules` loop entirely and reuse the
-        // pre-built map. This unblocks Phase 5 — the merged augmentation-targets
-        // index no longer needs per-file binder state.
+        // pre-built map. This means the merged augmentation-targets index no
+        // longer needs per-file binder state.
         let has_skeleton_aug_targets = self.skeleton_augmentation_targets_index.is_some();
-        // Phase 2 step 4: when the driver pre-built
+        // When the driver pre-built
         // `skeleton_module_binder_index` from `SkeletonIndex`, skip the
         // module-binder-index push lines inside the per-binder
-        // `module_exports.iter()` loop and reuse the pre-built map. This
-        // unblocks Phase 5 — the merged module-binder index no longer needs
+        // `module_exports.iter()` loop and reuse the pre-built map. This means
+        // the merged module-binder index no longer needs
         // per-file binder state.
         let has_skeleton_module_binders = self.skeleton_module_binder_index.is_some();
-        // Phase 2 step 6: when the driver pre-built
+        // When the driver pre-built
         // `skeleton_module_exports_index` from `SkeletonIndex` +
         // `program.module_exports`, skip the inner `for (export_name, sym_id)
         // in exports.iter()` push loop and reuse the pre-built map. This
-        // unblocks Phase 5 — the merged module-exports index no longer needs
+        // means the merged module-exports index no longer needs
         // per-file binder state.
         let has_skeleton_module_exports = self.skeleton_module_exports_index.is_some();
 
@@ -1809,10 +1804,9 @@ impl ProgramContext {
                     .push((file_idx, sym_id));
             }
             for (module_spec, exports) in binder.module_exports.iter() {
-                // Phase 2 step 4: skip the per-binder module_binder_index
-                // pushes when the skeleton-built map is already installed.
-                // The driver pre-built it from
-                // `SkeletonIndex::build_module_binder_index(...)`.
+                // Skip the per-binder `module_binder_index` pushes when the
+                // skeleton-built map is already installed. The driver pre-built
+                // it from `SkeletonIndex::build_module_binder_index(...)`.
                 if !has_skeleton_module_binders {
                     // Build module_binder_index: module_spec -> [binder_idx]
                     module_binder_index
@@ -1827,9 +1821,9 @@ impl ProgramContext {
                             .push(file_idx);
                     }
                 }
-                // Phase 2 step 6: skip the per-binder module_exports_index
-                // pushes when the skeleton-built map is already installed.
-                // The driver pre-built it from
+                // Skip the per-binder `module_exports_index` pushes when the
+                // skeleton-built map is already installed. The driver pre-built
+                // it from
                 // `SkeletonIndex::build_module_exports_index(&program.module_exports)`.
                 if !has_skeleton_module_exports {
                     for (export_name, &sym_id) in exports.iter() {
@@ -1859,9 +1853,9 @@ impl ProgramContext {
                     dm.insert_module_name(name);
                 }
             }
-            // Phase 2 step 2: skip the per-binder module_augmentations loop
-            // when the skeleton-built map is already installed. The driver
-            // pre-built it from `SkeletonIndex::module_augmentations_for(...)`.
+            // Skip the per-binder `module_augmentations` loop when the
+            // skeleton-built map is already installed. The driver pre-built it
+            // from `SkeletonIndex::module_augmentations_for(...)`.
             if !has_skeleton_module_augmentations {
                 for (module_spec, augmentations) in binder.module_augmentations.iter() {
                     module_augs_index
@@ -1881,9 +1875,9 @@ impl ProgramContext {
                         }));
                 }
             }
-            // Phase 2 step 3: skip the per-binder augmentation_target_modules
-            // loop when the skeleton-built map is already installed. The driver
-            // pre-built it from `SkeletonIndex::build_augmentation_targets_index(...)`.
+            // Skip the per-binder `augmentation_target_modules` loop when the
+            // skeleton-built map is already installed. The driver pre-built it
+            // from `SkeletonIndex::build_augmentation_targets_index(...)`.
             if !has_skeleton_aug_targets {
                 for (&sym_id, module_spec) in binder.augmentation_target_modules.iter() {
                     aug_targets_index
@@ -1915,29 +1909,29 @@ impl ProgramContext {
         }
 
         self.global_file_locals_index = Some(Arc::new(file_locals_index));
-        // Phase 2 step 6: prefer the skeleton-pre-built map when available;
-        // otherwise install the binder-derived one we just computed.
+        // Prefer the skeleton-pre-built map when available; otherwise install
+        // the binder-derived one we just computed.
         self.global_module_exports_index = self
             .skeleton_module_exports_index
             .as_ref()
             .map(Arc::clone)
             .or_else(|| Some(Arc::new(module_exports_index)));
-        // Phase 2 step 2: prefer the skeleton-pre-built map when available;
-        // otherwise install the binder-derived one we just computed.
+        // Prefer the skeleton-pre-built map when available; otherwise install
+        // the binder-derived one we just computed.
         self.global_module_augmentations_index = self
             .skeleton_module_augmentations_index
             .as_ref()
             .map(Arc::clone)
             .or_else(|| Some(Arc::new(module_augs_index)));
-        // Phase 2 step 3: prefer the skeleton-pre-built map when available;
-        // otherwise install the binder-derived one we just computed.
+        // Prefer the skeleton-pre-built map when available; otherwise install
+        // the binder-derived one we just computed.
         self.global_augmentation_targets_index = self
             .skeleton_augmentation_targets_index
             .as_ref()
             .map(Arc::clone)
             .or_else(|| Some(Arc::new(aug_targets_index)));
-        // Phase 2 step 4: prefer the skeleton-pre-built map when available;
-        // otherwise install the binder-derived one we just computed.
+        // Prefer the skeleton-pre-built map when available; otherwise install
+        // the binder-derived one we just computed.
         self.global_module_binder_index = self
             .skeleton_module_binder_index
             .as_ref()
