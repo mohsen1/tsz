@@ -245,6 +245,33 @@ type T2<K extends 'a'|'b'> = T1<K>[K];
 }
 
 #[test]
+fn test_remapped_mapped_type_template_index_emits_ts2536_and_ts2344() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+interface Person {
+    name: string;
+    age: number;
+}
+
+type Getters<T> = {
+    [K in keyof T as `get${Capitalize<K & string>}`]: () => T[K];
+};
+
+type GetterReturn<T, K extends keyof T> = ReturnType<Getters<T>[`get${Capitalize<K & string>}`]>;
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Expected TS2536 for generic template literal index into remapped mapped type.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2344),
+        "Expected TS2344 because the invalid indexed access cannot satisfy ReturnType's function constraint.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_element_access_mismatched_keyof_source_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r"
