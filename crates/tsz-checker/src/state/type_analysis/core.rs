@@ -1374,7 +1374,7 @@ impl<'a> CheckerState<'a> {
     /// for `typeof` context. Recurses through nested `QualifiedName` nodes
     /// so that `typeof a.b.c` resolves `a` as a value, then `.b`, then `.c`.
     #[allow(dead_code)]
-    pub(super) fn resolve_typeof_qualified_value_chain(
+    pub(crate) fn resolve_typeof_qualified_value_chain(
         &mut self,
         idx: NodeIndex,
         use_flow: bool,
@@ -1382,7 +1382,7 @@ impl<'a> CheckerState<'a> {
         self.resolve_typeof_qualified_value_chain_with_request(idx, &TypingRequest::NONE, use_flow)
     }
 
-    pub(super) fn resolve_typeof_qualified_value_chain_with_request(
+    pub(crate) fn resolve_typeof_qualified_value_chain_with_request(
         &mut self,
         idx: NodeIndex,
         request: &TypingRequest,

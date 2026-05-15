@@ -1604,6 +1604,36 @@ model.alias;
 }
 
 #[test]
+fn class_property_initializer_this_prescan_includes_accessors() {
+    let diags = check_source(
+        r#"
+declare function needsAccessor(value: { readonly current: number }): void;
+
+export class Model {
+    get current(): number {
+        return 1;
+    }
+    value = needsAccessor(this);
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2345 | 2739))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected class property initializer `this` prescan to include accessors, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn static_property_initializer_this_uses_constructor_owner_during_type_environment() {
     let diags = check_source(
         r#"

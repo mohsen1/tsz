@@ -83,20 +83,82 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// TS1329: Check if a method/accessor decorator accepts too few arguments.
-    ///
-    /// For experimental decorators, method/accessor decorators are called as
-    /// `decorator(target, propertyKey, descriptor)` - 3 arguments.
-    /// If the decorator expression has call signatures but none can accept 3 args,
-    /// emit TS1329 suggesting to call it first: `@dec()` instead of `@dec`.
-    pub(crate) fn check_method_decorator_arity(
+    pub(crate) fn check_method_or_accessor_decorator_call_signature(
         &mut self,
         decorator_expr: NodeIndex,
         decorator_type: TypeId,
         decorator_node: NodeIndex,
+        member_node: NodeIndex,
+        experimental_decorators: bool,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
+        }
+
+        self.ensure_relation_input_ready(decorator_type);
+        let resolved = self.evaluate_type_for_assignability(decorator_type);
+        if decorator_type_is_unchecked(resolved) {
+            return;
+        }
+
+        if self.method_decorator_has_zero_arg_factory_shape(
+            decorator_expr,
+            resolved,
+            decorator_node,
+        ) {
+            return;
+        }
+
+        let arg_types = if experimental_decorators {
+            vec![TypeId::ANY, TypeId::STRING, TypeId::ANY]
+        } else {
+            self.es_method_or_accessor_decorator_args(member_node)
+                .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT])
+        };
+
+        let (result, _, _) =
+            self.resolve_call_with_checker_adapter(resolved, &arg_types, false, None, None);
+
+        let return_type = match result {
+            CallResult::Success(return_type) => Some(return_type),
+            _ => {
+                self.error_at_node(
+                    decorator_node,
+                    diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                );
+                self.recover_decorator_return_type_with_any_args(resolved)
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::stable_call_recovery_return_type(
+                            self.ctx.types,
+                            resolved,
+                        )
+                    })
+            }
+        };
+
+        self.check_method_or_accessor_decorator_return_type(
+            decorator_node,
+            member_node,
+            experimental_decorators,
+            return_type,
+        );
+    }
+
+    /// TS1329: Check if a method/accessor decorator accepts too few arguments.
+    ///
+    /// Method/accessor decorators are invoked with at least two arguments in
+    /// stage-3 mode and three arguments in legacy mode. If every call signature
+    /// has zero parameters, tsc reports the decorator-factory hint instead of
+    /// the generic method-decorator signature failure.
+    fn method_decorator_has_zero_arg_factory_shape(
+        &mut self,
+        decorator_expr: NodeIndex,
+        decorator_type: TypeId,
+        decorator_node: NodeIndex,
+    ) -> bool {
+        if decorator_type_is_unchecked(decorator_type) {
+            return false;
         }
 
         let has_too_few_args = if let Some(shape) =
@@ -125,6 +187,239 @@ impl<'a> CheckerState<'a> {
                 &msg,
                 diagnostic_codes::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT,
             );
+            return true;
+        }
+
+        false
+    }
+
+    fn es_method_or_accessor_decorator_args(
+        &mut self,
+        member_idx: NodeIndex,
+    ) -> Option<Vec<TypeId>> {
+        let member = self.ctx.arena.get(member_idx)?;
+        match member.kind {
+            k if k == tsz_parser::parser::syntax_kind_ext::METHOD_DECLARATION => {
+                let value_type = self.method_decorator_value_type(member_idx)?;
+                let context_type = self
+                    .resolve_decorator_context_type(
+                        "ClassMethodDecoratorContext",
+                        vec![TypeId::ANY, value_type],
+                    )
+                    .unwrap_or(TypeId::OBJECT);
+                Some(vec![value_type, context_type])
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR => {
+                let value_type = self.accessor_decorator_value_type(member_idx)?;
+                let value = self
+                    .accessor_value_type_argument(member_idx)
+                    .unwrap_or(TypeId::ANY);
+                let context_type = self
+                    .resolve_decorator_context_type(
+                        "ClassGetterDecoratorContext",
+                        vec![TypeId::ANY, value],
+                    )
+                    .unwrap_or(TypeId::OBJECT);
+                Some(vec![value_type, context_type])
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR => {
+                let value_type = self.accessor_decorator_value_type(member_idx)?;
+                let value = self
+                    .accessor_value_type_argument(member_idx)
+                    .unwrap_or(TypeId::ANY);
+                let context_type = self
+                    .resolve_decorator_context_type(
+                        "ClassSetterDecoratorContext",
+                        vec![TypeId::ANY, value],
+                    )
+                    .unwrap_or(TypeId::OBJECT);
+                Some(vec![value_type, context_type])
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_decorator_context_type(&mut self, name: &str, args: Vec<TypeId>) -> Option<TypeId> {
+        let lib_binders = self.get_lib_binders();
+        let sym_id = self
+            .ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)?;
+        let base = self.ctx.create_lazy_type_ref(sym_id);
+        Some(self.ctx.types.factory().application(base, args))
+    }
+
+    fn method_decorator_value_type(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
+        let member = self.ctx.arena.get(member_idx)?;
+        let method = self.ctx.arena.get_method_decl(member)?;
+        let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
+        let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
+        let return_type = if method.type_annotation.is_some() {
+            self.get_type_from_type_node(method.type_annotation)
+        } else if method.body.is_some() {
+            self.infer_return_type_from_body(member_idx, method.body, None)
+        } else {
+            TypeId::ANY
+        };
+        self.pop_type_parameters(type_param_updates);
+
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .function(tsz_solver::FunctionShape {
+                    type_params,
+                    params,
+                    this_type,
+                    return_type,
+                    type_predicate: None,
+                    is_constructor: false,
+                    is_method: true,
+                }),
+        )
+    }
+
+    fn accessor_decorator_value_type(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
+        let member = self.ctx.arena.get(member_idx)?;
+        let accessor = self.ctx.arena.get_accessor(member)?;
+        let (params, this_type) = self.extract_params_from_parameter_list(&accessor.parameters);
+        let return_type = if member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR {
+            if accessor.type_annotation.is_some() {
+                self.get_type_from_type_node(accessor.type_annotation)
+            } else if accessor.body.is_some() {
+                self.infer_return_type_from_body(member_idx, accessor.body, None)
+            } else {
+                TypeId::ANY
+            }
+        } else {
+            TypeId::VOID
+        };
+
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .function(tsz_solver::FunctionShape {
+                    type_params: Vec::new(),
+                    params,
+                    this_type,
+                    return_type,
+                    type_predicate: None,
+                    is_constructor: false,
+                    is_method: true,
+                }),
+        )
+    }
+
+    fn accessor_value_type_argument(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
+        let member = self.ctx.arena.get(member_idx)?;
+        let accessor = self.ctx.arena.get_accessor(member)?;
+        if member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR {
+            if accessor.type_annotation.is_some() {
+                return Some(self.get_type_from_type_node(accessor.type_annotation));
+            }
+            if accessor.body.is_some() {
+                return Some(self.infer_return_type_from_body(member_idx, accessor.body, None));
+            }
+            return Some(TypeId::ANY);
+        }
+
+        let first_param = accessor.parameters.nodes.first().copied()?;
+        let param_node = self.ctx.arena.get(first_param)?;
+        let param = self.ctx.arena.get_parameter(param_node)?;
+        if param.type_annotation.is_some() {
+            Some(self.get_type_from_type_node(param.type_annotation))
+        } else {
+            Some(TypeId::ANY)
+        }
+    }
+
+    fn check_method_or_accessor_decorator_return_type(
+        &mut self,
+        decorator_node: NodeIndex,
+        member_idx: NodeIndex,
+        experimental_decorators: bool,
+        return_type: Option<TypeId>,
+    ) {
+        let Some(return_type) = return_type else {
+            return;
+        };
+        let return_type = self.evaluate_type_for_assignability(return_type);
+        if matches!(return_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) {
+            return;
+        }
+
+        let Some(expected_return) = self
+            .method_or_accessor_decorator_expected_return_type(member_idx, experimental_decorators)
+        else {
+            return;
+        };
+        if !self.is_assignable_to(return_type, expected_return) {
+            let return_str = self.format_type_diagnostic(return_type);
+            let expected_str = self.format_type_diagnostic(expected_return);
+            let message = format_message(
+                diagnostic_messages::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&return_str, &expected_str],
+            );
+            self.error_at_node(
+                decorator_node,
+                &message,
+                diagnostic_codes::DECORATOR_FUNCTION_RETURN_TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+    }
+
+    fn method_or_accessor_decorator_expected_return_type(
+        &mut self,
+        member_idx: NodeIndex,
+        experimental_decorators: bool,
+    ) -> Option<TypeId> {
+        if !experimental_decorators {
+            let value_type = self.method_or_accessor_decorator_value_type(member_idx)?;
+            return Some(self.ctx.types.factory().union2(TypeId::VOID, value_type));
+        }
+
+        let descriptor_value = self.legacy_method_or_accessor_descriptor_value_type(member_idx)?;
+        let descriptor_type =
+            self.resolve_decorator_context_type("TypedPropertyDescriptor", vec![descriptor_value])?;
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .union2(TypeId::VOID, descriptor_type),
+        )
+    }
+
+    fn method_or_accessor_decorator_value_type(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
+        let member = self.ctx.arena.get(member_idx)?;
+        match member.kind {
+            k if k == tsz_parser::parser::syntax_kind_ext::METHOD_DECLARATION => {
+                self.method_decorator_value_type(member_idx)
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
+                || k == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR =>
+            {
+                self.accessor_decorator_value_type(member_idx)
+            }
+            _ => None,
+        }
+    }
+
+    fn legacy_method_or_accessor_descriptor_value_type(
+        &mut self,
+        member_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let member = self.ctx.arena.get(member_idx)?;
+        match member.kind {
+            k if k == tsz_parser::parser::syntax_kind_ext::METHOD_DECLARATION => {
+                self.method_decorator_value_type(member_idx)
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
+                || k == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR =>
+            {
+                self.accessor_value_type_argument(member_idx)
+            }
+            _ => None,
         }
     }
 

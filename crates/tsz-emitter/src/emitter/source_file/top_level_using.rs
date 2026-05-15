@@ -609,7 +609,8 @@ impl<'a> Printer<'a> {
         let mut export_let_names = Vec::new();
         let mut seen_export_let = FxHashSet::default();
         let mut export_named_bindings = Vec::new();
-        let mut hoisted_function_indices = FxHashSet::default();
+        let mut hoisted_function_indices = Vec::new();
+        let mut hoisted_function_index_set = FxHashSet::default();
 
         for &stmt_idx in &statements.nodes[start_idx..] {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -632,7 +633,9 @@ impl<'a> Printer<'a> {
                     || k == syntax_kind_ext::FUNCTION_DECLARATION =>
                 {
                     if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                        hoisted_function_indices.insert(stmt_idx);
+                        if hoisted_function_index_set.insert(stmt_idx) {
+                            hoisted_function_indices.push(stmt_idx);
+                        }
                     } else {
                         self.collect_top_level_using_named_decl_hoist(
                             stmt_node,
@@ -670,8 +673,10 @@ impl<'a> Printer<'a> {
                         k if k == syntax_kind_ext::CLASS_DECLARATION
                             || k == syntax_kind_ext::FUNCTION_DECLARATION =>
                         {
-                            if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                                hoisted_function_indices.insert(stmt_idx);
+                            if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                                && hoisted_function_index_set.insert(stmt_idx)
+                            {
+                                hoisted_function_indices.push(stmt_idx);
                             }
                             self.collect_top_level_using_named_decl_hoist(
                                 clause_node,
@@ -752,7 +757,7 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
-        hoisted_function_indices
+        hoisted_function_index_set
     }
 
     fn collect_top_level_using_variable_hoists(
