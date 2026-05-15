@@ -15631,7 +15631,8 @@ const reducer = createReducer(0, {
 /// TS Unsoundness #41: Key Remapping with `as never`
 /// In mapped types, remapping a key to `never` removes that key from the result.
 /// This is the mechanism behind the `Omit` utility type.
-/// Note: Full instantiation of generic mapped types is tested in `solver/evaluate_tests.rs`.
+/// Note: Full instantiation of generic mapped types is tested in
+/// `crates/tsz-solver/tests/evaluate_tests.rs`.
 // TODO: Fix TS2304 for mapped type parameters (P, K) -- binder scope gap.
 #[test]
 fn test_key_remapping_syntax_parsing() {
@@ -15754,7 +15755,8 @@ const ctor2: DefaultCtor = AnotherClass;
 /// TS Unsoundness #40: Distributivity Disabling via [T] extends [U]
 /// Tests the `is_distributive` flag parsing and lowering through conditional types.
 /// Verifies that naked type parameters are marked distributive while tuple-wrapped are not.
-/// Note: This test verifies the lowering behavior via the solver's `lower_tests.rs`,
+/// Note: This test verifies the lowering behavior via the solver's
+/// `evaluate_tests.rs`,
 /// and checks that the thin checker properly handles conditional type declarations.
 #[test]
 fn test_distributivity_conditional_type_declarations() {
@@ -15800,7 +15802,8 @@ declare const y: NonDistributive<string>;
 
 /// TS Unsoundness #40: Conditional type parsing with concrete extends checks
 /// Tests that conditional types with concrete types parse correctly.
-/// Note: Conditional type evaluation during type alias assignment is tested in `solver/evaluate_tests.rs`.
+/// Note: Conditional type evaluation during type alias assignment is tested in
+/// `crates/tsz-solver/tests/evaluate_tests.rs`.
 #[test]
 fn test_conditional_type_concrete_extends() {
     // Test that conditional types parse and bind correctly with concrete extends checks
@@ -15848,7 +15851,8 @@ declare const t: TupleCheck;
 
 /// TS Unsoundness #40: Tuple-wrapped conditional types for non-distribution
 /// Tests the [T] extends [U] pattern used to disable distributivity.
-/// The `is_distributive` flag detection is verified in `solver/lower_tests.rs`.
+/// The `is_distributive` flag detection is verified in
+/// `crates/tsz-solver/tests/evaluate_tests.rs`.
 #[test]
 fn test_tuple_wrapped_conditional_pattern() {
     // Test the [T] extends [U] pattern used to disable distributivity

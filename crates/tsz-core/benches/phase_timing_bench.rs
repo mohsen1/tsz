@@ -140,7 +140,7 @@ fn bench_phase_timing(c: &mut Criterion) {
         let lines = count_lines(&source);
         let label = format!("{decl_count}decls_{lines}lines");
 
-        // Phase 1: Parse only
+        // Pass 1: Parse only
         group.bench_with_input(BenchmarkId::new("1_parse", &label), &source, |b, src| {
             b.iter(|| {
                 let mut parser =
@@ -150,7 +150,7 @@ fn bench_phase_timing(c: &mut Criterion) {
             });
         });
 
-        // Phase 2: Parse + Bind
+        // Second pass: Parse + Bind
         group.bench_with_input(
             BenchmarkId::new("2_parse_bind", &label),
             &source,
@@ -167,7 +167,7 @@ fn bench_phase_timing(c: &mut Criterion) {
             },
         );
 
-        // Phase 3: Parse + Bind + Check (full pipeline)
+        // Pass 3: Parse + Bind + Check (full pipeline)
         group.bench_with_input(
             BenchmarkId::new("3_parse_bind_check", &label),
             &source,
@@ -227,7 +227,7 @@ fn bench_cache_reuse(c: &mut Criterion) {
 
     let label = format!("100decls_{lines}lines");
 
-    // Cold check (no cache — what Salsa Phase 1 does)
+    // Cold check (no cache — what first-pass Salsa does)
     group.bench_with_input(
         BenchmarkId::new("cold_check", &label),
         &source,

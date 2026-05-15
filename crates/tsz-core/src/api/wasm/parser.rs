@@ -30,7 +30,7 @@ use crate::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 /// High-performance parser using Node architecture (16 bytes/node).
-/// This is the optimized path for Phase 8 test suite evaluation.
+/// This is the optimized path used by high-throughput test-suite evaluation.
 #[wasm_bindgen]
 pub struct Parser {
     parser: ParserState,

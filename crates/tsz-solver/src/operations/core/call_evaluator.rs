@@ -556,7 +556,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Phase 1: Try to find matching signatures across all lists
+        // first pass: Try to find matching signatures across all lists
         // For each signature in each member's list, check if there's a compatible
         // signature in every other member's list.
         for (list_idx, (_, sigs)) in sig_lists.iter().enumerate() {
@@ -631,7 +631,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return Some(result);
         }
 
-        // Phase 2: If only ONE member has multiple overloads, use that member's
+        // Second pass: If only ONE member has multiple overloads, use that member's
         // overloads as the base and combine each with the single-signature members.
         // But first verify that each single-overload member is compatible with at
         // least one of the multi-overload member's signatures (per tsc's

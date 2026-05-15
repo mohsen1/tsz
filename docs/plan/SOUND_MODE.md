@@ -883,7 +883,7 @@ f("not", "a", "number", 42, true);  // ✅ tsc allows any args!
 
 #### TSZ5001: Unchecked Index Access
 
-> **Implementation: Planned.** Sound mode does NOT currently auto-enable `noUncheckedIndexedAccess`. The index access evaluation in `evaluate.rs:1263` reads the `no_unchecked_indexed_access` parameter from compiler options, but `sound: true` does not force this to `true`. It must be set separately. Wiring this is a one-line change.
+> **Implementation: Planned.** Sound mode does NOT currently auto-enable `noUncheckedIndexedAccess`. The index access evaluation in `crates/tsz-solver/src/evaluation/evaluate.rs:1263` reads the `no_unchecked_indexed_access` parameter from compiler options, but `sound: true` does not force this to `true`. It must be set separately. Wiring this is a one-line change.
 
 **TypeScript allows:**
 ```typescript

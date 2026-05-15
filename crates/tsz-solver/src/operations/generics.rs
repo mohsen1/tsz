@@ -12,7 +12,7 @@ use tsz_common::interner::Atom;
 
 /// Result of validating type arguments against their type parameter constraints.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // Used in operations_tests.rs
+#[allow(dead_code)]
 pub(crate) enum GenericInstantiationResult {
     /// All type arguments satisfy their constraints
     Success,
@@ -43,7 +43,7 @@ pub(crate) enum GenericInstantiationResult {
 /// # Returns
 /// * `GenericInstantiationResult::Success` if all constraints are satisfied
 /// * `GenericInstantiationResult::ConstraintViolation` if any constraint is violated
-#[allow(dead_code)] // Used in operations_tests.rs
+#[allow(dead_code)]
 pub(crate) fn solve_generic_instantiation<C: AssignabilityChecker>(
     type_params: &[TypeParamInfo],
     type_args: &[TypeId],

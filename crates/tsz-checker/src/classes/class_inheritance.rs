@@ -129,9 +129,6 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             return true;
         }
 
-        // DEBUG: Log when we successfully register inheritance
-        // tracing::debug!("Registered inheritance: {:?} extends {:?}", current_sym, parent_symbols);
-
         // No cycles - register with InheritanceGraph
         self.ctx
             .inheritance_graph

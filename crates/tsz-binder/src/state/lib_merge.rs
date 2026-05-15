@@ -129,7 +129,7 @@ impl BinderState {
             return;
         }
 
-        // Phase 1: Clone all lib symbols into local arena, building remap maps
+        // first pass: Clone all lib symbols into local arena, building remap maps
         // Maps: (lib_binder_ptr, old_id) -> new_id
         let mut lib_symbol_remap: FxHashMap<(usize, SymbolId), SymbolId> = FxHashMap::default();
         // Maps: interned symbol name -> new_id (for merging same-name symbols)
@@ -313,7 +313,7 @@ impl BinderState {
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), new_id);
 
-                // Store reverse mapping for Phase 2 of merge_bind_results.
+                // Store reverse mapping for second pass of merge_bind_results.
                 // Arc::make_mut is free when refcount=1 (the case during a
                 // single file's bind, before the bound state is shared).
                 Arc::make_mut(&mut self.lib_symbol_reverse_remap)
@@ -324,7 +324,7 @@ impl BinderState {
             }
         }
 
-        // Phase 2: Remap internal references (parent, exports, members)
+        // second pass: Remap internal references (parent, exports, members)
         // We need a second pass because parents/exports/members may reference symbols
         // that were processed later in the first pass.
         for lib_ctx in lib_contexts {
@@ -368,7 +368,7 @@ impl BinderState {
                             sym.exports = Some(Box::new(remapped_exports));
                         } else if let Some(existing) = sym.exports.as_mut() {
                             for (name, id) in remapped_exports.iter() {
-                                // Always overwrite: Phase 1's alloc_from copies exports
+                                // Always overwrite: first pass's alloc_from copies exports
                                 // with un-remapped SymbolIds. We must replace them with
                                 // the remapped IDs from lib_symbol_remap.
                                 existing.set(name.clone(), *id);
@@ -403,7 +403,7 @@ impl BinderState {
             }
         }
 
-        // Phase 3: Update file_locals with remapped IDs and track lib symbol IDs
+        // First pass: update file_locals with remapped IDs and track lib symbol IDs
         for lib_ctx in lib_contexts {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
@@ -432,10 +432,10 @@ impl BinderState {
             }
         }
 
-        // Phase 4: Propagate semantic_defs from lib binders with remapped SymbolIds.
+        // Second pass: propagate semantic_defs from lib binders with remapped SymbolIds.
         //
         // Lib binders record `semantic_defs` for their top-level declarations during
-        // binding (TypeAlias, Interface, Class, Enum, Namespace). After Phase 1
+        // binding (TypeAlias, Interface, Class, Enum, Namespace). After first pass
         // remaps SymbolIds, the main binder's `semantic_defs` doesn't know about
         // these merged lib symbols. Without this, `pre_populate_def_ids_from_binder`
         // only covers user-declared types, and lib symbols fall through to the

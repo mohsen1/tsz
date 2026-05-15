@@ -19,7 +19,7 @@ pub(super) const MAX_QUALIFIED_NAME_DEPTH: u32 = 100;
 /// Maximum depth for binding pattern recursion ({a: {b: {c: ...}}})
 pub(super) const MAX_BINDING_PATTERN_DEPTH: u32 = 100;
 
-/// Lowering pass - Phase 1 of emission
+/// Lowering pass - first pass of emission
 ///
 /// Walks the AST and produces transform directives based on compiler options.
 pub struct LoweringPass<'a> {

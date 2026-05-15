@@ -259,7 +259,7 @@ impl TypeIdExt for TypeId {
 /// Look up a property by name, using the cached property index if available.
 ///
 /// This consolidates the duplicated `lookup_property` implementations from
-/// `subtype_rules/objects.rs` and `infer_bct.rs`.
+/// `relations/subtype/rules/objects.rs` and `inference/infer_bct.rs`.
 #[inline]
 pub(crate) fn lookup_property<'props>(
     db: &dyn TypeDatabase,

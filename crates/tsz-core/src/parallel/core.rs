@@ -595,7 +595,7 @@ pub struct BindResult {
     /// Per-file alias partners from binder (`TYPE_ALIAS` → `ALIAS` mapping, pre-remap)
     pub alias_partners: Arc<FxHashMap<SymbolId, SymbolId>>,
     pub file_features: crate::binder::FileFeatures,
-    /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
+    /// Binder-captured semantic definitions for top-level declarations (first pass DefId-first).
     /// Maps pre-remap `SymbolId` → `SemanticDefEntry`.
     ///
     /// Shared via `Arc` because the binder owns it as `Arc<FxHashMap<...>>` to
@@ -1034,7 +1034,7 @@ pub fn load_lib_files_for_binding_strict(
         return Ok(Vec::new());
     }
 
-    // Phase 1: Read all files and resolve references.
+    // first pass: Read all files and resolve references.
     //
     // OPTIMIZATION: Pre-read ALL .d.ts files in the lib directory into memory
     // before processing references. This batches all file I/O upfront instead
@@ -1082,7 +1082,7 @@ pub fn load_lib_files_for_binding_strict(
         return Ok(Vec::new());
     }
 
-    // Phase 2: Parse and bind all files in parallel (CPU bound — the expensive part).
+    // Parse and bind all files in parallel (CPU bound — the expensive part).
     // Sort largest files first so rayon's work-stealing starts them early.
     // dom.d.ts (40K lines, 2MB) dominates parse time — without this sort it's
     // file #81 of 87 and becomes the critical-path bottleneck.
@@ -1199,7 +1199,7 @@ fn parse_and_bind_lib_file(
     Ok(lib)
 }
 
-/// Phase 1 helper with pre-loaded file cache. Uses embedded lib contents
+/// first pass helper with pre-loaded file cache. Uses embedded lib contents
 /// first (zero I/O), then pre-read file cache, then disk as last resort.
 fn collect_lib_files_recursive_cached(
     path: &Path,
@@ -1915,7 +1915,7 @@ pub struct BoundFile {
     /// `merge_lib_contexts_into_binder` completes; the merge path uses
     /// `Arc::make_mut`, which is free when refcount=1.
     pub lib_symbol_reverse_remap: Arc<FxHashMap<SymbolId, (usize, SymbolId)>>,
-    /// Per-file semantic definitions for top-level declarations (Phase 1 DefId-first).
+    /// Per-file semantic definitions for top-level declarations (first pass DefId-first).
     /// Contains only entries that originated in this file (post-remap `SymbolIds`).
     /// This enables file-scoped identity without cloning the entire global map.
     ///
@@ -2128,7 +2128,7 @@ pub struct MergedProgram {
     /// When `export type X = ...` and `export * as X from "..."` coexist, the exports table
     /// holds the `TYPE_ALIAS` symbol and this map links it to the ALIAS symbol for value resolution.
     pub alias_partners: Arc<FxHashMap<SymbolId, SymbolId>>,
-    /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
+    /// Binder-captured semantic definitions for top-level declarations (first pass DefId-first).
     /// Maps post-remap `SymbolId` → `SemanticDefEntry` across all files.
     /// The checker reads this during construction to pre-create solver `DefIds`.
     ///
@@ -2766,7 +2766,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     let mut merged_symbols: FxHashMap<Atom, SymbolId> = FxHashMap::default();
 
     // ==========================================================================
-    // PHASE 1: Remap lib symbols to global arena
+    // Pass 1: remap lib symbols to global arena
     // ==========================================================================
     // This creates a mapping from (lib_binder_ptr, local_id) -> global_id
     // so that file_locals can reference lib symbols using global IDs
@@ -2903,13 +2903,13 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     }
 
     // ==========================================================================
-    // PHASE 1.25: Clear un-remapped exports/members from global symbols
+    // Pass 1a: clear un-remapped exports/members from global symbols
     // ==========================================================================
-    // Phase 1's `alloc_from()` copies symbols including their exports/members
+    // first pass's `alloc_from()` copies symbols including their exports/members
     // tables, but those tables contain lib-LOCAL SymbolIds. In the global arena,
     // those same numeric IDs map to DIFFERENT symbols (e.g., lib-local SymbolId(2)
     // might be DateTimeFormat in es5.d.ts, but SymbolId(2) in the global arena is
-    // cancelIdleCallback from dom.d.ts). Phase 1.5 will rebuild exports/members
+    // cancelIdleCallback from dom.d.ts). A later pass rebuilds exports/members
     // with correctly remapped global IDs, so we must clear the corrupt data first.
     {
         let lib_global_ids: FxHashSet<SymbolId> = lib_symbol_remap.values().copied().collect();
@@ -2922,14 +2922,14 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     }
 
     // ==========================================================================
-    // PHASE 1.5: Remap internal references (parent, exports, members)
+    // Pass 1b: remap internal references (parent, exports, members)
     // ==========================================================================
     // After all lib symbols have been allocated in the global arena, we need a
     // second pass to fix up internal SymbolId references. The `alloc_from()` call
     // copies the symbol data including members/exports/parent, but those fields
     // still contain LOCAL SymbolIds from the original lib binder. We must remap
     // them to the corresponding global IDs using lib_symbol_remap.
-    // (This mirrors Phase 2 in state.rs merge_lib_contexts_into_binder.)
+    // (This mirrors the two-pass merge stage in state.rs merge_lib_contexts_into_binder.)
     for lib_binder in &lib_binders {
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
 
@@ -3145,16 +3145,16 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     }
 
     // ==========================================================================
-    // PHASE 1.6: Propagate lib semantic_defs directly to global semantic_defs
+    // Pass 1c: propagate lib semantic_defs directly to global semantic_defs
     // ==========================================================================
     // Lib binders record `semantic_defs` for their top-level declarations during
     // binding (TypeAlias, Interface, Class, Enum, Namespace, Function, Variable).
-    // Phase 1 already remapped lib SymbolIds to global IDs. We propagate the
+    // first pass already remapped lib SymbolIds to global IDs. We propagate the
     // semantic_defs using that remap so the checker can pre-create solver DefIds
     // for ALL lib symbols at construction time.
     //
     // Previously, lib semantic_defs only reached the global map indirectly through
-    // per-file binders (which ran `merge_lib_symbols` Phase 4). That path is
+    // per-file binders (which ran `merge_lib_symbols` pass 4). That path is
     // redundant and order-dependent — by propagating directly here, the merge is
     // self-contained and deterministic.
     for lib_binder in &lib_binders {
@@ -3181,7 +3181,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     global_lib_symbol_ids.extend(lib_symbol_remap.values().copied());
 
     // ==========================================================================
-    // PHASE 2: Process user files
+    // Pass 2: process user files
     // ==========================================================================
 
     for file_idx in 0..results.len() {
@@ -3250,15 +3250,15 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
             for i in 0..result.symbols.len() {
                 let old_id = SymbolId(i as u32);
                 if let Some(sym) = result.symbols.get(old_id) {
-                    // For lib-originated symbols, reuse the Phase 1 global IDs rather than
+                    // For lib-originated symbols, reuse the first pass global IDs rather than
                     // allocating new ones. This prevents duplicate lib symbols and ensures
-                    // the Phase 1.5 remapped exports/members are preserved.
+                    // the pass 1b remapped exports/members are preserved.
                     if result.lib_symbol_ids.contains(&old_id) {
                         // For lib-originated symbols, use the reverse remap to find the
-                        // original (lib_binder_ptr, local_id), then look up the Phase 1
+                        // original (lib_binder_ptr, local_id), then look up the first pass
                         // global ID via lib_symbol_remap. This ensures all lib symbols
-                        // (both top-level and nested) map to their Phase 1 global IDs,
-                        // preserving the Phase 1.5 export/member remapping.
+                        // (both top-level and nested) map to their first pass global IDs,
+                        // preserving the pass 1b export/member remapping.
                         let mut resolved_global_id = None;
                         if let Some(&(binder_ptr, original_local_id)) =
                             result.lib_symbol_reverse_remap.get(&old_id)
@@ -3388,7 +3388,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
 
             // Copy declaration_arenas entries from user file, remapping symbol IDs.
             // Skip lib-originated symbols: their declaration_arenas were already set up
-            // in Phase 1 from the original lib binder. The per-file binder has duplicate
+            // in first pass from the original lib binder. The per-file binder has duplicate
             // arenas for the same declarations (from merge_lib_contexts_into_binder),
             // which would cause interface members to be lowered multiple times.
             for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
@@ -3574,8 +3574,8 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                 }
             }
 
-            // Remap binder's per-file semantic_defs to global SymbolIds (Phase 1 DefId-first).
-            // Skip lib-originated symbols — they were already propagated in Phase 1.6.
+            // Remap binder's per-file semantic_defs to global SymbolIds (first pass DefId-first).
+            // Skip lib-originated symbols — they were already propagated in pass 1c.
             // Also collect per-file entries for BoundFile.semantic_defs (file-scoped identity).
             let mut file_semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry> =
                 FxHashMap::default();
@@ -3620,7 +3620,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
             sorted_remap.sort_unstable_by_key(|(old, _)| old.0);
 
             for &(old_id, new_id) in &sorted_remap {
-                // Skip lib-originated symbols - they were already set up by Phase 1 + 1.5
+                // Skip lib-originated symbols - they were already set up by first pass + 1.5
                 if result.lib_symbol_ids.contains(&old_id) {
                     continue;
                 }
@@ -3745,7 +3745,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                         // Finalize file index on stable declaration locations that
                         // were recorded by per-file binders with `u32::MAX` (the
                         // parallel pipeline does not call `BinderState::set_file_idx`
-                        // before binding). This keeps the Phase 1 stable-location
+                        // before binding). This keeps the first pass stable-location
                         // invariants consistent with `decl_file_idx`.
                         let stamped = file_idx as u32;
                         for stable in &mut updated.stable_declarations {

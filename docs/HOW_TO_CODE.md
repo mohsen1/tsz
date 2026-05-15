@@ -176,9 +176,9 @@ In debug builds, forgotten `leave()` calls trigger a panic on drop. This catches
 
 Use `DepthCounter::with_initial_depth(max, parent_depth)` so the inherited depth is treated as the base level and doesn't trigger debug leak detection when the child context is dropped.
 
-### Don't put limits in `limits.rs` for solver recursion
+### Don't put limits in the shared `tsz-common` limits module for solver recursion
 
-Solver recursion limits (subtype depth, evaluation depth, etc.) are owned by `RecursionProfile` in `recursion.rs`. The `limits.rs` file is for checker/parser/emitter/capacity constants only. This prevents the "centralized file that nobody actually imports" problem.
+Solver recursion limits (subtype depth, evaluation depth, etc.) are owned by `RecursionProfile` in `recursion.rs`. The shared `tsz-common/limits` module is for checker/parser/emitter/capacity constants only. This prevents the "centralized file that nobody actually imports" problem.
 
 ---
 

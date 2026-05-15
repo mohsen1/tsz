@@ -7,12 +7,12 @@
 //!
 //! # Architecture
 //!
-//! ## Phase 1: Lowering Pass
+//! ## first pass: Lowering Pass
 //! The `LoweringPass` walks the AST and produces `TransformDirective`s for nodes that
 //! need transformation (ES5 classes, module exports, etc.). These directives are stored
 //! in a `TransformContext`.
 //!
-//! ## Phase 2: Print Pass
+//! ## Print Pass
 //! The `Printer` checks the `TransformContext` before emitting each node. If a
 //! directive exists, it uses that to guide emission; otherwise it emits the node directly.
 //!

@@ -2988,7 +2988,7 @@ fn no_false_ts2339_for_getter_this_type_after_constructor() {
     // Getter returning `this` declared after constructor should not produce
     // false TS2339 when the getter's return type is accessed through a variable.
     // Previously, the cached_instance_this_type in enclosing_class was stale
-    // (set to the Phase 0 prescan type), causing `this` in the getter body to
+    // (set to the pre-scan type), causing `this` in the getter body to
     // resolve to a partial type missing the getter property itself.
     let diags = check_source_diagnostics(
         r#"
@@ -3016,7 +3016,7 @@ r2.y;
 #[test]
 fn getter_returning_this_after_constructor_resolves_to_this_type() {
     // When a getter that returns `this` is declared after the constructor,
-    // the inferred return type might not match the Phase 3 partial type by
+    // the inferred return type might not match the pre-scan partial type by
     // TypeId equality. The syntactic `method_body_returns_only_this` fallback
     // ensures the getter still gets polymorphic `ThisType`, so that accessing
     // getter properties on the result works correctly.

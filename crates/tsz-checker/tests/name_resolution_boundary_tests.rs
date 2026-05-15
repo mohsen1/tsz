@@ -357,11 +357,11 @@ let t: Direction;
 }
 
 // =========================================================================
-// Phase 2: report_wrong_meaning routing tests
+// Boundary: report_wrong_meaning routing tests
 // =========================================================================
 
 #[test]
-fn phase2_type_alias_in_value_routes_through_report_wrong_meaning() {
+fn boundary_type_alias_in_value_routes_through_report_wrong_meaning() {
     let diags = check(
         r#"
 type StringAlias = string;
@@ -376,7 +376,7 @@ let v = StringAlias;
 }
 
 #[test]
-fn phase2_namespace_as_value_routes_through_report_wrong_meaning() {
+fn boundary_namespace_as_value_routes_through_report_wrong_meaning() {
     let diags = check(
         r#"
 namespace PureTypeNs {
@@ -393,7 +393,7 @@ let v = PureTypeNs;
 }
 
 #[test]
-fn phase2_value_only_in_type_routes_through_boundary_in_type_literal() {
+fn boundary_value_only_in_type_routes_through_boundary_in_type_literal() {
     let diags = check(
         r#"
 function myFunc() { return 1; }
@@ -407,7 +407,7 @@ type T = { x: myFunc };
 }
 
 #[test]
-fn phase2_value_only_in_qualified_type_routes_through_boundary() {
+fn boundary_value_only_in_qualified_type_routes_through_boundary() {
     let diags = check(
         r#"
 namespace NS {
@@ -471,11 +471,11 @@ export {};
 }
 
 // =========================================================================
-// Phase 2: Type-position suggestion collection through boundary
+// Boundary: Type-position suggestion collection through boundary
 // =========================================================================
 
 #[test]
-fn phase2_type_position_not_found_goes_through_boundary() {
+fn boundary_type_position_not_found_goes_through_boundary() {
     let diags = check(
         r#"
 let x: UnknownTypeName;
@@ -488,11 +488,11 @@ let x: UnknownTypeName;
 }
 
 // =========================================================================
-// Phase 2: No duplicate diagnostics after migration
+// Boundary: No duplicate diagnostics after migration
 // =========================================================================
 
 #[test]
-fn phase2_no_double_diagnostic_for_interface_as_value() {
+fn boundary_no_double_diagnostic_for_interface_as_value() {
     let diags = check(
         r#"
 interface IFoo { x: number; }
@@ -507,7 +507,7 @@ let v = IFoo;
 }
 
 #[test]
-fn phase2_no_double_diagnostic_for_namespace_as_value() {
+fn boundary_no_double_diagnostic_for_namespace_as_value() {
     let diags = check(
         r#"
 namespace NS {
@@ -524,7 +524,7 @@ let v = NS;
 }
 
 #[test]
-fn phase2_no_double_diagnostic_for_value_as_type() {
+fn boundary_no_double_diagnostic_for_value_as_type() {
     let diags = check(
         r#"
 const myVal = 42;
@@ -539,7 +539,7 @@ let x: myVal;
 }
 
 // =========================================================================
-// Phase 2: boundary_known_value_no_diagnostic
+// Boundary: boundary_known_value_no_diagnostic
 // =========================================================================
 
 #[test]
@@ -702,12 +702,12 @@ let x: booz.bar;
 }
 
 // =========================================================================
-// Phase 2.5: Wrong-meaning migration through boundary
+// Boundary: Wrong-meaning migration through boundary
 // =========================================================================
 
 /// Primitive keyword types used as values route through wrong-meaning boundary
 #[test]
-fn phase2_primitive_keyword_type_as_value_routes_through_boundary() {
+fn boundary_primitive_keyword_type_as_value_routes_through_boundary() {
     // NOTE: "void" and "undefined" excluded — they are keyword tokens with
     // special parsing rules, not identifiers in `const x = void` context.
     // "null" excluded — it's a valid value (NullKeyword).
@@ -732,7 +732,7 @@ fn phase2_primitive_keyword_type_as_value_routes_through_boundary() {
 
 /// Value-only symbol in type position routes through wrong-meaning boundary (TS2749)
 #[test]
-fn phase2_value_only_type_routes_through_boundary_in_return_type() {
+fn boundary_value_only_type_routes_through_boundary_in_return_type() {
     let diags = check(
         r#"
 const myVal = "hello";
@@ -748,7 +748,7 @@ function f(): myVal { return ""; }
 
 /// Keyword type in `new` expression routes through wrong-meaning boundary
 #[test]
-fn phase2_keyword_type_in_new_routes_through_boundary() {
+fn boundary_keyword_type_in_new_routes_through_boundary() {
     let diags = check("const x = new string();");
     assert!(
         has_diagnostic_code(&diags, 2693),
@@ -758,7 +758,7 @@ fn phase2_keyword_type_in_new_routes_through_boundary() {
 }
 
 #[test]
-fn phase2_unresolved_new_target_reports_ts2304_not_ts2693() {
+fn boundary_unresolved_new_target_reports_ts2304_not_ts2693() {
     let diags = check("new A().b();");
     let codes = diagnostic_codes(&diags);
     assert!(
@@ -828,7 +828,7 @@ f.marked = true;
 
 /// Heritage clause with unresolved name routes through boundary for suggestions
 #[test]
-fn phase2_heritage_unresolved_routes_through_boundary() {
+fn boundary_heritage_unresolved_routes_through_boundary() {
     let diags = check(
         r#"
 class Base {}
@@ -845,7 +845,7 @@ class Derived extends Bace {}
 
 /// `typeof default` emits TS2304 through boundary
 #[test]
-fn phase2_typeof_default_routes_through_boundary() {
+fn boundary_typeof_default_routes_through_boundary() {
     let diags = check("type T = typeof default;");
     assert!(
         has_diagnostic_code(&diags, 2304),
@@ -856,7 +856,7 @@ fn phase2_typeof_default_routes_through_boundary() {
 
 /// Suggestion suppression: accessibility modifiers don't get TS2552
 #[test]
-fn phase2_suggestion_suppression_for_accessibility_modifiers() {
+fn boundary_suggestion_suppression_for_accessibility_modifiers() {
     // "private" used as identifier — should get TS2304, not TS2552
     let diags = check(
         r#"
@@ -877,7 +877,7 @@ function f() {
 
 /// No double diagnostics after migration: globalThis property type-only
 #[test]
-fn phase2_no_double_diagnostic_for_global_type_only() {
+fn boundary_no_double_diagnostic_for_global_type_only() {
     let diags = check(
         r#"
 interface Foo { x: number; }

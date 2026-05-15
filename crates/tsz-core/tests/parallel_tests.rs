@@ -3864,7 +3864,7 @@ fn test_parallel_binding_produces_consistent_symbols() {
 }
 
 // =============================================================================
-// Phase 1 DefId-First Stable Identity Tests (Parallel Pipeline)
+// DefId-First Stable Identity Tests (Parallel Pipeline)
 // =============================================================================
 
 #[test]

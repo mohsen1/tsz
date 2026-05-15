@@ -1269,7 +1269,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Pre-populate `symbol_to_def` and `def_to_symbol` from the binder's
-    /// `semantic_defs` index (Phase 1 DefId-first stable identity).
+    /// `semantic_defs` index (first pass DefId-first stable identity).
     ///
     /// Called once during checker construction so that `get_or_create_def_id`
     /// finds stable `DefIds` already present for top-level declarations. This
@@ -1387,7 +1387,7 @@ impl<'a> CheckerContext<'a> {
             // Use the SemanticDefEntry's self-contained data (name, file_id,
             // span_start) instead of looking up the symbol table. This makes
             // pre-population independent of full symbol residency, which is a
-            // prerequisite for file-skeleton decomposition (Phase 2).
+            // prerequisite for file-skeleton decomposition (second pass).
             let name = self.types.intern_string(&entry.name);
 
             // Create type parameter entries preserving arity and names.

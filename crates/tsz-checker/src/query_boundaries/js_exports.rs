@@ -758,7 +758,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
-        // Phase 1: Collect prototype member assignments (ctor_name, member_name, rhs_idx)
+        // first pass: Collect prototype member assignments (ctor_name, member_name, rhs_idx)
         // from the arena. This borrows the arena immutably.
         let pending: Vec<(String, String, NodeIndex)> = {
             let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
@@ -803,7 +803,7 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         }
 
-        // Phase 2: Infer types for each RHS (borrows self mutably).
+        // Re-scan each RHS under a mutable borrow so types are inferred once in place.
         let mut prototype_props: FxHashMap<String, Vec<(String, TypeId)>> = FxHashMap::default();
         for (ctor_name, member_name, rhs_idx) in pending {
             let rhs_type = self.infer_commonjs_export_rhs_type(target_file_idx, rhs_idx, None);
@@ -815,7 +815,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Phase 3: Flatten into PropertyInfo entries
+        // third pass: Flatten into PropertyInfo entries
         let mut result = Vec::new();
         for members in prototype_props.values() {
             for (idx, (member_name, member_type)) in members.iter().enumerate() {

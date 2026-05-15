@@ -500,7 +500,7 @@ impl<'a> CheckerState<'a> {
         // binder skips re-walking `lib_binders` to avoid re-introducing the
         // symbols it just merged.
         //
-        // Phase 3 of the merge intentionally EXCLUDES file_locals belonging to
+        // third pass of the merge intentionally EXCLUDES file_locals belonging to
         // external-module lib files unless the name appears in the lib's
         // `global_augmentations` map (`crates/tsz-binder/src/state/lib_merge.rs`,
         // around the `is_external_module && !global_augmentations.contains_key`

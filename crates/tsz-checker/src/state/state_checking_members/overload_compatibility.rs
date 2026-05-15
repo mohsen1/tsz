@@ -323,7 +323,9 @@ impl<'a> CheckerState<'a> {
         lowering.lower_type(type_node)
     }
 
-    // Note: type_contains_any, implicit_any_return_display, should_report_implicit_any_return are in type_checking.rs
+    // Note: `implicit_any_return_display` and
+    // `should_report_implicit_any_return` are implemented in
+    // `types/utilities/enum_utils.rs`.
 
     pub(crate) fn maybe_report_implicit_any_return(
         &mut self,

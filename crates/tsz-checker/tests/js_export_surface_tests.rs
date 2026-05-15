@@ -1563,7 +1563,7 @@ lib.myFunc;
 }
 
 // ==========================================================================
-// Phase 2: Additional regression tests for surface-routed consumers
+// Additional regression tests for surface-routed consumers
 // ==========================================================================
 
 // --- module.exports = X (direct export) regression tests ---

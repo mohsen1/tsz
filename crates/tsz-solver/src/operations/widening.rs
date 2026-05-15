@@ -496,7 +496,7 @@ fn widen_type_cached(
             // display) skip this carve-out so e.g. `[true, ...string[]]`
             // continues to widen its fixed-prefix `true` to `boolean` — the
             // inference resolution path explicitly relies on this for
-            // `infer_resolve.rs:721`.
+            // `inference/infer_resolve.rs:721`.
             let widen_booleans_here = widen_boolean_intrinsics
                 && !(preserve_booleans_in_rest_tuples && elements.iter().any(|elem| elem.rest));
             let mut new_elements = Vec::with_capacity(elements.len());
@@ -842,7 +842,7 @@ pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> Type
 /// tsc's TS2367 diagnostic uses widened types for number/boolean operands
 /// (e.g., `true` → `boolean`, `0` → `number`) but preserves string/bigint
 /// literal types in the message text.
-#[allow(dead_code)] // Reserved for TS2367 diagnostic message formatting
+#[allow(dead_code)]
 pub(crate) fn widen_non_string_bigint_literal(
     db: &dyn crate::TypeDatabase,
     type_id: TypeId,

@@ -1627,27 +1627,27 @@ fn checker_files_stay_under_loc_limit() {
     // These ceilings represent the current state — they can only shrink, never grow.
     // Removed after dropping below 2000 LOC:
     //   complex.rs (926), variable_checking/core.rs (1606),
-    //   symbol_types.rs (892), error_reporter/core.rs (1576),
-    //   types/computation/call.rs (1805→split), checkers/call_checker.rs (1396),
+    //   symbol_types.rs (892), error_reporter/core/mod.rs (1576),
+    //   types/computation/call/mod.rs (1805→split), call_checker/mod.rs (1396),
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
-        ("state/type_analysis/computed_commonjs.rs", 2787),
+        ("state/type_analysis/computed_commonjs/mod.rs", 2787),
         ("checkers/jsx/props/resolution.rs", 1600),
         ("checkers/jsx/orchestration", 2397),
         ("checkers/call_checker/overload_resolution.rs", 1400),
         ("checkers/call_checker/candidate_collection.rs", 1100),
-        ("types/property_access_helpers.rs", 2104),
+        ("types/property_access_helpers/mod.rs", 2104),
         // Bumped from 2500 to 2501 for TS2532/TS18048 attribution fix in
         // `this: undefined` property access (module top-level arrow). The
         // file-split plan is still pending.
         ("types/property_access_type/resolve.rs", 2501),
-        ("declarations/import/core.rs", 2562),
+        ("declarations/import/core/mod.rs", 2562),
         ("declarations/import/declaration.rs", 2341),
         ("types/computation/call/inner.rs", 2019),
-        ("jsdoc/resolution.rs", 2357),
-        ("assignability/assignment_checker.rs", 2083),
-        ("error_reporter/core.rs", 2358),
-        ("error_reporter/call_errors.rs", 2554),
+        ("jsdoc/resolution/mod.rs", 2357),
+        ("assignability/assignment_checker/mod.rs", 2083),
+        ("error_reporter/core/mod.rs", 2358),
+        ("error_reporter/call_errors/mod.rs", 2554),
         ("error_reporter/core/diagnostic_source.rs", 2069),
         ("types/type_checking/duplicate_identifiers_helpers.rs", 2244),
         ("types/type_checking/duplicate_identifiers.rs", 2060),
@@ -2588,7 +2588,7 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "types/type_checking/core.rs",
         "declarations/import/core/mod.rs",
         "assignability/assignment_checker/mod.rs",
-        // property_access_type.rs migrated skip_flow_narrowing, not contextual_type
+        // property_access_type/resolve.rs migrated skip_flow_narrowing, not contextual_type
         // Wave 2 migrations:
         "assignability/compound_assignment.rs",
         "error_reporter/call_errors/mod.rs",
@@ -2618,7 +2618,7 @@ fn migrated_files_no_raw_contextual_type_mutation() {
         "checkers/jsx/props/validation.rs",
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
-        "types/computation/call.rs",
+        "types/computation/call",
         "types/computation/object_literal.rs",
         "types/computation/helpers.rs",
         "types/computation/call_display.rs",
@@ -2803,7 +2803,7 @@ fn migrated_files_no_raw_contextual_assertion_mutation() {
         "checkers/jsx/props/validation.rs",
         "checkers/jsx/runtime.rs",
         "checkers/jsx/diagnostics.rs",
-        "types/computation/call.rs",
+        "types/computation/call",
         "types/computation/helpers.rs",
         "types/computation/object_literal.rs",
         "types/function_type.rs",
@@ -3097,7 +3097,7 @@ fn no_ambient_current_callable_type() {
         "src/checkers/call_checker/candidate_collection.rs",
         "src/checkers/call_checker/diagnostics.rs",
         "src/checkers/call_checker/overload_resolution.rs",
-        "src/types/computation/call.rs",
+        "src/types/computation/call",
         "src/types/computation/call_inference.rs",
         "src/types/computation/call_display.rs",
         "src/state/type_analysis/computed_helpers.rs",
@@ -3664,7 +3664,7 @@ fn test_class_query_boundary_uses_relation_request_for_property_mismatch() {
 }
 
 // =============================================================================
-// Phase 2: Object/property/call compatibility through canonical boundary
+// Second pass: Object/property/call compatibility through canonical boundary
 // =============================================================================
 
 /// `RelationOutcome` must include `property_classification` for structured
@@ -4166,23 +4166,23 @@ fn test_checker_file_size_ceiling() {
     // Ceiling: number of checker source files exceeding 2000 LOC.
     // This number must only shrink as files are split into smaller modules.
     // Current oversized files (as of 2026-04-03):
-    //   checkers/call_checker.rs, checkers/generic_checker.rs,
-    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs, checkers/jsx/orchestration.rs,
+    //   checkers/call_checker/mod.rs, checkers/generic_checker/mod.rs,
+    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs, checkers/jsx/orchestration/mod.rs,
     //   types/type_checking/duplicate_identifiers.rs, types/function_type.rs,
     //   types/queries/lib.rs, types/utilities/core.rs, types/computation/binary.rs,
-    //   types/computation/identifier.rs, types/computation/call/inner.rs,
-    //   types/computation/object_literal.rs, types/property_access_helpers.rs,
-    //   types/property_access_type.rs, types/class_type/core.rs,
+    //   types/computation/identifier/mod.rs, types/computation/call/inner.rs,
+    //   types/computation/object_literal/mod.rs, types/property_access_helpers/mod.rs,
+    //   types/property_access_type/mod.rs, types/class_type/core.rs,
     //   types/class_type/constructor.rs,
-    //   classes/class_checker.rs, classes/class_implements_checker.rs,
-    //   declarations/import/core.rs, declarations/import/declaration.rs,
+    //   classes/class_checker.rs, classes/class_implements_checker/mod.rs,
+    //   declarations/import/core/mod.rs, declarations/import/declaration.rs,
     //   state/variable_checking/core.rs,
-    //   state/variable_checking/variable_helpers.rs, state/variable_checking/destructuring.rs,
-    //   state/type_analysis/computed_commonjs.rs, state/type_analysis/computed.rs,
+    //   state/variable_checking/variable_helpers/mod.rs, state/variable_checking/destructuring.rs,
+    //   state/type_analysis/computed_commonjs/mod.rs, state/type_analysis/computed/mod.rs,
     //   state/type_resolution/module.rs,
-    //   jsdoc/params.rs, jsdoc/resolution.rs, symbols/scope_finder.rs,
-    //   assignability/assignment_checker.rs, error_reporter/core.rs,
-    //   error_reporter/call_errors.rs, flow/control_flow/core.rs
+    //   jsdoc/params.rs, jsdoc/resolution/mod.rs, symbols/scope_finder.rs,
+    //   assignability/assignment_checker/mod.rs, error_reporter/core/mod.rs,
+    //   error_reporter/call_errors/mod.rs, flow/control_flow/core.rs
     const FILE_COUNT_CEILING: usize = 35;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,

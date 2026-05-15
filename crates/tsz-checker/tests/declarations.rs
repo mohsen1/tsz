@@ -354,10 +354,12 @@ x: number;  // Should NOT report (strict mode disabled)
     }
 }
 
-// ========== Phase 2 Tests: Control Flow Analysis ==========
+// ==========
+// Control-flow constructor initialization tests
+// ==========
 
 #[test]
-fn test_ts2564_phase2_simple_constructor_initialization() {
+fn test_ts2564_simple_constructor_initialization() {
     // Test that TS2564 is NOT reported for properties initialized in simple constructor
     let source = r"
 class Foo {
@@ -405,7 +407,7 @@ constructor() {
 }
 
 #[test]
-fn test_ts2564_phase2_conditional_all_paths_assigned() {
+fn test_ts2564_conditional_all_paths_assigned() {
     // Test that TS2564 is NOT reported when property is initialized on all code paths
     let source = r"
 class Foo {
@@ -457,7 +459,7 @@ constructor(flag: boolean) {
 }
 
 #[test]
-fn test_ts2564_phase2_conditional_not_all_paths_assigned() {
+fn test_ts2564_conditional_not_all_paths_assigned() {
     // Test that TS2564 IS reported when property is not initialized on all code paths
     let source = r"
 class Foo {
@@ -508,7 +510,7 @@ constructor(flag: boolean) {
 }
 
 #[test]
-fn test_ts2564_phase2_return_statement_exits() {
+fn test_ts2564_return_statement_exits() {
     // Test that TS2564 IS reported when property is not initialized before early return
     let source = r"
 class Foo {
@@ -559,7 +561,7 @@ constructor(flag: boolean) {
 }
 
 #[test]
-fn test_ts2564_phase2_multiple_properties() {
+fn test_ts2564_multiple_properties() {
     // Test mixed scenario: some properties initialized, some not
     let source = r"
 class Foo {

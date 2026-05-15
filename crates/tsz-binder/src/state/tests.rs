@@ -4066,7 +4066,7 @@ interface Foo {
 }
 
 // =============================================================================
-// Phase 1 DefId-First Stable Identity Tests
+// first pass DefId-First Stable Identity Tests
 // =============================================================================
 
 /// Helper: parse + bind a source file and return the binder state.
@@ -7290,7 +7290,7 @@ fn flow_nodes_arc_share_is_zero_copy() {
 }
 
 // =============================================================================
-// Phase 1 — `StableLocation` plumbing
+// first pass — `StableLocation` plumbing
 //
 // These tests verify the binder populates arena-free declaration locations
 // in lockstep with the existing `NodeIndex` fields. See
@@ -7351,7 +7351,7 @@ fn stable_location_set_file_idx_if_unassigned_is_latching() {
 fn binder_populates_stable_declarations_in_lockstep() {
     // Every `NodeIndex` on `Symbol::declarations` must have a sibling entry
     // on `Symbol::stable_declarations`, and its `(pos, end)` must equal the
-    // declaration node's source span. This is the core Phase 1 invariant.
+    // declaration node's source span. This is the core first pass invariant.
     let source = r"
 function foo() {}
 interface Bar { x: number }
@@ -7452,7 +7452,7 @@ fn stable_locations_default_file_idx_when_driver_unassigned() {
 
 #[test]
 fn stable_locations_identify_declarations_after_arena_drop() {
-    // Simulate the Phase 5 scenario: user binds a file, the driver drops
+    // Simulate the stale-driver scenario: user binds a file, the driver drops
     // the arena, but the `StableLocation`s are enough to reconstruct
     // `(file_idx, span)` and match them against a freshly reparsed file.
     let source = r"
@@ -7517,8 +7517,8 @@ class Qux {}
 // BinderState round-trip (lib snapshot campaign)
 // =============================================================================
 
-/// Phase 1.5 (`PERFORMANCE_PLAN.md)`: `BinderState` must round-trip
-/// through serde with diagnostic-identical behaviour, otherwise the
+/// Snapshot round-trip check (`docs/plan/PERFORMANCE_PLAN.md`): `BinderState` must
+/// round-trip through serde with diagnostic-identical behavior, otherwise the
 /// disk-backed lib cache would silently corrupt symbol resolution. The
 /// resolution caches (`resolved_export_cache`, `resolved_identifier_cache`)
 /// are `#[serde(skip)]` because they're regenerable; this test verifies

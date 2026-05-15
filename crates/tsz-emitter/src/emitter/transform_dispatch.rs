@@ -1,7 +1,7 @@
 //! Transform dispatch logic for the emitter.
 //!
 //! Contains the `EmitDirective` enum and all methods related to applying
-//! transform directives during emission (Phase 2 architecture).
+//! transform directives during emission (transform architecture).
 
 use super::declarations::class::class_has_self_references;
 use super::*;
@@ -84,7 +84,7 @@ enum EmitDirective {
 
 impl<'a> Printer<'a> {
     // =========================================================================
-    // Transform Application (Phase 2 Architecture)
+    // Transform Application (Directive Architecture)
     // =========================================================================
 
     fn emit_directive_from_transform(directive: &TransformDirective) -> EmitDirective {

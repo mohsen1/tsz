@@ -1373,7 +1373,7 @@ impl<'a> CheckerState<'a> {
         let comments = &sf.comments;
         let mut results = Vec::new();
         let mut handled_comment_positions = Vec::new();
-        // Phase 1: Check each top-level statement's leading JSDoc
+        // first pass: Check each top-level statement's leading JSDoc
         for &stmt_idx in statements {
             let Some(node) = self.ctx.arena.get(stmt_idx) else {
                 continue;
@@ -1414,7 +1414,7 @@ impl<'a> CheckerState<'a> {
             };
             results.push((tag, Some((pos, len))));
         }
-        // Phase 2: Check for dangling JSDoc comments not attached to any statement
+        // Second pass: Check for dangling JSDoc comments not attached to any statement
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
         for comment in comments {
             if !is_jsdoc_comment(comment, source_text) {

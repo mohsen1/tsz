@@ -282,7 +282,7 @@ impl BinderState {
         // so we have to traverse `lib_binders` directly to find them.
         //
         // Post-merge: every globally-visible lib symbol has been hoisted into
-        // `self.file_locals` by `merge_lib_contexts_into_binder` (Phase 3).
+        // `self.file_locals` by `merge_lib_contexts_into_binder` (third pass).
         // Module-scoped lib names that do NOT belong in the global scope are
         // intentionally excluded from the merge — re-walking `lib_binders`
         // would put them back. Callers that legitimately need access to those

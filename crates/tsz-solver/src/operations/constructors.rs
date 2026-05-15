@@ -313,10 +313,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// Uses the same three-phase approach as `resolve_union_call`:
     ///
-    /// Phase 1: Arity check against the combined signature (max of all members'
+    /// first pass: Arity check against the combined signature (max of all members'
     ///          required counts, intersection of param types, union of return types).
-    /// Phase 2: Per-member resolution to collect actual return types.
-    /// Phase 3: Validate arg types against the combined (intersected) param types.
+    /// Second pass: Per-member resolution to collect actual return types.
+    /// third pass: Validate arg types against the combined (intersected) param types.
     ///
     /// When no combined signature exists (any member has multiple/generic construct
     /// signatures), falls back to strict per-member semantics: ALL members must
@@ -334,7 +334,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // and unions return types.
         let combined = self.try_compute_combined_union_construct_signature(&members);
 
-        // Phase 1: Argument count validation using combined signature.
+        // first pass: Argument count validation using combined signature.
         if let Some(ref combined) = combined {
             if arg_types.len() < combined.min_required {
                 return CallResult::ArgumentCountMismatch {
@@ -354,7 +354,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Phase 2: Per-member resolution to collect return types and failures.
+        // Second pass: Per-member resolution to collect return types and failures.
         let mut return_types = Vec::new();
         let mut failures = Vec::new();
 
@@ -379,7 +379,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Phase 3 (combined path): validate arg types against intersected param types.
+        // third pass (combined path): validate arg types against intersected param types.
         if let Some(ref combined) = combined {
             // When all members succeeded, return the union of their return types.
             if failures.is_empty() {

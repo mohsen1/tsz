@@ -154,7 +154,7 @@ impl LibFile {
 /// and merges them into a single `LibFile` where all symbols are in one binder
 /// with remapped `SymbolIds` to avoid collisions.
 #[must_use]
-#[allow(dead_code)] // Reserved for future multi-lib merging support
+#[allow(dead_code)]
 pub(crate) fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
     use crate::state::LibContext as BinderLibContext;
 

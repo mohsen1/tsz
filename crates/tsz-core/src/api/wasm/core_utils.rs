@@ -18,7 +18,7 @@ pub enum Comparison {
 }
 
 // =============================================================================
-// String Comparison Utilities (Phase 1.1)
+// String Comparison Utilities
 // =============================================================================
 
 /// Compare two strings using a case-sensitive ordinal comparison.
@@ -152,7 +152,7 @@ pub fn equate_strings_case_insensitive(a: &str, b: &str) -> bool {
 }
 
 // =============================================================================
-// Path Utilities (Phase 1.2)
+// Path Utilities
 // =============================================================================
 
 /// Directory separator used internally (forward slash).
@@ -297,7 +297,7 @@ pub fn to_file_name_lower_case(x: &str) -> String {
 }
 
 // =============================================================================
-// Character Classification (Phase 1.3 - Scanner Prep)
+// Character Classification
 // =============================================================================
 
 /// Check if character is a line break (LF, CR, LS, PS).

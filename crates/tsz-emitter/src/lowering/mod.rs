@@ -1,4 +1,4 @@
-//! Lowering Pass - Phase 1 of the Transform/Print Architecture
+//! Lowering Pass - first pass of the Transform/Print Architecture
 //!
 //! This module implements the first phase of emission: analyzing the AST and
 //! producing transform directives. The lowering pass walks the Node AST

@@ -82,7 +82,7 @@ impl<'a> CheckerState<'a> {
         // Without strictNullChecks, null/undefined are in every type's domain (assignable
         // to number), so tsc does NOT emit TS18050 for binary operations.
         // Note: TS18050 for property access on literal null/undefined (`null.foo`) is
-        // independent of strictNullChecks and handled separately in property_access_type.rs.
+        // independent of strictNullChecks and handled separately in property_access_type/mod.rs.
         if !self.ctx.compiler_options.strict_null_checks {
             return false;
         }

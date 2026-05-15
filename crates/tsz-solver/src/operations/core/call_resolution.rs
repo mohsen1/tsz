@@ -592,7 +592,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Compute max_allowed using tsc's Phase 1 matching semantics:
+        // Compute max_allowed using tsc's first pass matching semantics:
         // The member(s) with the highest min_required become the "base" of the
         // combined signature (all other members' signatures partially match them
         // because their min ≤ base.min). The combined inherits the base member's
@@ -929,7 +929,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
 
-        // Phase 0: Check `this` parameter for the union.
+        // Pass 0: check `this` parameter for the union.
         // TSC computes the intersection of all members' `this` types and checks the
         // calling context against it. A call fails with TS2684 if the `this` context
         // doesn't satisfy ALL members' `this` requirements.
@@ -951,10 +951,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 None
             };
 
-        // Phase 0.5: Check multi-overload union members for compatible signatures.
+        // Pass 0.5: check multi-overload union members for compatible signatures.
         // When multiple union members have multiple overloads, first try to find
         // compatible signatures across members. If found, validate `this` types.
-        // If not found, fall through to per-member resolution (Phase 2) which
+        // If not found, fall through to per-member resolution (second pass) which
         // resolves each member's overloads independently — this matches tsc's
         // behavior for cases like `(A[] | B[]).filter(cb)` where each array type
         // has overloaded `filter` but per-member resolution succeeds.
@@ -1138,7 +1138,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // and intersected parameter types with unioned return types.
         let combined = self.try_compute_combined_union_signature(&members);
 
-        // Phase 1: Argument count validation using combined signature.
+        // first pass: Argument count validation using combined signature.
         // This catches cases where members have different param counts —
         // the combined signature requires the maximum number of params.
         if let Some(ref combined) = combined {
@@ -1160,7 +1160,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Phase 2: Per-member resolution for argument type checking.
+        // Second pass: Per-member resolution for argument type checking.
         // This avoids over-constraining via intersection when tsc would reduce the union.
         let compatibility = if combined.is_some() {
             // Combined signature already validated arity; skip old bounds check
@@ -1187,8 +1187,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 CallResult::ThisTypeMismatch { .. } => {
                     // Per-member `this` failures mean arguments were validated
                     // successfully — only the `this` context was wrong. In union
-                    // context, `this` is checked at the union level (Phase 0
-                    // deferred check), so treat this as argument-success and
+                    // context, `this` is checked at the union level (deferred
+                    // union-level check), so treat this as argument-success and
                     // extract the member's return type.
                     if let Some(ret) = crate::type_queries::get_return_type(self.interner, member) {
                         return_types.push(ret);
@@ -1206,7 +1206,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
         }
-        // Phase 3: Result aggregation.
+        // third pass: Result aggregation.
         if let Some(ref combined) = combined
             && !arg_types
                 .iter()

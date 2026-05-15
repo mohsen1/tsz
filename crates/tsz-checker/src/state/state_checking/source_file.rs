@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
             self.register_function_def_ids_early();
         }
 
-        // Phase 1 DefId-first: warm local caches with stable DefIds.
+        // first pass DefId-first: warm local caches with stable DefIds.
         //
         // When the checker received a pre-populated shared DefinitionStore
         // from the merge pipeline, we warm local caches in one pass from
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.pre_populate_def_ids_from_lib_binders();
         }
 
-        // Phase 1c: resolve cross-batch heritage. Now that all DefIds from both
+        // first pass C: resolve cross-batch heritage. Now that all DefIds from both
         // the primary binder and lib binders are registered, resolve heritage_names
         // (e.g., `class MyError extends Error`) to DefId-level extends/implements.
         // Skip when the DefinitionStore was fully populated at merge time

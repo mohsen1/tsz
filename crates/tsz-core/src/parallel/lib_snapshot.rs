@@ -65,7 +65,7 @@ const ENV_VAR: &str = "TSZ_LIB_CACHE";
 const ENV_DIR: &str = "TSZ_LIB_CACHE_DIR";
 
 /// Persistent representation of one cached lib file's full parse + bind
-/// state. Phase 1.4-final: persists both `NodeArena` (parser AST + its
+/// state: persists both `NodeArena` (parser AST + its
 /// interner, see PR #4528 for round-trip foundation) and `BinderState`
 /// (symbols + scopes + flow + declared modules, see PRs #1-#3).
 #[derive(serde::Serialize, serde::Deserialize)]

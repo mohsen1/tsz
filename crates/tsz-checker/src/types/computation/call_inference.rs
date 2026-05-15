@@ -2864,7 +2864,7 @@ impl<'a> CheckerState<'a> {
                 if Self::should_preserve_speculative_call_diagnostic(diag) {
                     return true;
                 }
-                // --- Phase 1: dedup by (code, start) against pre-existing + already-kept ---
+                // --- first pass: dedup by (code, start) against pre-existing + already-kept ---
                 let key = (diag.code, diag.start);
                 if !seen_new_diags.insert(key) {
                     return false;
@@ -2873,7 +2873,7 @@ impl<'a> CheckerState<'a> {
                 if seen_diag_keys.iter().any(|existing| existing.0 == diag.code && existing.1 == diag.start) {
                     return false;
                 }
-                // --- Phase 2: classify the diagnostic ---
+                // --- Second pass: classify the diagnostic ---
                 let is_provisional_implicit_any = matches!(
                     diag.code,
                     diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
@@ -3047,7 +3047,7 @@ impl<'a> CheckerState<'a> {
                     || is_nullish_callback_body_diag
                     || is_concrete_callback_implicit_any
                     || !(is_object_literal_diag || is_function_arg_implicit_any_diag);
-                // --- Phase 3: exact-message dedup for kept diagnostics ---
+                // --- Pass 3: exact-message dedup for kept diagnostics ---
                 if keep {
                     let full_key = (
                         diag.code,

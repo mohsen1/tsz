@@ -1,6 +1,6 @@
 //! AST-based validity helpers for index-signature parameter type annotations.
 //!
-//! Extracted from `index_signature_checks.rs` to keep the parent module
+//! Extracted from `crates/tsz-checker/src/state/state_checking_members/index_signature_checks.rs` to keep the parent module
 //! under the 2000-LOC ceiling. Methods live on `CheckerState` so they can
 //! reuse the type-position symbol resolver and the checker's type-parameter
 //! stack.

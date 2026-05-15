@@ -286,7 +286,7 @@ const MAX_EMIT_RECURSION_DEPTH: u32 = 10_000;
 ///
 /// Uses `SourceWriter` for output generation (enables source map support).
 /// Uses `EmitContext` for transform-specific state management.
-/// Uses `TransformContext` for directive-based transforms (Phase 2 architecture).
+/// Uses `TransformContext` for directive-based transform orchestration.
 pub struct Printer<'a> {
     /// The `NodeArena` containing the AST.
     pub(crate) arena: &'a NodeArena,
@@ -1122,7 +1122,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Create a new Printer with transform directives.
-    /// This is the Phase 2 constructor that accepts pre-computed transforms.
+    /// This constructor accepts pre-computed transforms.
     pub fn with_transforms(arena: &'a NodeArena, transforms: TransformContext) -> Self {
         let mut printer = Self::new(arena);
         printer.transforms = transforms;

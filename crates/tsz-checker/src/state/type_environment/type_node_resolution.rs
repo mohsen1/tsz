@@ -567,8 +567,6 @@ impl<'a> CheckerState<'a> {
     // Enhanced to provide suggestions for similar names, import suggestions, and
     // library change suggestions for ES2015+ types.
 
-    // Note: can_merge_symbols is in type_checking.rs
-
     /// Check if a type name is a built-in mapped type utility.
     /// These are standard TypeScript utility types that transform other types.
     /// When used with type arguments, they should not cause "cannot find type" errors.

@@ -1893,5 +1893,5 @@ impl<'a> CheckerState<'a> {
     }
 
     // Interface merge compatibility, name matching, property name utilities,
-    // and node containment are in `type_checking/declarations_utils.rs`.
+    // and node containment are in `crates/tsz-checker/src/types/type_checking/declarations_utils.rs`.
 }
