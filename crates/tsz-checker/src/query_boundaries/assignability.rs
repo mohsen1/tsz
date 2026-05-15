@@ -1,3 +1,4 @@
+use tsz_common::Atom;
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
     TypeResolver,
@@ -771,9 +772,6 @@ pub(crate) fn classify_object_properties(
         return Some(PropertyClassification::default());
     }
 
-    // Collect all target property names from all branches (union/intersection/object).
-    let target_property_names = collect_target_property_names(db, target);
-
     let mut classification = PropertyClassification::default();
 
     // Check for index signatures, empty object targets, and special shapes.
@@ -840,31 +838,25 @@ pub(crate) fn classify_object_properties(
         }
     }
 
-    // Collect target properties for compatibility checking.
-    let target_props = collect_target_properties(db, target);
+    // Collect target properties for presence and compatibility checking.
+    let target_props = collect_target_property_index(db, target);
 
     // Classify each source property and check compatibility of matching ones.
     let mut all_matching_compatible = true;
     let mut matching_props = Vec::new();
 
     for source_prop in source_props {
-        tsz_common::perf_counters::record_property_classification_string_fallback_source_lookup();
-        let name_str = db.resolve_atom_ref(source_prop.name);
-        if target_property_names.contains(name_str.as_ref()) {
+        if let Some(target_prop_type) = target_props.matching_type_for(db, source_prop) {
             // Property exists in target — check type compatibility.
-            if let Some(target_prop_type) = target_props.get(name_str.as_ref()).copied() {
-                // Account for optional properties: target `prop?: T` accepts `T | undefined`.
-                let effective_target_type = target_prop_type;
-                if !tsz_solver::is_subtype_of(db, source_prop.type_id, effective_target_type) {
-                    all_matching_compatible = false;
-                    classification.incompatible_properties.push((
-                        source_prop.name,
-                        source_prop.type_id,
-                        effective_target_type,
-                    ));
-                } else {
-                    matching_props.push(source_prop.clone());
-                }
+            // Account for optional properties: target `prop?: T` accepts `T | undefined`.
+            let effective_target_type = target_prop_type;
+            if !tsz_solver::is_subtype_of(db, source_prop.type_id, effective_target_type) {
+                all_matching_compatible = false;
+                classification.incompatible_properties.push((
+                    source_prop.name,
+                    source_prop.type_id,
+                    effective_target_type,
+                ));
             } else {
                 matching_props.push(source_prop.clone());
             }
@@ -955,25 +947,71 @@ fn shape_index_signature_accepts_property(
     string_index.is_some()
 }
 
+/// Property-name index for assignability failure classification.
+///
+/// The normal path keys by `Atom`, which is the stable property-name identity
+/// available on `PropertyInfo`. The fallback string scan keeps behavior intact
+/// if a source property arrives with a name identity that cannot be matched by
+/// atom alone.
+#[derive(Default)]
+struct TargetPropertyIndex {
+    by_atom: std::collections::HashMap<Atom, TypeId>,
+    fallback_order: Vec<(Atom, TypeId)>,
+}
+
+impl TargetPropertyIndex {
+    fn insert(&mut self, prop: &PropertyInfo) {
+        self.by_atom.entry(prop.name).or_insert(prop.type_id);
+        self.fallback_order.push((prop.name, prop.type_id));
+    }
+
+    fn matching_type_for(
+        &self,
+        db: &dyn TypeDatabase,
+        source_prop: &PropertyInfo,
+    ) -> Option<TypeId> {
+        if let Some(target_type) = self.by_atom.get(&source_prop.name).copied() {
+            return Some(target_type);
+        }
+
+        tsz_common::perf_counters::record_property_classification_string_fallback_source_lookup();
+        self.matching_type_by_resolved_name(db, source_prop.name)
+    }
+
+    fn matching_type_by_resolved_name(
+        &self,
+        db: &dyn TypeDatabase,
+        source_name: Atom,
+    ) -> Option<TypeId> {
+        let source_text = db.resolve_atom_ref(source_name);
+        self.fallback_order
+            .iter()
+            .find_map(|(target_name, target_type)| {
+                tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
+                let target_text = db.resolve_atom_ref(*target_name);
+                if target_text.as_ref() == source_text.as_ref() {
+                    tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
+                    Some(*target_type)
+                } else {
+                    None
+                }
+            })
+    }
+}
+
 /// Collect all property names and their types from a target type.
 ///
-/// Returns a map from property name to type for type compatibility checking.
 /// For unions, uses the type from the first member that has the property.
 /// For intersections, uses the type from the first member that has the property.
-fn collect_target_properties(
-    db: &dyn TypeDatabase,
-    target: TypeId,
-) -> std::collections::HashMap<String, TypeId> {
+fn collect_target_property_index(db: &dyn TypeDatabase, target: TypeId) -> TargetPropertyIndex {
     use super::common::{intersection_members, union_members};
-    let mut props = std::collections::HashMap::new();
+    let mut props = TargetPropertyIndex::default();
 
     if let Some(shape) =
         crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
     {
         for prop in shape.properties.iter() {
-            tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
-            let name = db.resolve_atom(prop.name);
-            props.entry(name).or_insert(prop.type_id);
+            props.insert(prop);
         }
     }
 
@@ -983,9 +1021,7 @@ fn collect_target_properties(
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
                 for prop in shape.properties.iter() {
-                    tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
-                    let name = db.resolve_atom(prop.name);
-                    props.entry(name).or_insert(prop.type_id);
+                    props.insert(prop);
                 }
             }
         }
@@ -997,61 +1033,13 @@ fn collect_target_properties(
                 crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
             {
                 for prop in shape.properties.iter() {
-                    tsz_common::perf_counters::record_property_classification_string_fallback_target_type();
-                    let name = db.resolve_atom(prop.name);
-                    props.entry(name).or_insert(prop.type_id);
+                    props.insert(prop);
                 }
             }
         }
     }
 
     props
-}
-
-/// Collect all property names from a target type (handling unions/intersections).
-fn collect_target_property_names(
-    db: &dyn TypeDatabase,
-    target: TypeId,
-) -> std::collections::HashSet<String> {
-    use super::common::{intersection_members, union_members};
-    let mut names = std::collections::HashSet::new();
-
-    if let Some(shape) =
-        crate::query_boundaries::common::get_merged_object_shape_for_type(db, target)
-    {
-        for prop in shape.properties.iter() {
-            tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
-            names.insert(db.resolve_atom(prop.name));
-        }
-    }
-
-    if let Some(members) = union_members(db, target) {
-        for &member in &members {
-            if let Some(shape) =
-                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
-            {
-                for prop in shape.properties.iter() {
-                    tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
-                    names.insert(db.resolve_atom(prop.name));
-                }
-            }
-        }
-    }
-
-    if let Some(members) = intersection_members(db, target) {
-        for &member in members.iter() {
-            if let Some(shape) =
-                crate::query_boundaries::common::get_merged_object_shape_for_type(db, member)
-            {
-                for prop in shape.properties.iter() {
-                    tsz_common::perf_counters::record_property_classification_string_fallback_target_name();
-                    names.insert(db.resolve_atom(prop.name));
-                }
-            }
-        }
-    }
-
-    names
 }
 
 /// Check if an object shape represents the global Object or Function interface.
@@ -1164,4 +1152,37 @@ pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolv
         policy,
         context,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn target_property_index_uses_first_atom_match() {
+        let db = TypeInterner::new();
+        let name = db.intern_string("renamed");
+        let mut index = TargetPropertyIndex::default();
+
+        index.insert(&PropertyInfo::new(name, TypeId::STRING));
+        index.insert(&PropertyInfo::new(name, TypeId::NUMBER));
+
+        let source = PropertyInfo::new(name, TypeId::BOOLEAN);
+        assert_eq!(index.matching_type_for(&db, &source), Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn target_property_index_keeps_string_fallback() {
+        let db = TypeInterner::new();
+        let name = db.intern_string("fallbackName");
+        let mut index = TargetPropertyIndex::default();
+
+        index.fallback_order.push((name, TypeId::NUMBER));
+
+        assert_eq!(
+            index.matching_type_by_resolved_name(&db, name),
+            Some(TypeId::NUMBER)
+        );
+    }
 }
