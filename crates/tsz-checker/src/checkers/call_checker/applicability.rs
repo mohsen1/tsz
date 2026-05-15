@@ -226,6 +226,22 @@ impl<'a> CheckerState<'a> {
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
     ) -> CallResult {
+        self.resolve_new_with_checker_adapter_evidence(
+            type_id,
+            arg_types,
+            force_bivariant_callbacks,
+            contextual_type,
+        )
+        .result
+    }
+
+    pub(crate) fn resolve_new_with_checker_adapter_evidence(
+        &mut self,
+        type_id: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+    ) -> CheckerCallResolution {
         self.ensure_relation_input_ready(type_id);
         self.ensure_relation_inputs_ready(arg_types);
 
@@ -234,13 +250,19 @@ impl<'a> CheckerState<'a> {
             state: self,
             relation_evidence: Vec::new(),
         };
-        resolve_new(
+        let result = resolve_new(
             db,
             &mut checker,
             type_id,
             arg_types,
             force_bivariant_callbacks,
             contextual_type,
-        )
+        );
+        CheckerCallResolution {
+            result,
+            selected_type_predicate: None,
+            instantiated_params: None,
+            relation_evidence: checker.relation_evidence,
+        }
     }
 }

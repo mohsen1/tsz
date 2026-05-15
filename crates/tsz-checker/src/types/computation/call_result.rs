@@ -39,7 +39,7 @@ impl<'a> CheckerState<'a> {
             .map(|evidence| &evidence.outcome)
     }
 
-    fn report_argument_assignability_with_evidence(
+    pub(crate) fn report_argument_assignability_with_evidence(
         &mut self,
         relation_evidence: &[CallRelationEvidence],
         source: TypeId,

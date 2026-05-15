@@ -1504,12 +1504,14 @@ impl<'a> CheckerState<'a> {
         // Delegate to Solver for constructor resolution, passing contextual type
         // so generic constructors like `new Promise(...)` can infer type parameters
         // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
-        let result = self.resolve_new_with_checker_adapter(
+        let new_resolution = self.resolve_new_with_checker_adapter_evidence(
             constructor_type,
             &arg_types,
             false,
             contextual_type,
         );
+        let result = new_resolution.result;
+        let relation_evidence = new_resolution.relation_evidence;
 
         match result {
             CallResult::Success(mut return_type) => {
@@ -1819,8 +1821,12 @@ impl<'a> CheckerState<'a> {
                             false
                         };
                         if !elaborated {
-                            let _ =
-                                self.check_argument_assignable_or_report(actual, expected, arg_idx);
+                            let _ = self.report_argument_assignability_with_evidence(
+                                &relation_evidence,
+                                actual,
+                                expected,
+                                arg_idx,
+                            );
                         }
                     }
                 }
