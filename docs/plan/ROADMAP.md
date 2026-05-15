@@ -83,6 +83,10 @@ changes the picture.
    enablers inside the tracks below. Broad checker thinning, display rewrites,
    LSP/WASM expansion, and generalized query-engine refactors stay on the back
    burner until a release gate or bug family requires them.
+9. Emit architecture is moving to a TS6+ direct-to-target lane: `ES2015` is the
+   strategic floor, `ES3`/`ES5` and deprecated legacy module outputs are
+   compatibility lanes, and already-emitted JS/DTS string rewrites are tracked
+   as output-surgery debt by `scripts/emit/audit-output-surgery.py`.
 
 ## Coordination Model
 
