@@ -612,25 +612,27 @@ impl<'a> CheckerState<'a> {
         receiver_type
     }
 
-    /// Check if an element access on a generic type parameter would be an unsafe write.
+    /// Check if an element access on a generic type would be an unsafe write.
     ///
-    /// Returns `true` when the object type is generic and the index type is a broad
-    /// primitive key space (`string`, `number`, `symbol`, or a union of them), and
-    /// the write would flow through an index-signature-like path. In this case,
-    /// TS2862 should be emitted.
+    /// Returns `true` when the receiver's key space is genuinely generic — i.e.
+    /// the write through `obj[k]` cannot be statically checked against a
+    /// concretely declared index signature value type — so TS2862 should fire.
     ///
     /// Does NOT fire when:
     /// - The index is a specific literal (`"x"`, `1`) — resolves to a named property
     /// - The index is `keyof T` — constrains to the receiver's own key space
     /// - The index is `K extends keyof T` — a type parameter constrained to keyof
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
+    /// - The receiver has a *concretely declared* index signature (class body,
+    ///   interface body, or a mapped type whose key constraint is non-generic
+    ///   like `Record<string, T>`): the write flows through ordinary
+    ///   assignability and TS2322 catches any real mismatch.
     pub(crate) fn is_generic_indexed_write(
         &mut self,
         object_type: TypeId,
         index_type: TypeId,
     ) -> bool {
         use crate::query_boundaries::common as common_query;
-        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
         // Broad primitive keys definitely go through an index-signature-like path.
         if !self.is_broad_index_type(index_type) {
@@ -654,23 +656,21 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Object must be a type parameter (e.g., T in `function f<T extends ...>(target: T)`)
+        // Receiver is a non-type-parameter that contains free type parameters
+        // (e.g. `Dict<T>`, `Record<keyof Shape, V>`, an interface with a
+        // declared index signature, etc.). tsc emits TS2862 here only when
+        // the receiver's *key space* is genuinely deferred — i.e. after
+        // evaluation in the current environment the receiver is still a
+        // generic mapped type whose key constraint contains a free type
+        // parameter (e.g. `{ [K in keyof T]: ... }`, `Record<keyof T, V>`).
+        //
+        // Concretely declared index signatures (class instance types,
+        // interfaces, `Record<string, V>`, etc.) reduce to `ObjectWithIndex`
+        // with a known string/number key — writes through them go through
+        // ordinary assignability and TS2322 reports any real mismatch.
         if !object_is_type_parameter {
             let evaluated_object = self.evaluate_type_with_env(object_type);
-            let resolver = IndexSignatureResolver::new(self.ctx.types);
-
-            if common_query::is_generic_mapped_type(self.ctx.types, evaluated_object)
-                || common_query::is_mapped_type(self.ctx.types, evaluated_object)
-            {
-                return true;
-            }
-
-            return if index_type == TypeId::STRING {
-                resolver.has_index_signature(evaluated_object, IndexKind::String)
-            } else {
-                resolver.has_index_signature(evaluated_object, IndexKind::String)
-                    || resolver.has_index_signature(evaluated_object, IndexKind::Number)
-            };
+            return common_query::is_generic_mapped_type(self.ctx.types, evaluated_object);
         }
 
         // When the object IS a type parameter T, the index must reference a foreign
