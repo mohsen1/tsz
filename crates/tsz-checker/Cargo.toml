@@ -1138,6 +1138,10 @@ name = "generic_call_primitive_widening_display_tests"
 path = "tests/generic_call_primitive_widening_display_tests.rs"
 
 [[test]]
+name = "generic_property_mismatch_display_tests"
+path = "tests/generic_property_mismatch_display_tests.rs"
+
+[[test]]
 name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 
