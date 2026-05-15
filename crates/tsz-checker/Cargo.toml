@@ -1221,5 +1221,13 @@ path = "tests/satisfies_object_property_position_tests.rs"
 name = "nested_infer_extends_scope_tests"
 path = "tests/nested_infer_extends_scope_tests.rs"
 
+[[test]]
+name = "homomorphic_indexed_access_tests"
+path = "tests/homomorphic_indexed_access_tests.rs"
+
+[[test]]
+name = "homomorphic_indexed_access_edge_cases"
+path = "tests/homomorphic_indexed_access_edge_cases.rs"
+
 [lints]
 workspace = true
