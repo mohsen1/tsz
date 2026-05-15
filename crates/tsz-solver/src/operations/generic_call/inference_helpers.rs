@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(super) fn resolve_direct_parameter_inference_type(
-        &self,
+        &mut self,
         lower_bounds: &[TypeId],
         inferred: TypeId,
         has_usable_contra_candidates: bool,
@@ -69,6 +69,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .copied()
                         .filter(|ty| !ty.is_any_unknown_or_error())
                         .collect();
+                    // A widened direct argument, e.g. `[1, 2, 3]` -> `number`,
+                    // should continue to own T. Folding a conflicting callback
+                    // return into the direct lower-bound union would mask the
+                    // later callback-return assignability error.
+                    if !inferred.is_any_unknown_or_error()
+                        && concrete_bounds
+                            .iter()
+                            .any(|&bound| self.checker.is_assignable_to(bound, inferred))
+                    {
+                        return inferred;
+                    }
                     if !concrete_bounds.is_empty() {
                         return crate::utils::union_or_single(self.interner, concrete_bounds);
                     }
