@@ -3865,10 +3865,6 @@ fn resolved_indexed_access_alias_bodies_stay_structural_without_repainting_writt
         "Nested indexed access should preserve the helper alias surface when it is written directly"
     );
 }
-// NOTE: lazy_raw_def_id_falls_back_to_symbol_name was removed.
-// DefId and SymbolId are independent ID spaces. The raw-value fallback
-// was removed because it caused incorrect type names (e.g., enum "Foo"
-// displaying as "timeout" when IDs collided).
 
 // =================================================================
 // Optional parameter/property display (no redundant `| undefined`)
