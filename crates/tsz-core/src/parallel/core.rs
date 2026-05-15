@@ -1082,7 +1082,7 @@ pub fn load_lib_files_for_binding_strict(
         return Ok(Vec::new());
     }
 
-    // Phase 2: Parse and bind all files in parallel (CPU bound — the expensive part).
+    // Parse and bind all files in parallel (CPU bound — the expensive part).
     // Sort largest files first so rayon's work-stealing starts them early.
     // dom.d.ts (40K lines, 2MB) dominates parse time — without this sort it's
     // file #81 of 87 and becomes the critical-path bottleneck.
@@ -2929,7 +2929,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     // copies the symbol data including members/exports/parent, but those fields
     // still contain LOCAL SymbolIds from the original lib binder. We must remap
     // them to the corresponding global IDs using lib_symbol_remap.
-    // (This mirrors Phase 2 in state.rs merge_lib_contexts_into_binder.)
+    // (This mirrors the two-pass merge stage in state.rs merge_lib_contexts_into_binder.)
     for lib_binder in &lib_binders {
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
 
