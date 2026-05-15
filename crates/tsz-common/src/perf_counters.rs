@@ -69,14 +69,15 @@ pub fn enabled_fast() -> bool {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(usize)]
 pub enum CheckerCreationReason {
-    /// `cross_file.rs::delegate_cross_arena_symbol_resolution` — the headline
+    /// `state/type_analysis/cross_file.rs::delegate_cross_arena_symbol_resolution` —
+    /// the headline
     /// hot path; deep recursion through cross-file type queries.
     DelegateCrossArenaSymbol = 0,
-    /// `cross_file.rs::delegate_cross_arena_class_instance_type`.
+    /// `state/type_analysis/cross_file.rs::delegate_cross_arena_class_instance_type`.
     DelegateCrossArenaClass = 1,
-    /// `cross_file.rs::delegate_cross_arena_interface_type`.
+    /// `state/type_analysis/cross_file.rs::delegate_cross_arena_interface_type`.
     DelegateCrossArenaInterface = 2,
-    /// Other `cross_file.rs` delegate variants (heritage, etc).
+    /// Other `state/type_analysis/cross_file.rs` delegate variants (heritage, etc).
     DelegateCrossArenaOther = 3,
     /// JSDoc namespace-typedef lookups crossing arenas.
     JsDocLookup = 4,

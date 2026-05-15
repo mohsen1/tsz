@@ -1268,12 +1268,14 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // Convert parent SymbolId back to DefId.
         //
         // We cannot use `symbol_to_def_id` here because `symbol_to_def` is a per-file
-        // (local) map that is NOT merged across checker contexts (see cross_file.rs comment).
+        // (local) map that is NOT merged across checker contexts (see
+        // `state/type_analysis/cross_file.rs` comment).
         // The parent enum may live in a different file (e.g., `foo.ts`'s binder), so its
         // SymbolId is absent from the current file's `symbol_to_def`.
         //
         // Instead, we use `def_to_symbol`, which IS merged from child checkers into the
-        // parent during cross-file type analysis (see cross_file.rs lines 326-330).
+        // parent during cross-file type analysis (see
+        // `state/type_analysis/cross_file.rs` lines 326-330).
         // By scanning it for the parent's SymbolId, we can find the parent's DefId
         // regardless of which file it originates from.
         //
