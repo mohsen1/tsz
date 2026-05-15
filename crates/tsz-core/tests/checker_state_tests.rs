@@ -11553,7 +11553,7 @@ type T = typeof Alias.value;
 
 #[test]
 fn test_checker_typeof_with_type_arguments() {
-    use tsz_solver::{SymbolRef, TypeData};
+    use tsz_solver::TypeData;
 
     let source = r#"
 const Foo = <T>(value: T) => value;
@@ -11582,21 +11582,21 @@ type Alias = typeof Foo<string>;
         checker.ctx.diagnostics
     );
 
-    let foo_sym = binder.file_locals.get("Foo").expect("Foo should exist");
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
 
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeData::Application(app_id) => {
-            let app = types.type_application(app_id);
-            assert_eq!(app.args, vec![TypeId::STRING]);
-            match types.lookup(app.base) {
-                Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, foo_sym.0),
-                other => panic!("Expected TypeQuery base type, got {other:?}"),
-            }
+        TypeData::Callable(shape_id) => {
+            let shape = types.callable_shape(shape_id);
+            assert_eq!(shape.call_signatures.len(), 1);
+            let sig = &shape.call_signatures[0];
+            assert!(sig.type_params.is_empty());
+            assert_eq!(sig.params.len(), 1);
+            assert_eq!(sig.params[0].type_id, TypeId::STRING);
+            assert_eq!(sig.return_type, TypeId::STRING);
         }
-        _ => panic!("Expected Alias to be Application type, got {alias_key:?}"),
+        _ => panic!("Expected Alias to be instantiated callable type, got {alias_key:?}"),
     }
 }
 

@@ -642,6 +642,10 @@ name = "ts2344_typeof_merged_tests"
 path = "tests/ts2344_typeof_merged_tests.rs"
 
 [[test]]
+name = "typeof_instantiation_expression_tests"
+path = "tests/typeof_instantiation_expression_tests.rs"
+
+[[test]]
 name = "ts2344_class_constructor_constraint"
 path = "tests/ts2344_class_constructor_constraint.rs"
 
