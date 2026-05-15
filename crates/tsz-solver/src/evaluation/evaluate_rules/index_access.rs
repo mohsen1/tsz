@@ -552,8 +552,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 if result == TypeId::UNDEFINED {
                     // Check if the member is a type parameter without a meaningful constraint.
                     // If so, create a deferred IndexAccess to preserve the constraint.
-                    // This ensures (S & State<T>)["a"] produces S["a"] & (T | undefined)
-                    // even when the index is generic (e.g., inferred as "a" from context).
                     if let Some(TypeData::TypeParameter(param_info)) =
                         self.evaluator.interner().lookup(member)
                     {
@@ -561,8 +559,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                             .constraint
                             .is_some_and(|c| c != TypeId::UNKNOWN && c != TypeId::ANY);
                         if !has_meaningful_constraint {
-                            // Create a deferred IndexAccess for the type parameter
-                            // without a meaningful constraint
                             let deferred = self
                                 .evaluator
                                 .interner()
@@ -589,10 +585,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 ));
             }
 
-            // If no concrete results but we have deferred results, return those.
             // This handles cases like `(S & State<T>)["a"]` where S is a type parameter
             // without a meaningful constraint - we need to preserve S["a"] as a deferred
-            // IndexAccess to ensure correct assignability checking.
             if !deferred_results.is_empty() {
                 return Some(crate::utils::intersection_or_single(
                     self.evaluator.interner(),
@@ -623,8 +617,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     } else {
                         self.evaluator.interner().object(properties)
                     };
-                    // Index access on merged object will defer (generic index),
-                    // but the merged object has all properties accessible.
                     return Some(self.evaluator.recurse_index_access(merged, self.index_type));
                 }
                 PropertyCollectionResult::Any => return Some(TypeId::ANY),
@@ -635,7 +627,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         }
 
         // For concrete indexes, distribute over intersection members and intersect results.
-        // (A & B)[K] = A[K] & B[K] — index access distributes over intersections.
         // Members that don't have the property (returning UNDEFINED) are excluded.
         //
         // CRITICAL: Deferred IndexAccess types (from type parameters without constraints)
@@ -670,8 +661,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                         .constraint
                         .is_some_and(|c| c != TypeId::UNKNOWN && c != TypeId::ANY);
                     if !has_meaningful_constraint {
-                        // Create a deferred IndexAccess for the type parameter
-                        // without a meaningful constraint
                         let deferred = self
                             .evaluator
                             .interner()
@@ -775,17 +764,16 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .resolver()
             .resolve_this_type(self.evaluator.interner())?;
         if concrete_this == self.object_type {
-            Some(
+            return Some(
                 self.evaluator
                     .interner()
                     .index_access(self.object_type, self.index_type),
-            )
-        } else {
-            Some(
-                self.evaluator
-                    .recurse_index_access(concrete_this, self.index_type),
-            )
+            );
         }
+        Some(
+            self.evaluator
+                .recurse_index_access(concrete_this, self.index_type),
+        )
     }
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
