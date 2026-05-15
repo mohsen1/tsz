@@ -9,6 +9,24 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+fn is_symbol_only_key_constraint(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    if ty == TypeId::SYMBOL {
+        return true;
+    }
+
+    match db.lookup(ty) {
+        Some(tsz_solver::TypeData::UniqueSymbol(_)) => true,
+        Some(tsz_solver::TypeData::Union(members)) => {
+            let members = db.type_list(members);
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| is_symbol_only_key_constraint(db, member))
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
@@ -857,7 +875,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 index_type,
             )
-            .is_some()
+            .is_some_and(|constraint| is_symbol_only_key_constraint(self.ctx.types, constraint))
             && !self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
