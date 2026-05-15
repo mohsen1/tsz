@@ -672,15 +672,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let sf = self.source_file_data_for_node(func_idx)?;
-        if sf.comments.is_empty() {
+        if sf.comments.is_empty() || !sf.comments.iter().any(|comment| comment.is_multi_line) {
             return None;
         }
 
-        let source_text = sf.text.to_string();
-        let comments = sf.comments.clone();
         let node = self.ctx.arena.get(func_idx)?;
         let jsdoc = self.get_jsdoc_for_function(func_idx)?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
         self.jsdoc_concrete_callable_type_from_expr(type_expr, node.pos, &comments, &source_text)
     }
 
@@ -727,6 +727,9 @@ impl<'a> CheckerState<'a> {
         let sf = self.ctx.arena.source_files.first()?;
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
+        if !comments.iter().any(|comment| comment.is_multi_line) {
+            return None;
+        }
 
         // Try the function node itself first
         let func_node = self.ctx.arena.get(func_idx)?;
