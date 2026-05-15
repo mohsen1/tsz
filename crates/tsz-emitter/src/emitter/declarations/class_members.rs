@@ -6,6 +6,14 @@
 use super::super::*;
 use tsz_parser::parser::NodeList;
 
+struct ConstructorUsingRegion {
+    env_name: String,
+    error_name: String,
+    result_name: String,
+    using_async: bool,
+    prev_block_using_env: Option<(String, bool)>,
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Class Members
@@ -1053,6 +1061,8 @@ impl<'a> Printer<'a> {
             || !auto_accessor_inits.is_empty()
             || !self.pending_private_field_constructor_inits.is_empty()
             || self.pending_instances_weakset_add.is_some();
+        let has_using_region = !self.ctx.options.target.supports_es2025()
+            && self.block_has_using_declarations(&block.statements);
 
         // Empty constructor with no prologue: check source format
         if block.statements.nodes.is_empty() && !has_prologue && !has_function_temps {
@@ -1103,6 +1113,7 @@ impl<'a> Printer<'a> {
         if block.statements.nodes.len() == 1
             && !has_prologue
             && !has_function_temps
+            && !has_using_region
             && self.is_single_line(block_node)
         {
             self.map_opening_brace(block_node);
@@ -1151,7 +1162,6 @@ impl<'a> Printer<'a> {
         // Capture position for inserting hoisted temps created during statement emit
         // (e.g., `_a` from `??` lowering inside the constructor body).
         let hoisted_var_insert_pos = (self.writer.len(), self.writer.current_line());
-
         // Find the super() call index so we can emit prologue after it.
         // In derived class constructors, super() must be called before
         // accessing `this`, so param property and field init assignments
@@ -1185,9 +1195,20 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
+        let mut using_region = if has_using_region {
+            Some(self.reserve_constructor_using_region(block_idx, &block.statements))
+        } else {
+            None
+        };
+        if has_using_region && has_prologue && super_call_idx.is_none() {
+            self.emit_constructor_prologue(param_props, field_inits, auto_accessor_inits);
+        }
+        if let Some(region) = using_region.as_mut() {
+            self.begin_constructor_using_region(region);
+        }
 
         // Emit original body statements, inserting prologue after super() if present
-        let mut prologue_emitted = !has_prologue;
+        let mut prologue_emitted = !has_prologue || (has_using_region && super_call_idx.is_none());
         for (stmt_i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
@@ -1221,6 +1242,9 @@ impl<'a> Printer<'a> {
         if !prologue_emitted {
             self.emit_constructor_prologue(param_props, field_inits, auto_accessor_inits);
         }
+        if let Some(region) = using_region {
+            self.end_constructor_using_region(region);
+        }
 
         // Insert any hoisted temps created during statement emit (e.g., `_a` from `??` lowering).
         if !self.hoisted_assignment_temps.is_empty() {
@@ -1240,6 +1264,107 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn reserve_constructor_using_region(
+        &mut self,
+        block_idx: NodeIndex,
+        statements: &NodeList,
+    ) -> ConstructorUsingRegion {
+        let using_async = self.block_has_await_using(statements);
+        let (env_name, error_name, result_name) = self.disposable_env_names_for_node(block_idx);
+        ConstructorUsingRegion {
+            env_name,
+            error_name,
+            result_name,
+            using_async,
+            prev_block_using_env: None,
+        }
+    }
+
+    fn begin_constructor_using_region(&mut self, region: &mut ConstructorUsingRegion) {
+        let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
+        region.prev_block_using_env = self
+            .block_using_env
+            .replace((region.env_name.clone(), region.using_async));
+
+        self.write(env_decl_keyword);
+        self.write(" ");
+        self.write(&region.env_name);
+        self.write(" = { stack: [], error: void 0, hasError: false };");
+        self.write_line();
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+    }
+
+    fn end_constructor_using_region(&mut self, region: ConstructorUsingRegion) {
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("catch (");
+        self.write(&region.error_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        self.write(&region.env_name);
+        self.write(".error = ");
+        self.write(&region.error_name);
+        self.write(";");
+        self.write_line();
+        self.write(&region.env_name);
+        self.write(".hasError = true;");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("finally {");
+        self.write_line();
+        self.increase_indent();
+        if region.using_async {
+            let await_kw = if self.ctx.emit_await_as_yield || self.ctx.emit_await_as_yield_await {
+                "yield"
+            } else {
+                "await"
+            };
+            self.write(if self.ctx.target_es5 { "var" } else { "const" });
+            self.write(" ");
+            self.write(&region.result_name);
+            self.write(" = ");
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&region.env_name);
+            self.write(");");
+            self.write_line();
+            self.write("if (");
+            self.write(&region.result_name);
+            self.write(")");
+            self.write_line();
+            self.increase_indent();
+            self.write(await_kw);
+            self.write(" ");
+            if self.ctx.emit_await_as_yield_await {
+                self.write_helper("__await");
+                self.write("(");
+                self.write(&region.result_name);
+                self.write(")");
+            } else {
+                self.write(&region.result_name);
+            }
+            self.write(";");
+            self.write_line();
+            self.decrease_indent();
+        } else {
+            self.write_helper("__disposeResources");
+            self.write("(");
+            self.write(&region.env_name);
+            self.write(");");
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.block_using_env = region.prev_block_using_env;
     }
 
     /// Emit parameter property and field initializer assignments (constructor prologue).
