@@ -1,5 +1,6 @@
 //! Property access checking (accessibility, computed names, const modifiers).
 
+mod private_error;
 mod super_static_access;
 
 use crate::classes_domain::class_summary::ClassMemberKind;
@@ -337,14 +338,11 @@ impl<'a> CheckerState<'a> {
 
         match access_info.level {
             MemberAccessLevel::Private => {
-                let message = format!(
-                    "Property '{}' is private and only accessible within class '{}'.",
-                    property_name, access_info.declaring_class_name
-                );
-                self.error_at_node(
+                self.report_private_member_error(
                     error_node,
-                    &message,
-                    diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS,
+                    object_expr,
+                    property_name,
+                    &access_info.declaring_class_name,
                 );
             }
             MemberAccessLevel::Protected => {
@@ -545,14 +543,11 @@ impl<'a> CheckerState<'a> {
             if !allowed {
                 match access_info.level {
                     MemberAccessLevel::Private => {
-                        let message = format!(
-                            "Property '{}' is private and only accessible within class '{}'.",
-                            property_name, access_info.declaring_class_name
-                        );
-                        self.error_at_node(
+                        self.report_private_member_error(
                             error_node,
-                            &message,
-                            diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS,
+                            object_expr,
+                            property_name,
+                            &access_info.declaring_class_name,
                         );
                     }
                     MemberAccessLevel::Protected => {
