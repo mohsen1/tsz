@@ -496,7 +496,7 @@ fn widen_type_cached(
             // display) skip this carve-out so e.g. `[true, ...string[]]`
             // continues to widen its fixed-prefix `true` to `boolean` — the
             // inference resolution path explicitly relies on this for
-            // `infer_resolve.rs:721`.
+            // `inference/infer_resolve.rs:721`.
             let widen_booleans_here = widen_boolean_intrinsics
                 && !(preserve_booleans_in_rest_tuples && elements.iter().any(|elem| elem.rest));
             let mut new_elements = Vec::with_capacity(elements.len());
