@@ -884,7 +884,7 @@ fn test_async_function_no_diagnostic_with_lib() {
 }
 
 // =============================================================================
-// Phase 2: Top-level await boundary routing (TS1378 via FeatureGate::TopLevelAwait)
+// Boundary: Top-level await boundary routing (TS1378 via FeatureGate::TopLevelAwait)
 // =============================================================================
 
 #[test]
@@ -1012,7 +1012,7 @@ fn test_top_level_await_in_checked_js_script_emits_ts1375() {
 }
 
 // =============================================================================
-// Phase 2: Import assert deprecation boundary (TS2880)
+// Boundary: Import assert deprecation boundary (TS2880)
 // =============================================================================
 
 #[test]
@@ -1048,7 +1048,7 @@ fn test_import_assert_deprecated_suppressed_by_ignore_deprecations() {
 }
 
 // =============================================================================
-// Phase 2: Import assert deprecated integration test (checker-level)
+// Boundary: Import assert deprecated integration test (checker-level)
 // =============================================================================
 
 #[test]
@@ -1085,7 +1085,7 @@ fn test_import_assert_deprecated_suppressed_checker_integration() {
 }
 
 // =============================================================================
-// Phase 2: resolveJsonModule incompatibility extended (TS5071)
+// Boundary: resolveJsonModule incompatibility extended (TS5071)
 // =============================================================================
 
 #[test]
@@ -1141,7 +1141,7 @@ fn test_resolve_json_module_compatible_preserve() {
 }
 
 // =============================================================================
-// Phase 2: Deprecation state and skip lib resolution (TS5101/TS5107)
+// Boundary: Deprecation state and skip lib resolution (TS5101/TS5107)
 // =============================================================================
 
 #[test]
@@ -1184,7 +1184,7 @@ fn test_deprecation_diagnostic_code_mapping() {
 }
 
 // =============================================================================
-// Phase 2: CapabilityDiagnostic code mapping completeness
+// Boundary: CapabilityDiagnostic code mapping completeness
 // =============================================================================
 
 #[test]
@@ -1205,7 +1205,7 @@ fn test_capability_diagnostic_new_variants_code_mapping() {
 }
 
 // =============================================================================
-// Phase 2: Top-level await Node18/Node20 coverage (fixed by boundary routing)
+// Boundary: Top-level await Node18/Node20 coverage (fixed by boundary routing)
 // =============================================================================
 
 #[test]

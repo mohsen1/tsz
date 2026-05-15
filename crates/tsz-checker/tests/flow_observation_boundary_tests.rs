@@ -424,7 +424,7 @@ try {} catch (e) {
 }
 
 // =============================================================================
-// Phase 2: NullUndefinedWidening boundary
+// Boundary: NullUndefinedWidening boundary
 // =============================================================================
 
 /// When strictNullChecks is off, a destructured binding whose type is
@@ -493,7 +493,7 @@ const n: number = x;
 }
 
 // =============================================================================
-// Phase 2: UncheckedIndexedAccess boundary
+// Boundary: UncheckedIndexedAccess boundary
 // =============================================================================
 
 /// noUncheckedIndexedAccess adds undefined to array element types
@@ -520,7 +520,7 @@ const s: string = first;
 }
 
 // =============================================================================
-// Phase 2: ForInExpressionNullish boundary
+// Boundary: ForInExpressionNullish boundary
 // =============================================================================
 
 /// For-in expression with a non-null type should resolve to string.
@@ -543,7 +543,7 @@ for (const key in obj) {
 }
 
 // =============================================================================
-// Phase 2: Catch variable with destructuring in catch
+// Boundary: Catch variable with destructuring in catch
 // =============================================================================
 
 /// Catch variable with explicit unknown annotation should allow typeof narrowing.
@@ -589,7 +589,7 @@ try {
 }
 
 // =============================================================================
-// Phase 2: For-of with various iterable patterns
+// Boundary: For-of with various iterable patterns
 // =============================================================================
 
 /// For-of with string iteration yields string characters.
@@ -633,7 +633,7 @@ for (const { key, value } of entries) {
 }
 
 // =============================================================================
-// Phase 2: Dependent destructured variables (union narrowing)
+// Boundary: Dependent destructured variables (union narrowing)
 // =============================================================================
 
 /// Destructuring a discriminated union type preserves property types.
@@ -706,7 +706,7 @@ function f(p: Point) {
 }
 
 // =============================================================================
-// Phase 2: Optional chain + truthiness combined
+// Boundary: Optional chain + truthiness combined
 // =============================================================================
 
 /// Optional chain in ternary expression.
@@ -729,7 +729,7 @@ function f(x: { y: number } | null) {
 }
 
 // =============================================================================
-// Phase 2: Non-null assertion boundary routing
+// Boundary: Non-null assertion boundary routing
 // =============================================================================
 
 /// Non-null assertion (`!`) should strip null/undefined through the boundary.
@@ -770,7 +770,7 @@ function f(x: string | null) {
 }
 
 // =============================================================================
-// Phase 2: Nullish coalescing reachability boundary routing
+// Boundary: Nullish coalescing reachability boundary routing
 // =============================================================================
 
 /// Nullish coalescing (`??`) strips nullish from left operand through boundary.
@@ -792,7 +792,7 @@ function f(x: string | null) {
 }
 
 // =============================================================================
-// Phase 2: For-in with nullish expression boundary routing
+// Boundary: For-in with nullish expression boundary routing
 // =============================================================================
 
 /// For-in variable type with potentially nullish expression uses boundary.
@@ -818,7 +818,7 @@ function f(obj: Record<string, number> | null) {
 }
 
 // =============================================================================
-// Phase 2: Parameter default removes undefined through boundary
+// Boundary: Parameter default removes undefined through boundary
 // =============================================================================
 
 /// Parameter with default value should strip undefined from its type.
@@ -840,7 +840,7 @@ function f(x: string | undefined = "hello") {
 }
 
 // =============================================================================
-// Phase 2: Computed binding helper destructuring default boundary routing
+// Boundary: Computed binding helper destructuring default boundary routing
 // =============================================================================
 
 /// Destructuring default in computed binding context uses boundary.
@@ -865,7 +865,7 @@ function f(opts: Opts) {
 }
 
 // =============================================================================
-// Phase 2: Destructuring default in flow analysis context
+// Boundary: Destructuring default in flow analysis context
 // =============================================================================
 
 /// Assignment destructuring default should strip undefined through boundary.
@@ -933,7 +933,7 @@ fn assignment_pattern_default_order_reduces_union_after_non_empty_rhs() {
 }
 
 // =============================================================================
-// Phase 2: Nested destructuring with defaults in type-checking validation
+// Boundary: Nested destructuring with defaults in type-checking validation
 // =============================================================================
 
 /// Nested destructuring with defaults should strip undefined in type checking.
@@ -957,7 +957,7 @@ function f(d: Deep) {
 }
 
 // =============================================================================
-// Phase 2: For-of with destructuring and defaults combined
+// Boundary: For-of with destructuring and defaults combined
 // =============================================================================
 
 /// For-of with array destructuring and element defaults.

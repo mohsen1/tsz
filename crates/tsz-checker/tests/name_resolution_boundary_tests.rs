@@ -357,7 +357,7 @@ let t: Direction;
 }
 
 // =========================================================================
-// Phase 2: report_wrong_meaning routing tests
+// Boundary: report_wrong_meaning routing tests
 // =========================================================================
 
 #[test]
@@ -471,7 +471,7 @@ export {};
 }
 
 // =========================================================================
-// Phase 2: Type-position suggestion collection through boundary
+// Boundary: Type-position suggestion collection through boundary
 // =========================================================================
 
 #[test]
@@ -488,7 +488,7 @@ let x: UnknownTypeName;
 }
 
 // =========================================================================
-// Phase 2: No duplicate diagnostics after migration
+// Boundary: No duplicate diagnostics after migration
 // =========================================================================
 
 #[test]
@@ -539,7 +539,7 @@ let x: myVal;
 }
 
 // =========================================================================
-// Phase 2: boundary_known_value_no_diagnostic
+// Boundary: boundary_known_value_no_diagnostic
 // =========================================================================
 
 #[test]
@@ -702,7 +702,7 @@ let x: booz.bar;
 }
 
 // =========================================================================
-// Phase 2.5: Wrong-meaning migration through boundary
+// Boundary: Wrong-meaning migration through boundary
 // =========================================================================
 
 /// Primitive keyword types used as values route through wrong-meaning boundary
