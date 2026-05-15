@@ -80,14 +80,27 @@ pub(crate) fn lib_def_id_from_node(
     fallback_arena: &NodeArena,
 ) -> Option<tsz_solver::DefId> {
     let sym_id = resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)?;
-    let name = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena)?;
-    let expected_name = name
-        .strip_prefix("globalThis.")
-        .unwrap_or(&name)
-        .rsplit('.')
-        .next()
-        .unwrap_or(&name);
-    Some(ctx.get_canonical_lib_def_id(expected_name, sym_id))
+    if binder
+        .get_symbol_with_libs(sym_id, &[])
+        .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER))
+    {
+        return Some(ctx.get_lib_def_id(sym_id));
+    }
+
+    if let Some(name) = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena) {
+        let expected_name = name
+            .strip_prefix("globalThis.")
+            .unwrap_or(&name)
+            .rsplit('.')
+            .next()
+            .unwrap_or(&name);
+        if let Some(def_id) = ctx.actual_lib_def_id_for_bare_name(expected_name) {
+            return Some(def_id);
+        }
+        return Some(ctx.get_canonical_lib_def_id(expected_name, sym_id));
+    }
+
+    Some(ctx.get_lib_def_id(sym_id))
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via lib-context binders.
@@ -111,6 +124,9 @@ pub(crate) fn lib_def_id_from_node_in_lib_contexts(
         .rsplit('.')
         .next()
         .unwrap_or(&name);
+    if let Some(def_id) = ctx.actual_lib_def_id_for_bare_name(expected_name) {
+        return Some(def_id);
+    }
     Some(ctx.get_canonical_lib_def_id(expected_name, sym_id))
 }
 
@@ -882,7 +898,8 @@ impl<'a> CheckerState<'a> {
                     )
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 };
 
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {

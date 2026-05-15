@@ -133,7 +133,8 @@ impl<'a> CheckerState<'a> {
             )
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
         };
 
         let lowering = TypeLowering::with_hybrid_resolver(
