@@ -1801,9 +1801,9 @@ fn test_solver_imports_go_through_query_boundaries() {
         "type_contains_undefined",
     ];
 
-    // ── TODO: These imports bypass query_boundaries but wrappers don't exist yet. ──
-    // Each entry is (item, list of files using it). When a wrapper is created,
-    // remove the entry and let the test enforce the boundary.
+    // Temporary allowances for boundary enforcement tests.
+    // Each entry is (item, list of files using it). Remove entries as the
+    // wrapper and boundary migration complete.
     const TEMPORARILY_ALLOWED: &[&str] = &[
         // All solver imports now go through query_boundaries — list is empty.
     ];
