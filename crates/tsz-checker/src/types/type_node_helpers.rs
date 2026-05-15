@@ -741,7 +741,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// representation. Returns `None` for any other type node, including aliases that
     /// happen to resolve to `Array<T>`.
     ///
-    /// This canonicalization mirrors the path in `types/type_literal_checker.rs:308` and
+    /// This canonicalization mirrors the path in `crates/tsz-checker/src/types/type_literal_checker.rs:308` and
     /// ensures that downstream consumers which inspect the solver array variant
     /// directly (e.g. tuple rest element extraction in `array_element_type`) see
     /// the array shape instead of `Application(Lazy(Array_DefId), [T])`. Without

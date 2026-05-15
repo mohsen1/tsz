@@ -95,7 +95,8 @@ declare let v: { [key: boolean]: string };
 /// Regression case 1: intersection arm in
 /// `is_valid_index_sig_param_type` must NOT accept `T & string` and bypass
 /// TS1337 in callers that gate on validity. Covers the `interface` path
-/// (`types/interface_type.rs:435`) and the type-alias path (`types/type_checking/type_alias_checking.rs:690`).
+/// (`crates/tsz-checker/src/types/interface_type.rs:435`) and the type-alias path
+/// (`crates/tsz-checker/src/types/type_checking/type_alias_checking.rs:690`).
 #[test]
 fn generic_intersection_in_interface_emits_ts1337() {
     let codes = check_source_codes(
@@ -111,7 +112,7 @@ interface I<T extends string> {
     );
 }
 
-/// Regression case 1, `state/state_checking_members/index_signature_checks.rs:100` call site.
+/// Regression case 1, `crates/tsz-checker/src/state/state_checking_members/index_signature_checks.rs:100` call site.
 /// Mirrors the type-alias case but ensures the validity check inside
 /// `index_signature_checks` still routes the generic intersection to TS1337.
 #[test]

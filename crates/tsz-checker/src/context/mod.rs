@@ -1103,13 +1103,13 @@ pub struct CheckerContext<'a> {
     /// Pre-built global index: `module_specifier` -> Vec<(`file_idx`, `ModuleAugmentation`)>.
     /// Merges all binders' `module_augmentations` into a single lookup table.
     /// Eliminates O(N) scans when resolving module augmentations for interface
-    /// declaration merging (`interface_type.rs`, computed.rs).
+    /// declaration merging (`crates/tsz-checker/src/types/interface_type.rs`, `crates/tsz-checker/src/types/computed.rs`).
     pub global_module_augmentations_index: Option<GlobalModuleAugmentationsIndex>,
 
     /// Pre-built global index: `module_specifier` -> Vec<(SymbolId, `file_idx`)>.
     /// Merges all binders' `augmentation_target_modules` (reverse map: symbol -> module)
     /// into a forward lookup: module -> symbols. Eliminates O(N) scans when finding
-    /// augmentation symbols for a given module specifier (`interface_type.rs`).
+    /// augmentation symbols for a given module specifier (`crates/tsz-checker/src/types/interface_type.rs`).
     pub global_augmentation_targets_index: Option<GlobalAugmentationTargetsIndex>,
 
     /// Pre-built global index: module name -> list of binder indices that have that module

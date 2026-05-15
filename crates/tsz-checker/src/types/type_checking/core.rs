@@ -3,7 +3,7 @@
 //! destructuring, variable/using declaration validation.
 //!
 //! Type alias declaration checking and type node validation are in
-//! `type_alias_checking.rs`.
+//! `crates/tsz-checker/src/types/type_checking/type_alias_checking.rs`.
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
