@@ -7149,7 +7149,7 @@ type Qux = { [key: string]: Foo };
                 .lookup(string_index.value_type)
                 .expect("Index value type should exist");
             match value_key {
-                TypeData::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                TypeData::Lazy(_def_id) => {} // Alias references are represented as `Lazy(DefId)` here.
                 _ => panic!("Expected Foo lazy type, got {value_key:?}"),
             }
         }
@@ -7697,8 +7697,8 @@ type Alias = Outer.Inner;
             assert_eq!(prop.type_id, TypeId::STRING);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
@@ -7963,8 +7963,8 @@ type AliasB = Outer.B;
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected AliasA to resolve to Object or Lazy type, got {alias_a_key:?}"),
     }
@@ -7983,8 +7983,8 @@ type AliasB = Outer.B;
             assert_eq!(prop.type_id, TypeId::STRING);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected AliasB to resolve to Object or Lazy type, got {alias_b_key:?}"),
     }
@@ -10604,8 +10604,8 @@ type Alias = Foo.Bar;
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
@@ -10669,8 +10669,8 @@ type Alias = Foo.Bar;
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
@@ -10870,7 +10870,7 @@ const value: Merge.B = { y: 1 };
 
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
     let alias_type = checker.get_type_of_symbol(alias_sym);
-    // Phase 4.2: Type aliases are now represented as Lazy types, need to resolve them
+    // Type aliases use `Lazy(DefId)` representation; resolve lazily as needed.
     let resolved_type = checker.resolve_lazy_type(alias_type);
     let alias_key = types
         .lookup(resolved_type)
@@ -10886,8 +10886,8 @@ const value: Merge.B = { y: 1 };
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
@@ -11060,8 +11060,8 @@ type Alias = Merge.Extra;
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
@@ -11123,8 +11123,8 @@ type Alias = Merge.Extra;
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
@@ -11300,8 +11300,8 @@ type Alias = Merge.Extra;
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
@@ -11369,8 +11369,8 @@ type Alias = Merge.Extra;
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
         TypeData::Lazy(_def_id) => {
-            // Phase 4.3: Interface type references now use Lazy(DefId)
-            // The Lazy type is correctly resolved when needed for type checking
+            // Compatibility path: interface references remain valid through
+            // `Lazy(DefId)` when needed by type checking.
         }
         _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
@@ -32650,22 +32650,21 @@ fn test_lib_merge_consistent_symbol_resolution() {
 }
 
 // =============================================================================
-// Selective TypeAlias Migration Tests (Phase 4.2.1)
+// Selective DefId migration checks for named type categories.
 // =============================================================================
 //
-// These tests verify that Type Aliases are registered with DefId while
-// Classes and Interfaces use SymbolRef during the incremental migration (Issue #12).
+// These tests verify that type aliases, classes, interfaces, and generic
+// aliases all participate in DefId-based resolution paths.
 //
 // Migration strategy:
-// - Type Aliases → DefId-based registration [target for Phase 4.2.1]
-// - Classes → SymbolRef-based registration [legacy, deferred]
-// - Interfaces → SymbolRef-based registration [legacy, deferred]
+// - Type aliases → DefId registration with type-parameter metadata
+// - Classes → DefId registration with constructor and instance wiring
+// - Interfaces → DefId registration for nominal identity
 // =============================================================================
 
 /// Test that a type alias gets a DefId created
 ///
-/// This is the core of Phase 4.2.1: verify that type aliases
-/// have `DefIds` created for them.
+/// Verify that type aliases have `DefId`s created.
 #[test]
 fn test_selective_migration_type_alias_has_def_id() {
     let source = r#"
@@ -32695,19 +32694,13 @@ const x: UserId = "user123";
         .get("UserId")
         .expect("UserId symbol should exist");
 
-    // After Phase 4.2.1, type aliases should have DefIds created
+    // Type aliases should have `DefId`s created.
     let def_id = checker.ctx.get_existing_def_id(user_id_sym);
 
-    assert!(
-        def_id.is_some(),
-        "Type alias should have DefId created after Phase 4.2.1"
-    );
+    assert!(def_id.is_some(), "Type alias should have a `DefId` created");
 }
 
-/// Test that a class DOES get a DefId created (Phase 4.3)
-///
-/// Phase 4.3: Unified type resolution for all named types (interfaces, type aliases, classes)
-/// to return Lazy(DefId) references instead of eagerly expanded structural types.
+/// Verify that a class has a `DefId` created.
 #[test]
 fn test_selective_migration_class_has_def_id() {
     let source = r#"
@@ -32739,19 +32732,16 @@ const obj: Foo = new Foo();
         .get("Foo")
         .expect("Foo symbol should exist");
 
-    // During Phase 4.3, classes SHOULD have DefIds created for unified type resolution
+    // Classes should have a `DefId` created for nominal identity checks.
     let def_id = checker.ctx.get_existing_def_id(foo_sym);
 
     assert!(
         def_id.is_some(),
-        "Class should have DefId during Phase 4.3 (unified type resolution)"
+        "Class should have a `DefId` for nominal identity"
     );
 }
 
-/// Test that an interface DOES get a DefId created (Phase 4.3)
-///
-/// Phase 4.3: Unified type resolution for all named types (interfaces, type aliases, classes)
-/// to return Lazy(DefId) references instead of eagerly expanded structural types.
+/// Verify that an interface has a `DefId` created.
 #[test]
 fn test_selective_migration_interface_has_def_id() {
     let source = r#"
@@ -32784,12 +32774,12 @@ const p: Point = { x: 1, y: 2 };
         .get("Point")
         .expect("Point symbol should exist");
 
-    // During Phase 4.3, interfaces SHOULD have DefIds created for unified type resolution
+    // Interfaces should have a `DefId` created for nominal identity checks.
     let def_id = checker.ctx.get_existing_def_id(point_sym);
 
     assert!(
         def_id.is_some(),
-        "Interface should have DefId during Phase 4.3 (unified type resolution)"
+        "Interface should have a `DefId` for nominal identity"
     );
 }
 
@@ -32825,22 +32815,22 @@ const x: Box<string> = { value: "hello" };
         .get("Box")
         .expect("Box symbol should exist");
 
-    // After Phase 4.2.1, generic type aliases should have DefIds
+    // Generic type aliases should have `DefId`s.
     let def_id = checker.ctx.get_existing_def_id(box_sym);
 
     assert!(
         def_id.is_some(),
-        "Generic type alias should have DefId created after Phase 4.2.1"
+        "Generic type alias should have a `DefId` created"
     );
 }
 
-/// Test generic recursive type alias (Phase 4.2.1 - IN PROGRESS)
+/// Test generic recursive type alias.
 ///
 /// This test verifies that generic recursive type aliases like:
 ///   type List<T> = { value: T; next: List<T> | null }
 /// work correctly with DefId-based resolution.
 ///
-/// Phase 4.2.1 PROGRESS:
+/// Migration progress notes:
 /// ✅ Implemented `def_type_params` cache in `CheckerContext`
 /// ✅ Implemented `get_lazy_type_params()` in `TypeResolver`
 /// ✅ Type parameters are stored when resolving type aliases/interfaces/classes
