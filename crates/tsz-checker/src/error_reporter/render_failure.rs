@@ -1053,6 +1053,26 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Render the checker-facing relation failure shape produced by
+    /// `query_boundaries`.
+    ///
+    /// This is intentionally parallel to `render_failure_reason` during the
+    /// migration: diagnostic paths can consume boundary-owned evidence without
+    /// re-running solver failure analysis, while specialized renderer logic can
+    /// move over variant by variant.
+    pub(crate) fn render_relation_failure(
+        &mut self,
+        reason: &crate::query_boundaries::relation_types::RelationFailure,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+        depth: u32,
+    ) -> Diagnostic {
+        let solver_reason = reason.to_solver_failure_reason();
+
+        self.render_failure_reason(&solver_reason, source, target, idx, depth)
+    }
+
     fn object_literal_property_literal_union_alias_target_display(
         &mut self,
         target: TypeId,

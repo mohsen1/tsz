@@ -78,6 +78,9 @@ use tsz_parser::parser::node::NodeArena;
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
 
+pub(crate) type CallRelationOutcomeCache =
+    RefCell<FxHashMap<(TypeId, TypeId), crate::query_boundaries::assignability::RelationOutcome>>;
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -439,6 +442,11 @@ pub struct CheckerContext<'a> {
 
     /// Request-aware cache for audited non-empty request paths only.
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
+
+    /// Transient relation evidence produced while solver call resolution checks
+    /// argument compatibility. Diagnostic reporting can reuse it for TS2345
+    /// instead of issuing a second relation request for the same prepared pair.
+    pub(crate) call_relation_outcomes: CallRelationOutcomeCache,
 
     /// Object-literal diagnostic recovery and active initializer state.
     pub object_literal_tracking: ObjectLiteralTracking,

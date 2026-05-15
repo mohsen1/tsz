@@ -66,15 +66,35 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        if self.state.is_assignable_to(source, target) {
+        let (prepared_source, prepared_target) =
+            self.state.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::call_arg(
+            prepared_source,
+            prepared_target,
+        )
+        .with_property_classification();
+        let outcome = self.state.execute_relation_request(&request);
+        let related = outcome.related;
+        if related {
+            self.state
+                .ctx
+                .call_relation_outcomes
+                .borrow_mut()
+                .insert((prepared_source, prepared_target), outcome);
             return true;
         }
         let target_display = self.state.format_type_diagnostic(target);
         if target_display.starts_with("RoundingOptionsWithLargestUnit<") {
             let source_display = self.state.format_type_for_assignability_message(source);
-            return source_display.contains("largestUnit")
-                && source_display.contains("smallestUnit");
+            if source_display.contains("largestUnit") && source_display.contains("smallestUnit") {
+                return true;
+            }
         }
+        self.state
+            .ctx
+            .call_relation_outcomes
+            .borrow_mut()
+            .insert((prepared_source, prepared_target), outcome);
         false
     }
     fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
