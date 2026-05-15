@@ -1501,17 +1501,12 @@ impl<'a> CheckerState<'a> {
             return "<anonymous>".to_string();
         };
 
-        if class.name.is_some()
-            && let Some(name_node) = self.ctx.arena.get(class.name)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-        {
-            let mut name = ident.escaped_text.clone();
+        if let Some(mut name) = self.get_bound_class_name_from_decl(class_idx) {
             self.append_type_param_names(&mut name, &class.type_parameters);
             return name;
         }
 
-        self.get_bound_class_name_from_decl(class_idx)
-            .unwrap_or_else(|| "<anonymous>".to_string())
+        "<anonymous>".to_string()
     }
 
     /// Get the name of a class member (property, method, or accessor).

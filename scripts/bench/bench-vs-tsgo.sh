@@ -215,6 +215,48 @@ file_info() {
     echo "${lines} lines, ${kb}KB"
 }
 
+measure_peak_rss_enabled() {
+    case "${TSZ_BENCH_PROJECT_PEAK_RSS:-}" in
+        1|true|TRUE|yes|YES) return 0 ;;
+        0|false|FALSE|no|NO) return 1 ;;
+    esac
+
+    [ "${CI:-}" = "true" ] && [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]
+}
+
+process_tree_rss_kb() {
+    local root_pid="$1"
+
+    ps -e -o pid=,ppid=,rss= 2>/dev/null | awk -v root="$root_pid" '
+        {
+            pid[NR] = $1
+            ppid[NR] = $2
+            rss[NR] = $3
+            count = NR
+        }
+        END {
+            live[root] = 1
+            changed = 1
+            while (changed) {
+                changed = 0
+                for (i = 1; i <= count; i += 1) {
+                    if (live[ppid[i]] && !live[pid[i]]) {
+                        live[pid[i]] = 1
+                        changed = 1
+                    }
+                }
+            }
+            total = 0
+            for (i = 1; i <= count; i += 1) {
+                if (live[pid[i]]) {
+                    total += rss[i]
+                }
+            }
+            print total + 0
+        }
+    '
+}
+
 # Run a command with a timeout (in seconds). Returns the command's exit code,
 # or 124 if it was killed due to timeout (matching GNU timeout convention).
 # Usage: run_with_timeout <seconds> <command...>
@@ -226,26 +268,29 @@ run_with_timeout() {
     # Run the command in a background subshell
     "$@" &
     local pid=$!
-    local rss_file
-    rss_file=$(mktemp)
-    printf '0\n' > "$rss_file"
+    local rss_file=""
+    local rss_monitor_pid=""
 
     # Watchdog: SIGKILL directly after timeout (SIGTERM can be ignored by Rust binaries)
     ( sleep "$timeout_secs" && kill -KILL "$pid" 2>/dev/null || true ) &
     local watchdog_pid=$!
-    (
-        local peak_kb=0
-        local rss_kb
-        while kill -0 "$pid" 2>/dev/null; do
-            rss_kb="$(ps -o rss= -p "$pid" 2>/dev/null | awk '{print $1 + 0}' || true)"
-            if [[ "$rss_kb" =~ ^[0-9]+$ ]] && [ "$rss_kb" -gt "$peak_kb" ]; then
-                peak_kb="$rss_kb"
-                printf '%s\n' "$((peak_kb * 1024))" > "$rss_file"
-            fi
-            sleep 1
-        done
-    ) &
-    local rss_monitor_pid=$!
+    if measure_peak_rss_enabled; then
+        rss_file=$(mktemp)
+        printf '0\n' > "$rss_file"
+        (
+            local peak_kb=0
+            local rss_kb
+            while kill -0 "$pid" 2>/dev/null; do
+                rss_kb="$(process_tree_rss_kb "$pid" || true)"
+                if [[ "$rss_kb" =~ ^[0-9]+$ ]] && [ "$rss_kb" -gt "$peak_kb" ]; then
+                    peak_kb="$rss_kb"
+                    printf '%s\n' "$((peak_kb * 1024))" > "$rss_file"
+                fi
+                sleep 1
+            done
+        ) &
+        rss_monitor_pid=$!
+    fi
 
     # Wait for the main process (|| true for set -e safety)
     local exit_code=0
@@ -254,10 +299,14 @@ run_with_timeout() {
     # Clean up watchdog (|| true since it may have already exited)
     kill "$watchdog_pid" 2>/dev/null || true
     wait "$watchdog_pid" 2>/dev/null || true
-    kill "$rss_monitor_pid" 2>/dev/null || true
-    wait "$rss_monitor_pid" 2>/dev/null || true
-    LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || echo 0)"
-    rm -f "$rss_file"
+    if [ -n "$rss_monitor_pid" ]; then
+        kill "$rss_monitor_pid" 2>/dev/null || true
+        wait "$rss_monitor_pid" 2>/dev/null || true
+    fi
+    if [ -n "$rss_file" ]; then
+        LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || echo 0)"
+        rm -f "$rss_file"
+    fi
 
     # SIGKILL exit code is 137 (128+9)
     if [ "$exit_code" -eq 137 ]; then
@@ -336,6 +385,51 @@ hyperfine_exit_status_for() {
 
     echo "ok"
     return 0
+}
+
+project_failure_class() {
+    local status="$1"
+    shift || true
+
+    if [[ "$status" == *"timeout"* ]]; then
+        echo "timeout"
+        return
+    fi
+
+    local code
+    for code in "$@"; do
+        case "$code" in
+            124|142)
+                echo "timeout"
+                return
+                ;;
+            137)
+                echo "oom"
+                return
+                ;;
+            132|134|136|139)
+                echo "crash"
+                return
+                ;;
+        esac
+    done
+
+    echo "nonzero exit"
+}
+
+project_failure_status() {
+    case "$1" in
+        timeout) echo "compiler timed out" ;;
+        oom) echo "compiler OOM or killed" ;;
+        crash) echo "compiler crashed" ;;
+        *) echo "diagnostic mismatch or compiler error" ;;
+    esac
+}
+
+exit_codes_from_status() {
+    local status="$1"
+    printf '%s\n' "$status" | sed -E 's/[^0-9]+/\
+/g' | sed '/^$/d'
 }
 
 sum_ts_lines() {
@@ -770,6 +864,8 @@ function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticC
   };
 
   if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "oom") add("OOM or killed during project check");
+  if (exitClass === "crash") add("compiler crash during project check");
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
@@ -1171,11 +1267,9 @@ run_project_benchmark() {
             status="${status:+${status}; }tsc ok"
         fi
 
-        if [ "$tsz_check" -eq 124 ] || [ "$tsgo_check" -eq 124 ]; then
-            record_project_compatibility "$name" "timeout" "check" "compiler timed out" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
-        else
-            record_project_compatibility "$name" "nonzero exit" "check" "diagnostic mismatch or compiler error" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
-        fi
+        local exit_class
+        exit_class="$(project_failure_class "$status" "$tsz_check" "$tsgo_check")"
+        record_project_compatibility "$name" "$exit_class" "check" "$(project_failure_status "$exit_class")" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
         return
     fi
@@ -1324,11 +1418,9 @@ run_project_benchmark() {
             [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
             [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
             echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
-            if [[ "$status" == *"timeout"* ]]; then
-                record_project_compatibility "$name" "timeout" "timing" "compiler timed out" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
-            else
-                record_project_compatibility "$name" "nonzero exit" "timing" "diagnostic mismatch or compiler error" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
-            fi
+            local exit_class
+            exit_class="$(project_failure_class "$status" $(exit_codes_from_status "$status"))"
+            record_project_compatibility "$name" "$exit_class" "timing" "$(project_failure_status "$exit_class")" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             rm -f "$json_file"
             return
@@ -1545,6 +1637,8 @@ function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas) {
   const phase = String(recorded.phase || "");
 
   if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "oom") add("OOM or killed during project check");
+  if (exitClass === "crash") add("compiler crash during project check");
   if (exitClass === "fixture invalid") add("reference fixture invalid");
   if (exitClass === "runner error") add("benchmark runner error");
   if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");

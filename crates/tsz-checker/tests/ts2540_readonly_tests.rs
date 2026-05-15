@@ -189,6 +189,44 @@ obj.c = true;
     );
 }
 
+#[test]
+fn test_nested_readonly_survives_prior_receiver_assignment() {
+    let source = r#"
+interface DeepFrozen {
+    readonly a: {
+        readonly b: number;
+    };
+}
+const df: DeepFrozen = { a: { b: 1 } };
+df.a = { b: 2 };
+df.a.b = 3;
+
+type AliasFrozen = {
+    readonly outer: {
+        readonly inner: number;
+    };
+};
+let af: AliasFrozen = { outer: { inner: 1 } };
+af.outer = { inner: 2 };
+af.outer.inner = 3;
+
+interface MutableParent {
+    slot: {
+        readonly leaf: number;
+    };
+}
+let mp: MutableParent = { slot: { leaf: 1 } };
+mp.slot = { leaf: 2 };
+mp.slot.leaf = 3;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 5,
+        "Expected readonly diagnostics for both parent writes and nested child writes, got {ts2540_count}: {diags:?}"
+    );
+}
+
 // =========================================================================
 // Namespace let export should be mutable
 // =========================================================================
@@ -373,6 +411,31 @@ v[0] = 1;
     assert!(
         !diags.iter().any(|d| d.0 == 2542),
         "Should NOT emit TS2542 for readonly tuple fixed element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_readonly_tuple_fixed_element_suppresses_type_mismatch() {
+    // Fixed readonly tuple elements are named properties. When the write is
+    // invalid both because the element is readonly and because the assigned
+    // literal has the wrong type, tsc reports only TS2540 for that assignment.
+    let source = r#"
+const arr = [1, 2, 3] as const;
+arr[0] = 999;
+
+const nested = { a: [1, 2] as const };
+nested.a[0] = 999;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    let ts2322_count = diags.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected TS2540 for direct and nested readonly tuple fixed elements, got: {diags:?}"
+    );
+    assert_eq!(
+        ts2322_count, 0,
+        "TS2322 should be suppressed when TS2540 already reports the readonly fixed element write, got: {diags:?}"
     );
 }
 

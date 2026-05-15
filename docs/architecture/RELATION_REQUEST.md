@@ -54,7 +54,7 @@ diagnostics and `RelationRequest::call_arg` for TS2345 call-argument
 diagnostics. These callers reuse `RelationOutcome` to avoid separately
 recomputing weak-union and property-classification analysis.
 
-`assignment_checker/destructuring.rs` builds `RelationRequest::assign` for rest
+`assignability/assignment_checker/destructuring.rs` builds `RelationRequest::assign` for rest
 destructuring assignment diagnostics.
 
 `query_boundaries/class.rs` builds `RelationRequest::assign` with

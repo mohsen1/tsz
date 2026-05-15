@@ -6,6 +6,7 @@
 
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{CallableShape, FunctionShape, TypeData, TypeId, TypeListId};
+use rustc_hash::FxHashSet;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Resolve a `new` expression (constructor call).
@@ -143,6 +144,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut max_expected = 0;
         let mut any_has_rest = false;
         let actual_count = arg_types.len();
+        let mut exact_expected_counts = FxHashSet::default();
         // Track single count-compatible overload that fails on types (see resolve_callable_call).
         let mut type_mismatch_count: usize = 0;
         let mut first_type_mismatch: Option<(usize, TypeId, TypeId, TypeId)> = None;
@@ -209,6 +211,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } => {
                     if expected_max.is_none() {
                         any_has_rest = true;
+                    } else if expected_min == expected_max.unwrap_or(expected_min) {
+                        exact_expected_counts.insert(expected_min);
                     }
                     let max = expected_max.unwrap_or(expected_min);
                     min_expected = min_expected.min(expected_min);
@@ -250,6 +254,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         if all_arg_count_mismatches && !failures.is_empty() {
+            if !any_has_rest
+                && !exact_expected_counts.is_empty()
+                && !exact_expected_counts.contains(&actual_count)
+            {
+                let mut lower = None;
+                let mut upper = None;
+                for &count in &exact_expected_counts {
+                    if count < actual_count {
+                        lower = Some(lower.map_or(count, |prev: usize| prev.max(count)));
+                    } else if count > actual_count {
+                        upper = Some(upper.map_or(count, |prev: usize| prev.min(count)));
+                    }
+                }
+                if let (Some(expected_low), Some(expected_high)) = (lower, upper) {
+                    return CallResult::OverloadArgumentCountMismatch {
+                        actual: actual_count,
+                        expected_low,
+                        expected_high,
+                    };
+                }
+            }
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_expected,
                 expected_max: if any_has_rest {

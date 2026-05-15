@@ -988,6 +988,33 @@ fn test_rename_class_method() {
     );
 }
 
+#[test]
+fn test_rename_class_method_includes_instance_access() {
+    let source = "class Foo {\n  bar() {}\n}\nconst f = new Foo();\nf.bar();";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let edit = provider
+        .provide_rename_edits(root, Position::new(1, 2), "baz".to_string())
+        .expect("Should rename method");
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(
+        edits.len(),
+        2,
+        "Should rename declaration and instance access exactly once, got {edits:?}"
+    );
+    assert!(
+        edits
+            .iter()
+            .any(|edit| edit.range.start.line == 4 && edit.range.start.character == 2),
+        "Should rename f.bar() usage, got {edits:?}"
+    );
+}
+
 // =========================================================================
 // Additional edge-case tests
 // =========================================================================

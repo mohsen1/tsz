@@ -1623,6 +1623,18 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                if self.ctx.compiler_options.experimental_decorators
+                    && !is_abstract
+                    && !legacy_decorator_not_valid
+                    && node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                {
+                    self.check_legacy_property_decorator_call_signature(
+                        modifier_idx,
+                        decorator_type,
+                        self.has_accessor_modifier_ref(Some(modifiers)),
+                    );
+                }
+
                 // TS1329: Check if the decorator accepts too few arguments for this position.
                 // For experimental decorators on methods/accessors, the decorator is called
                 // with 3 arguments (target, propertyKey, descriptor). If the decorator has

@@ -635,55 +635,9 @@ impl<'a> CheckerState<'a> {
         let mut prop_order: u32 = 1;
         let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
 
-        // Pre-scan: collect ALL method names from the object literal so that
-        // the synthetic `this` type includes placeholders for all methods,
-        // enabling mutually-recursive methods to resolve `this.otherMethod`.
-        // Maps method name atom → element node index so we can extract annotated
-        // parameter/return types when building placeholders for not-yet-processed methods.
-        // This includes both method declarations (get() {}) and property assignments
-        // with function values (set: function() {}) to ensure complete this-typing.
-        let obj_all_method_names: rustc_hash::FxHashMap<Atom, (NodeIndex, u32)> = obj
-            .elements
-            .nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(pos, &elem_idx)| {
-                let elem_node = self.ctx.arena.get(elem_idx)?;
-
-                // Case 1: Method declaration like `get() {}`
-                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
-                    let name = self.get_property_name(method.name)?;
-                    return Some((
-                        self.ctx.types.intern_string(&name),
-                        (elem_idx, (pos + 1) as u32),
-                    ));
-                }
-
-                // Case 2: Property assignment with function value like `set: function() {}`
-                if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                    let initializer_is_function_like = self
-                        .ctx
-                        .arena
-                        .get(prop.initializer)
-                        .is_some_and(|init_node| {
-                            matches!(
-                                init_node.kind,
-                                syntax_kind_ext::ARROW_FUNCTION
-                                    | syntax_kind_ext::FUNCTION_EXPRESSION
-                            )
-                        });
-                    if initializer_is_function_like {
-                        let name = self.get_property_name_resolved(prop.name)?;
-                        return Some((
-                            self.ctx.types.intern_string(&name),
-                            (elem_idx, (pos + 1) as u32),
-                        ));
-                    }
-                }
-
-                None
-            })
-            .collect();
+        let obj_all_method_names = self.object_literal_callable_member_names(&obj.elements.nodes);
+        let circular_return_method_sites =
+            self.object_literal_circular_return_method_sites(&obj_all_method_names);
 
         // Pre-scan: collect getter property names so setter TS7006 checks can
         // detect paired getters regardless of declaration order.
@@ -1004,7 +958,7 @@ impl<'a> CheckerState<'a> {
                     // it uses the property NAME node as the fallback initializer for error
                     // recovery (prop.initializer == prop.name). Skip type-checking in that
                     // case to prevent a spurious TS2304 for the property name identifier.
-                    let value_type = if prop.initializer == prop.name {
+                    let mut value_type = if prop.initializer == prop.name {
                         TypeId::ANY
                     } else if self.ctx.in_destructuring_target {
                         self.destructuring_target_type_from_initializer(prop.initializer)
@@ -1088,6 +1042,27 @@ impl<'a> CheckerState<'a> {
 
                         value_type
                     };
+                    if circular_return_method_sites.contains(&elem_idx)
+                        && initializer_is_function_expression
+                        && jsdoc_declared_type.is_none()
+                        && property_request.contextual_type.is_none()
+                        && self.ctx.no_implicit_any()
+                        && !self.has_syntax_parse_errors()
+                        && !self.is_js_file()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            prop.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[&name],
+                        );
+                        value_type =
+                            crate::query_boundaries::assignability::replace_function_return_type(
+                                self.ctx.types,
+                                value_type,
+                                TypeId::ANY,
+                            );
+                    }
 
                     // TS2779: The left-hand side of an assignment expression may not be
                     // an optional property access. Applies to destructuring targets like
@@ -1126,6 +1101,14 @@ impl<'a> CheckerState<'a> {
                         }
                         declared_type
                     } else {
+                        let value_has_non_widening_source = self
+                            .expression_is_type_assertion(prop.initializer)
+                            || self.identifier_refers_to_non_widening_declared_value_type(
+                                prop.initializer,
+                            )
+                            || self
+                                .object_literal_property_access_literal_type(prop.initializer)
+                                .is_some();
                         // Apply bidirectional type inference - use contextual type to narrow
                         // the value type, except for function-like values with explicit
                         // signature annotations. For those, tsc preserves the explicit
@@ -1135,6 +1118,14 @@ impl<'a> CheckerState<'a> {
                                 .function_like_has_explicit_signature_annotations(prop.initializer)
                         {
                             value_type
+                        } else if value_has_non_widening_source {
+                            self.literal_type_from_initializer(prop.initializer)
+                                .or_else(|| {
+                                    self.object_literal_property_access_literal_type(
+                                        prop.initializer,
+                                    )
+                                })
+                                .unwrap_or(value_type)
                         } else {
                             let applied = crate::query_boundaries::common::apply_contextual_type(
                                 self.ctx.types,
@@ -1153,14 +1144,6 @@ impl<'a> CheckerState<'a> {
                         // - A contextual type narrows the property to a literal
                         // - The value is a type assertion (`as T` / `<T>expr`) or an identifier
                         //   whose declaration is non-widening (const-asserted or literal-annotated).
-                        let value_has_non_widening_source = self
-                            .expression_is_type_assertion(prop.initializer)
-                            || self.identifier_refers_to_non_widening_declared_value_type(
-                                prop.initializer,
-                            )
-                            || self
-                                .object_literal_property_access_literal_type(prop.initializer)
-                                .is_some();
                         let final_type = if self.should_widen_object_property_literal(
                             value_type,
                             property_context_type,
@@ -2070,6 +2053,29 @@ impl<'a> CheckerState<'a> {
                             &[&name],
                         );
                         method_type = refined_method_type;
+                    }
+
+                    if circular_return_method_sites.contains(&elem_idx)
+                        && pushed_synthetic_this
+                        && jsdoc_declared_type.is_none()
+                        && method.type_annotation.is_none()
+                        && !has_concrete_method_context
+                        && self.ctx.no_implicit_any()
+                        && !self.has_syntax_parse_errors()
+                        && !self.is_js_file()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            method.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[&name],
+                        );
+                        method_type =
+                            crate::query_boundaries::assignability::replace_function_return_type(
+                                self.ctx.types,
+                                method_type,
+                                TypeId::ANY,
+                            );
                     }
 
                     let method_type = jsdoc_declared_type.unwrap_or_else(|| {

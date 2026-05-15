@@ -36,12 +36,77 @@ const hyperfineExitCodesRequired = payloads.every(
   ({ payload }) => payload.validation?.hyperfine_exit_codes_required === true,
 );
 
+const REQUIRED_PROJECT_ROWS = [
+  "kysely-project",
+  "zod-project",
+  "ts-toolbelt-project",
+  "type-fest-project",
+  "ts-essentials-project",
+  "large-ts-repo",
+  "nextjs",
+];
+
+const REQUIRED_COMPATIBILITY_FIELDS = [
+  "exit_class",
+  "phase",
+  "last_successful_phase",
+  "diagnostic_status",
+  "diagnostic_deltas",
+  "diagnostic_subsystems",
+  "known_blockers",
+  "exit_codes",
+  "files_reached",
+  "peak_memory_bytes",
+  "emit_status",
+  "dts_status",
+];
+
+function hasProjectCompatibilityRows(rows) {
+  return rows.some((row) => REQUIRED_PROJECT_ROWS.includes(row?.name));
+}
+
+function validateProjectCompatibilityRows(rows) {
+  const projectRows = rows.filter((row) => REQUIRED_PROJECT_ROWS.includes(row?.name));
+  if (projectRows.length === 0) return;
+
+  const byName = new Map(projectRows.map((row) => [row.name, row]));
+  const failures = [];
+  for (const name of REQUIRED_PROJECT_ROWS) {
+    const row = byName.get(name);
+    if (!row) {
+      failures.push(`${name}: missing project row`);
+      continue;
+    }
+    if (!row.compatibility || typeof row.compatibility !== "object") {
+      failures.push(`${name}: missing compatibility object`);
+      continue;
+    }
+    for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(row.compatibility, field)) {
+        failures.push(`${name}: missing compatibility.${field}`);
+      }
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error("Project compatibility artifact validation failed:");
+    for (const failure of failures) {
+      console.error(`  - ${failure}`);
+    }
+    process.exit(1);
+  }
+}
+
+validateProjectCompatibilityRows(results);
+const projectCompatibilityRequiredFields = hasProjectCompatibilityRows(results);
+
 const merged = {
   generated_at: new Date().toISOString(),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
   validation: {
     hyperfine_exit_codes_required: hyperfineExitCodesRequired,
+    project_compatibility_required_fields: projectCompatibilityRequiredFields,
   },
   quick_mode: payloads.every(({ payload }) => payload.quick_mode === true),
   filter: null,

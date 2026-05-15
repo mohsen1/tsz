@@ -74,6 +74,47 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn is_callee_function_expression(&self, callee_expr: NodeIndex) -> bool {
+        self.is_callback_like_argument(callee_expr)
+    }
+
+    pub(crate) fn this_argument_satisfies_polymorphic_this_rest_target(
+        &mut self,
+        arg_idx: Option<NodeIndex>,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> bool {
+        if !crate::query_boundaries::common::contains_this_type(self.ctx.types, expected) {
+            return false;
+        }
+        let arg_is_this = arg_idx
+            .and_then(|arg_idx| self.ctx.arena.get(arg_idx))
+            .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16);
+        if !arg_is_this {
+            return false;
+        }
+        let Some(concrete_this) = self
+            .ctx
+            .this_type_stack
+            .last()
+            .copied()
+            .or_else(|| self.ctx.enclosing_class.as_ref()?.cached_instance_this_type)
+        else {
+            return false;
+        };
+        let substituted_expected = crate::query_boundaries::common::substitute_this_type(
+            self.ctx.types,
+            expected,
+            concrete_this,
+        );
+        let substituted_rest_element = crate::query_boundaries::common::rest_argument_element_type(
+            self.ctx.types,
+            substituted_expected,
+        );
+        self.is_assignable_to_with_env(actual, substituted_expected)
+            || self.is_assignable_to_with_env(actual, substituted_rest_element)
+    }
+
     pub(super) fn report_checked_js_nullable_this_property_method_call(
         &mut self,
         callee_expr: NodeIndex,

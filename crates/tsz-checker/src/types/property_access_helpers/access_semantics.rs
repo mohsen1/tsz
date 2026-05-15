@@ -213,6 +213,7 @@ impl<'a> CheckerState<'a> {
         .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(&self.ctx.type_environment)
+        .with_checker_context(&self.ctx)
         .with_narrowing_cache(&self.ctx.narrowing_cache)
         .with_call_type_predicates(&self.ctx.call_type_predicates)
         .with_flow_buffers(
@@ -800,12 +801,12 @@ impl<'a> CheckerState<'a> {
         fn method_this_arg_type(
             sig: &tsz_solver::CallSignature,
             is_constructor: bool,
-            receiver_this_type: Option<TypeId>,
+            _receiver_this_type: Option<TypeId>,
         ) -> TypeId {
             if is_constructor {
                 sig.return_type
             } else if sig.this_type.is_some() {
-                receiver_this_type.unwrap_or_else(|| sig.this_type.unwrap_or(TypeId::ANY))
+                sig.this_type.unwrap_or(TypeId::ANY)
             } else {
                 TypeId::ANY
             }
@@ -814,12 +815,12 @@ impl<'a> CheckerState<'a> {
         fn bind_this_arg_type(
             sig: &tsz_solver::CallSignature,
             is_constructor: bool,
-            receiver_this_type: Option<TypeId>,
+            _receiver_this_type: Option<TypeId>,
         ) -> TypeId {
             if is_constructor {
                 TypeId::ANY
             } else if sig.this_type.is_some() {
-                receiver_this_type.unwrap_or_else(|| sig.this_type.unwrap_or(TypeId::ANY))
+                sig.this_type.unwrap_or(TypeId::ANY)
             } else {
                 TypeId::ANY
             }

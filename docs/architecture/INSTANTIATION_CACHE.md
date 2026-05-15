@@ -11,7 +11,7 @@ raw `TypeDatabase`.
 - Storage: `crates/tsz-solver/src/caches/instantiation_cache.rs`
 - Statistics and invalidation: `crates/tsz-solver/src/caches/query_cache.rs`
 - Trait boundary and raw-database defaults: `crates/tsz-solver/src/caches/db.rs`
-- Production probes and inserts: `crates/tsz-solver/src/instantiation/instantiate.rs`
+- Production probes and inserts: `crates/tsz-solver/src/caches/instantiation_cache.rs`
 - Focused coverage: `crates/tsz-solver/src/caches/instantiation_cache_test.rs`
 
 ## Active Probe And Insert Sites
