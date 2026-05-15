@@ -786,13 +786,21 @@ function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticC
   return blockers;
 }
 
+function lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }) {
+  if (exitClass === "exit success" && diagnosticStatus === "none") return "check";
+  return null;
+}
+
 const diagnosticSubsystems = diagnosticSubsystemsFrom(diagnosticDeltas);
 const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
+const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";
+const diagnosticStatus = process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown";
 const row = {
   name: process.env.COMPAT_NAME || "",
-  exit_class: process.env.COMPAT_EXIT_CLASS || "unknown",
+  exit_class: exitClass,
   phase: process.env.COMPAT_PHASE || "unknown",
-  diagnostic_status: process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown",
+  last_successful_phase: lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }),
+  diagnostic_status: diagnosticStatus,
   diagnostic_deltas: diagnosticDeltas,
   diagnostic_subsystems: diagnosticSubsystems,
   primary_subsystem: diagnosticSubsystems[0]?.subsystem || null,
@@ -800,7 +808,7 @@ const row = {
   emit_status: "not in scope (noEmit project check)",
   dts_status: "not in scope (noEmit project check)",
   known_blockers: knownBlockersFrom({
-    exitClass: process.env.COMPAT_EXIT_CLASS || "unknown",
+    exitClass,
     phase: process.env.COMPAT_PHASE || "unknown",
     diagnosticSubsystems,
     diagnosticCodes,
@@ -1462,6 +1470,7 @@ function fallbackCompatibility(row) {
     return {
       exit_class: "exit success",
       phase: "check",
+      last_successful_phase: "check",
       diagnostic_status: "none",
       diagnostic_deltas: [],
       exit_codes: { tsc: [], tsz: [], tsgo: [] },
@@ -1473,6 +1482,7 @@ function fallbackCompatibility(row) {
     return {
       exit_class: "fixture invalid",
       phase: "fixture setup",
+      last_successful_phase: null,
       diagnostic_status: "tsc fixture failed",
       diagnostic_deltas: [],
       exit_codes: { tsc: [], tsz: [], tsgo: [] },
@@ -1483,6 +1493,7 @@ function fallbackCompatibility(row) {
   return {
     exit_class: status.includes("timeout") ? "timeout" : "nonzero exit",
     phase: "check",
+    last_successful_phase: null,
     diagnostic_status: status.includes("tsz") ? "diagnostic mismatch or compiler error" : "compiler error",
     diagnostic_deltas: [],
     exit_codes: { tsc: [], tsz: [], tsgo: [] },
@@ -1608,6 +1619,14 @@ function normalizedDiagnosticSubsystems(recorded, deltas) {
   return diagnosticSubsystemsFrom(deltas).slice(0, 8);
 }
 
+function lastSuccessfulPhaseFrom(recorded) {
+  if (recorded.last_successful_phase !== undefined && recorded.last_successful_phase !== "") {
+    return recorded.last_successful_phase;
+  }
+  if (recorded.exit_class === "exit success" && recorded.diagnostic_status === "none") return "check";
+  return null;
+}
+
 function compatibilityFor(row, compatibilityRows) {
   const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
   if (!recorded) return {};
@@ -1617,6 +1636,7 @@ function compatibilityFor(row, compatibilityRows) {
     compatibility: {
       exit_class: recorded.exit_class || "unknown",
       phase: recorded.phase || "unknown",
+      last_successful_phase: lastSuccessfulPhaseFrom(recorded),
       diagnostic_status: recorded.diagnostic_status || "unknown",
       diagnostic_deltas: diagnosticDeltas,
       diagnostic_codes: diagnosticCodesFrom(diagnosticDeltas),
