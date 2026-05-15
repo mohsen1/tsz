@@ -1523,7 +1523,8 @@ impl<'a> CheckerState<'a> {
             }
             result
         };
-        let instance_type = if instance_type == TypeId::ERROR
+        let instance_type = if class.name.is_none()
+            && instance_type == TypeId::ERROR
             && rough_instance_return_type != TypeId::ANY
             && rough_instance_return_type != TypeId::ERROR
         {
