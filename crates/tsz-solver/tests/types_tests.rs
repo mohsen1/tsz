@@ -309,8 +309,9 @@ fn test_merge_display_properties_for_intersection_keeps_left_to_right_member_seq
 /// sort. Sorting the canonical shape's properties by `declaration_order`
 /// must therefore recover source declaration order — the invariant the
 /// JSX synthesized-source-type display in
-/// `crates/tsz-checker/src/checkers/jsx/{spread.rs,props/resolution.rs}`
-/// relies on to mirror tsc's per-attribute ordering.
+/// `crates/tsz-checker/src/checkers/jsx/spread.rs` and
+/// `crates/tsz-checker/src/checkers/jsx/props/resolution.rs` rely on this to mirror
+/// tsc's per-attribute ordering.
 ///
 /// Atom IDs come from a sharded interner whose shard index is hash-derived,
 /// so insertion order does NOT determine atom order across two strings in
