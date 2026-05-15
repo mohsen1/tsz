@@ -2043,7 +2043,7 @@ exports.direct = undefined;
 }
 
 #[test]
-#[ignore = "regressed after remote changes: expected 2 TS2322 for same-file CommonJS reassignments, now emits 0"]
+#[ignore = "pre-existing regression: expected 2 TS2322 for same-file CommonJS reassignments, now emits 0"]
 fn test_current_file_exports_reads_use_prior_assignment_types() {
     let diagnostics = check_commonjs_single_file(
         "self.js",
