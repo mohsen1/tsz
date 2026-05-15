@@ -221,14 +221,31 @@ file_info() {
 run_with_timeout() {
     local timeout_secs="$1"
     shift
+    LAST_PEAK_RSS_BYTES=0
 
     # Run the command in a background subshell
     "$@" &
     local pid=$!
+    local rss_file
+    rss_file=$(mktemp)
+    printf '0\n' > "$rss_file"
 
     # Watchdog: SIGKILL directly after timeout (SIGTERM can be ignored by Rust binaries)
     ( sleep "$timeout_secs" && kill -KILL "$pid" 2>/dev/null || true ) &
     local watchdog_pid=$!
+    (
+        local peak_kb=0
+        local rss_kb
+        while kill -0 "$pid" 2>/dev/null; do
+            rss_kb="$(ps -o rss= -p "$pid" 2>/dev/null | awk '{print $1 + 0}' || true)"
+            if [[ "$rss_kb" =~ ^[0-9]+$ ]] && [ "$rss_kb" -gt "$peak_kb" ]; then
+                peak_kb="$rss_kb"
+                printf '%s\n' "$((peak_kb * 1024))" > "$rss_file"
+            fi
+            sleep 1
+        done
+    ) &
+    local rss_monitor_pid=$!
 
     # Wait for the main process (|| true for set -e safety)
     local exit_code=0
@@ -237,6 +254,10 @@ run_with_timeout() {
     # Clean up watchdog (|| true since it may have already exited)
     kill "$watchdog_pid" 2>/dev/null || true
     wait "$watchdog_pid" 2>/dev/null || true
+    kill "$rss_monitor_pid" 2>/dev/null || true
+    wait "$rss_monitor_pid" 2>/dev/null || true
+    LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || echo 0)"
+    rm -f "$rss_file"
 
     # SIGKILL exit code is 137 (128+9)
     if [ "$exit_code" -eq 137 ]; then
@@ -629,6 +650,7 @@ check_prerequisites() {
 RESULTS_CSV=""
 BENCHMARKS_RUN=0
 PROJECT_COMPATIBILITY_JSONL=""
+LAST_PEAK_RSS_BYTES=0
 
 record_project_compatibility() {
     local name="$1"
@@ -683,12 +705,106 @@ const diagnosticDeltas = delta
   .map((line) => line.trim())
   .filter(Boolean)
   .slice(0, 20);
+
+const DIAGNOSTIC_SUBSYSTEM_RULES = [
+  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
+  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
+  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
+  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
+  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
+  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
+  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
+  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
+  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
+];
+
+function subsystemForCode(code) {
+  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
+    if (codes.has(code)) return subsystem;
+  }
+  return "unclassified diagnostic";
+}
+
+function diagnosticSubsystemsFrom(deltas) {
+  const groups = new Map();
+  for (const line of deltas) {
+    const codes = [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
+    const lineCodes = codes.length ? codes : ["uncoded"];
+    for (const code of lineCodes) {
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
+      if (!groups.has(subsystem)) {
+        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+      }
+      const group = groups.get(subsystem);
+      group.count += 1;
+      if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
+        group.codes.push(code);
+      }
+      if (group.examples.length < 3) {
+        group.examples.push(line);
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+function diagnosticCodesFrom(deltas) {
+  const codes = [];
+  const seen = new Set();
+  for (const line of deltas) {
+    for (const match of String(line || "").matchAll(/\bTS\d{4,5}\b/g)) {
+      const code = match[0];
+      if (seen.has(code)) continue;
+      seen.add(code);
+      codes.push(code);
+      if (codes.length >= 8) return codes;
+    }
+  }
+  return codes;
+}
+
+function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticCodes }) {
+  const blockers = [];
+  const add = (blocker) => {
+    if (blocker && !blockers.includes(blocker) && blockers.length < 8) blockers.push(blocker);
+  };
+
+  if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "fixture invalid") add("reference fixture invalid");
+  if (exitClass === "runner error") add("benchmark runner error");
+  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (phase && phase !== "check") add(`${phase} phase blocker`);
+
+  for (const group of diagnosticSubsystems) {
+    add(group.subsystem);
+  }
+
+  if (!blockers.length && diagnosticCodes.length) {
+    add("unclassified diagnostic mismatch");
+  }
+
+  return blockers;
+}
+
+const diagnosticSubsystems = diagnosticSubsystemsFrom(diagnosticDeltas);
+const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
 const row = {
   name: process.env.COMPAT_NAME || "",
   exit_class: process.env.COMPAT_EXIT_CLASS || "unknown",
   phase: process.env.COMPAT_PHASE || "unknown",
   diagnostic_status: process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown",
   diagnostic_deltas: diagnosticDeltas,
+  diagnostic_subsystems: diagnosticSubsystems,
+  primary_subsystem: diagnosticSubsystems[0]?.subsystem || null,
+  diagnostic_codes: diagnosticCodes,
+  emit_status: "not in scope (noEmit project check)",
+  dts_status: "not in scope (noEmit project check)",
+  known_blockers: knownBlockersFrom({
+    exitClass: process.env.COMPAT_EXIT_CLASS || "unknown",
+    phase: process.env.COMPAT_PHASE || "unknown",
+    diagnosticSubsystems,
+    diagnosticCodes,
+  }),
   exit_codes: {
     tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
     tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
@@ -880,6 +996,16 @@ run_project_benchmark() {
     local name="$1"
     local tsconfig="$2"
     local src_dir="$3"
+    local peak_memory_bytes=""
+
+    update_project_peak_memory() {
+        local observed="${LAST_PEAK_RSS_BYTES:-0}"
+        if [[ "$observed" =~ ^[0-9]+$ ]] && [ "$observed" -gt 0 ]; then
+            if [ -z "$peak_memory_bytes" ] || [ "$observed" -gt "$peak_memory_bytes" ]; then
+                peak_memory_bytes="$observed"
+            fi
+        fi
+    }
 
     # Skip if filter is set and name doesn't match
     if [ -n "$FILTER" ] && ! echo "$name" | grep -qE "$FILTER"; then
@@ -926,8 +1052,10 @@ run_project_benchmark() {
         local tsc_check=0
         if [ "${#project_node_prefix[@]}" -gt 0 ]; then
             run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+            update_project_peak_memory
         else
             run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+            update_project_peak_memory
         fi
         tsc_exit_codes="$tsc_check"
         if [ "$tsc_check" -ne 0 ]; then
@@ -947,7 +1075,7 @@ run_project_benchmark() {
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $(printf '%s' "$tsc_error" | head -1)" >&2
             fi
-            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count" "" "$tsc_exit_codes"
+            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             return
         fi
@@ -964,13 +1092,17 @@ run_project_benchmark() {
     if [ "$name" != "large-ts-repo" ]; then
         if [ "${#tsz_prefix[@]}" -gt 0 ]; then
             run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+            update_project_peak_memory
         else
             run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+            update_project_peak_memory
         fi
         if [ "${#project_node_prefix[@]}" -gt 0 ]; then
             run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+            update_project_peak_memory
         else
             run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+            update_project_peak_memory
         fi
     fi
 
@@ -1032,9 +1164,9 @@ run_project_benchmark() {
         fi
 
         if [ "$tsz_check" -eq 124 ] || [ "$tsgo_check" -eq 124 ]; then
-            record_project_compatibility "$name" "timeout" "check" "compiler timed out" "$diagnostic_delta" "$file_count" "" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
+            record_project_compatibility "$name" "timeout" "check" "compiler timed out" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
         else
-            record_project_compatibility "$name" "nonzero exit" "check" "diagnostic mismatch or compiler error" "$diagnostic_delta" "$file_count" "" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
+            record_project_compatibility "$name" "nonzero exit" "check" "diagnostic mismatch or compiler error" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
         fi
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
         return
@@ -1113,7 +1245,7 @@ run_project_benchmark() {
                 -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
         fi
         if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
-            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "" "$tsc_exit_codes"
+            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,tsgo,0,tsz unavailable; tsgo error\n"
             rm -f "$json_file"
             return
@@ -1122,7 +1254,7 @@ run_project_benchmark() {
             local tsgo_exit_status
             tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
             if [ "$tsgo_exit_status" != "ok" ]; then
-                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count" "" "$tsc_exit_codes" "" "$tsgo_exit_status"
+                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "$tsgo_exit_status"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,error,0,tsz unavailable; tsgo ${tsgo_exit_status}\n"
                 rm -f "$json_file"
                 return
@@ -1134,7 +1266,7 @@ run_project_benchmark() {
                 tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
                 local tsgo_ms
                 tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
-                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count" "" "$tsc_exit_codes" "" "0"
+                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "0"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,${tsgo_ms},N/A,${tsgo_lps},tsgo,0,tsz unavailable\n"
             fi
         fi
@@ -1167,7 +1299,7 @@ run_project_benchmark() {
     fi
     if [ "$hyperfine_status" -ne 0 ]; then
         local status="hyperfine error"
-        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count" "" "$tsc_exit_codes"
+        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
         return
@@ -1185,9 +1317,9 @@ run_project_benchmark() {
             [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
             echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
             if [[ "$status" == *"timeout"* ]]; then
-                record_project_compatibility "$name" "timeout" "timing" "compiler timed out" "$status" "$file_count" "" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
+                record_project_compatibility "$name" "timeout" "timing" "compiler timed out" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
             else
-                record_project_compatibility "$name" "nonzero exit" "timing" "diagnostic mismatch or compiler error" "$status" "$file_count" "" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
+                record_project_compatibility "$name" "nonzero exit" "timing" "diagnostic mismatch or compiler error" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
             fi
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             rm -f "$json_file"
@@ -1212,7 +1344,7 @@ run_project_benchmark() {
                 ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
             fi
 
-            record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "" "$tsc_exit_codes" "0" "0"
+            record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     fi
@@ -1388,10 +1520,99 @@ function reductionCandidatesFrom(deltas) {
   return source.slice(0, 5);
 }
 
+function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas) {
+  const existing = Array.isArray(recorded.known_blockers) ? recorded.known_blockers : [];
+  if (existing.length) {
+    return existing.map(String).filter(Boolean).slice(0, 8);
+  }
+
+  const blockers = [];
+  const add = (blocker) => {
+    if (blocker && !blockers.includes(blocker) && blockers.length < 8) blockers.push(blocker);
+  };
+  const exitClass = String(recorded.exit_class || "");
+  const phase = String(recorded.phase || "");
+
+  if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "fixture invalid") add("reference fixture invalid");
+  if (exitClass === "runner error") add("benchmark runner error");
+  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (phase && phase !== "check") add(`${phase} phase blocker`);
+
+  for (const group of diagnosticSubsystems) {
+    add(String(group?.subsystem || ""));
+  }
+
+  if (!blockers.length && diagnosticCodesFrom(diagnosticDeltas).length) {
+    add("unclassified diagnostic mismatch");
+  }
+
+  return blockers;
+}
+
+const DIAGNOSTIC_SUBSYSTEM_RULES = [
+  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
+  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
+  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
+  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
+  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
+  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
+  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
+  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
+  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
+];
+
+function subsystemForCode(code) {
+  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
+    if (codes.has(code)) return subsystem;
+  }
+  return "unclassified diagnostic";
+}
+
+function diagnosticSubsystemsFrom(deltas) {
+  const groups = new Map();
+  for (const line of deltas) {
+    const codes = [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
+    const lineCodes = codes.length ? codes : ["uncoded"];
+    for (const code of lineCodes) {
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
+      if (!groups.has(subsystem)) {
+        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+      }
+      const group = groups.get(subsystem);
+      group.count += 1;
+      if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
+        group.codes.push(code);
+      }
+      if (group.examples.length < 3) {
+        group.examples.push(line);
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+function normalizedDiagnosticSubsystems(recorded, deltas) {
+  const existing = Array.isArray(recorded.diagnostic_subsystems) ? recorded.diagnostic_subsystems : [];
+  if (existing.length) {
+    return existing
+      .map((group) => ({
+        subsystem: String(group?.subsystem || "unclassified diagnostic"),
+        codes: Array.isArray(group?.codes) ? group.codes.map(String).filter(Boolean).slice(0, 8) : [],
+        count: Number.isFinite(Number(group?.count)) ? Number(group.count) : 0,
+        examples: Array.isArray(group?.examples) ? group.examples.map(String).filter(Boolean).slice(0, 3) : [],
+      }))
+      .filter((group) => group.count > 0 || group.codes.length || group.examples.length)
+      .slice(0, 8);
+  }
+  return diagnosticSubsystemsFrom(deltas).slice(0, 8);
+}
+
 function compatibilityFor(row, compatibilityRows) {
   const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
   if (!recorded) return {};
   const diagnosticDeltas = normalizedDiagnosticDeltas(recorded);
+  const diagnosticSubsystems = normalizedDiagnosticSubsystems(recorded, diagnosticDeltas);
   return {
     compatibility: {
       exit_class: recorded.exit_class || "unknown",
@@ -1399,7 +1620,12 @@ function compatibilityFor(row, compatibilityRows) {
       diagnostic_status: recorded.diagnostic_status || "unknown",
       diagnostic_deltas: diagnosticDeltas,
       diagnostic_codes: diagnosticCodesFrom(diagnosticDeltas),
+      diagnostic_subsystems: diagnosticSubsystems,
+      primary_subsystem: recorded.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
       reduction_candidates: reductionCandidatesFrom(diagnosticDeltas),
+      emit_status: recorded.emit_status || "not in scope (noEmit project check)",
+      dts_status: recorded.dts_status || "not in scope (noEmit project check)",
+      known_blockers: knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas),
       exit_codes: recorded.exit_codes && typeof recorded.exit_codes === "object"
         ? {
             tsc: Array.isArray(recorded.exit_codes.tsc) ? recorded.exit_codes.tsc : [],

@@ -374,6 +374,10 @@ name = "rest_tuple_conditional_arg_tests"
 path = "tests/rest_tuple_conditional_arg_tests.rs"
 
 [[test]]
+name = "curry_recursive_conditional_infer_tests"
+path = "tests/curry_recursive_conditional_infer_tests.rs"
+
+[[test]]
 name = "ts1210_class_arguments_tests"
 path = "tests/ts1210_class_arguments_tests.rs"
 
@@ -598,6 +602,10 @@ name = "enum_nominality_tests"
 path = "tests/enum_nominality_tests.rs"
 
 [[test]]
+name = "enum_indexed_access_tests"
+path = "tests/enum_indexed_access_tests.rs"
+
+[[test]]
 name = "enum_member_cache_tests"
 path = "tests/enum_member_cache_tests.rs"
 
@@ -684,6 +692,10 @@ path = "tests/ts2315_explicit_any_type_alias_tests.rs"
 [[test]]
 name = "generic_type_alias_deferred_eval_tests"
 path = "tests/generic_type_alias_deferred_eval_tests.rs"
+
+[[test]]
+name = "generic_conditional_default_assignability_tests"
+path = "tests/generic_conditional_default_assignability_tests.rs"
 
 [[test]]
 name = "ts2344_widen_literal_arg_display_tests"
@@ -860,6 +872,10 @@ path = "tests/jsdoc_prototype_assignment_target_display.rs"
 [[test]]
 name = "elaboration_wrapper_init_tests"
 path = "tests/elaboration_wrapper_init_tests.rs"
+
+[[test]]
+name = "ts2339_readonly_array_mutating_methods_tests"
+path = "tests/ts2339_readonly_array_mutating_methods_tests.rs"
 
 [[test]]
 name = "ts2339_union_narrow_display_tests"

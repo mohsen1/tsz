@@ -1975,6 +1975,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 &non_constraint_bounds,
                                 infer_ctx.best_common_type(&non_constraint_bounds),
                                 has_usable_contra_candidates,
+                                infer_ctx.has_fresh_array_element_candidate(var),
                             );
                             let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
                                 !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
@@ -2022,6 +2023,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     &lower_bounds,
                                     ty,
                                     has_usable_contra_candidates,
+                                    infer_ctx.has_fresh_array_element_candidate(var),
                                 )
                             } else {
                                 ty
@@ -2171,6 +2173,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     &lower_bounds,
                                     fallback,
                                     has_usable_contra_candidates,
+                                    infer_ctx.has_fresh_array_element_candidate(var),
                                 )
                             } else {
                                 fallback
@@ -2253,15 +2256,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     );
                                     // tsc's BCT widening: array element inference widens
                                     // fresh literals to their primitive in NoInfer<T>
-                                    // positions. Direct scalar arguments are NOT widened
-                                    // (from_array_element = false on their candidates).
+                                    // positions. Direct scalar arguments are preserved only
+                                    // when T appears at the return type's top level (`(): T`).
+                                    // Complex return shapes (`(): { v: T }`) use tsc's normal
+                                    // widened inference result.
                                     let db = self.interner.as_type_database();
-                                    let should_widen =
-                                        (crate::visitor::is_literal_type(db, result)
-                                            && infer_ctx.all_candidates_from_array_elements(var))
-                                            || crate::visitor::is_union_of_fresh_literals(
-                                                db, result,
-                                            );
+                                    let return_preserves_direct_literal =
+                                        crate::visitor::is_type_parameter_at_top_level(
+                                            db,
+                                            func.return_type,
+                                            tp.name,
+                                        );
+                                    let should_widen = crate::visitor::is_literal_type(db, result)
+                                        && (!return_preserves_direct_literal
+                                            || infer_ctx.all_candidates_from_array_elements(var))
+                                        || crate::visitor::is_union_of_fresh_literals(db, result);
                                     if should_widen {
                                         crate::widen_literal_type(db, result)
                                     } else {

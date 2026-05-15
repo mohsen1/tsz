@@ -14,10 +14,12 @@
 mod aliases;
 mod caches;
 mod compiler_options;
+mod cross_file_delegation_cache;
 pub use caches::{NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache};
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
+pub use cross_file_delegation_cache::CrossFileDelegationCache;
 mod constructors;
 mod core;
 mod cross_file_query;
@@ -58,7 +60,7 @@ use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::def::{DefId, DefinitionStore};
-use tsz_solver::{PropertyInfo, TypeId, TypeParamInfo};
+use tsz_solver::{PropertyInfo, TypeId};
 
 // Re-export context-facing types used by downstream crates.
 pub use tsz_binder::LibContext;
@@ -368,11 +370,8 @@ pub struct CheckerContext<'a> {
     /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
     pub lib_type_resolution_cache: FxHashMap<String, Option<TypeId>>,
 
-    /// Cache for lib delegation results in `delegate_cross_arena_symbol_resolution`.
-    /// Keyed by SymbolId, stores the resolved TypeId plus type parameters. Prevents
-    /// redundant child checker creation for the same lib symbol while preserving
-    /// generic application metadata for cache hits.
-    pub lib_delegation_cache: FxHashMap<SymbolId, (TypeId, Vec<TypeParamInfo>)>,
+    /// File-local caches for cross-file/lib delegation results.
+    pub lib_delegation_cache: CrossFileDelegationCache,
 
     /// Per-checker cache for cross-binder namespace member resolution.
     /// Keyed by (`namespace_name`, `member_name`) and stores both hits and misses.

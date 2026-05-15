@@ -626,6 +626,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        // Strategy 1.5: Evaluate statically determinable conditionals.
+        //
+        // When the check type and extends type are both concrete (contain no type
+        // parameters), the conditional resolves to a single branch without needing
+        // any substitution context. Evaluate it and check source against the result.
+        //
+        // This handles generic defaults with conditional types that become fully
+        // concrete after substitution, e.g.:
+        //   type Wrap<K, V, M = K extends string ? Map<K, V> : Map<string, V>>
+        // After Test<string, number>: M = string extends string ? Map<string,number> : ...
+        // which evaluates to Map<string,number>. Strategy 2 below would also reach
+        // the correct answer when both branches are identical, but this strategy
+        // correctly handles the case where only one branch matches the source.
+        if !crate::visitor::contains_type_parameters(self.interner, target.check_type)
+            && !crate::visitor::contains_type_parameters(self.interner, target.extends_type)
+        {
+            let evaluated = self.evaluate_type(target_id);
+            if evaluated != target_id {
+                return self.check_subtype(source, evaluated);
+            }
+        }
+
         // Strategy 2: Both branches must be supertypes of source.
         if self.check_subtype(source, target.true_type).is_true()
             && self.check_subtype(source, target.false_type).is_true()

@@ -128,6 +128,26 @@ var result: number = b.getX();
     );
 }
 
+#[test]
+fn test_generic_class_this_indexed_array_element_return() {
+    let source = r#"
+class Container<T> {
+    items: T[] = [];
+
+    getFirst(): this["items"][number] | undefined {
+        return this.items[0];
+    }
+}
+
+export {};
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "this[\"items\"][number] should resolve to the class array element type. Got: {diagnostics:?}"
+    );
+}
+
 /// Regression guard: accessing a property that truly doesn't exist should
 /// still produce TS2339, even with the polymorphic this type fix.
 #[test]

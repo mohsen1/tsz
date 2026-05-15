@@ -1801,6 +1801,29 @@ choose("a", "a");
 }
 
 #[test]
+fn noinfer_complex_return_widens_scalar_literal() {
+    let source = r#"
+function fn1<T>(a: T, b: NoInfer<T>): T {
+  return a;
+}
+
+function fn2<T>(a: T, b: NoInfer<T>): { v: T } {
+  return { v: a };
+}
+
+fn1("a", "b");
+fn2("a", "b");
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|(c, _)| *c == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Only direct scalar return should preserve the literal and reject the NoInfer fallback. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn noinfer_array_alias_widens_to_primitive() {
     let source = r#"
 type NI<T> = NoInfer<T>;
@@ -1812,6 +1835,30 @@ choose([1, 2], 3);
     assert!(
         diags.is_empty(),
         "NoInfer via type alias still widens array-inferred T to primitive. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_callback_return_accepts_widened_numeric_array_inference() {
+    let source = r#"
+declare function process<T>(arr: T[], fn: (x: T) => T): T[];
+
+const result = process([1, 2, 3], x => x * 2);
+const check: number[] = result;
+const literalOnly: (1 | 2 | 3)[] = result;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'number' is not assignable to type '1 | 2 | 3'")
+        }),
+        "numeric array inference should widen T before checking callback return. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2322 && message.contains("number[]")),
+        "result should be number[], not a literal-only array. Got: {diags:#?}"
     );
 }
 
@@ -3095,6 +3142,42 @@ class Container<T> {
     assert!(
         diags.iter().all(|(code, _)| *code != 2322),
         "constructor inference inside a generic static method should preserve the method type parameter. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn generic_class_expression_method_contextualizes_callback_parameter() {
+    let source = r#"
+const Container = class<T> {
+    constructor(public value: T) {}
+
+    map<U>(fn: (v: T) => U): InstanceType<typeof Container<U>> {
+        return null as any;
+    }
+};
+
+const numContainer = new Container(42);
+const checkNumber: number = numContainer.value;
+const checkString: string = numContainer.value;
+numContainer.map(n => n.toString());
+numContainer.map((n: string) => n);
+"#;
+    let diags = relevant_strict_default_lib_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 7006),
+        "generic class expression method should contextually type callback parameter from instantiated class type. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2322 && message.contains("number")),
+        "generic class expression constructor inference should preserve `value: number`. Got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == 2345 && message.contains("string")),
+        "generic class expression method should reject callback parameter annotations incompatible with number. Got: {diags:#?}"
     );
 }
 

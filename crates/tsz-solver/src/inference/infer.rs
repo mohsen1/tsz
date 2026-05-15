@@ -1435,6 +1435,17 @@ impl<'a> InferenceContext<'a> {
         !info.candidates.is_empty() && info.candidates.iter().all(|c| c.from_array_element)
     }
 
+    /// Returns true when at least one fresh literal candidate came from array
+    /// element inference. This is narrower than `all_candidates_from_array_elements`
+    /// so mixed direct/callback inference can still recognize literal-array evidence.
+    pub fn has_fresh_array_element_candidate(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates
+            .iter()
+            .any(|c| c.from_array_element && c.is_fresh_literal)
+    }
+
     /// Returns `true` if any covariant candidate came from a type assertion (`expr as T`).
     /// Asserted types are non-fresh and must not be widened.
     pub fn has_type_annotation_candidates(&mut self, var: InferenceVar) -> bool {

@@ -552,8 +552,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 if result == TypeId::UNDEFINED {
                     // Check if the member is a type parameter without a meaningful constraint.
                     // If so, create a deferred IndexAccess to preserve the constraint.
-                    // This ensures (S & State<T>)["a"] produces S["a"] & (T | undefined)
-                    // even when the index is generic (e.g., inferred as "a" from context).
                     if let Some(TypeData::TypeParameter(param_info)) =
                         self.evaluator.interner().lookup(member)
                     {
@@ -561,8 +559,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                             .constraint
                             .is_some_and(|c| c != TypeId::UNKNOWN && c != TypeId::ANY);
                         if !has_meaningful_constraint {
-                            // Create a deferred IndexAccess for the type parameter
-                            // without a meaningful constraint
                             let deferred = self
                                 .evaluator
                                 .interner()
@@ -589,10 +585,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 ));
             }
 
-            // If no concrete results but we have deferred results, return those.
             // This handles cases like `(S & State<T>)["a"]` where S is a type parameter
             // without a meaningful constraint - we need to preserve S["a"] as a deferred
-            // IndexAccess to ensure correct assignability checking.
             if !deferred_results.is_empty() {
                 return Some(crate::utils::intersection_or_single(
                     self.evaluator.interner(),
@@ -623,8 +617,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     } else {
                         self.evaluator.interner().object(properties)
                     };
-                    // Index access on merged object will defer (generic index),
-                    // but the merged object has all properties accessible.
                     return Some(self.evaluator.recurse_index_access(merged, self.index_type));
                 }
                 PropertyCollectionResult::Any => return Some(TypeId::ANY),
@@ -635,7 +627,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         }
 
         // For concrete indexes, distribute over intersection members and intersect results.
-        // (A & B)[K] = A[K] & B[K] — index access distributes over intersections.
         // Members that don't have the property (returning UNDEFINED) are excluded.
         //
         // CRITICAL: Deferred IndexAccess types (from type parameters without constraints)
@@ -670,8 +661,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                         .constraint
                         .is_some_and(|c| c != TypeId::UNKNOWN && c != TypeId::ANY);
                     if !has_meaningful_constraint {
-                        // Create a deferred IndexAccess for the type parameter
-                        // without a meaningful constraint
                         let deferred = self
                             .evaluator
                             .interner()
@@ -726,12 +715,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluator
             .evaluate_tuple_index(&elements, self.index_type);
 
-        // CRITICAL FIX: If we can't find the element, but the index is generic,
-        // we must defer evaluation (return None) instead of returning UNDEFINED.
-        // This prevents false TS2344 errors when a tuple is indexed by a type
-        // parameter (e.g., `[-1, 0, 1, ...][Depth]` where `Depth extends number`).
-        // Without this, the evaluator resolves the IndexAccess to `undefined`,
-        // which then fails the constraint check against `number`.
+        // Generic tuple indexes defer instead of becoming `undefined`, avoiding
+        // false constraint errors for patterns like `Tuple[Depth]`.
         if result == TypeId::UNDEFINED && self.is_generic_index() {
             return None;
         }
@@ -773,11 +758,43 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         self.evaluate_type_param(param_info)
     }
 
+    fn visit_this_type(&mut self) -> Self::Output {
+        let concrete_this = self
+            .evaluator
+            .resolver()
+            .resolve_this_type(self.evaluator.interner())?;
+        if concrete_this == self.object_type {
+            return Some(
+                self.evaluator
+                    .interner()
+                    .index_access(self.object_type, self.index_type),
+            );
+        }
+        Some(
+            self.evaluator
+                .recurse_index_access(concrete_this, self.index_type),
+        )
+    }
+
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
         Some(
             self.evaluator
                 .recurse_index_access(inner_type, self.index_type),
         )
+    }
+
+    fn visit_enum(&mut self, def_id: u32, _member_type: TypeId) -> Self::Output {
+        let ns_type = self
+            .evaluator
+            .resolver()
+            .get_enum_namespace_type(crate::def::DefId(def_id))?;
+        let result = self
+            .evaluator
+            .recurse_index_access(ns_type, self.index_type);
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+        Some(result)
     }
 
     fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
@@ -786,35 +803,13 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .interner()
             .get_mapped(MappedTypeId(mapped_id));
 
-        // Optimization: Mapped[K] -> Template[P/K] where K matches constraint
-        // This handles cases like `Ev<K>["callback"]` where Ev<K> is a mapped type
-        // over K, without needing to expand the mapped type (which fails for TypeParameter K).
-
-        tracing::trace!(
-            mapped_constraint = mapped.constraint.0,
-            mapped_constraint_key = ?self.evaluator.interner().lookup(mapped.constraint),
-            index_type = self.index_type.0,
-            index_type_key = ?self.evaluator.interner().lookup(self.index_type),
-            "visit_mapped index access"
-        );
-
         // Only apply if no name remapping (as clause)
         if mapped.name_type.is_some() {
             return None;
         }
 
-        // Same-name TypeParameter match: handle the case where the mapped constraint and
-        // the index type are both TypeParameters with the same name but different TypeIds.
-        //
-        // This occurs with `T extends Record<K, number>, K extends string` where
-        // `T[K]` should resolve to `number`. After Application expansion:
-        // - `Record<K, number>` → `{ [P in K_inner]: number }` where K_inner (TypeId A)
-        //   was created before K's `extends string` constraint was recorded.
-        // - The function's K has a different TypeId (TypeId B) with the constraint.
-        // - Both have the same Atom name (e.g., Atom("K")).
-        //
-        // By name-matching TypeParams we correctly identify that the index K is the
-        // same parameter as the mapped constraint K, enabling substitution.
+        // Name-match TypeParams so expanded `Record<K, V>` constraints still
+        // substitute for the caller's distinct-but-same-name `K`.
         let same_type_param_name = {
             let interner = self.evaluator.interner();
             match (
