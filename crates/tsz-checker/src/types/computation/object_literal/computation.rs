@@ -684,6 +684,8 @@ impl<'a> CheckerState<'a> {
                 None
             })
             .collect();
+        let circular_return_method_sites =
+            self.object_literal_circular_return_method_sites(&obj_all_method_names);
 
         // Pre-scan: collect getter property names so setter TS7006 checks can
         // detect paired getters regardless of declaration order.
@@ -1004,7 +1006,7 @@ impl<'a> CheckerState<'a> {
                     // it uses the property NAME node as the fallback initializer for error
                     // recovery (prop.initializer == prop.name). Skip type-checking in that
                     // case to prevent a spurious TS2304 for the property name identifier.
-                    let value_type = if prop.initializer == prop.name {
+                    let mut value_type = if prop.initializer == prop.name {
                         TypeId::ANY
                     } else if self.ctx.in_destructuring_target {
                         self.destructuring_target_type_from_initializer(prop.initializer)
@@ -1088,6 +1090,27 @@ impl<'a> CheckerState<'a> {
 
                         value_type
                     };
+                    if circular_return_method_sites.contains(&elem_idx)
+                        && initializer_is_function_expression
+                        && jsdoc_declared_type.is_none()
+                        && property_request.contextual_type.is_none()
+                        && self.ctx.no_implicit_any()
+                        && !self.has_syntax_parse_errors()
+                        && !self.is_js_file()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            prop.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[&name],
+                        );
+                        value_type =
+                            crate::query_boundaries::assignability::replace_function_return_type(
+                                self.ctx.types,
+                                value_type,
+                                TypeId::ANY,
+                            );
+                    }
 
                     // TS2779: The left-hand side of an assignment expression may not be
                     // an optional property access. Applies to destructuring targets like
@@ -2070,6 +2093,29 @@ impl<'a> CheckerState<'a> {
                             &[&name],
                         );
                         method_type = refined_method_type;
+                    }
+
+                    if circular_return_method_sites.contains(&elem_idx)
+                        && pushed_synthetic_this
+                        && jsdoc_declared_type.is_none()
+                        && method.type_annotation.is_none()
+                        && !has_concrete_method_context
+                        && self.ctx.no_implicit_any()
+                        && !self.has_syntax_parse_errors()
+                        && !self.is_js_file()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            method.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[&name],
+                        );
+                        method_type =
+                            crate::query_boundaries::assignability::replace_function_return_type(
+                                self.ctx.types,
+                                method_type,
+                                TypeId::ANY,
+                            );
                     }
 
                     let method_type = jsdoc_declared_type.unwrap_or_else(|| {

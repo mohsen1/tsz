@@ -1,8 +1,374 @@
 use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn object_literal_circular_return_method_sites(
+        &self,
+        obj_all_method_names: &FxHashMap<Atom, (NodeIndex, u32)>,
+    ) -> FxHashSet<NodeIndex> {
+        let unannotated_methods: FxHashMap<Atom, NodeIndex> = obj_all_method_names
+            .iter()
+            .filter_map(|(&name, &(elem_idx, _))| {
+                self.object_literal_callable_member_has_inferred_return(elem_idx)
+                    .then_some((name, elem_idx))
+            })
+            .collect();
+        if unannotated_methods.is_empty() {
+            return FxHashSet::default();
+        }
+
+        let mut graph: FxHashMap<NodeIndex, Vec<NodeIndex>> = FxHashMap::default();
+        for &elem_idx in unannotated_methods.values() {
+            let Some(body_idx) = self.object_literal_callable_member_body(elem_idx) else {
+                continue;
+            };
+            let mut callees = FxHashSet::default();
+            self.collect_this_member_calls_in_returns(body_idx, &unannotated_methods, &mut callees);
+            if !callees.is_empty() {
+                graph.insert(elem_idx, callees.into_iter().collect());
+            }
+        }
+
+        let mut circular_sites = FxHashSet::default();
+        let mut visited = FxHashSet::default();
+        let mut stack = Vec::new();
+        for &elem_idx in unannotated_methods.values() {
+            Self::collect_circular_return_graph_sites(
+                elem_idx,
+                &graph,
+                &mut visited,
+                &mut stack,
+                &mut circular_sites,
+            );
+        }
+        circular_sites
+    }
+
+    fn object_literal_callable_member_body(&self, elem_idx: NodeIndex) -> Option<NodeIndex> {
+        let elem_node = self.ctx.arena.get(elem_idx)?;
+        if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+            return method.body.into_option();
+        }
+
+        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(prop.initializer);
+        let init_node = self.ctx.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+            return None;
+        }
+        self.ctx.arena.get_function(init_node)?.body.into_option()
+    }
+
+    fn object_literal_callable_member_has_inferred_return(&self, elem_idx: NodeIndex) -> bool {
+        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+            return false;
+        };
+        if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+            return method.type_annotation.is_none() && method.body.is_some();
+        }
+
+        let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+            return false;
+        };
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(prop.initializer);
+        let Some(init_node) = self.ctx.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_function(init_node)
+            .is_some_and(|func| func.type_annotation.is_none() && func.body.is_some())
+    }
+
+    fn collect_circular_return_graph_sites(
+        elem_idx: NodeIndex,
+        graph: &FxHashMap<NodeIndex, Vec<NodeIndex>>,
+        visited: &mut FxHashSet<NodeIndex>,
+        stack: &mut Vec<NodeIndex>,
+        circular_sites: &mut FxHashSet<NodeIndex>,
+    ) {
+        if let Some(cycle_start) = stack.iter().position(|&stacked| stacked == elem_idx) {
+            circular_sites.extend(stack[cycle_start..].iter().copied());
+            return;
+        }
+        if visited.contains(&elem_idx) {
+            return;
+        }
+
+        stack.push(elem_idx);
+        if let Some(targets) = graph.get(&elem_idx) {
+            for &target in targets {
+                Self::collect_circular_return_graph_sites(
+                    target,
+                    graph,
+                    visited,
+                    stack,
+                    circular_sites,
+                );
+            }
+        }
+        stack.pop();
+        visited.insert(elem_idx);
+    }
+
+    fn collect_this_member_calls_in_returns(
+        &self,
+        body_idx: NodeIndex,
+        unannotated_methods: &FxHashMap<Atom, NodeIndex>,
+        callees: &mut FxHashSet<NodeIndex>,
+    ) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            if let Some(block) = self.ctx.arena.get_block(body_node) {
+                for &stmt_idx in &block.statements.nodes {
+                    self.collect_this_member_calls_in_return_statement(
+                        stmt_idx,
+                        unannotated_methods,
+                        callees,
+                    );
+                }
+            }
+        } else {
+            self.collect_this_member_calls_in_return_expression(
+                body_idx,
+                unannotated_methods,
+                callees,
+            );
+        }
+    }
+
+    fn collect_this_member_calls_in_return_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        unannotated_methods: &FxHashMap<Atom, NodeIndex>,
+        callees: &mut FxHashSet<NodeIndex>,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(ret) = self.ctx.arena.get_return_statement(node)
+                    && ret.expression.is_some()
+                {
+                    self.collect_this_member_calls_in_return_expression(
+                        ret.expression,
+                        unannotated_methods,
+                        callees,
+                    );
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        self.collect_this_member_calls_in_return_statement(
+                            stmt,
+                            unannotated_methods,
+                            callees,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_this_member_calls_in_return_statement(
+                        if_data.then_statement,
+                        unannotated_methods,
+                        callees,
+                    );
+                    if if_data.else_statement.is_some() {
+                        self.collect_this_member_calls_in_return_statement(
+                            if_data.else_statement,
+                            unannotated_methods,
+                            callees,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt in &clause.statements.nodes {
+                                self.collect_this_member_calls_in_return_statement(
+                                    stmt,
+                                    unannotated_methods,
+                                    callees,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    self.collect_this_member_calls_in_return_statement(
+                        try_data.try_block,
+                        unannotated_methods,
+                        callees,
+                    );
+                    if try_data.catch_clause.is_some() {
+                        self.collect_this_member_calls_in_return_statement(
+                            try_data.catch_clause,
+                            unannotated_methods,
+                            callees,
+                        );
+                    }
+                    if try_data.finally_block.is_some() {
+                        self.collect_this_member_calls_in_return_statement(
+                            try_data.finally_block,
+                            unannotated_methods,
+                            callees,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_this_member_calls_in_return_statement(
+                        catch_data.block,
+                        unannotated_methods,
+                        callees,
+                    );
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    self.collect_this_member_calls_in_return_statement(
+                        loop_data.statement,
+                        unannotated_methods,
+                        callees,
+                    );
+                }
+            }
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_for_in_of(node) {
+                    self.collect_this_member_calls_in_return_statement(
+                        loop_data.statement,
+                        unannotated_methods,
+                        callees,
+                    );
+                }
+            }
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                    self.collect_this_member_calls_in_return_statement(
+                        labeled.statement,
+                        unannotated_methods,
+                        callees,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_this_member_calls_in_return_expression(
+        &self,
+        expr_idx: NodeIndex,
+        unannotated_methods: &FxHashMap<Atom, NodeIndex>,
+        callees: &mut FxHashSet<NodeIndex>,
+    ) {
+        if self.object_literal_expression_is_void_prefix_unary(expr_idx) {
+            return;
+        }
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return;
+        };
+
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+        ) {
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.ctx.arena.get_call_expr(node)
+        {
+            let callee = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(call.expression);
+            if let Some(callee_node) = self.ctx.arena.get(callee)
+                && callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.ctx.arena.get_access_expr(callee_node)
+            {
+                let receiver = self
+                    .ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression);
+                if self.ctx.arena.get(receiver).is_some_and(|receiver_node| {
+                    receiver_node.kind == SyntaxKind::ThisKeyword as u16
+                }) && let Some(name) = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.as_str())
+                {
+                    let atom = self.ctx.types.intern_string(name);
+                    if let Some(&target_idx) = unannotated_methods.get(&atom) {
+                        callees.insert(target_idx);
+                    }
+                }
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(expr_idx) {
+            self.collect_this_member_calls_in_return_expression(
+                child_idx,
+                unannotated_methods,
+                callees,
+            );
+        }
+    }
+
+    fn object_literal_expression_is_void_prefix_unary(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_unary_expr(node)
+                    .is_some_and(|unary| unary.operator == SyntaxKind::VoidKeyword as u16)
+        })
+    }
+
     pub(super) fn build_object_literal_method_synthetic_this_type(
         &mut self,
         properties: &rustc_hash::FxHashMap<tsz_common::interner::Atom, tsz_solver::PropertyInfo>,
