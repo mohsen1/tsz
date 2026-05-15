@@ -104,13 +104,15 @@ impl<'a> CheckerState<'a> {
             self.register_boxed_types();
         }
 
-        // Type setup can spend the per-file resolution budget or trip the
-        // stack breaker while probing large lib-facing types. Those guards
-        // should bound setup itself, not poison the later statement pass where
-        // user-visible diagnostics are emitted.
+        // Type setup can spend the per-file resolution/application budget or
+        // trip the stack/depth breaker while probing large lib-facing types.
+        // Those guards should bound setup itself, not poison the later
+        // statement pass where user-visible diagnostics are emitted.
         self.ctx
             .type_resolution_fuel
             .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
+        self.ctx.eval_session.reset_instantiation_fuel();
+        self.ctx.depth_exceeded.set(false);
         crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
         crate::checkers_domain::reset_stack_overflow_flag();
 
