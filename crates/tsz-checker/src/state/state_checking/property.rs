@@ -978,10 +978,12 @@ impl<'a> CheckerState<'a> {
                 // Boundary-driven early exits: empty object, index signatures,
                 // global Object/Function, type parameters.
                 if cls.target_is_empty_object
-                    || cls.target_has_index_signature
                     || cls.target_is_global_object_or_function
                     || cls.target_is_type_parameter
                 {
+                    return;
+                }
+                if cls.target_has_index_signature && cls.excess_properties.is_empty() {
                     return;
                 }
             }
