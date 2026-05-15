@@ -1598,17 +1598,18 @@ impl<'a> CheckerState<'a> {
                     // and the type argument shares no common properties, tsc emits TS2559
                     // instead of TS2344. However, primitive types satisfy weak type
                     // constraints in tsc (e.g., `bigint extends {t?: string}` is valid).
-                    let weak_constraint_violation =
-                        if let Some(outcome) = constraint_relation_outcome.as_ref() {
-                            outcome.weak_union_violation
-                        } else {
-                            let analysis = self
-                                .analyze_assignability_failure(type_arg, instantiated_constraint);
-                            matches!(
-                                analysis.failure_reason,
-                                Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
-                            )
-                        };
+                    let weak_constraint_violation = if let Some(outcome) =
+                        constraint_relation_outcome.as_ref()
+                    {
+                        outcome.weak_union_violation
+                    } else {
+                        use crate::query_boundaries::assignability::RelationRequest;
+                        let (prepared_arg, prepared_constraint) =
+                            self.prepare_assignability_inputs(type_arg, instantiated_constraint);
+                        let request = RelationRequest::assign(prepared_arg, prepared_constraint);
+                        let outcome = self.execute_relation_request(&request);
+                        outcome.weak_union_violation
+                    };
                     if weak_constraint_violation {
                         // Primitives satisfy weak type constraints — skip TS2559
                         if !query::is_primitive_type(self.ctx.types.as_type_database(), type_arg) {
