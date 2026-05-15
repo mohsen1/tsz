@@ -1862,6 +1862,15 @@ impl<'a> CheckerState<'a> {
                 }
                 if index < args.len() {
                     let arg_idx = args[index];
+                    if is_generic_new
+                        && self.generic_new_argument_accepts_contextual_parameter(arg_idx, expected)
+                    {
+                        return self
+                            .recover_new_expression_return_type_after_contextual_argument_match(
+                                constructor_type,
+                                fallback_return,
+                            );
+                    }
                     // Check if this is a weak union violation or excess property case
                     // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
                     // We should skip the TS2322 error regardless of check_excess_properties flag
