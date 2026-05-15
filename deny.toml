@@ -1,0 +1,42 @@
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# Existing wasm-bindgen/js-sys lockfile entries are yanked but not a security
+# advisory. Keep the required PR gate focused on advisories, licenses, and
+# source policy; dependency refresh work should handle yanked updates separately.
+yanked = "allow"
+ignore = [
+  # Existing dependency. Replacing `bincode` needs a separate serialization
+  # compatibility review instead of being bundled with tooling setup.
+  "RUSTSEC-2025-0141",
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+  "Apache-2.0 WITH LLVM-exception",
+  "Apache-2.0",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+]
+exceptions = []
+
+[bans]
+multiple-versions = "allow"
+wildcards = "warn"
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
