@@ -253,6 +253,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
+        // A source function `(...args: [A, B]) => R` is structurally equivalent
+        // to `(a: A, b: B) => R` for infer matching.  Expand before the
+        // per-param loop so `(first: infer F, ...rest: infer Rest)` correctly
+        // binds F = A and Rest = [B] instead of F = [A, B] and Rest = [].
+        // Guard on get_tuple_elements to skip the Vec allocation for non-tuple
+        // rest params such as `...args: string[]`.
+        let expanded: Vec<ParamInfo>;
+        let source_params = if source_params.len() == 1
+            && source_params[0].rest
+            && crate::type_queries::get_tuple_elements(self.interner(), source_params[0].type_id)
+                .is_some()
+        {
+            expanded = crate::type_queries::unpack_tuple_rest_parameter(
+                self.interner(),
+                &source_params[0],
+            );
+            &expanded
+        } else {
+            source_params
+        };
+
         let trailing_rest_param = pattern_params.last().filter(|param| param.rest);
         let fixed_param_count = if trailing_rest_param.is_some() {
             pattern_params.len().saturating_sub(1)
