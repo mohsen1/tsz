@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
 
         let lib_contexts = self.ctx.lib_contexts.clone();
         let lib_binders = self.get_lib_binders();
-        let (declarations, has_interface, has_type_alias) = {
+        let (mut declarations, has_interface, has_type_alias) = {
             let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
             (
                 symbol.declarations.clone(),
@@ -86,6 +86,34 @@ impl<'a> CheckerState<'a> {
                 .lib_type_resolution_cache
                 .insert(cache_name.to_string(), None);
             return None;
+        }
+        if let Some((namespace, export_name)) = cache_name.split_once('.') {
+            for lib_ctx in lib_contexts.iter().take(self.ctx.actual_lib_file_count) {
+                let Some(namespace_sym_id) = lib_ctx.binder.file_locals.get(namespace) else {
+                    continue;
+                };
+                let Some(namespace_symbol) = lib_ctx.binder.get_symbol(namespace_sym_id) else {
+                    continue;
+                };
+                let Some(export_sym_id) = namespace_symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(export_name))
+                else {
+                    continue;
+                };
+                if export_sym_id == sym_id {
+                    continue;
+                }
+                let Some(export_symbol) = lib_ctx.binder.get_symbol(export_sym_id) else {
+                    continue;
+                };
+                if export_symbol.has_any_flags(symbol_flags::INTERFACE)
+                    && !export_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                {
+                    declarations.extend(export_symbol.declarations.iter().copied());
+                }
+            }
         }
 
         let fallback_arena =
@@ -132,8 +160,15 @@ impl<'a> CheckerState<'a> {
                 fallback_arena,
             )
         };
+        let namespace = cache_name.split_once('.').map(|(namespace, _)| namespace);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
-            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+            if let Some(namespace) = namespace
+                && let Some(sym_id) = self.resolve_lib_namespace_export_symbol(namespace, type_name)
+            {
+                return Some(self.ctx.get_lib_def_id(sym_id));
+            }
+            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
         };
 
         let lowering = TypeLowering::with_hybrid_resolver(
@@ -143,6 +178,7 @@ impl<'a> CheckerState<'a> {
             &def_id_resolver,
             &resolver,
         )
+        .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_name_def_id_resolver(&name_resolver);
         let lowering =
             if self.ctx.all_binders.is_some() || self.ctx.global_file_locals_index.is_some() {
