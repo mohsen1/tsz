@@ -887,6 +887,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
+        // `typeof import("...").<segments>` (bare or qualified) must resolve to
+        // the imported module's namespace type or qualified member type, not
+        // fall through to lowering (which returns ERROR for non-identifier
+        // expression names). Without this, inline indexed-access / keyof on
+        // `typeof import("...")` collapses to ERROR, causing utility types
+        // (Parameters, ReturnType, keyof) to evaluate against ERROR and yield
+        // `never`. Aliased uses already go through CheckerState's TYPE_QUERY
+        // handler; this brings the inline path to parity.
+        if self.is_import_call_typeof_query(type_query.expr_name)
+            && let Some(imported) = self.resolve_import_typeof_query_via_state(idx)
+        {
+            if let Some(type_arguments) = &type_query.type_arguments {
+                let type_arguments = type_arguments.clone();
+                return self
+                    .apply_instantiation_expression_type_arguments(imported, &type_arguments);
+            }
+            return imported;
+        }
+
         // Capture type argument node indices early (before borrows prevent access).
         // When present, the base type will be wrapped in Application(base, args)
         // so that constraint checking (TS2344) sees the instantiated type rather
