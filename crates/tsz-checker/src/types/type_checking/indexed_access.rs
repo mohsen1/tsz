@@ -15,24 +15,6 @@ use indexed_access_helpers::{
     same_type_param_name,
 };
 
-fn is_symbol_only_key_constraint(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
-    if ty == TypeId::SYMBOL {
-        return true;
-    }
-
-    match db.lookup(ty) {
-        Some(tsz_solver::TypeData::UniqueSymbol(_)) => true,
-        Some(tsz_solver::TypeData::Union(members)) => {
-            let members = db.type_list(members);
-            !members.is_empty()
-                && members
-                    .iter()
-                    .all(|&member| is_symbol_only_key_constraint(db, member))
-        }
-        _ => false,
-    }
-}
-
 impl<'a> CheckerState<'a> {
     fn is_mapped_key_index_for_current_object(
         &mut self,
@@ -829,8 +811,12 @@ impl<'a> CheckerState<'a> {
         }
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
             && crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
-            && index_constraint
-                .is_some_and(|constraint| is_symbol_only_key_constraint(self.ctx.types, constraint))
+            && index_constraint.is_some_and(|constraint| {
+                crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
+                    self.ctx.types,
+                    constraint,
+                )
+            })
             && !self.is_valid_index_for_type_param(index_type, object_type)
         {
             let obj_type_str = self.format_type(object_type);
