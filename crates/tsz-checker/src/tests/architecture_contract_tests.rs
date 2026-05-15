@@ -2055,6 +2055,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 // SECTION 6: DefId-First Semantic Type Resolution
 // - [x] No ad-hoc TypeData::Lazy interning                -> test_array_helpers_avoid_direct_typekey_interning (existing)
 // - [x] instanceof class narrowing uses real DefIds       -> test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback
+// - [x] No new raw SymbolRef reference construction       -> test_checker_raw_symbol_reference_construction_budget
 // - [x] ensure_relation_input_ready used before relations  -> test_subtype_path_establishes_preconditions_before_subtype_cache_lookup (existing)
 //
 // SECTION 11: Solver Contracts
@@ -5060,6 +5061,59 @@ fn test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback() {
     assert!(
         !class_branch.contains(".reference("),
         "instanceof class-symbol branch must not create Lazy(DefId(symbol_id)) via raw SymbolRef fallback"
+    );
+}
+
+/// Guard: checker code must not add new raw `reference(SymbolRef)` fallback
+/// construction while the remaining producers migrate to real `DefId`s.
+#[test]
+fn test_checker_raw_symbol_reference_construction_budget() {
+    fn allowed_raw_reference_constructions(rel_path: &str) -> usize {
+        match rel_path {
+            "src/flow/control_flow/type_guards.rs" | "src/flow/control_flow/narrowing.rs" => 2,
+            _ => 0,
+        }
+    }
+
+    fn is_raw_reference_construction(line: &str) -> bool {
+        let trimmed = line.trim_start();
+        !trimmed.starts_with("//") && line.contains(".reference(")
+    }
+
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(Path::new("src"), &mut files);
+
+    let mut violations = Vec::new();
+    for path in files {
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+        {
+            continue;
+        }
+
+        let rel_path = path.display().to_string();
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        let count = source
+            .lines()
+            .filter(|line| is_raw_reference_construction(line))
+            .count();
+        let allowed = allowed_raw_reference_constructions(&rel_path);
+
+        if count > allowed {
+            violations.push(format!(
+                "{rel_path}: {count} raw .reference() calls (allowed {allowed})"
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "new raw SymbolRef-backed reference construction found in checker code. \
+         Resolve symbols through TypeEnvironment/DefId helpers before creating \
+         Lazy(DefId), or migrate one of the existing allowlisted fallbacks first:\n{}",
+        violations.join("\n")
     );
 }
 

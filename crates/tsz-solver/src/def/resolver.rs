@@ -963,19 +963,27 @@ impl TypeResolver for TypeEnvironment {
         if let Some(&instance_type) = self.class_instance_types.get(&def_id.0) {
             return Some(instance_type);
         }
-        self.get_def(def_id).or_else(|| {
-            // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
-            // where N is the raw SymbolId. Look up the real DefId via symbol_to_def.
-            let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
-                self.definition_store
-                    .as_ref()
-                    .and_then(|store| store.find_def_by_symbol(def_id.0))
-            })?;
-            if let Some(&instance_type) = self.class_instance_types.get(&real_def.0) {
-                return Some(instance_type);
-            }
-            self.get_def(real_def)
-        })
+        if let Some(ty) = self.get_def(def_id) {
+            return Some(ty);
+        }
+
+        // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
+        // where N is the raw SymbolId. Look up the real DefId via symbol_to_def.
+        let real_def = self.symbol_to_def.get(&def_id.0).copied().or_else(|| {
+            self.definition_store
+                .as_ref()
+                .and_then(|store| store.find_def_by_symbol(def_id.0))
+        })?;
+        tracing::trace!(
+            target: "tsz::solver::def_id",
+            raw_def_id = def_id.0,
+            redirected_def_id = real_def.0,
+            "resolved lazy type through raw SymbolRef fallback"
+        );
+        if let Some(&instance_type) = self.class_instance_types.get(&real_def.0) {
+            return Some(instance_type);
+        }
+        self.get_def(real_def)
     }
 
     fn resolve_this_type(&self, _interner: &dyn TypeDatabase) -> Option<TypeId> {
@@ -1159,6 +1167,44 @@ mod tests {
         assert!(
             env.is_boxed_type_id(string_type, IntrinsicKind::String),
             "String TypeId should match String kind"
+        );
+    }
+
+    #[test]
+    fn resolve_lazy_raw_symbol_fallback_redirects_to_real_def() {
+        let mut env = TypeEnvironment::new();
+        let interner = crate::TypeInterner::new();
+
+        let raw_symbol = SymbolRef(7);
+        let real_def = DefId(42);
+        let resolved_type = TypeId(99);
+
+        env.symbol_to_def.insert(raw_symbol.0, real_def);
+        env.insert_def(real_def, resolved_type);
+
+        assert_eq!(
+            env.resolve_lazy(DefId(raw_symbol.0), &interner),
+            Some(resolved_type)
+        );
+    }
+
+    #[test]
+    fn resolve_lazy_raw_symbol_fallback_preserves_class_instance_type() {
+        let mut env = TypeEnvironment::new();
+        let interner = crate::TypeInterner::new();
+
+        let raw_symbol = SymbolRef(7);
+        let real_def = DefId(42);
+        let constructor_type = TypeId(99);
+        let instance_type = TypeId(123);
+
+        env.symbol_to_def.insert(raw_symbol.0, real_def);
+        env.insert_def(real_def, constructor_type);
+        env.class_instance_types.insert(real_def.0, instance_type);
+
+        assert_eq!(
+            env.resolve_lazy(DefId(raw_symbol.0), &interner),
+            Some(instance_type)
         );
     }
 
