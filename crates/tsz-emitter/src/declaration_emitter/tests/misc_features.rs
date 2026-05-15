@@ -1424,6 +1424,52 @@ class Calculator {
 }
 
 #[test]
+fn method_body_return_inference_survives_non_callable_cached_method_type() {
+    let source = r#"
+class Boxed {
+    values() {
+        return new Boxed();
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let method_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::METHOD_DECLARATION)
+                .then_some(NodeIndex(idx as u32))
+                .filter(|&method_idx| {
+                    parser
+                        .arena
+                        .get(method_idx)
+                        .and_then(|node| parser.arena.get_method_decl(node))
+                        .and_then(|method| parser.arena.get_identifier_text(method.name))
+                        == Some("values")
+                })
+        })
+        .expect("missing values method");
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(method_idx.0, TypeId::UNKNOWN);
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("values(): Boxed;"),
+        "Expected body inference to recover the method return type when cache is non-callable: {output}"
+    );
+}
+
+#[test]
 fn method_return_type_inferred_from_subtraction() {
     let output = emit_dts_with_binding(
         r#"
