@@ -1448,12 +1448,18 @@ impl<'a> CheckerState<'a> {
                         if is_weak {
                             let class_instance_type =
                                 self.get_class_instance_type(class_idx, class_data);
-                            let analysis = self
-                                .analyze_assignability_failure(class_instance_type, interface_type);
-                            if matches!(
-                                analysis.failure_reason,
-                                Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
-                            ) {
+                            let outcome = {
+                                use crate::query_boundaries::assignability::RelationRequest;
+                                let (prepared_source, prepared_target) = self
+                                    .prepare_assignability_inputs(
+                                        class_instance_type,
+                                        interface_type,
+                                    );
+                                let request =
+                                    RelationRequest::assign(prepared_source, prepared_target);
+                                self.execute_relation_request(&request)
+                            };
+                            if outcome.weak_union_violation {
                                 let class_str = self.format_type(class_instance_type);
                                 let iface_str = self.format_type(interface_type);
                                 let message = crate::diagnostics::format_message(
