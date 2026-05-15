@@ -38,7 +38,7 @@ pub use tsz_parser::parser;
 // Syntax utilities - re-exported from tsz-parser workspace crate
 pub use tsz_parser::syntax;
 
-// Parser - Cache-optimized parser using NodeArena (Phase 0.1)
+// Parser - cache-optimized parser using NodeArena
 #[cfg(test)]
 #[path = "../tests/parser_state_tests.rs"]
 mod parser_state_tests;
@@ -65,7 +65,7 @@ mod strict_bind_call_apply_tests;
 // Binder types and implementation - re-exported from tsz-binder workspace crate
 pub use tsz_binder as binder;
 
-// BinderState - Binder using NodeArena (Phase 0.1)
+// BinderState - Binder using NodeArena
 #[cfg(test)]
 #[path = "../tests/binder_state_tests.rs"]
 mod binder_state_tests;
@@ -73,7 +73,7 @@ mod binder_state_tests;
 // Lib Loader - re-exported from tsz-binder
 pub use tsz_binder::lib_loader;
 
-// Checker types and implementation (Phase 5) - re-exported from tsz-checker workspace crate
+// Checker types and implementation - re-exported from tsz-checker workspace crate
 pub use tsz_checker as checker;
 
 #[cfg(test)]
@@ -130,19 +130,19 @@ pub mod diagnostics;
 // Enums - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::enums;
 
-// Parallel processing with Rayon (Phase 0.4)
+// Parallel processing with Rayon
 pub mod parallel;
 
 // Embedded lib.d.ts files for zero-I/O startup
 pub mod embedded_libs;
 
-// Comment preservation (Phase 6.3)
+// Comment preservation
 pub use tsz_common::comments;
 #[cfg(test)]
 #[path = "../tests/comments_tests.rs"]
 mod comments_tests;
 
-// Source Map generation (Phase 6.2)
+// Source Map generation
 pub use tsz_common::source_map;
 #[cfg(test)]
 #[path = "../tests/source_map_test_utils.rs"]
@@ -178,7 +178,7 @@ pub use tsz_emitter::declaration_emitter;
 // JavaScript transforms - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::transforms;
 
-// Query-based Structural Solver (Phase 7.5)
+// Query-based Structural Solver
 pub use tsz_solver;
 
 // LSP (Language Server Protocol) support - re-exported from tsz-lsp workspace crate

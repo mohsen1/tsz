@@ -317,8 +317,9 @@ impl<'a> CheckerState<'a> {
         let mut has_late_bound_members = false;
         let mut merged_interface_type_for_class: Option<TypeId> = None;
 
-        // Phase 0: Pre-scan annotated properties to build a preliminary partial `this` type.
-        // Property initializers like `n = this.s` need `this` to resolve during Phase 1.
+        // Pre-scan annotated properties to build a preliminary partial `this` type.
+        // Property initializers like `n = this.s` need `this` to resolve during the
+        // first-pass class member build.
         // The type builder is called from `build_type_environment` BEFORE `enclosing_class`
         // is set, so `this` in property initializers would otherwise resolve to `any`.
         // By pushing a partial type onto `this_type_stack`, initializer expressions that
@@ -1171,7 +1172,7 @@ impl<'a> CheckerState<'a> {
 
             // Keep enclosing_class.cached_instance_this_type in sync with the
             // partial type so that class_member_this_type returns the current
-            // construction state (not the stale Phase 0 prescan type).
+            // construction state (not the stale pre-scan type).
             if let Some(ref mut info) = self.ctx.enclosing_class {
                 info.cached_instance_this_type = Some(partial_type);
             }
@@ -1332,7 +1333,7 @@ impl<'a> CheckerState<'a> {
             // partial type so that `this` evaluation inside getter/setter bodies
             // (via class_member_this_type → cached_instance_this) sees the
             // up-to-date type including properties and methods — not the stale
-            // prescan type from Phase 0.  Without this, `get y() { return this; }`
+            // pre-scan type.  Without this, `get y() { return this; }`
             // infers a return type that doesn't match partial_type, preventing the
             // ThisType rewrite and causing false TS2339 on the accessor property.
             if let Some(ref mut info) = self.ctx.enclosing_class {

@@ -14708,13 +14708,13 @@ fn test_application_ref_expansion_box_string() {
     let value_name = interner.intern_string("value");
     let box_body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
 
-    // Create Lazy(DefId(1)) for Box type alias (Phase 4.3: use DefId instead of SymbolRef)
+    // Create Lazy(DefId(1)) for Box type alias using the DefId-based API.
     let box_ref = interner.lazy(DefId(1));
 
     // Create Application: Box<string> = Application(Lazy(DefId(1)), [string])
     let box_string = interner.application(box_ref, vec![TypeId::STRING]);
 
-    // Set up resolver with both body type and type parameters (Phase 4.3: use DefId API)
+    // Set up resolver with both body type and type parameters using the DefId API.
     let mut env = TypeEnvironment::new();
     env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
@@ -15281,7 +15281,7 @@ fn test_application_ref_expansion_recursive() {
     // Create Application: List<string>
     let list_string = interner.application(list_ref, vec![TypeId::STRING]);
 
-    // Set up resolver with type parameters (Phase 4.2: use DefId-based API)
+    // Set up resolver with type parameters using the DefId-based API.
     let mut env = TypeEnvironment::new();
     env.insert_def_with_params(list_def_id, list_body, vec![t_param]);
 

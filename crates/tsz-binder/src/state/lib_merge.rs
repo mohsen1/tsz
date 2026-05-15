@@ -403,7 +403,7 @@ impl BinderState {
             }
         }
 
-        // Phase 3: Update file_locals with remapped IDs and track lib symbol IDs
+        // First pass: update file_locals with remapped IDs and track lib symbol IDs
         for lib_ctx in lib_contexts {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
@@ -432,7 +432,7 @@ impl BinderState {
             }
         }
 
-        // Phase 4: Propagate semantic_defs from lib binders with remapped SymbolIds.
+        // Second pass: propagate semantic_defs from lib binders with remapped SymbolIds.
         //
         // Lib binders record `semantic_defs` for their top-level declarations during
         // binding (TypeAlias, Interface, Class, Enum, Namespace). After first pass

@@ -1,6 +1,6 @@
 //! Emitter Benchmark
 //!
-//! Measures emitter throughput (bytes/sec) for Phase 6.1 performance analysis.
+//! Measures emitter throughput (bytes/sec) for performance analysis.
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tsz_core::{emitter::Printer, parser::ParserState};

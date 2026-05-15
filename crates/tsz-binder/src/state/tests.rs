@@ -7452,7 +7452,7 @@ fn stable_locations_default_file_idx_when_driver_unassigned() {
 
 #[test]
 fn stable_locations_identify_declarations_after_arena_drop() {
-    // Simulate the Phase 5 scenario: user binds a file, the driver drops
+    // Simulate the stale-driver scenario: user binds a file, the driver drops
     // the arena, but the `StableLocation`s are enough to reconstruct
     // `(file_idx, span)` and match them against a freshly reparsed file.
     let source = r"
@@ -7517,8 +7517,8 @@ class Qux {}
 // BinderState round-trip (lib snapshot campaign)
 // =============================================================================
 
-/// Phase 1.5 (`PERFORMANCE_PLAN.md)`: `BinderState` must round-trip
-/// through serde with diagnostic-identical behaviour, otherwise the
+/// Snapshot round-trip check (`docs/plan/PERFORMANCE_PLAN.md`): `BinderState` must
+/// round-trip through serde with diagnostic-identical behavior, otherwise the
 /// disk-backed lib cache would silently corrupt symbol resolution. The
 /// resolution caches (`resolved_export_cache`, `resolved_identifier_cache`)
 /// are `#[serde(skip)]` because they're regenerable; this test verifies

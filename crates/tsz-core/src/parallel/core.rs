@@ -2766,7 +2766,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     let mut merged_symbols: FxHashMap<Atom, SymbolId> = FxHashMap::default();
 
     // ==========================================================================
-    // PHASE 1: Remap lib symbols to global arena
+    // Pass 1: remap lib symbols to global arena
     // ==========================================================================
     // This creates a mapping from (lib_binder_ptr, local_id) -> global_id
     // so that file_locals can reference lib symbols using global IDs
@@ -2903,13 +2903,13 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     }
 
     // ==========================================================================
-    // PHASE 1.25: Clear un-remapped exports/members from global symbols
+    // Pass 1a: clear un-remapped exports/members from global symbols
     // ==========================================================================
     // first pass's `alloc_from()` copies symbols including their exports/members
     // tables, but those tables contain lib-LOCAL SymbolIds. In the global arena,
     // those same numeric IDs map to DIFFERENT symbols (e.g., lib-local SymbolId(2)
     // might be DateTimeFormat in es5.d.ts, but SymbolId(2) in the global arena is
-    // cancelIdleCallback from dom.d.ts). Phase 1.5 will rebuild exports/members
+    // cancelIdleCallback from dom.d.ts). A later pass rebuilds exports/members
     // with correctly remapped global IDs, so we must clear the corrupt data first.
     {
         let lib_global_ids: FxHashSet<SymbolId> = lib_symbol_remap.values().copied().collect();
@@ -2922,7 +2922,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     }
 
     // ==========================================================================
-    // PHASE 1.5: Remap internal references (parent, exports, members)
+    // Pass 1b: remap internal references (parent, exports, members)
     // ==========================================================================
     // After all lib symbols have been allocated in the global arena, we need a
     // second pass to fix up internal SymbolId references. The `alloc_from()` call
@@ -3145,7 +3145,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     }
 
     // ==========================================================================
-    // PHASE 1.6: Propagate lib semantic_defs directly to global semantic_defs
+    // Pass 1c: propagate lib semantic_defs directly to global semantic_defs
     // ==========================================================================
     // Lib binders record `semantic_defs` for their top-level declarations during
     // binding (TypeAlias, Interface, Class, Enum, Namespace, Function, Variable).
@@ -3154,7 +3154,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     // for ALL lib symbols at construction time.
     //
     // Previously, lib semantic_defs only reached the global map indirectly through
-    // per-file binders (which ran `merge_lib_symbols` Phase 4). That path is
+    // per-file binders (which ran `merge_lib_symbols` pass 4). That path is
     // redundant and order-dependent — by propagating directly here, the merge is
     // self-contained and deterministic.
     for lib_binder in &lib_binders {
@@ -3181,7 +3181,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     global_lib_symbol_ids.extend(lib_symbol_remap.values().copied());
 
     // ==========================================================================
-    // PHASE 2: Process user files
+    // Pass 2: process user files
     // ==========================================================================
 
     for file_idx in 0..results.len() {
@@ -3252,13 +3252,13 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                 if let Some(sym) = result.symbols.get(old_id) {
                     // For lib-originated symbols, reuse the first pass global IDs rather than
                     // allocating new ones. This prevents duplicate lib symbols and ensures
-                    // the Phase 1.5 remapped exports/members are preserved.
+                    // the pass 1b remapped exports/members are preserved.
                     if result.lib_symbol_ids.contains(&old_id) {
                         // For lib-originated symbols, use the reverse remap to find the
                         // original (lib_binder_ptr, local_id), then look up the first pass
                         // global ID via lib_symbol_remap. This ensures all lib symbols
                         // (both top-level and nested) map to their first pass global IDs,
-                        // preserving the Phase 1.5 export/member remapping.
+                        // preserving the pass 1b export/member remapping.
                         let mut resolved_global_id = None;
                         if let Some(&(binder_ptr, original_local_id)) =
                             result.lib_symbol_reverse_remap.get(&old_id)
@@ -3575,7 +3575,7 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
             }
 
             // Remap binder's per-file semantic_defs to global SymbolIds (first pass DefId-first).
-            // Skip lib-originated symbols — they were already propagated in Phase 1.6.
+            // Skip lib-originated symbols — they were already propagated in pass 1c.
             // Also collect per-file entries for BoundFile.semantic_defs (file-scoped identity).
             let mut file_semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry> =
                 FxHashMap::default();

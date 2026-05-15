@@ -929,7 +929,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
 
-        // Phase 0: Check `this` parameter for the union.
+        // Pass 0: check `this` parameter for the union.
         // TSC computes the intersection of all members' `this` types and checks the
         // calling context against it. A call fails with TS2684 if the `this` context
         // doesn't satisfy ALL members' `this` requirements.
@@ -951,7 +951,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 None
             };
 
-        // Phase 0.5: Check multi-overload union members for compatible signatures.
+        // Pass 0.5: check multi-overload union members for compatible signatures.
         // When multiple union members have multiple overloads, first try to find
         // compatible signatures across members. If found, validate `this` types.
         // If not found, fall through to per-member resolution (second pass) which
@@ -1187,8 +1187,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 CallResult::ThisTypeMismatch { .. } => {
                     // Per-member `this` failures mean arguments were validated
                     // successfully — only the `this` context was wrong. In union
-                    // context, `this` is checked at the union level (Phase 0
-                    // deferred check), so treat this as argument-success and
+                    // context, `this` is checked at the union level (deferred
+                    // union-level check), so treat this as argument-success and
                     // extract the member's return type.
                     if let Some(ret) = crate::type_queries::get_return_type(self.interner, member) {
                         return_types.push(ret);

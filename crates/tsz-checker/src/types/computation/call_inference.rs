@@ -3047,7 +3047,7 @@ impl<'a> CheckerState<'a> {
                     || is_nullish_callback_body_diag
                     || is_concrete_callback_implicit_any
                     || !(is_object_literal_diag || is_function_arg_implicit_any_diag);
-                // --- Phase 3: exact-message dedup for kept diagnostics ---
+                // --- Pass 3: exact-message dedup for kept diagnostics ---
                 if keep {
                     let full_key = (
                         diag.code,

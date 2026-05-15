@@ -10540,7 +10540,7 @@ fn test_union_call_mixed_rest_and_required_uses_base_member_max() {
     //   F4 = (a: string, b?: string, ...rest: string[]) => void — min=1, unlimited, rest
     //   F5 = (a: string, b: string) => void         — min=2, max=2, no rest
     //
-    // tsc's Phase 1: F5 has the highest min (2), so it becomes the base.
+    // tsc gives F5 highest min (2), so it becomes the base.
     // Combined signature inherits F5's shape: exactly 2 params, no rest.
     // max_allowed = Some(2), NOT None.
     let interner = TypeInterner::new();
@@ -12127,7 +12127,7 @@ fn test_union_call_mixed_overloads_intersects_this_types_callable() {
     let union_type = interner.union(vec![f1, f4]);
 
     // Create a `this` context that satisfies A (from F1's this type)
-    // so Phase 0 passes and we reach the 1-multi compatibility check.
+    // so the first pass succeeds and we reach the 1-multi compatibility check.
     let actual_this = interner.intersection(vec![type_a, type_c]);
 
     let mut checker = CompatChecker::new(&interner);
@@ -12307,7 +12307,7 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // resolve_union_new — combined construct-signature tests
-// These lock the Phase 1/2/3 algorithm used by resolve_union_new.
+// These lock the resolve_union_new overload-resolution algorithm.
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// Helper: build a one-construct-signature Callable type.

@@ -134,8 +134,9 @@ fn incremental_parse_resolves_new_identifier_through_get_identifier_text() {
     );
 }
 
-/// Phase 1.3 (`PERFORMANCE_PLAN` T3.1): the snapshot pipeline serialises a
-/// parsed `NodeArena` to disk and restores it on a later run. The arena's
+/// Snapshot pipeline serialization (`docs/plan/PERFORMANCE_PLAN.md` T3.1): the snapshot
+/// pipeline serializes a parsed `NodeArena` to disk and restores it on a later run.
+/// The arena's
 /// internal `Interner` field used to be `#[serde(skip)]`, which silently
 /// stripped identifier text on round-trip. This test pins the post-fix
 /// invariant: serialise -> deserialise -> resolve must yield the same text
@@ -154,7 +155,7 @@ fn node_arena_round_trips_identifier_text_via_serde_json() {
         "fixture should produce at least one Identifier node"
     );
 
-    // Round-trip through serde_json (the Phase 1 prototype format).
+    // Round-trip through serde_json (the prototype snapshot format).
     let json = serde_json::to_string(&arena).expect("NodeArena should serialize via serde_json");
     let restored: NodeArena =
         serde_json::from_str(&json).expect("NodeArena should deserialize via serde_json");
