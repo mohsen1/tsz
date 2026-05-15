@@ -32,7 +32,8 @@ impl<'a> CheckerState<'a> {
     // Type Relations (uses solver::CompatChecker for assignability)
     // =========================================================================
 
-    // Note: enum_symbol_from_type and enum_symbol_from_value_type are defined in type_checking.rs
+    // Note: `enum_symbol_from_type` and `enum_symbol_from_value_type` are defined
+    // in `types/utilities/enum_utils.rs`.
 
     pub(crate) fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         use tsz_solver::{IndexSignature, ObjectShape, PropertyInfo};

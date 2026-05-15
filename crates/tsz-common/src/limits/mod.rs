@@ -16,7 +16,8 @@
 //!
 //! This file previously contained ~40 constants attempting to centralize every
 //! limit in the codebase. In practice most were duplicated locally and the
-//! `limits.rs` copies were never imported — changes here had no effect.
+//! legacy monolithic module copies were never imported — changes here had no
+//! effect.
 //! It was trimmed to only the constants that are genuinely cross-crate.
 
 // =============================================================================
