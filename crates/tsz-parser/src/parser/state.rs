@@ -648,6 +648,64 @@ impl ParserState {
         }
     }
 
+    /// Returns true when the current `Unknown` token is the backslash/escape
+    /// debris from an invalid unicode escape in a declaration identifier.
+    pub(crate) fn current_unknown_starts_invalid_unicode_identifier_debris(&self) -> bool {
+        if !self.is_token(SyntaxKind::Unknown) {
+            return false;
+        }
+
+        let src = self.scanner.source_text();
+        let start = self.scanner.get_token_start();
+        let bytes = src.as_bytes();
+        bytes.get(start) == Some(&b'\\') && bytes.get(start + 1) == Some(&b'u')
+    }
+
+    /// Recover an invalid unicode escape that appears where a declaration
+    /// identifier is required. `tsc` drops the leading backslash and keeps the
+    /// `u...` debris as identifier text, optionally merging the adjacent
+    /// identifier token when the scanner split after a valid-but-illegal
+    /// identifier-start escape such as `\u0031a`.
+    pub(crate) fn parse_recovered_invalid_unicode_escape_identifier(&mut self) -> NodeIndex {
+        debug_assert!(self.current_unknown_starts_invalid_unicode_identifier_debris());
+        let start_pos = self.token_pos();
+        let mut end_pos = self.token_end();
+        let token_text = self.scanner.get_token_text_ref();
+        let mut recovered = token_text
+            .strip_prefix('\\')
+            .unwrap_or(token_text)
+            .to_string();
+
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+            tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+        );
+        self.next_token();
+
+        while self.token_pos() == end_pos && self.is_identifier_or_keyword() {
+            let text = if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+                self.scanner.get_token_value_ref().to_string()
+            } else {
+                self.scanner.get_token_text_ref().to_string()
+            };
+            recovered.push_str(&text);
+            end_pos = self.token_end();
+            self.next_token();
+        }
+
+        self.arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            start_pos,
+            end_pos,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: recovered,
+                original_text: None,
+                type_arguments: None,
+            },
+        )
+    }
+
     /// Consume a keyword token, checking for TS1260 (keywords cannot contain escape characters).
     /// Call this instead of `next_token()` when consuming a keyword in a keyword position.
     pub(crate) fn consume_keyword(&mut self) {

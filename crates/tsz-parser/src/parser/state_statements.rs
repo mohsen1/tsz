@@ -2006,9 +2006,12 @@ impl ParserState {
         loop {
             // Check if we can start a variable declaration
             // Can be: identifier, keyword as identifier, or binding pattern (object/array)
+            let starts_recovered_invalid_unicode_identifier =
+                self.current_unknown_starts_invalid_unicode_identifier_debris();
             let can_start_decl = self.is_identifier_or_keyword()
                 || self.is_token(SyntaxKind::OpenBraceToken)
-                || self.is_token(SyntaxKind::OpenBracketToken);
+                || self.is_token(SyntaxKind::OpenBracketToken)
+                || starts_recovered_invalid_unicode_identifier;
 
             if !can_start_decl {
                 if self.is_token(SyntaxKind::Unknown) {
@@ -2206,7 +2209,8 @@ impl ParserState {
                     let next_starts_declarator = (self.is_identifier_or_keyword()
                         && !self.is_reserved_word())
                         || self.is_token(SyntaxKind::OpenBraceToken)
-                        || self.is_token(SyntaxKind::OpenBracketToken);
+                        || self.is_token(SyntaxKind::OpenBracketToken)
+                        || self.current_unknown_starts_invalid_unicode_identifier_debris();
                     if !(decl_only_literal_value_errors && next_starts_declarator) {
                         break;
                     }
@@ -2276,7 +2280,8 @@ impl ParserState {
                     let can_continue = (self.is_identifier_or_keyword()
                         && !self.is_reserved_word())
                         || self.is_token(SyntaxKind::OpenBraceToken)
-                        || self.is_token(SyntaxKind::OpenBracketToken);
+                        || self.is_token(SyntaxKind::OpenBracketToken)
+                        || self.current_unknown_starts_invalid_unicode_identifier_debris();
                     if can_continue {
                         // Emit ',' expected directly, bypassing the distance-based
                         // suppression heuristic. tsc's parseDelimitedList always
@@ -2686,6 +2691,8 @@ impl ParserState {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
+        } else if self.current_unknown_starts_invalid_unicode_identifier_debris() {
+            self.parse_recovered_invalid_unicode_escape_identifier()
         } else if self.is_reserved_word() {
             // TS1389: '{0}' is not allowed as a variable declaration name.
             // tsc emits this specific error instead of the generic TS1359 when a reserved
