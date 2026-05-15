@@ -90,6 +90,15 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// so the formatter shows the intermediate alias name (e.g.
     /// `DeepReadonlyObject<Part>`) rather than the outer alias (`DeepReadonly<Part>`).
     pub(super) apparent_conditional_branch: Option<TypeId>,
+    /// Tracks whether ANY structural depth bailout was silently converted to an
+    /// opaque (identity) result during this evaluator's lifetime. Distinct from
+    /// `guard.exceeded` (cleared as part of the silent-bail policy) and from
+    /// `flag_depth_on_app_cycle`. Callers that run a follow-up pass with a more
+    /// powerful resolver use this to skip the retry when the original bail was
+    /// structural — a more powerful resolver does not change the structural cost
+    /// of recursive type-tree walks like `ts-toolbelt`'s `ComputeDeep` /
+    /// `Invert` mapped+conditional bodies. See `is_silent_depth_bailed`.
+    silent_depth_bailed: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -163,6 +172,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
+            silent_depth_bailed: false,
         }
     }
 }
@@ -224,6 +234,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
+            silent_depth_bailed: false,
         }
     }
 
@@ -373,6 +384,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.guard.is_exceeded()
     }
 
+    /// Whether any structural depth bailout was silently converted to an
+    /// opaque (identity) result during this evaluator's lifetime.
+    ///
+    /// `is_depth_exceeded` is intentionally cleared when the silent-bail policy
+    /// fires for legitimate finite recursion (see `RecursionResult::DepthExceeded`
+    /// handling), so a follow-up pass with a more powerful resolver cannot use
+    /// that flag to decide whether to retry. This counter preserves the signal.
+    ///
+    /// Callers that retry on the same root `type_id` should treat a silent bail
+    /// as "the structural type-tree walk hit its protection limit" — running
+    /// the retry will hit the same limit at the same shape and burn the same
+    /// time without making additional progress.
+    #[inline]
+    pub const fn is_silent_depth_bailed(&self) -> bool {
+        self.silent_depth_bailed
+    }
+
     /// Mark the guard as exceeded, causing subsequent evaluations to bail out.
     ///
     /// Used when an external condition (e.g. mapped key count or distribution
@@ -489,6 +517,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // rather than propagating ERROR. The outer evaluator can
                 // proceed at a shallower depth without inheriting a sticky
                 // exceeded flag. See the analogous DepthExceeded arm below.
+                self.silent_depth_bailed = true;
                 return type_id;
             }
             let result = self.evaluate_guarded(type_id);
@@ -575,6 +604,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return TypeId::ERROR;
                 }
                 self.guard.clear_exceeded();
+                self.silent_depth_bailed = true;
                 self.cache.insert(type_id, type_id);
                 return type_id;
             }
