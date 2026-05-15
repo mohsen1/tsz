@@ -1952,6 +1952,66 @@ b = a;
 }
 
 #[test]
+fn inferred_generic_class_new_preserves_application_display() {
+    let source = r#"
+namespace FirstSource {
+    export interface OptionalShape<T, U> {
+        one: T;
+        two?: U;
+    }
+    var obj: OptionalShape<number, string> = { one: 1 };
+    export var value = obj;
+}
+
+namespace FirstTarget {
+    export class RequiredShape<T, U> {
+        constructor(public one: T, public two: U) {}
+    }
+    var instance = new RequiredShape(1, "a");
+    export var value = instance;
+}
+
+FirstTarget.value = FirstSource.value;
+
+namespace SecondSource {
+    export interface MaybePair<X, Y> {
+        left: X;
+        right?: Y;
+    }
+    var obj: MaybePair<boolean, number> = { left: true };
+    export var value = obj;
+}
+
+namespace SecondTarget {
+    export class StrictPair<A, B> {
+        constructor(public left: A, public right: B) {}
+    }
+    var instance = new StrictPair(false, 1);
+    export var value = instance;
+}
+
+SecondTarget.value = SecondSource.value;
+"#;
+
+    let messages = ts2322_messages(source);
+
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("OptionalShape<number, string>")
+                && message.contains("RequiredShape<number, string>")
+        }),
+        "expected inferred RequiredShape application display, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("MaybePair<boolean, number>")
+                && message.contains("StrictPair<boolean, number>")
+        }),
+        "expected inferred StrictPair application display, got: {messages:?}"
+    );
+}
+
+#[test]
 fn generic_object_assign_initializer_keeps_outer_ts2322() {
     let source = r#"
 type Omit<T, K> = Pick<T, Exclude<keyof T, K>>;

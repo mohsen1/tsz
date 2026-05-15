@@ -1496,6 +1496,13 @@ impl<'a> CheckerState<'a> {
                 {
                     return fixed;
                 }
+                if let Some(ref type_args) = inferred_new_type_args
+                    && self.ctx.types.get_display_alias(return_type).is_none()
+                    && let Some(app) =
+                        self.explicit_class_new_application(new_expr.expression, type_args.clone())
+                {
+                    self.ctx.types.store_display_alias(return_type, app);
+                }
                 // When explicit type arguments were provided (e.g., `new D<string>()`),
                 // the checker pre-applied them to the construct signature, making
                 // `type_params` empty. The solver's non-generic path then skips
