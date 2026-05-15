@@ -1873,7 +1873,6 @@ export const timestamp = now();
 }
 
 #[test]
-#[ignore] // TODO: declaration emit should report TS7056 for private import type alias
 fn declaration_emit_reports_ts7056_for_private_import_type_alias() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -12830,7 +12829,6 @@ export function wrap<T>(value: T, count: number = 1): T[] {
 }
 
 #[test]
-#[ignore] // TODO: generic utility library classes should compile without errors
 fn compile_generic_utility_library_classes() {
     // Test generic utility classes
     let temp = TempDir::new().expect("temp dir");

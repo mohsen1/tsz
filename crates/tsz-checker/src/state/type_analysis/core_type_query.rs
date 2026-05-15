@@ -4,8 +4,8 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::common::lazy_def_id;
 use crate::state::CheckerState;
 use tracing::trace;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::PropertyInfo;
 use tsz_solver::TypeId;
@@ -62,18 +62,19 @@ impl<'a> CheckerState<'a> {
             .get(type_query.expr_name)
             .and_then(|node| self.ctx.arena.get_identifier(node))
             .is_some();
-        let has_type_args = type_query
+        let type_argument_nodes = type_query
             .type_arguments
             .as_ref()
-            .is_some_and(|args| !args.nodes.is_empty());
+            .map(|args| args.nodes.to_vec())
+            .unwrap_or_default();
+        let has_type_args = !type_argument_nodes.is_empty();
         // Resolve type arguments up-front so their own diagnostics (unresolved
         // names, malformed nodes) are reported independently of whether the
         // base of the `typeof X<...>` query resolves. tsc reports both the
         // unresolved base and each unresolved type argument. The results are
         // memoized and will be reused by the success paths below.
-        if has_type_args && let Some(args) = type_query.type_arguments.as_ref() {
-            let arg_nodes: Vec<NodeIndex> = args.nodes.to_vec();
-            for arg_idx in arg_nodes {
+        if has_type_args {
+            for &arg_idx in &type_argument_nodes {
                 let _ = self.get_type_from_type_node(arg_idx);
             }
         }
@@ -190,7 +191,7 @@ impl<'a> CheckerState<'a> {
             return base;
         }
 
-        if !has_type_args && let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
+        if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
             // Handle QualifiedName (e.g. `typeof x.p`) by resolving as value property access.
             // QualifiedName in typeof context means value.property, not namespace.member,
             // so we can't send it through get_type_of_node which dispatches to resolve_qualified_name.
@@ -315,7 +316,11 @@ impl<'a> CheckerState<'a> {
                                     let property_type = self.resolve_type_query_type(type_id);
                                     let resolved =
                                         self.get_enum_namespace_type_for_value(property_type);
-                                    return if use_flow_sensitive_query {
+                                    let resolved = self.apply_type_query_instantiation_arguments(
+                                        resolved,
+                                        &type_argument_nodes,
+                                    );
+                                    return if use_flow_sensitive_query && !has_type_args {
                                         self.apply_flow_narrowing(type_query.expr_name, resolved)
                                     } else {
                                         resolved
@@ -333,7 +338,11 @@ impl<'a> CheckerState<'a> {
                         let member_type = self.get_type_of_symbol(sym_id);
                         trace!(sym_id = ?sym_id, member_type = ?member_type, "type_query qualified: resolved via binder exports");
                         if member_type != TypeId::ERROR {
-                            return self.get_enum_namespace_type_for_value(member_type);
+                            let member_type = self.get_enum_namespace_type_for_value(member_type);
+                            return self.apply_type_query_instantiation_arguments(
+                                member_type,
+                                &type_argument_nodes,
+                            );
                         }
                     }
                 }
@@ -375,7 +384,11 @@ impl<'a> CheckerState<'a> {
                     let expr_type = query_expr_type(self, use_flow_sensitive_query);
                     let is_lazy = lazy_def_id(self.ctx.types, expr_type).is_some();
                     if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
-                        return self.get_enum_namespace_type_for_value(expr_type);
+                        let expr_type = self.get_enum_namespace_type_for_value(expr_type);
+                        return self.apply_type_query_instantiation_arguments(
+                            expr_type,
+                            &type_argument_nodes,
+                        );
                     }
                 }
             }
@@ -540,19 +553,38 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // No name text - propagate error
         };
 
-        let factory = self.ctx.types.factory();
-        if let Some(args) = &type_query.type_arguments
-            && !args.nodes.is_empty()
-        {
-            let type_args = args
-                .nodes
-                .iter()
-                .map(|&idx| self.get_type_from_type_node(idx))
-                .collect();
-            return factory.application(base, type_args);
-        }
+        self.apply_type_query_instantiation_arguments(base, &type_argument_nodes)
+    }
 
-        base
+    fn apply_type_query_instantiation_arguments(
+        &mut self,
+        base: TypeId,
+        type_argument_nodes: &[NodeIndex],
+    ) -> TypeId {
+        if type_argument_nodes.is_empty() {
+            return base;
+        }
+        if self
+            .instantiation_expression_applicability_error_type(base, type_argument_nodes.len())
+            .is_none()
+        {
+            let type_arguments = NodeList {
+                nodes: type_argument_nodes.to_vec(),
+                pos: 0,
+                end: 0,
+                has_trailing_comma: false,
+            };
+            let instantiated =
+                self.apply_type_arguments_to_callable_type(base, Some(&type_arguments));
+            if instantiated != base {
+                return instantiated;
+            }
+        }
+        let type_args = type_argument_nodes
+            .iter()
+            .map(|&idx| self.get_type_from_type_node(idx))
+            .collect();
+        self.ctx.types.factory().application(base, type_args)
     }
 
     pub(crate) fn const_object_member_literal_type_query(
