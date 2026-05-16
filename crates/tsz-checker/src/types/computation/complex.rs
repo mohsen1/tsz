@@ -181,9 +181,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(symbol) = self.ctx.binder.get_symbol(type_sym_id) else {
-            return None;
-        };
+        let symbol = self.ctx.binder.get_symbol(type_sym_id)?;
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
         if symbol.has_any_flags(value_flags_except_module) && !symbol.is_type_only {
             trace!(
