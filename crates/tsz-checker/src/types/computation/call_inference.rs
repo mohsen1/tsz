@@ -870,6 +870,18 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn array_or_number_index_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(elem) = common::array_element_type(self.ctx.types, type_id) {
+            return Some(elem);
+        }
+
+        let resolved = self.resolve_lazy_type(type_id);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+        resolver.resolve_number_index(resolved)
+    }
+
     fn return_context_application_bases_match(&self, left: TypeId, right: TypeId) -> bool {
         use tsz_binder::SymbolId;
 
@@ -1272,7 +1284,7 @@ impl<'a> CheckerState<'a> {
                     // matched against `number[]` infers T = number[] instead of
                     // letting the solver infer T = number.
                     let target_is_array_like =
-                        common::array_element_type(self.ctx.types, target).is_some();
+                        self.array_or_number_index_element_type(target).is_some();
                     let source_is_iterable_like =
                         target_is_array_like && !source_args.is_empty() && {
                             let evaluated = self.evaluate_type_with_env(source);
@@ -1283,7 +1295,8 @@ impl<'a> CheckerState<'a> {
                         // before mapping against the source type args. This prevents the
                         // contextual substitution from using unwidened literal types that
                         // would cause false TS2345 mismatches.
-                        let elem = common::array_element_type(self.ctx.types, target)
+                        let elem = self
+                            .array_or_number_index_element_type(target)
                             .expect("array target should have element type");
                         let widened_elem = tsz_solver::operations::widening::widen_literal_type(
                             self.ctx.types,
@@ -1438,10 +1451,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let (Some(source_elem), Some(target_elem)) = (
-            common::array_element_type(self.ctx.types, source),
-            common::array_element_type(self.ctx.types, target),
-        ) {
+        let source_array_elem = self.array_or_number_index_element_type(source);
+        let target_array_elem = self.array_or_number_index_element_type(target);
+        if let (Some(source_elem), Some(target_elem)) = (source_array_elem, target_array_elem) {
             self.collect_return_context_substitution(
                 source_elem,
                 target_elem,
@@ -1452,7 +1464,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(source_elem) = common::array_element_type(self.ctx.types, source)
+        if let Some(source_elem) = source_array_elem
             && let Some((_target_base, target_args)) =
                 common::application_info(self.ctx.types, target)
             && target_args.len() == 1
@@ -1467,7 +1479,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(source_elem) = common::array_element_type(self.ctx.types, source)
+        if let Some(source_elem) = source_array_elem
             && let Some(iterator_info) = common::get_iterator_info(self.ctx.types, target, false)
         {
             self.collect_return_context_substitution(
