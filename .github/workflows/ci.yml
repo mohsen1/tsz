@@ -493,6 +493,13 @@ jobs:
     # so sharding test execution is not the lever. Re-evaluate sharding once
     # the sccache silent-exit issue is fixed (then compile drops to seconds
     # on cache hit and sharding becomes worth the overhead).
+    #
+    # Keep sccache disabled here because the tsz-checker lib-test target can
+    # exit silently when built through sccache from a restored warm target
+    # cache. Still restore the GCS cargo-home and ci-unit target cache so PRs
+    # do not rebuild third-party dependencies from scratch on every run;
+    # gcp-cache refreshes source mtimes after restore so workspace test
+    # binaries are revalidated.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
@@ -501,9 +508,8 @@ jobs:
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       CARGO_INCREMENTAL: "0"
-      TSZ_CI_CACHE_RESTORE: "0"
       TSZ_CI_DISABLE_SCCACHE: "1"
-      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
+      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "1"
     steps:
       - uses: actions/checkout@v4
         with:
