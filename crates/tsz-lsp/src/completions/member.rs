@@ -375,17 +375,7 @@ impl<'a> Completions<'a> {
         // Use the lib-defined Array<T> interface when available, substituting the
         // element type so that method return types are as precise as possible.
         let array_elem = visitor::array_element_type(interner, evaluated).or_else(|| {
-            visitor::tuple_list_id(interner, evaluated).map(|list_id| {
-                let elems = interner.tuple_list(list_id);
-                let elem_types: Vec<TypeId> = elems.iter().map(|e| e.type_id).collect();
-                if elem_types.is_empty() {
-                    TypeId::NEVER
-                } else if elem_types.len() == 1 {
-                    elem_types[0]
-                } else {
-                    interner.union(elem_types)
-                }
-            })
+            tsz_solver::type_queries::get_tuple_element_type_union(interner, evaluated)
         });
         if let Some(_elem) = array_elem {
             if let Some(array_base) = interner.get_array_base_type() {
