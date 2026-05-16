@@ -1,16 +1,10 @@
-//! Generic type argument constraint validation (TS2344).
-
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Returns `true` when an arity diagnostic (TS2314 generic type requires
-    /// N args, TS2315 type is not generic, or TS2707 generic type requires
-    /// between M and N args) was emitted at any byte offset inside the AST
-    /// range of `type_arg_idx`. Used to suppress cascading TS2344 on an
-    /// outer type reference whose argument carries an inner arity error.
+    /// Returns true when an arity diagnostic was emitted inside `type_arg_idx`.
     fn type_arg_subtree_has_arity_error(&self, type_arg_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_arg_idx) else {
             return false;
@@ -1163,6 +1157,18 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if is_bare_type_param && base_constraint_type.is_none() {
+                        if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                            && self
+                                .explicit_alias_type_parameter_constraint_satisfies_arg_constraint(
+                                    arg_idx,
+                                    type_arg,
+                                    constraint,
+                                    type_params,
+                                    &type_args,
+                                )
+                        {
+                            continue;
+                        }
                         // Bare `Infer` — base_constraint_of_type returns the type
                         // unchanged, so base_constraint_type is None. Skip when the
                         // infer var has a hidden structural or positional constraint.
