@@ -536,10 +536,10 @@ impl<'a> Printer<'a> {
 
     fn reusable_object_rest_initializer_name(&self, initializer_idx: NodeIndex) -> Option<String> {
         if initializer_idx.is_none()
-            || !self
+            || self
                 .arena
                 .get(initializer_idx)
-                .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+                .is_none_or(|n| n.kind != tsz_scanner::SyntaxKind::Identifier as u16)
         {
             return None;
         }

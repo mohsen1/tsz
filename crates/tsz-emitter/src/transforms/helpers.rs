@@ -764,7 +764,7 @@ fn emit_unprioritized_helpers(helpers: &HelpersNeeded, output: &mut String) {
     }
 }
 
-fn fallback_unprioritized_order(helpers: &HelpersNeeded) -> [HelperEmitOrder; 12] {
+const fn fallback_unprioritized_order(helpers: &HelpersNeeded) -> [HelperEmitOrder; 12] {
     [
         HelperEmitOrder::Await,
         HelperEmitOrder::AsyncGenerator,
