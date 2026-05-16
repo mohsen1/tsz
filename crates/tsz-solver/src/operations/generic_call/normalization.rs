@@ -47,6 +47,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
         let return_is_tp = is_tp(return_ty);
+        if func.is_constructor && !return_is_tp {
+            return None;
+        }
         let return_contains_tp = return_is_tp
             || crate::visitor::contains_type_parameter_named(
                 self.interner.as_type_database(),
