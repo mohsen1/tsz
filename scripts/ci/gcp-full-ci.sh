@@ -59,17 +59,11 @@ default_cargo_build_jobs() {
   mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
   case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
     unit|unit-archive|unit-shard)
-      # Unit builds compile large lib-test targets concurrently with downstream
-      # crates. tsz-checker's lib-test is the peak RSS consumer (~6-8 GiB at
-      # cgu=4). Sizing at 8192 MiB/job gives 32 GiB / 8 GiB = 4 cargo build
-      # jobs on the 32 GiB cloud runners — restoring the historical default
-      # (commit 111d24ba98 used 7168 MiB/job globally, also yielding 4 jobs).
-      # The 16384 MiB/job cap was added in commit 1bddbbfbf4 alongside the
-      # sccache disablement as a bundled defensive move; with sccache still
-      # off the smaller cap is safe. If rustc starts hitting SIGKILL on the
-      # checker lib-test compile, override via TSZ_CI_UNIT_CARGO_MB_PER_JOB
-      # (12288 → 2 jobs, 16384 → 2 jobs).
-      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-8192}"
+      # Unit builds compile several large lib-test targets concurrently with
+      # downstream crates. The 24 GiB cloud runners were still hitting rustc
+      # SIGKILL at 3 build jobs (8192 MiB/job), so default unit builds to 2 jobs
+      # on that class while keeping larger runners parallel.
+      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-12288}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
