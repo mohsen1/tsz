@@ -520,6 +520,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(t_callable_id) = callable_shape_id(self.interner, resolved_target) {
             let t_callable = self.interner.callable_shape(t_callable_id);
+            let source_intersection_members =
+                crate::type_queries::data::get_intersection_members(self.interner, resolved_source);
             let prefer_property_failure = !t_callable.properties.is_empty()
                 && !self.callable_properties_are_only_function_members(&t_callable.properties);
             if !prefer_property_failure && !t_callable.call_signatures.is_empty() {
@@ -540,14 +542,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return Some(reason);
                     }
                 }
-            }
-        }
 
-        // Callable target with properties: when assigning to a callable type that has
-        // additional properties (e.g., `{ (): string; prop: number }`), check for missing
-        // properties from the source. This produces TS2741/TS2739 instead of generic TS2322.
-        if let Some(t_callable_id) = callable_shape_id(self.interner, resolved_target) {
-            let t_callable = self.interner.callable_shape(t_callable_id);
+                if let Some(members) = &source_intersection_members {
+                    for member in members.iter() {
+                        if let Some(s_fn_id) = function_shape_id(self.interner, *member) {
+                            let s_fn = self.interner.function_shape(s_fn_id);
+                            if let Some(reason) =
+                                self.explain_function_to_callable_failure(&s_fn, &t_callable)
+                            {
+                                return Some(reason);
+                            }
+                        }
+                        if let Some(s_callable_id) = callable_shape_id(self.interner, *member) {
+                            let s_callable = self.interner.callable_shape(s_callable_id);
+                            if let Some(reason) = self
+                                .explain_callable_to_callable_signature_failure(
+                                    &s_callable,
+                                    &t_callable,
+                                )
+                            {
+                                return Some(reason);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Emit TS2741/TS2739 for missing properties instead of generic TS2322.
             if !t_callable.properties.is_empty() {
                 let source_props: Vec<PropertyInfo> = if let Some(s_callable_id) =
                     callable_shape_id(self.interner, resolved_source)
@@ -558,6 +579,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .clone()
                 } else if let Some(s_shape_id) = object_shape_id(self.interner, resolved_source) {
                     self.interner.object_shape(s_shape_id).properties.clone()
+                } else if source_intersection_members.is_some() {
+                    match crate::objects::collect_properties(
+                        resolved_source,
+                        self.interner,
+                        self.resolver,
+                    ) {
+                        crate::objects::PropertyCollectionResult::Properties {
+                            properties, ..
+                        } => properties,
+                        _ => vec![],
+                    }
                 } else {
                     vec![]
                 };

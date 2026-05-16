@@ -3,7 +3,6 @@
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -39,19 +38,6 @@ impl<'a> CheckerState<'a> {
             .diagnostics
             .iter()
             .any(|d| d.code == code && d.start >= start && d.start < end)
-    }
-
-    fn type_arg_is_unknown_keyword(&self, type_arg_idx: NodeIndex) -> bool {
-        self.node_text(type_arg_idx)
-            .is_some_and(|text| text.trim() == "unknown")
-            || self
-                .type_arg_identifier_name(type_arg_idx)
-                .is_some_and(|name| name == "unknown")
-            || self
-                .ctx
-                .arena
-                .get(type_arg_idx)
-                .is_some_and(|node| node.kind == SyntaxKind::UnknownKeyword as u16)
     }
 
     /// Validate each type argument against its corresponding type parameter
@@ -235,6 +221,18 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     type_args_list.nodes.get(i).copied(),
                 ) {
+                    continue;
+                }
+
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self.syntax_instantiated_type_arg_satisfies_constraint(
+                        type_arg,
+                        arg_idx,
+                        type_params,
+                        &type_args,
+                        constraint,
+                    )
+                {
                     continue;
                 }
 

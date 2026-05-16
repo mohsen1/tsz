@@ -77,7 +77,7 @@ fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
         || stem.starts_with("webworker.")
 }
 
-fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
+pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
     arena.source_files.first().is_some_and(|source_file| {
         if !source_file.is_declaration_file {
             return false;
