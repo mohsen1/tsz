@@ -191,6 +191,23 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
     )
 }
 
+fn iterator_object_has_global_augmentations(ctx: &crate::context::CheckerContext<'_>) -> bool {
+    if ctx
+        .binder
+        .global_augmentations
+        .get("IteratorObject")
+        .is_some_and(|augmentations| !augmentations.is_empty())
+    {
+        return true;
+    }
+
+    ctx.binder
+        .file_locals
+        .get("IteratorObject")
+        .and_then(|sym_id| ctx.binder.get_symbol(sym_id))
+        .is_some_and(|symbol| symbol.declarations.len() > 1)
+}
+
 impl<'a> CheckerState<'a> {
     fn symbol_is_actual_lib_namespace_export(
         &self,
@@ -691,6 +708,15 @@ impl<'a> CheckerState<'a> {
         if has_interface_type_params
             && !protocol_method_interface
             && !allow_generic_actual_lib_direct_fallback(&name)
+            && name == "IteratorObject"
+        {
+            return None;
+        }
+        if has_interface_type_params
+            && !protocol_method_interface
+            && !allow_generic_actual_lib_direct_fallback(&name)
+            && self.symbol_has_direct_actual_lib_iterator_object_heritage(sym_id, &symbol)
+            && iterator_object_has_global_augmentations(&self.ctx)
         {
             return None;
         }
@@ -698,10 +724,17 @@ impl<'a> CheckerState<'a> {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
             if let Some(direct_type) = direct_type {
                 (direct_type, params)
-            } else if protocol_method_interface || allow_generic_actual_lib_direct_fallback(&name) {
-                let direct_type = self.resolve_lib_interface_type_by_symbol(&name, sym_id)?;
-                let params = self.get_type_params_for_symbol(sym_id);
-                (direct_type, params)
+            } else if protocol_method_interface
+                || !self.symbol_has_direct_actual_lib_iterator_object_heritage(sym_id, &symbol)
+                || !iterator_object_has_global_augmentations(&self.ctx)
+            {
+                self.direct_cross_file_interface_lowering(
+                    sym_id,
+                    self.ctx.binder,
+                    delegate_arena,
+                    true,
+                    false,
+                )?
             } else {
                 return None;
             }
