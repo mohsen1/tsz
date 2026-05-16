@@ -57,6 +57,9 @@ pub(crate) enum RelationKind {
     Destructuring,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
+    /// Bivariant callback assignment: method-override or bivariant-callback
+    /// scenarios where function parameter types are checked bivariantly.
+    BivariantCallbacks,
 }
 
 /// How excess properties (properties in source not in target) are handled.
@@ -148,6 +151,10 @@ impl RelationRequest {
 
     pub(crate) fn destructuring(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Destructuring)
+    }
+
+    pub(crate) fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::BivariantCallbacks)
     }
 
     /// Mark the source as a fresh object literal, enabling EPC.
@@ -649,19 +656,33 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         relation_flags |= RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
     }
 
-    let inputs = AssignabilityQueryInputs {
-        db,
-        resolver,
-        source: request.source,
-        target: request.target,
-        flags: relation_flags,
-        inheritance_graph,
-        sound_mode,
+    // BivariantCallbacks uses a different solver entry point that treats
+    // callback parameter types bivariantly (strips strict-function-types).
+    let (related, depth_exceeded) = if request.kind == RelationKind::BivariantCallbacks {
+        let bivariant_flags = relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES;
+        let r = is_assignable_bivariant_with_resolver(
+            db,
+            resolver,
+            request.source,
+            request.target,
+            bivariant_flags,
+            inheritance_graph,
+            sound_mode,
+        );
+        (r, false)
+    } else {
+        let inputs = AssignabilityQueryInputs {
+            db,
+            resolver,
+            source: request.source,
+            target: request.target,
+            flags: relation_flags,
+            inheritance_graph,
+            sound_mode,
+        };
+        let relation_result = is_assignable_with_overrides(&inputs, overrides);
+        (relation_result.is_related(), relation_result.depth_exceeded)
     };
-
-    let relation_result = is_assignable_with_overrides(&inputs, overrides);
-    let related = relation_result.is_related();
-    let depth_exceeded = relation_result.depth_exceeded;
 
     if related {
         return RelationOutcome {
