@@ -616,8 +616,7 @@ impl<'a> CheckerState<'a> {
                 let resolver_generation = tsz_solver::TypeResolver::resolver_generation(&self.ctx);
                 let cache_key = |base, name| (base, resolver_generation, name);
 
-                // property_cache stores Option<TypeId>: Some(id) = resolved type,
-                // None = property not found (fall through for TS2339 diagnostics).
+                // None means property not found; fall through for TS2339 diagnostics.
                 let cached_property_type = self
                     .ctx
                     .narrowing_cache
