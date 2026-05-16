@@ -64,6 +64,25 @@ fn parse_bound_source_with_name(
     )
 }
 
+fn interface_declarations_in_arena(
+    arena: &tsz_parser::parser::node::NodeArena,
+) -> Vec<tsz_parser::NodeIndex> {
+    arena
+        .source_files
+        .first()
+        .expect("source file should parse")
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .filter(|idx| {
+            arena
+                .get(*idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
+        })
+        .collect()
+}
+
 fn interface_member_by_name(
     arena: &tsz_parser::parser::node::NodeArena,
     interface_idx: tsz_parser::NodeIndex,
@@ -140,7 +159,7 @@ fn does_not_treat_local_declaration_paths_as_external_packages() {
 
 #[test]
 fn source_file_direct_interface_lowering_accepts_scope_independent_members() {
-    let (arena, declarations) = parse_interface_declarations(
+    let (arena, binder, _types) = parse_bound_source(
         r#"
                 interface Leaf {
                     value: number;
@@ -149,22 +168,227 @@ fn source_file_direct_interface_lowering_accepts_scope_independent_members() {
                 }
             "#,
     );
-    let declarations = vec![(declarations[0], &arena)];
+    let declarations = interface_declarations_in_arena(arena.as_ref());
+    let declarations = vec![(declarations[0], arena.as_ref())];
 
-    assert!(CheckerState::source_file_interface_declarations_are_direct_lowerable(&declarations,));
+    assert!(
+        CheckerState::source_file_interface_declarations_are_direct_lowerable(
+            &declarations,
+            binder.as_ref(),
+        )
+    );
 }
 
 #[test]
 fn source_file_direct_interface_lowering_rejects_scope_dependent_members() {
-    let (arena, declarations) = parse_interface_declarations(
+    let (arena, binder, _types) = parse_bound_source(
         r#"
-                interface Local { value: number; }
+                class Local { value: number; }
                 interface UsesLocal { value: Local; }
             "#,
     );
-    let declarations = vec![(declarations[1], &arena)];
+    let declarations = interface_declarations_in_arena(arena.as_ref());
+    let declarations = vec![(declarations[0], arena.as_ref())];
 
-    assert!(!CheckerState::source_file_interface_declarations_are_direct_lowerable(&declarations,));
+    assert!(
+        !CheckerState::source_file_interface_declarations_are_direct_lowerable(
+            &declarations,
+            binder.as_ref(),
+        )
+    );
+}
+
+#[test]
+fn source_file_direct_interface_lowering_accepts_sibling_option_bag_refs() {
+    let (arena, binder, _types) = parse_bound_source(
+        r#"
+                type Mode = "lookup" | "best fit";
+                interface Nested { enabled: boolean; }
+                interface Options {
+                    mode?: Mode;
+                    nested: Nested;
+                    modes: ReadonlyArray<Mode>;
+                }
+            "#,
+    );
+    let declarations = interface_declarations_in_arena(arena.as_ref());
+    let declarations = vec![(declarations[1], arena.as_ref())];
+
+    assert!(
+        CheckerState::source_file_interface_declarations_are_direct_lowerable(
+            &declarations,
+            binder.as_ref(),
+        )
+    );
+}
+
+#[test]
+fn direct_cross_file_interface_lowering_accepts_source_option_bag_sibling_refs() {
+    let (arena, binder, types) = parse_bound_source(
+        r#"
+                type Mode = "lookup" | "best fit";
+                interface Nested { enabled: boolean; }
+                interface Options {
+                    mode?: Mode;
+                    nested: Nested;
+                    modes: ReadonlyArray<Mode>;
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let options_sym = binder.file_locals.get("Options").expect("Options symbol");
+
+    let (options_type, params) = state
+        .direct_cross_file_interface_lowering(
+            options_sym,
+            binder.as_ref(),
+            arena.as_ref(),
+            false,
+            true,
+        )
+        .expect("option-bag interface with direct-lowerable siblings should lower directly");
+
+    assert_ne!(options_type, TypeId::UNKNOWN);
+    assert_ne!(options_type, TypeId::ERROR);
+    assert!(params.is_empty());
+    let nested = types.intern_string("nested");
+    let nested_type = crate::query_boundaries::common::raw_property_type(
+        state.ctx.types.as_type_database(),
+        options_type,
+        nested,
+    )
+    .expect("directly lowered option bag should retain sibling interface properties");
+    let resolved_nested = state.resolve_lazy_type(nested_type);
+    let enabled = state.ctx.types.intern_string("enabled");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            resolved_nested,
+            enabled,
+        )
+        .is_some(),
+        "sibling interface property should resolve through the lazy DefId"
+    );
+}
+
+#[test]
+fn direct_cross_file_interface_lowering_resolves_siblings_in_delegate_file() {
+    let (target_arena, target_binder, types) = parse_bound_source(
+        r#"
+                type Padding = 0;
+                type Mode = "target";
+                interface Options { mode: Mode; }
+            "#,
+    );
+    let (requester_arena, requester_binder, _) = parse_bound_source(
+        r#"
+                type Mode = "requester";
+                import { Options } from "./target";
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    state.ctx.set_current_file_idx(0);
+
+    let options_sym = target_binder
+        .file_locals
+        .get("Options")
+        .expect("Options symbol");
+    let target_mode_sym = target_binder
+        .file_locals
+        .get("Mode")
+        .expect("target Mode symbol");
+    let requester_mode_sym = requester_binder
+        .file_locals
+        .get("Mode")
+        .expect("requester Mode symbol");
+    assert_ne!(
+        target_mode_sym, requester_mode_sym,
+        "fixture should use distinct raw SymbolIds so DefId resolution can distinguish files",
+    );
+
+    let (options_type, _params) = state
+        .direct_cross_file_interface_lowering(
+            options_sym,
+            target_binder.as_ref(),
+            target_arena.as_ref(),
+            false,
+            true,
+        )
+        .expect("target option-bag interface should lower directly");
+    let mode = types.intern_string("mode");
+    let mode_type = crate::query_boundaries::common::raw_property_type(
+        state.ctx.types.as_type_database(),
+        options_type,
+        mode,
+    )
+    .expect("mode property should lower");
+    let target_mode_def = state.ctx.get_or_create_def_id(target_mode_sym);
+
+    assert_eq!(
+        crate::query_boundaries::common::lazy_def_id(&types, mode_type),
+        Some(target_mode_def),
+        "source-file direct lowering should resolve sibling type references in the delegate file",
+    );
+}
+
+#[test]
+fn source_file_direct_interface_lowering_rejects_generic_sibling_refs() {
+    let (arena, binder, _types) = parse_bound_source(
+        r#"
+                type Box<T> = T;
+                interface Options { value: Box<string>; }
+            "#,
+    );
+    let declarations = interface_declarations_in_arena(arena.as_ref());
+    let declarations = vec![(declarations[0], arena.as_ref())];
+
+    assert!(
+        !CheckerState::source_file_interface_declarations_are_direct_lowerable(
+            &declarations,
+            binder.as_ref(),
+        )
+    );
+}
+
+#[test]
+fn source_file_direct_interface_lowering_rejects_sibling_cycles() {
+    let (arena, binder, _types) = parse_bound_source(
+        r#"
+                interface Parent { child: Child; }
+                interface Child { parent: Parent; }
+            "#,
+    );
+    let declarations = interface_declarations_in_arena(arena.as_ref());
+    let declarations = vec![(declarations[0], arena.as_ref())];
+
+    assert!(
+        !CheckerState::source_file_interface_declarations_are_direct_lowerable(
+            &declarations,
+            binder.as_ref(),
+        )
+    );
 }
 
 #[test]
