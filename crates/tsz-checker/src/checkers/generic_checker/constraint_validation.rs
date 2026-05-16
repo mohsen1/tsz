@@ -1564,6 +1564,10 @@ impl<'a> CheckerState<'a> {
                         || self.type_arg_evaluates_to_array_like_infer_result_conditional(
                             type_arg,
                             instantiated_constraint,
+                        )
+                        || self.array_element_infer_alias_satisfies_constraint(
+                            type_arg,
+                            instantiated_constraint,
                         );
                 }
                 if !is_satisfied
