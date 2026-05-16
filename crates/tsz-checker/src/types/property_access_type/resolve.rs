@@ -1847,26 +1847,28 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
-                    if !used_class_chain_method_type
-                        && direct_class_this_receiver
-                        && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
-                            self.ctx.types,
+                    if let Some((recovered_type, recovered_method)) = self
+                        .recover_direct_this_class_chain_member(
+                            direct_class_this_receiver,
+                            used_class_chain_method_type,
+                            access.expression,
+                            property_name,
+                            prop_type,
                             object_type_for_access,
-                        )
-                        && let Some(raw_prop) = shape.properties.iter().find(|prop| {
-                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
-                                == property_name.as_str()
-                        })
-                        && crate::query_boundaries::common::contains_this_type(
-                            self.ctx.types,
-                            raw_prop.type_id,
+                            original_object_type,
                         )
                     {
-                        prop_type = crate::query_boundaries::common::substitute_this_type(
-                            self.ctx.types,
-                            raw_prop.type_id,
-                            self.ctx.types.this_type(),
-                        );
+                        prop_type = recovered_type;
+                        used_class_chain_method_type = recovered_method;
+                    }
+
+                    if let Some(recovered_type) = self.substitute_direct_this_property_shape_type(
+                        direct_class_this_receiver,
+                        used_class_chain_method_type,
+                        object_type_for_access,
+                        property_name,
+                    ) {
+                        prop_type = recovered_type;
                     }
 
                     // Substitute polymorphic `this` type with the receiver type.
