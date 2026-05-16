@@ -407,7 +407,8 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                if !self.ctx.symbol_resolution_set.is_empty()
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                     && let Some(sym_id) = self
                         .resolve_type_symbol_for_lowering(type_ref.type_name)
                         .map(tsz_binder::SymbolId)
