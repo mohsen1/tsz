@@ -2229,6 +2229,14 @@ fn test_emitter_source_text_recovery_surface_does_not_grow() {
 
     let mut source_text_lines = Vec::new();
     for path in files {
+        let rel = path
+            .strip_prefix(&emitter_src)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel.ends_with("tests.rs") || rel.contains("/tests/") {
+            continue;
+        }
         let src = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
         for (line_num, line) in src.lines().enumerate() {
@@ -2242,7 +2250,7 @@ fn test_emitter_source_text_recovery_surface_does_not_grow() {
         }
     }
 
-    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 909;
+    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 828;
     assert!(
         source_text_lines.len() <= SOURCE_TEXT_RECOVERY_LINE_CEILING,
         "Emitter source-text recovery surface grew to {} lines (ceiling: {}). \
