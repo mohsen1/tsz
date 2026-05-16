@@ -991,10 +991,7 @@ impl<'a> CheckerState<'a> {
                         })
             })
             .collect();
-        if local_interface_decls.len() == declarations.len()
-            && !self.ctx.is_declaration_file()
-            && !Self::in_cross_arena_interface_delegation()
-        {
+        if local_interface_decls.len() == declarations.len() && !self.ctx.is_declaration_file() {
             let mut merged = TypeId::ERROR;
             for decl_idx in local_interface_decls {
                 let interface_type = self.get_type_of_interface(decl_idx);
