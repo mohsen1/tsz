@@ -2,10 +2,6 @@
 //!
 //! Structural rules (match `tsc`):
 //!
-//! **Target-driven rule (ES5):** When the receiver of a property access is the
-//! `super` keyword, target ES5 only permits base-class methods. Accessors remain
-//! valid in ES2015+ targets, but emit TS2340 under ES5.
-//!
 //! **Visibility-driven rule (all targets):** When the receiver of a property access
 //! is the `super` keyword:
 //! > - If the base-class member is **public** or **protected** (method, accessor,
@@ -14,6 +10,9 @@
 //! >   emit TS2340: "Only public and protected methods of the base class are
 //! >   accessible via the 'super' keyword."  (NOT TS2341, which is the error for
 //! >   ordinary `instance.privateMember` accesses.)
+//!
+//! Note: tsc does NOT emit TS2340 for public/protected super accessor access in
+//! any ES target. TS2340 is exclusively a private-member visibility diagnostic.
 //!
 //! `super.<field>` reads still emit TS2855 via the separate field path,
 //! which is exercised below.
@@ -265,99 +264,11 @@ class Derived extends Base {
 }
 
 // --- ES5 target tests ---
+// tsc never emits TS2340 for public/protected super accessor or field access,
+// regardless of ES target. Only private member access via super causes TS2340.
 
 #[test]
-fn es5_super_get_accessor_read_emits_ts2340() {
-    let d = check_es5(
-        r#"
-class Base {
-  get value(): number {
-    return 0;
-  }
-}
-
-class Derived extends Base {
-  override get value(): number {
-    return super.value + 1;
-  }
-}
-"#,
-    );
-    assert!(
-        has_diagnostic_code(&d, TS2340),
-        "ES5 super accessor read should emit TS2340, got: {d:?}",
-    );
-}
-
-#[test]
-fn es5_super_set_accessor_write_emits_ts2340() {
-    let d = check_es5(
-        r#"
-class Base {
-  set value(_v: number) {}
-}
-
-class Derived extends Base {
-  override set value(v: number) {
-    super.value = v / 2;
-  }
-}
-"#,
-    );
-    assert!(
-        has_diagnostic_code(&d, TS2340),
-        "ES5 super accessor write should emit TS2340, got: {d:?}",
-    );
-}
-
-#[test]
-fn es5_super_accessor_read_inside_method_emits_ts2340() {
-    let d = check_es5(
-        r#"
-class Base {
-  get x(): number {
-    return 1;
-  }
-}
-
-class Derived extends Base {
-  read(): number {
-    return super.x + 1;
-  }
-}
-"#,
-    );
-    assert!(
-        has_diagnostic_code(&d, TS2340),
-        "ES5 super accessor read inside method should emit TS2340, got: {d:?}",
-    );
-}
-
-#[test]
-fn es5_super_static_accessor_read_emits_ts2340() {
-    let d = check_es5(
-        r#"
-class Base {
-  static get s(): number {
-    return 1;
-  }
-}
-
-class Derived extends Base {
-  static read(): number {
-    return super.s + 1;
-  }
-}
-"#,
-    );
-    assert!(
-        has_diagnostic_code(&d, TS2340),
-        "ES5 static super accessor read should emit TS2340, got: {d:?}",
-    );
-}
-
-#[test]
-fn es5_super_method_call_still_no_ts2340() {
+fn es5_super_method_call_no_ts2340() {
     let d = check_es5(
         r#"
 class Base {
@@ -380,7 +291,30 @@ class Derived extends Base {
 }
 
 #[test]
-fn es5_super_field_read_emits_ts2340() {
+fn es5_super_accessor_read_no_ts2340() {
+    let d = check_es5(
+        r#"
+class Base {
+  get value(): number {
+    return 0;
+  }
+}
+
+class Derived extends Base {
+  override get value(): number {
+    return super.value + 1;
+  }
+}
+"#,
+    );
+    assert!(
+        !has_diagnostic_code(&d, TS2340),
+        "ES5 public super accessor read must not emit TS2340, got: {d:?}",
+    );
+}
+
+#[test]
+fn es5_super_field_read_no_ts2340() {
     let d = check_es5(
         r#"
 class Base {
@@ -394,13 +328,13 @@ class Derived extends Base {
 "#,
     );
     assert!(
-        has_diagnostic_code(&d, TS2340),
-        "ES5 super field read should emit TS2340, got: {d:?}",
+        !has_diagnostic_code(&d, TS2340),
+        "ES5 public super field read must not emit TS2340, got: {d:?}",
     );
 }
 
 #[test]
-fn es2015_super_accessor_read_still_no_ts2340() {
+fn es2015_super_accessor_read_no_ts2340() {
     let d = check_es2015(
         r#"
 class Base {
