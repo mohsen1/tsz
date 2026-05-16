@@ -677,6 +677,46 @@ jobs:
       - name: Run unit suite
         run: scripts/ci/github-suite.sh unit
 
+  unit-cloudbuild:
+    # EXPERIMENT: run the unit suite on Cloud Build private pool
+    # `tsz-ci-build-pool` (e2-highcpu-32, 32 vCPU × 32 GiB) and compare wall
+    # clock against the Cloud Run `unit` job above. The compile is the
+    # bottleneck (~12 min on 8 vCPU); 4× the cores should drop it to ~4 min.
+    #
+    # Submitted as a parallel job — the existing `unit` is still required for
+    # green CI. Promote unit-cloudbuild and demote `unit` after a week of
+    # apples-to-apples timing data.
+    #
+    # Budget: ~$0.024/min × ~5 min × 200 runs/day ≈ $720/month at full PR
+    # cadence. Under the $1k approved cap.
+    #
+    # continue-on-error keeps a Cloud Build flake from blocking the workflow.
+    # Not in the required-status set, so failure here is informational only.
+    name: unit-cloudbuild
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Submit unit build to Cloud Build pool
+        # `gcloud builds submit` tars the working directory, uploads it to the
+        # default tsz-ci_cloudbuild GCS staging bucket, then triggers the
+        # private-pool build. The previous attempt pointed at the
+        # thirdface-ai-oauth_cloudbuild bucket — the tsz-gh-runners SA cannot
+        # write there.
+        run: |
+          set -euo pipefail
+          gcloud builds submit \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --config=cloudbuild-unit.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            .
+
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
     # tsz-conformance harness; they do not need unit's test outputs. Each

@@ -4,22 +4,11 @@
 //! of the no-lib fallback shape `...args: any[]` produced by `make_apparent_method_type`.
 //! Does not affect type-checking behaviour.
 
-use tsz_solver::{IntrinsicKind, TypeId};
-
 /// Type hint for a parameter in an intrinsic method signature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IntrinsicParamTypeHint {
     String,
     Number,
-}
-
-impl IntrinsicParamTypeHint {
-    pub(crate) const fn to_type_id(self) -> TypeId {
-        match self {
-            Self::String => TypeId::STRING,
-            Self::Number => TypeId::NUMBER,
-        }
-    }
 }
 
 /// One parameter of an intrinsic primitive method for LSP display.
@@ -162,51 +151,62 @@ static PARAMS_OPT_RADIX: [IntrinsicParamSpec; 1] = [IntrinsicParamSpec {
     rest: false,
 }];
 
-/// Return the actual parameter specs for a named intrinsic primitive method.
+/// Return the actual parameter specs for a named string intrinsic method.
 ///
 /// Returns `None` for methods whose parameter shapes are too complex to represent
 /// here (e.g. `replace`, `split`, which take `RegExp` overloads).  The caller
 /// falls back to the synthetic `...args: any[]` shape in that case.
-pub(crate) fn intrinsic_method_params(
-    kind: IntrinsicKind,
+pub(crate) fn string_intrinsic_method_params(
     method: &str,
 ) -> Option<&'static [IntrinsicParamSpec]> {
-    match kind {
-        IntrinsicKind::String => Some(match method {
-            "toLowerCase" | "toUpperCase" | "trim" | "toString" | "valueOf" | "trimStart"
-            | "trimEnd" | "trimLeft" | "trimRight" | "toLocaleLowerCase" | "toLocaleUpperCase"
-            | "toWellFormed" => &[],
-            "charAt" | "codePointAt" => &PARAMS_SINGLE_POS,
-            "charCodeAt" => &PARAMS_SINGLE_INDEX,
-            "repeat" => &PARAMS_SINGLE_COUNT,
-            "normalize" => &PARAMS_OPT_FORM,
-            "localeCompare" => &PARAMS_THAT_STRING,
-            "concat" => &PARAMS_CONCAT_STRINGS,
-            "indexOf" | "lastIndexOf" | "startsWith" | "includes" => &PARAMS_SEARCH_AND_POS,
-            "endsWith" => &PARAMS_SEARCH_AND_END_POS,
-            "slice" => &PARAMS_SLICE,
-            "substring" | "substr" => &PARAMS_SUBSTRING,
-            "padStart" | "padEnd" => &PARAMS_PAD,
-            // match/matchAll/replace/replaceAll/search/split take RegExp or complex overloads.
-            _ => return None,
-        }),
-        IntrinsicKind::Number => Some(match method {
-            "valueOf" | "toLocaleString" => &[],
-            "toFixed" => &PARAMS_OPT_DIGITS,
-            "toExponential" => &PARAMS_OPT_FRACTION_DIGITS,
-            "toPrecision" => &PARAMS_OPT_PRECISION,
-            "toString" => &PARAMS_OPT_RADIX,
-            _ => return None,
-        }),
-        IntrinsicKind::Boolean => Some(match method {
-            "valueOf" | "toLocaleString" | "toString" => &[],
-            _ => return None,
-        }),
-        IntrinsicKind::Bigint => Some(match method {
-            "valueOf" | "toLocaleString" => &[],
-            "toString" => &PARAMS_OPT_RADIX,
-            _ => return None,
-        }),
-        _ => None,
-    }
+    Some(match method {
+        "toLowerCase" | "toUpperCase" | "trim" | "toString" | "valueOf" | "trimStart"
+        | "trimEnd" | "trimLeft" | "trimRight" | "toLocaleLowerCase" | "toLocaleUpperCase"
+        | "toWellFormed" => &[],
+        "charAt" | "codePointAt" => &PARAMS_SINGLE_POS,
+        "charCodeAt" => &PARAMS_SINGLE_INDEX,
+        "repeat" => &PARAMS_SINGLE_COUNT,
+        "normalize" => &PARAMS_OPT_FORM,
+        "localeCompare" => &PARAMS_THAT_STRING,
+        "concat" => &PARAMS_CONCAT_STRINGS,
+        "indexOf" | "lastIndexOf" | "startsWith" | "includes" => &PARAMS_SEARCH_AND_POS,
+        "endsWith" => &PARAMS_SEARCH_AND_END_POS,
+        "slice" => &PARAMS_SLICE,
+        "substring" | "substr" => &PARAMS_SUBSTRING,
+        "padStart" | "padEnd" => &PARAMS_PAD,
+        // match/matchAll/replace/replaceAll/search/split take RegExp or complex overloads.
+        _ => return None,
+    })
+}
+
+pub(crate) fn number_intrinsic_method_params(
+    method: &str,
+) -> Option<&'static [IntrinsicParamSpec]> {
+    Some(match method {
+        "valueOf" | "toLocaleString" => &[],
+        "toFixed" => &PARAMS_OPT_DIGITS,
+        "toExponential" => &PARAMS_OPT_FRACTION_DIGITS,
+        "toPrecision" => &PARAMS_OPT_PRECISION,
+        "toString" => &PARAMS_OPT_RADIX,
+        _ => return None,
+    })
+}
+
+pub(crate) fn boolean_intrinsic_method_params(
+    method: &str,
+) -> Option<&'static [IntrinsicParamSpec]> {
+    Some(match method {
+        "valueOf" | "toLocaleString" | "toString" => &[],
+        _ => return None,
+    })
+}
+
+pub(crate) fn bigint_intrinsic_method_params(
+    method: &str,
+) -> Option<&'static [IntrinsicParamSpec]> {
+    Some(match method {
+        "valueOf" | "toLocaleString" => &[],
+        "toString" => &PARAMS_OPT_RADIX,
+        _ => return None,
+    })
 }
