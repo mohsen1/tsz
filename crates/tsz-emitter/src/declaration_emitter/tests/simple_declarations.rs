@@ -1551,6 +1551,114 @@ function format(x) {
 }
 
 #[test]
+fn test_js_function_declaration_emits_separate_jsdoc_overload_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {'number'}
+ */
+/**
+ * @overload
+ * @param {string} value
+ * @returns {'string'}
+ */
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function kind(value) {
+  return typeof value;
+}
+
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+const identity = value => value;
+
+/**
+ * @template T
+ * @overload
+ * @param {T[]} values
+ * @returns {T[]}
+ */
+/**
+ * @param {unknown[]} values
+ * @returns {unknown[]}
+ */
+function copy(values) {
+  return values.map(identity);
+}
+"#,
+    );
+
+    let kind_number = output
+        .find("declare function kind(value: number): \"number\";")
+        .expect("expected number overload");
+    let kind_string = output
+        .find("declare function kind(value: string): \"string\";")
+        .expect("expected string overload");
+    let copy = output
+        .find("declare function copy<T>(values: T[]): T[];")
+        .expect("expected generic overload");
+    let identity = output
+        .find("declare function identity<T>(value: T): T;")
+        .expect("expected variable function declaration");
+
+    assert!(
+        kind_number < kind_string && kind_string < copy && copy < identity,
+        "Expected JS function overloads to stay in function source order before function variables: {output}"
+    );
+    assert!(
+        !output.contains("declare function kind(value: unknown): string;"),
+        "Implementation signature should not be emitted for @overload JSDoc: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_emits_combined_jsdoc_overload_comment() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ * @template U
+ * @overload
+ * @param {T[]} array
+ * @param {(x: T) => U[]} mapper
+ * @returns {U[]}
+ *
+ * @overload
+ * @param {T[][]} array
+ * @returns {T[]}
+ *
+ * @param {unknown[]} array
+ * @param {(x: unknown) => unknown} mapper
+ * @returns {unknown[]}
+ */
+function flatMap(array, mapper) {
+  return [];
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function flatMap<T, U>(array: T[], mapper: (x: T) => U[]): U[];"),
+        "Expected first overload from combined JSDoc comment: {output}"
+    );
+    assert!(
+        output.contains("declare function flatMap<T, U>(array: T[][]): T[];"),
+        "Expected second overload from combined JSDoc comment: {output}"
+    );
+    assert!(
+        !output.contains("array: unknown[]"),
+        "Implementation JSDoc tags after overloads should not become a declaration signature: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_variable_strips_jsdoc_satisfies_comment() {
     let output = emit_js_dts(
         r#"
