@@ -953,12 +953,6 @@ impl<'a> Printer<'a> {
                             "import",
                             "module",
                             "namespace",
-                            // TS parameter modifiers
-                            "private",
-                            "public",
-                            "protected",
-                            "readonly",
-                            "override",
                         ];
                         for &kw in keywords {
                             if preceding.ends_with(kw) {
@@ -972,6 +966,22 @@ impl<'a> Printer<'a> {
                                 }
                             }
                         }
+                        let parameter_modifiers: &[&str] =
+                            &["private", "public", "protected", "readonly", "override"];
+                        for &kw in parameter_modifiers {
+                            if preceding.ends_with(kw) {
+                                let kw_start = p - kw.len();
+                                let kw_before_ok = kw_start == 0
+                                    || !text_bytes[kw_start - 1].is_ascii_alphanumeric()
+                                        && text_bytes[kw_start - 1] != b'_'
+                                        && text_bytes[kw_start - 1] != b'$';
+                                if kw_before_ok
+                                    && Self::keyword_is_in_parameter_context(text_bytes, kw_start)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
                     }
                 }
                 i = abs + 1;
@@ -980,6 +990,14 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    fn keyword_is_in_parameter_context(text_bytes: &[u8], keyword_start: usize) -> bool {
+        let mut idx = keyword_start;
+        while idx > 0 && text_bytes[idx - 1].is_ascii_whitespace() {
+            idx -= 1;
+        }
+        idx > 0 && matches!(text_bytes[idx - 1], b'(' | b',')
     }
 
     /// Replace bytes inside `ranges` (absolute source positions) with spaces in

@@ -255,6 +255,44 @@ fn namespace_iife_param_renamed_for_variable_conflict() {
     );
 }
 
+#[test]
+fn namespace_iife_param_not_renamed_for_class_member_conflict() {
+    let source = "namespace m {\n  class City {\n    public m = () => 1;\n  }\n  export var v = () => new City();\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (m)"),
+        "Class field names do not bind in the namespace IIFE scope, so the parameter should stay `m`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (m_1)"),
+        "Class field names should not trigger namespace IIFE parameter renaming.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_iife_param_renamed_for_parameter_property_conflict() {
+    let source = "namespace m {\n  class City {\n    constructor(public m = 1) {}\n  }\n  export var v = () => new City();\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (m_1)"),
+        "Constructor parameter properties bind in function scope, so the namespace parameter should still be renamed.\nOutput:\n{output}"
+    );
+}
+
 /// When a namespace body has an import-equals with the same name as the namespace,
 /// the IIFE parameter must be renamed.
 /// E.g., `namespace A.M { import M = Z.M; ... }` should emit `(function (M_1) { ... })`.
