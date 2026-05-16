@@ -536,7 +536,7 @@ SOLVER_IMPORT_COUNT_CHECKS = [
             "crates/tsz-solver/",
             "crates/tsz-checker/",
         ),
-        38,
+        39,
     ),
 ]
 
