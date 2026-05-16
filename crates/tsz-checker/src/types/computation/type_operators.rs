@@ -123,13 +123,11 @@ impl<'a> CheckerState<'a> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                // Each `unique symbol` annotation at a distinct declaration site creates
-                // a fresh nominal UniqueSymbol. The node index is tagged with the high bit
-                // to avoid colliding with binder SymbolIds used by const-variable unique
-                // symbols. Two distinct property annotations are therefore never assignable
-                // to each other, matching tsc's nominal identity rule.
                 if inner_type == TypeId::SYMBOL {
-                    return self.ctx.types.unique_symbol(SymbolRef(idx.0 | 0x8000_0000));
+                    return self
+                        .ctx
+                        .types
+                        .unique_symbol(SymbolRef(idx.0 | SymbolRef::NODE_ANCHOR_BIT));
                 }
                 return inner_type;
             }

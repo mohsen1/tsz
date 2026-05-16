@@ -80,16 +80,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                // Each `unique symbol` annotation creates a fresh nominal unique symbol
-                // anchored to this declaration site. The node index is tagged with the
-                // high bit so it cannot collide with binder SymbolIds used by const-variable
-                // unique symbols (which grow from zero). Two distinct occurrences in
-                // different type declarations are therefore never mutually assignable.
                 if inner_type == TypeId::SYMBOL {
-                    return self
-                        .ctx
-                        .types
-                        .unique_symbol(tsz_solver::SymbolRef(idx.0 | 0x8000_0000));
+                    return self.ctx.types.unique_symbol(tsz_solver::SymbolRef(
+                        idx.0 | tsz_solver::SymbolRef::NODE_ANCHOR_BIT,
+                    ));
                 }
                 return inner_type;
             }

@@ -24,8 +24,8 @@ use crate::diagnostics::{
     get_message_template,
 };
 use crate::types::{
-    MappedModifier, ObjectFlags, ObjectShape, StringIntrinsicKind, TypeData, TypeId, TypeListId,
-    TypeParamInfo,
+    MappedModifier, ObjectFlags, ObjectShape, StringIntrinsicKind, SymbolRef, TypeData, TypeId,
+    TypeListId, TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -2213,7 +2213,7 @@ impl<'a> TypeFormatter<'a> {
                 // High bit clear = binder-anchored (`const x: unique symbol`); tsc
                 // renders these as `typeof x` for nominal discrimination.
                 // High bit set = node-anchored (inline annotation, no variable name).
-                if sym_ref.0 < 0x8000_0000 {
+                if sym_ref.0 & SymbolRef::NODE_ANCHOR_BIT == 0 {
                     if let Some(name) = self.resolve_unique_symbol_name(*sym_ref) {
                         return format!("typeof {name}").into();
                     }

@@ -1667,6 +1667,14 @@ impl TypeParamInfo {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SymbolRef(pub u32);
 
+impl SymbolRef {
+    /// High bit separates node-anchored unique symbols (inline `unique symbol`
+    /// property annotations, bit set) from binder-anchored ones (`const x: unique
+    /// symbol` declarations, bit clear). Binder SymbolIds grow from zero and never
+    /// reach this bit.
+    pub const NODE_ANCHOR_BIT: u32 = 0x8000_0000;
+}
+
 /// Conditional type structure
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ConditionalType {
