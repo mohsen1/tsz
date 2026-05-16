@@ -648,8 +648,8 @@ impl TypeInterner {
     const fn type_data_rank(data: &TypeData) -> u8 {
         match data {
             TypeData::Intrinsic(_) => 0,
-            TypeData::Literal(LiteralValue::String(_)) => 1,
-            TypeData::Literal(LiteralValue::Number(_)) => 2,
+            TypeData::Literal(LiteralValue::Number(_)) => 1,
+            TypeData::Literal(LiteralValue::String(_)) => 2,
             TypeData::Literal(LiteralValue::BigInt(_)) => 3,
             TypeData::Literal(LiteralValue::Boolean(_)) => 4,
             TypeData::Object(_) => 5,
