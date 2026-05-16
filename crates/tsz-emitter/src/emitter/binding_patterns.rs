@@ -704,6 +704,7 @@ impl<'a> Printer<'a> {
                     };
                     self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
                     excluded_props.push(ExcludedProp::Dynamic(key_temp));
+                    emitted_any = true;
                     continue;
                 }
 
@@ -764,6 +765,7 @@ impl<'a> Printer<'a> {
                     } else {
                         excluded_props.push(ExcludedProp::Identifier(prop_name));
                     }
+                    emitted_any = true;
                     continue;
                 }
 

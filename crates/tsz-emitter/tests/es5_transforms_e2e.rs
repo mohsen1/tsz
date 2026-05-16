@@ -399,6 +399,10 @@ let { [order(0)]: { [order(2)]: z } = order(1), ...w } = {} as any;
         "Nested computed binding should decompose from the defaulted value temp.\nOutput:\n{output}"
     );
     assert!(
+        output.contains("z = _d[_e], w = __rest("),
+        "Nested binding output must remain comma-separated before the outer rest lowering.\nOutput:\n{output}"
+    );
+    assert!(
         output.contains("__rest("),
         "Outer object rest should still lower to __rest.\nOutput:\n{output}"
     );
