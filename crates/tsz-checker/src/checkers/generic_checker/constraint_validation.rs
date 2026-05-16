@@ -1156,19 +1156,19 @@ impl<'a> CheckerState<'a> {
                         }
                         continue;
                     }
+                    if is_bare_type_param
+                        && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                        && self.explicit_alias_type_parameter_constraint_satisfies_arg_constraint(
+                            arg_idx,
+                            type_arg,
+                            constraint,
+                            type_params,
+                            &type_args,
+                        )
+                    {
+                        continue;
+                    }
                     if is_bare_type_param && base_constraint_type.is_none() {
-                        if let Some(&arg_idx) = type_args_list.nodes.get(i)
-                            && self
-                                .explicit_alias_type_parameter_constraint_satisfies_arg_constraint(
-                                    arg_idx,
-                                    type_arg,
-                                    constraint,
-                                    type_params,
-                                    &type_args,
-                                )
-                        {
-                            continue;
-                        }
                         // Bare `Infer` — base_constraint_of_type returns the type
                         // unchanged, so base_constraint_type is None. Skip when the
                         // infer var has a hidden structural or positional constraint.

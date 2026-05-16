@@ -861,6 +861,32 @@ type Parse<Input extends string> = ParseLiteral<Tokenize<Input>>[0];
 }
 
 #[test]
+fn type_challenges_json_parser_mapped_wrapper_preserves_alias_array_constraint() {
+    let source = r#"
+type Pure<T> = {
+    [Key in keyof T]: T[Key] extends object ? Pure<T[Key]> : T[Key]
+};
+
+type SetProperty<T, Key extends PropertyKey, Value> = {
+    [Prop in (keyof T) | Key]: Prop extends Key ? Value : Prop extends keyof T ? T[Prop] : never
+};
+
+type Token = any;
+type ParseResult<T, K extends Token[]> = [T, K];
+type Tokenize<T extends string, S extends Token[] = []> = Token[];
+type ParseLiteral<T extends Token[]> = ParseResult<any, T>;
+
+type Parse<T extends string> = Pure<ParseLiteral<Tokenize<T>>[0]>;
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2344),
+        "mapped wrapper around alias result should preserve the declared array constraint. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn renamed_alias_type_parameter_constraint_satisfies_array_argument_slot() {
     let source = r#"
 type Item = any;
