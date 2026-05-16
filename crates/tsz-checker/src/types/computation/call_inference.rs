@@ -1430,8 +1430,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let source_array_elem = self.array_or_number_index_element_type(source);
-        let target_array_elem = self.array_or_number_index_element_type(target);
+        let source_array_elem = common::array_element_type(self.ctx.types, source);
+        let target_array_elem = common::array_element_type(self.ctx.types, target);
         if let (Some(source_elem), Some(target_elem)) = (source_array_elem, target_array_elem) {
             self.collect_return_context_substitution(
                 source_elem,
