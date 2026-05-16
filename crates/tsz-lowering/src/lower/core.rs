@@ -30,6 +30,7 @@ pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
 pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 pub(super) type TypeofParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
+pub type LoweredInterfaceMemberTypes = (Vec<TypeParamInfo>, Vec<(NodeIndex, TypeId)>);
 
 /// Type lowering context.
 /// Converts AST type nodes into interned `TypeIds`.
@@ -1261,7 +1262,7 @@ impl<'a> TypeLowering<'a> {
         (params, result)
     }
 
-    pub(super) fn collect_type_parameters(&self, list: &NodeList) -> Vec<TypeParamInfo> {
+    pub fn collect_type_parameters(&self, list: &NodeList) -> Vec<TypeParamInfo> {
         let mut param_names = Vec::with_capacity(list.nodes.len());
         for &idx in &list.nodes {
             let Some(node) = self.arena.get(idx) else {
@@ -2247,6 +2248,65 @@ impl<'a> TypeLowering<'a> {
             is_constructor: false,
             is_method: true,
         })
+    }
+
+    pub fn lower_interface_member_simple_type(&self, member_idx: NodeIndex) -> Option<TypeId> {
+        let member = self.arena.get(member_idx)?;
+        let sig = self.arena.get_signature(member)?;
+
+        match member.kind {
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => Some(self.lower_method_signature(sig)),
+            k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
+                let base = if sig.type_annotation.is_some() {
+                    self.lower_type(sig.type_annotation)
+                } else {
+                    TypeId::ANY
+                };
+                if sig.question_token {
+                    Some(self.interner.union(vec![base, TypeId::UNDEFINED]))
+                } else {
+                    Some(base)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub fn lower_interface_members_simple_types(
+        &self,
+        interface_idx: NodeIndex,
+        member_indices: &[NodeIndex],
+    ) -> Option<LoweredInterfaceMemberTypes> {
+        let interface = self
+            .arena
+            .get(interface_idx)
+            .and_then(|node| self.arena.get_interface(node))?;
+
+        let params = if let Some(type_params) = &interface.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.push_type_param_scope();
+            Some(self.collect_type_parameters(type_params))
+        } else {
+            None
+        };
+
+        let mut lowered = Vec::with_capacity(member_indices.len());
+        for &member_idx in member_indices {
+            let Some(member_type) = self.lower_interface_member_simple_type(member_idx) else {
+                if params.is_some() {
+                    self.pop_type_param_scope();
+                }
+                return None;
+            };
+            lowered.push((member_idx, member_type));
+        }
+
+        if params.is_some() {
+            self.pop_type_param_scope();
+        }
+
+        Some((params.unwrap_or_default(), lowered))
     }
 
     fn lower_signature_params(&self, sig: &SignatureData) -> (Vec<ParamInfo>, Option<TypeId>) {

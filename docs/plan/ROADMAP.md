@@ -284,7 +284,7 @@ faster or move a red runtime/residency row toward green.
 Track these as counters or periodic audit bullets. They are more useful than
 subjective "cleanup" language.
 
-1. `CheckerContext` field count, currently pinned at `234`, plus the number of
+1. `CheckerContext` field count, currently pinned at `235`, plus the number of
    checker `source_text.contains` / file-name / rendered-message
    diagnostic decisions.
 2. Number of post-check `rewrite_*_fingerprints` passes still active.
