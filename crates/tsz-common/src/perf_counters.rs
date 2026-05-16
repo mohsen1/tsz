@@ -970,6 +970,10 @@ pub struct PerfCounters {
     /// Outcome buckets for direct actual-lib Intl interface attempts.
     pub direct_actual_lib_intl_interface_outcome:
         [AtomicU64; DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
+    /// Track 7 stable-identity migration counter: times
+    /// `TypeEnvironment::resolve_lazy` had to treat a `DefId` value as a raw
+    /// `SymbolId` and redirect it to the real `DefId`.
+    pub type_environment_raw_symbol_lazy_fallbacks: AtomicU64,
     /// Why each `cached_cross_file_*` reader returned `None`. See
     /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
     /// all buckets equals the flat miss count for the four reader
@@ -1103,6 +1107,7 @@ impl PerfCounters {
                 DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
             direct_actual_lib_intl_interface_outcome: [const { AtomicU64::new(0) };
                 DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
+            type_environment_raw_symbol_lazy_fallbacks: AtomicU64::new(0),
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };
@@ -2220,6 +2225,17 @@ pub fn record_direct_actual_lib_intl_interface_outcome(
     c.direct_actual_lib_intl_interface_outcome[outcome.as_index()].fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a raw `SymbolId`-shaped `DefId` redirect inside
+/// `TypeEnvironment::resolve_lazy`.
+///
+/// This is Track 7 instrumentation for removing legacy
+/// `interner.reference(SymbolRef)` producers. It is intentionally a flat
+/// counter: the call site also emits structured tracing fields with the raw
+/// and redirected IDs when trace logging is enabled.
+pub fn record_type_environment_raw_symbol_lazy_fallback() {
+    inc(&counters().type_environment_raw_symbol_lazy_fallbacks);
+}
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -2290,7 +2306,9 @@ impl PerfCounters {
              is_dir calls               {:>12}\n  \
              read_dir calls             {:>12}\n  \
              read_package_json calls    {:>12}\n  \
-             candidate paths total      {:>12}\n",
+             candidate paths total      {:>12}\n\
+             Stable identity:\n  \
+             raw SymbolRef lazy fallback{:>12}\n",
             snap.delegate.calls,
             snap.delegate.cache_hits_lib,
             snap.delegate.cache_hits_cross_file,
@@ -2334,6 +2352,7 @@ impl PerfCounters {
             snap.resolver.read_dir_calls.unwrap_or(0),
             snap.resolver.package_json_reads,
             snap.resolver.candidate_paths_total,
+            snap.identity.type_environment_raw_symbol_lazy_fallbacks,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
             + &Self::dump_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(
                 &snap.compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues,
@@ -2833,6 +2852,7 @@ pub struct PerfCounterSnapshot {
     pub wired: WiredCounters,
     pub delegate: DelegateCounters,
     pub checker: CheckerCounters,
+    pub identity: IdentityCounters,
     pub overlay: OverlayCounters,
     pub resolver: ResolverCounters,
     pub interner: InternerCounters,
@@ -3020,6 +3040,7 @@ pub struct WiredCounters {
     pub resolver_lookup: bool,
     pub resolver_fs_probes: bool,
     pub compute_type_of_symbol: bool,
+    pub stable_identity: bool,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -3051,6 +3072,13 @@ pub struct CheckerCounters {
     pub property_classification_string_fallback_source_lookups: u64,
     pub property_classification_string_fallback_target_names: u64,
     pub property_classification_string_fallback_target_types: u64,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct IdentityCounters {
+    /// Raw `SymbolId`-shaped `DefId` redirects inside
+    /// `TypeEnvironment::resolve_lazy`.
+    pub type_environment_raw_symbol_lazy_fallbacks: u64,
 }
 
 /// One `(name, count)` row in a named-counter JSON array.
@@ -3202,6 +3230,7 @@ impl PerfCounters {
                 resolver_lookup: true,
                 resolver_fs_probes: true,
                 compute_type_of_symbol: true,
+                stable_identity: true,
             },
             delegate: DelegateCounters {
                 calls: load(&c.delegate_cross_arena_calls),
@@ -3230,6 +3259,11 @@ impl PerfCounters {
                 ),
                 property_classification_string_fallback_target_types: load(
                     &c.property_classification_string_fallback_target_types,
+                ),
+            },
+            identity: IdentityCounters {
+                type_environment_raw_symbol_lazy_fallbacks: load(
+                    &c.type_environment_raw_symbol_lazy_fallbacks,
                 ),
             },
             overlay: OverlayCounters {
@@ -3525,6 +3559,7 @@ mod json_tests {
             "wired",
             "delegate",
             "checker",
+            "identity",
             "overlay",
             "resolver",
             "interner",
@@ -3696,6 +3731,7 @@ mod json_tests {
             "resolver_lookup",
             "resolver_fs_probes",
             "compute_type_of_symbol",
+            "stable_identity",
         ]
         .into_iter()
         .collect();
@@ -3762,6 +3798,18 @@ mod json_tests {
                 "property_classification_string_fallback_target_types",
             ],
         );
+    }
+
+    #[test]
+    fn identity_section_field_shape() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert_section_keys(
+            &json,
+            "identity",
+            &["type_environment_raw_symbol_lazy_fallbacks"],
+        );
+        assert_eq!(json["wired"]["stable_identity"], true);
     }
 
     #[test]
