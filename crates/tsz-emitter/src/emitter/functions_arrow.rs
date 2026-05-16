@@ -210,6 +210,9 @@ impl<'a> Printer<'a> {
                 .and_then(|&idx| self.arena.get(idx))
                 .map_or(0, |n| n.end);
             let search_end = self.arena.get(func.body).map_or(u32::MAX, |n| n.pos);
+            if let Some(arrow_equals_pos) = self.find_char_after(search_start, search_end, b'=') {
+                self.skip_arrow_pre_token_comments(search_start, arrow_equals_pos);
+            }
             self.map_token_after(search_start, search_end, b'=');
         }
         self.write("=> ");
@@ -287,6 +290,17 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
+    }
+
+    fn skip_arrow_pre_token_comments(&mut self, search_start: u32, arrow_equals_pos: u32) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.pos >= search_start && comment.end <= arrow_equals_pos {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
     }
 
     pub(in crate::emitter) fn emit_arrow_concise_body_leading_comments(&mut self, body_pos: u32) {

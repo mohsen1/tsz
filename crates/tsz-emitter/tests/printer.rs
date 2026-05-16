@@ -106,6 +106,21 @@ fn recovered_arrow_conditional_tail_emits_branch_statements() {
 }
 
 #[test]
+fn arrow_comments_before_token_are_erased_with_type_syntax() {
+    let source = "const a = (x: string): string /* erased */ => x;\nconst b = (x: string) => /* kept */ x;\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("const a = (x) => x;"),
+        "Comments before the arrow token belong to erased type syntax and should not lead the concise body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const b = (x) => /* kept */ x;"),
+        "Comments after the arrow token should still be preserved with the concise body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn arrow_default_optional_chain_temp_is_scoped_to_es5_body() {
     let source = "const a = (): { d: string } | undefined => undefined;\n((b = a()?.d) => {})();";
     let output = parse_lower_print(source, PrintOptions::es5());
