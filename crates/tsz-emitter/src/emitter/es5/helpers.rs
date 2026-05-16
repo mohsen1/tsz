@@ -1289,15 +1289,9 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
                 self.emit_param_prologue(&param_transforms);
-                if needs_parens {
-                    self.write("return (");
-                    self.emit(func.body);
-                    self.write(");");
-                } else {
-                    self.write("return ");
-                    self.emit(func.body);
-                    self.write(";");
-                }
+                let comments_before_return =
+                    self.es5_arrow_concise_body_needs_multiline_return(func.body);
+                self.emit_es5_arrow_concise_return(func.body, needs_parens, comments_before_return);
                 self.write_line();
                 self.decrease_indent();
                 self.write("}");
@@ -1306,17 +1300,52 @@ impl<'a> Printer<'a> {
                 // If the body is (or resolves to) an object literal, wrap in parens
                 // to disambiguate from a block: () => ({})  →  function () { return ({}); }
                 let needs_parens = self.concise_body_needs_parens(func.body);
-                if needs_parens {
-                    self.write("{ return (");
-                    self.emit(func.body);
-                    self.write("); }");
+                if self.es5_arrow_concise_body_needs_multiline_return(func.body) {
+                    self.write("{");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_es5_arrow_concise_return(func.body, needs_parens, true);
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("}");
                 } else {
-                    self.write("{ return ");
-                    self.emit(func.body);
-                    self.write("; }");
+                    self.write("{ ");
+                    self.emit_es5_arrow_concise_return(func.body, needs_parens, false);
+                    self.write(" }");
                 }
             }
             self.pop_temp_scope();
+        }
+    }
+
+    fn es5_arrow_concise_body_needs_multiline_return(&self, body: NodeIndex) -> bool {
+        self.arena.get(body).is_some_and(|body_node| {
+            self.pending_comment_before_pos_starts_after_newline(body_node.pos)
+        })
+    }
+
+    fn emit_es5_arrow_concise_return(
+        &mut self,
+        body: NodeIndex,
+        needs_parens: bool,
+        comments_before_return: bool,
+    ) {
+        if comments_before_return && let Some(body_node) = self.arena.get(body) {
+            self.emit_comments_before_pos(body_node.pos);
+        }
+        if needs_parens {
+            self.write("return (");
+        } else {
+            self.write("return ");
+        }
+        if !comments_before_return && let Some(body_node) = self.arena.get(body) {
+            self.emit_comments_before_pos(body_node.pos);
+        }
+        self.emit(body);
+        if needs_parens {
+            self.write(");");
+        } else {
+            self.write(";");
         }
     }
 
