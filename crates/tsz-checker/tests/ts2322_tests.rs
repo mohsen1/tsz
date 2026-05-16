@@ -1716,6 +1716,74 @@ interface Buzz { id: number; buzz: string }
         "union of built-in array methods should contextually type callback params, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn inherited_generic_class_field_array_methods_preserve_callback_context() {
+    let source = r#"
+export {};
+type StringCheck =
+  | { kind: "email"; pattern: string }
+  | { kind: "regex"; regex: RegExp };
+interface StringDef extends BaseDef {
+  checks: StringCheck[];
+}
+interface BoxDef<Item> extends BaseDef {
+  values: Item[];
+}
+interface BaseDef {
+  errorMap?: (issue: unknown) => string;
+}
+declare abstract class Base<
+  Output,
+  Def extends BaseDef = BaseDef,
+  Input = Output
+> {
+  readonly _type: Output;
+  readonly _output: Output;
+  readonly _input: Input;
+  readonly _def: Def;
+  abstract parse(input: unknown): Output;
+}
+class StringSchema extends Base<string, StringDef> {
+  parse(input: unknown): string {
+    return String(input);
+  }
+  get isEmail() {
+    return !!this._def.checks.find(ch => ch.kind === "email");
+  }
+  get usesRegex() {
+    return !!this._def.checks.find(entry => entry.kind === "regex");
+  }
+}
+class BoxSchema<T> extends Base<T, BoxDef<T>> {
+  parse(input: unknown): T {
+    return input as T;
+  }
+  has(value: T) {
+    return this._def.values.find(item => item === value);
+  }
+}
+"#;
+
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "array methods reached through inherited generic class fields should contextually type callback params, got: {diagnostics:?}"
+    );
+}
 // =============================================================================
 // Assignment Expression Tests (TS2322)
 // =============================================================================
