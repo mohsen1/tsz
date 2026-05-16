@@ -1754,6 +1754,87 @@ impl<'a> DeclarationEmitter<'a> {
     fn emit_jsdoc_overload_signature(&mut self, signature: &JsdocOverloadSignature) {
         self.emit_jsdoc_template_parameters(&signature.type_params);
         self.write("(");
+        self.emit_jsdoc_overload_parameters(signature);
+        self.write("): ");
+        self.write(&signature.return_type);
+    }
+
+    pub(in crate::declaration_emitter) fn emit_jsdoc_overload_method_signatures(
+        &mut self,
+        method_idx: NodeIndex,
+        signatures: &[JsdocOverloadSignature],
+    ) -> bool {
+        if signatures.is_empty() {
+            return false;
+        }
+
+        let Some(method_node) = self.arena.get(method_idx) else {
+            return false;
+        };
+        let Some(method) = self.arena.get_method_decl(method_node) else {
+            return false;
+        };
+
+        for signature in signatures {
+            self.emit_jsdoc_comment_chain(std::slice::from_ref(&signature.comment));
+            self.write_indent();
+            self.emit_member_modifiers(&method.modifiers);
+            self.emit_node(method.name);
+            if method.question_token {
+                self.write("?");
+            }
+            self.emit_jsdoc_overload_signature(signature);
+            self.write(";");
+            self.write_line();
+        }
+
+        self.skip_comments_in_node(method_node.pos, method_node.end);
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn emit_jsdoc_overload_constructor_signatures(
+        &mut self,
+        ctor_idx: NodeIndex,
+        signatures: &[JsdocOverloadSignature],
+    ) -> bool {
+        if signatures.is_empty() {
+            return false;
+        }
+
+        let Some(ctor_node) = self.arena.get(ctor_idx) else {
+            return false;
+        };
+        let Some(ctor) = self.arena.get_constructor(ctor_node) else {
+            return false;
+        };
+
+        for signature in signatures {
+            self.emit_jsdoc_comment_chain(std::slice::from_ref(&signature.comment));
+            self.write_indent();
+            if let Some(ref mods) = ctor.modifiers {
+                for &mod_idx in &mods.nodes {
+                    if let Some(mod_node) = self.arena.get(mod_idx) {
+                        match mod_node.kind {
+                            k if k == SyntaxKind::PrivateKeyword as u16 => self.write("private "),
+                            k if k == SyntaxKind::ProtectedKeyword as u16 => {
+                                self.write("protected ");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            self.write("constructor(");
+            self.emit_jsdoc_overload_parameters(signature);
+            self.write(");");
+            self.write_line();
+        }
+
+        self.skip_comments_in_node(ctor_node.pos, ctor_node.end);
+        true
+    }
+
+    fn emit_jsdoc_overload_parameters(&mut self, signature: &JsdocOverloadSignature) {
         for (idx, param) in signature.params.iter().enumerate() {
             if idx > 0 {
                 self.write(", ");
@@ -1768,8 +1849,6 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.write(&param.type_text);
         }
-        self.write("): ");
-        self.write(&signature.return_type);
     }
 
     pub(crate) fn jsdoc_template_params_for_node(&self, idx: NodeIndex) -> Vec<String> {

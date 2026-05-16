@@ -1659,6 +1659,96 @@ function flatMap(array, mapper) {
 }
 
 #[test]
+fn test_js_method_declaration_emits_jsdoc_overload_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ */
+class Box {
+  /** @param {T} value */
+  constructor(value) {
+    this.value = value;
+  }
+
+  /**
+   * @overload
+   * @param {Box<number>} this
+   * @returns {'number'}
+   */
+  /**
+   * @overload
+   * @param {Box<string>} this
+   * @returns {'string'}
+   */
+  /**
+   * @returns {string}
+   */
+  kind() {
+    return typeof this.value;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("kind(this: Box<number>): \"number\";"),
+        "Expected number receiver overload: {output}"
+    );
+    assert!(
+        output.contains("kind(this: Box<string>): \"string\";"),
+        "Expected string receiver overload: {output}"
+    );
+    assert!(
+        !output.contains("kind(): string;"),
+        "Implementation method signature should not be emitted for JSDoc overloads: {output}"
+    );
+}
+
+#[test]
+fn test_js_constructor_declaration_emits_jsdoc_overloads_before_private_marker() {
+    let output = emit_js_dts(
+        r#"
+export class Foo {
+  #value;
+
+  /**
+   * @constructor
+   * @overload
+   * @param {string} value
+   */
+  /**
+   * @constructor
+   * @overload
+   * @param {number} value
+   */
+  /** @constructor @param {string | number} value */
+  constructor(value) {
+    this.#value = value;
+  }
+}
+"#,
+    );
+
+    let string_ctor = output
+        .find("constructor(value: string);")
+        .expect("expected string constructor overload");
+    let number_ctor = output
+        .find("constructor(value: number);")
+        .expect("expected number constructor overload");
+    let private_marker = output.find("#private;").expect("expected private marker");
+
+    assert!(
+        string_ctor < number_ctor && number_ctor < private_marker,
+        "Expected constructor overloads before private marker: {output}"
+    );
+    assert!(
+        !output.contains("string | number"),
+        "Implementation constructor JSDoc should not become a signature: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_variable_strips_jsdoc_satisfies_comment() {
     let output = emit_js_dts(
         r#"
