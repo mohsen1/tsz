@@ -1,6 +1,7 @@
 //! Selection helpers for resolving canonical standard-library symbols.
 
 use crate::context::CheckerContext;
+use crate::query_boundaries::definition_identity::DefId;
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_solver::{TypeId, TypeParamInfo};
@@ -56,7 +57,7 @@ pub(crate) fn register_selected_lib_def_resolved(
     selected_from_lib_context: bool,
     ty: TypeId,
     params: Vec<TypeParamInfo>,
-) -> tsz_solver::def::DefId {
+) -> DefId {
     if !selected_from_lib_context {
         return ctx.register_lib_def_resolved(sym_id, ty, params);
     }
