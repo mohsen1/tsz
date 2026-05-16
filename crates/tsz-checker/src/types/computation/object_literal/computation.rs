@@ -66,35 +66,6 @@ fn is_literal_permissive_context(ctx: TypeId) -> bool {
     ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
 }
 
-fn is_single_quoted_string_property_name_node(
-    arena: &tsz_parser::parser::node::NodeArena,
-    name_idx: NodeIndex,
-) -> bool {
-    let Some(name_node) = arena.get(name_idx) else {
-        return false;
-    };
-
-    if name_node.kind == SyntaxKind::StringLiteral as u16 {
-        return arena
-            .get_literal(name_node)
-            .and_then(|literal| literal.raw_text.as_deref())
-            .is_some_and(|raw| raw.starts_with('\''));
-    }
-
-    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-        && let Some(computed) = arena.get_computed_property(name_node)
-        && let Some(expr_node) = arena.get(computed.expression)
-        && expr_node.kind == SyntaxKind::StringLiteral as u16
-    {
-        return arena
-            .get_literal(expr_node)
-            .and_then(|literal| literal.raw_text.as_deref())
-            .is_some_and(|raw| raw.starts_with('\''));
-    }
-
-    false
-}
-
 impl<'a> CheckerState<'a> {
     fn object_literal_property_is_typed_variable_initializer(
         &self,
@@ -1305,13 +1276,10 @@ impl<'a> CheckerState<'a> {
                     // Determine if this property was declared with a string key
                     // that looks numeric (e.g. "404" vs 404). This affects DTS
                     // emit quoting: `"404": ...` vs `404: ...`.
+                    let (string_literal_name, single_quoted_name) =
+                        self.ctx.arena.string_property_name_flags(prop.name);
                     let is_string_named =
-                        crate::types_domain::queries::core::is_string_property_name_node(
-                            self.ctx.arena,
-                            prop.name,
-                        ) || self.is_computed_string_property_name(prop.name);
-                    let single_quoted_name =
-                        is_single_quoted_string_property_name_node(self.ctx.arena, prop.name);
+                        string_literal_name || self.is_computed_string_property_name(prop.name);
                     let prop_info = PropertyInfo {
                         name: name_atom,
                         type_id: value_type,

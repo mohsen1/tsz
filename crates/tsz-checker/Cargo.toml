@@ -510,6 +510,10 @@ name = "keyof_array_literal_diagnostic_tests"
 path = "tests/keyof_array_literal_diagnostic_tests.rs"
 
 [[test]]
+name = "keyof_quoted_string_property_name_tests"
+path = "tests/keyof_quoted_string_property_name_tests.rs"
+
+[[test]]
 name = "partial_self_argument_diagnostic_tests"
 path = "tests/partial_self_argument_diagnostic_tests.rs"
 

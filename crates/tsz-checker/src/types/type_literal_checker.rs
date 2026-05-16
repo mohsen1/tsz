@@ -1105,11 +1105,12 @@ impl<'a> CheckerState<'a> {
         // after the loop, breaking tsc's interleaved display order.
         let mut member_order: u32 = 0;
         // Collect method signatures grouped by name to support overloaded methods.
-        // Each entry maps method name -> list of (CallSignature, optional, readonly).
-        let mut method_overloads: FxHashMap<Atom, Vec<(CallSignature, bool, bool)>> =
+        // Each entry maps method name -> list of
+        // (CallSignature, optional, readonly, is_symbol_named).
+        let mut method_overloads: FxHashMap<Atom, Vec<(CallSignature, bool, bool, bool)>> =
             FxHashMap::default();
         // Track insertion order and declaration_order for method overloads.
-        let mut method_overload_order: Vec<(Atom, u32)> = Vec::new();
+        let mut method_overload_order: Vec<(Atom, u32, bool, bool)> = Vec::new();
 
         for &member_idx in &data.members.nodes {
             let Some(member) = self.ctx.arena.get(member_idx) else {
@@ -1172,6 +1173,8 @@ impl<'a> CheckerState<'a> {
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
                         let is_symbol_named = self.is_symbol_property_name(sig.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(sig.name);
 
                         if member.kind == METHOD_SIGNATURE {
                             if let Some(ref _params) = sig.parameters {}
@@ -1198,9 +1201,14 @@ impl<'a> CheckerState<'a> {
                             let entry = method_overloads.entry(name_atom).or_default();
                             if entry.is_empty() {
                                 member_order += 1;
-                                method_overload_order.push((name_atom, member_order));
+                                method_overload_order.push((
+                                    name_atom,
+                                    member_order,
+                                    is_string_named,
+                                    single_quoted_name,
+                                ));
                             }
-                            entry.push((call_sig, optional, readonly));
+                            entry.push((call_sig, optional, readonly, is_symbol_named));
                         } else {
                             let circular_self_reference = sig.type_annotation.is_some()
                                 && owner_name.as_deref().is_some_and(|owner_name| {
@@ -1233,9 +1241,9 @@ impl<'a> CheckerState<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: member_order,
-                                is_string_named: false,
+                                is_string_named,
                                 is_symbol_named,
-                                single_quoted_name: false,
+                                single_quoted_name,
                             });
                         }
                     }
@@ -1519,11 +1527,16 @@ impl<'a> CheckerState<'a> {
             let read_type = getter_type.or(setter_type).unwrap_or(TypeId::UNKNOWN);
             let write_type = setter_type.or(getter_type).unwrap_or(read_type);
             let readonly = getter_type.is_some() && setter_type.is_none();
-            let is_symbol_named = accessor
+            let primary_name_idx = accessor
                 .getter
                 .as_ref()
                 .or(accessor.setter.as_ref())
-                .is_some_and(|member| self.is_symbol_property_name(member.name_idx));
+                .map(|member| member.name_idx);
+            let is_symbol_named =
+                primary_name_idx.is_some_and(|name_idx| self.is_symbol_property_name(name_idx));
+            let (is_string_named, single_quoted_name) = primary_name_idx
+                .map(|name_idx| self.ctx.arena.string_property_name_flags(name_idx))
+                .unwrap_or((false, false));
             properties.push(PropertyInfo {
                 name,
                 type_id: read_type,
@@ -1535,20 +1548,21 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: accessor.declaration_order,
-                is_string_named: false,
+                is_string_named,
                 is_symbol_named,
-                single_quoted_name: false,
+                single_quoted_name,
             });
         }
 
         // Merge overloaded method signatures into properties.
         // Single-signature methods become Function types; multi-signature become Callable types.
-        for (name_atom, decl_order) in method_overload_order {
+        for (name_atom, decl_order, is_string_named, single_quoted_name) in method_overload_order {
             if let Some(sigs) = method_overloads.remove(&name_atom) {
-                let optional = sigs.iter().all(|(_, opt, _)| *opt);
-                let readonly = sigs.iter().any(|(_, _, ro)| *ro);
+                let optional = sigs.iter().all(|(_, opt, _, _)| *opt);
+                let readonly = sigs.iter().any(|(_, _, ro, _)| *ro);
+                let is_symbol_named = sigs.iter().any(|(_, _, _, sym)| *sym);
                 let method_type = if sigs.len() == 1 {
-                    let (sig, _, _) = sigs
+                    let (sig, _, _, _) = sigs
                         .into_iter()
                         .next()
                         .expect("sigs.len() == 1 guard ensures at least one element");
@@ -1563,7 +1577,7 @@ impl<'a> CheckerState<'a> {
                     })
                 } else {
                     let merged_sigs: Vec<CallSignature> =
-                        sigs.into_iter().map(|(sig, _, _)| sig).collect();
+                        sigs.into_iter().map(|(sig, _, _, _)| sig).collect();
                     factory.callable(CallableShape {
                         call_signatures: merged_sigs,
                         construct_signatures: Vec::new(),
@@ -1585,9 +1599,9 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: decl_order,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
+                    is_string_named,
+                    is_symbol_named,
+                    single_quoted_name,
                 });
             }
         }
