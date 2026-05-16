@@ -347,7 +347,7 @@ impl<'a> CheckerState<'a> {
             && def.kind == tsz_solver::DefKind::TypeAlias
             && let Some(body) = def.body
         {
-            let instantiated_body = self.instantiate_type_alias_body_from_display_name(
+            let instantiated_body = self.instantiate_type_alias_body_from_application(
                 normalized,
                 &def.type_params,
                 body,
@@ -381,79 +381,43 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn instantiate_type_alias_body_from_display_name(
+    fn instantiate_type_alias_body_from_application(
         &mut self,
         alias_type: TypeId,
         type_params: &[tsz_solver::TypeParamInfo],
         body: TypeId,
     ) -> TypeId {
-        if let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, alias_type)
-            && args.len() == type_params.len()
-            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
-        {
-            let (base_body, base_params) = self.type_reference_symbol_type_with_params(sym_id);
-            if base_body != TypeId::ANY
-                && base_body != TypeId::ERROR
-                && base_params.len() == args.len()
-            {
-                let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-                    self.ctx.types,
-                    &base_params,
-                    &args,
-                );
-                return crate::query_boundaries::common::instantiate_type(
-                    self.ctx.types,
-                    base_body,
-                    &substitution,
-                );
-            }
-        }
-
-        if type_params.is_empty() {
-            return body;
-        }
-        let display = self.format_type(alias_type);
-        let Some(start) = display.find('<') else {
+        let application =
+            crate::query_boundaries::common::application_info(self.ctx.types, alias_type).or_else(
+                || {
+                    self.ctx
+                        .types
+                        .get_display_alias(alias_type)
+                        .and_then(|alias| {
+                            crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                        })
+                },
+            );
+        let Some((base, args)) = application else {
             return body;
         };
-        let Some(end) = display.rfind('>') else {
-            return body;
-        };
-        let arg_text = &display[start + 1..end];
-        let mut args = Vec::with_capacity(type_params.len());
-        for part in arg_text.split(',') {
-            let name = part.trim();
-            let Some(param) = self
-                .ctx
-                .type_parameter_scope
-                .get(name)
-                .copied()
-                .or_else(|| self.find_type_parameter_by_name_in_type(alias_type, name))
-            else {
-                return body;
-            };
-            args.push(param);
-        }
         if args.len() != type_params.len() {
+            return body;
+        }
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return body;
+        };
+        let (base_body, base_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if base_body == TypeId::ANY || base_body == TypeId::ERROR || base_params.len() != args.len()
+        {
             return body;
         }
         let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
-            type_params,
+            &base_params,
             &args,
         );
-        crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &substitution)
-    }
-
-    fn find_type_parameter_by_name_in_type(&self, type_id: TypeId, name: &str) -> Option<TypeId> {
-        let target = self.ctx.types.intern_string(name);
-        crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id)
-            .into_iter()
-            .find(|&candidate| {
-                crate::query_boundaries::common::type_param_info(self.ctx.types, candidate)
-                    .is_some_and(|info| info.name == target)
-            })
+        crate::query_boundaries::common::instantiate_type(self.ctx.types, base_body, &substitution)
     }
 
     pub(in crate::checkers_domain::jsx) fn jsx_alias_declares_string_prop(
