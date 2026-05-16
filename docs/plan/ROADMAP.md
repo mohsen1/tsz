@@ -297,6 +297,9 @@ subjective "cleanup" language.
    identity queries.
 7. Emitter/DTS direct solver imports, direct type evaluation during printing,
    and `TypeData`/`lookup()` guardrail exceptions.
+   Current guardrail cap: `39` direct `tsz_solver` import files outside
+   solver/checker, matching the post-#7602 `main` baseline. New work should
+   reduce this count or justify any cap bump in the same PR.
 8. `Printer` and `DeclarationEmitter` ambient state fields, especially fields
    added for one transform or one baseline family.
 9. Emitter/DTS tests that assert fragments instead of exact output or structured
