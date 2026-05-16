@@ -113,7 +113,7 @@ fn test_direct_typedata_construction_is_quarantined_to_intern() {
         }
     }
 
-    let solver_src_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let solver_src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut source_files = Vec::new();
     collect_solver_rs_files_recursive(&solver_src_dir, &mut source_files);
 
