@@ -249,6 +249,44 @@ const r: Next<number> = result;
 }
 
 #[test]
+fn custom_iterator_result_name_does_not_trigger_iterator_result_required_value_rule() {
+    let diagnostics = with_lib_contexts(
+        r#"
+interface MyIteratorYieldResult<TYield> {
+    done?: false;
+    value: TYield;
+}
+interface MyIteratorReturnResult<TReturn> {
+    done: true;
+    value: TReturn;
+}
+type MyIteratorResult<T, TReturn = any> =
+    | MyIteratorYieldResult<T>
+    | MyIteratorReturnResult<TReturn>;
+
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+
+declare const result: MyIteratorResult<number, undefined>;
+const r: Next<number> = result;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_diagnostic_code(&diagnostics, 2322),
+        "Renamed IteratorResult-like aliases should still reject through normal structural assignability, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn promise_suffixed_generic_wrapper_does_not_suppress_nested_argument_mismatch() {
     let diagnostics = get_all_diagnostics(
         r#"
