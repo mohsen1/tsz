@@ -1553,16 +1553,31 @@ impl<'a> CheckerState<'a> {
     }
 
     fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
-        if crate::query_boundaries::common::application_info(self.ctx.types, target).is_some() {
+        if self.ts2820_is_named_application_surface(target) {
             return true;
         }
 
         self.ctx
             .types
             .get_display_alias(target)
-            .is_some_and(|alias| {
-                crate::query_boundaries::common::application_info(self.ctx.types, alias).is_some()
-            })
+            .is_some_and(|alias| self.ts2820_is_named_application_surface(alias))
+    }
+
+    fn ts2820_is_named_application_surface(&self, target: TypeId) -> bool {
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target)
+        else {
+            return false;
+        };
+        !args.is_empty() && self.ts2820_application_base_has_named_surface(base)
+    }
+
+    fn ts2820_application_base_has_named_surface(&self, base: TypeId) -> bool {
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+            .is_some()
+            || self.ctx.types.get_display_alias(base).is_some()
+            || self.lookup_type_alias_name_for_display(base).is_some()
     }
 
     pub(super) fn first_nonpublic_constructor_param_property(
