@@ -101,6 +101,12 @@ test that preserves that rule. A temporary `/tmp` repro is useful evidence, but
 the durable artifact is the solver/checker test or guard row that would fail if
 the project-specific spelling changed.
 
+For termination or stack-growth fixes, separate the correctness guard from the
+stress evidence. The correctness guard should be the smallest semantic repro
+that terminates under normal execution, while larger project or slice commands
+should be recorded as bounded evidence with timeout, memory guard, diagnostic
+count, and any stack-size override called out explicitly.
+
 Do not run full conformance, full emit, or full fourslash locally.
 
 ## Project Compile Guard Contract

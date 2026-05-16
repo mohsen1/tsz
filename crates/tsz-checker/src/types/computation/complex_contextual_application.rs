@@ -25,18 +25,33 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn application_base_symbol_id(&self, base: TypeId) -> Option<tsz_binder::SymbolId> {
+        let mut visited = FxHashSet::default();
+        self.application_base_symbol_id_inner(base, &mut visited)
+    }
+
+    fn application_base_symbol_id_inner(
+        &self,
+        base: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> Option<tsz_binder::SymbolId> {
         if let Some(def_id) = query::lazy_def_id(self.ctx.types, base) {
             return self.ctx.def_to_symbol_id(def_id);
         }
-        crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
-            .map(|sym_ref| tsz_binder::SymbolId(sym_ref.0))
-            .or_else(|| {
-                self.ctx
-                    .types
-                    .get_display_alias(base)
-                    .and_then(|alias| query::get_application_info(self.ctx.types, alias))
-                    .and_then(|(alias_base, _)| self.application_base_symbol_id(alias_base))
-            })
+        if let Some(sym_ref) =
+            crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
+        {
+            return Some(tsz_binder::SymbolId(sym_ref.0));
+        }
+
+        if !visited.insert(base) {
+            return None;
+        }
+
+        self.ctx
+            .types
+            .get_display_alias(base)
+            .and_then(|alias| query::get_application_info(self.ctx.types, alias))
+            .and_then(|(alias_base, _)| self.application_base_symbol_id_inner(alias_base, visited))
     }
 
     pub(crate) fn is_same_class_static_method_new_result(
