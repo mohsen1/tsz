@@ -1075,6 +1075,31 @@ fn static_field_class_expression_in_parameter_default_uses_es5_comma_alias() {
 }
 
 #[test]
+fn static_field_class_expression_in_binding_key_uses_es5_comma_alias() {
+    let source = "(({ [class { static x = 1 }.x]: b = \"\" }) => {})();";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "function (_a) {\n    var _b;\n    var _c = (_b = /** @class */ (function () {"
+        ) && output.contains("function class_1()")
+            && output.contains("_b.x = 1,")
+            && output.contains("_b).x, _d = _a[_c], b = _d === void 0 ? \"\" : _d;"),
+        "ES5 computed binding keys should reserve the class-expression alias before the key temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return _c;"),
+        "Static-field class expressions in computed binding keys should not use a nested wrapper IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn legacy_decorated_anonymous_default_class_static_field_sets_default_name() {
     use crate::context::emit::EmitContext;
     use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
