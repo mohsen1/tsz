@@ -1258,6 +1258,10 @@ name = "homomorphic_indexed_access_edge_cases"
 path = "tests/homomorphic_indexed_access_edge_cases.rs"
 
 [[test]]
+name = "union_tuple_source_display_tests"
+path = "tests/union_tuple_source_display_tests.rs"
+
+[[test]]
 name = "track8_debt_contract_tests"
 path = "tests/track8_debt_contract_tests.rs"
 
