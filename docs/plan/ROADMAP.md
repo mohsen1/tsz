@@ -296,10 +296,9 @@ subjective "cleanup" language.
 6. Actual-lib alias admissions and allowlists that should become stable lib
    identity queries.
 7. Emitter/DTS direct solver imports, direct type evaluation during printing,
-   and `TypeData`/`lookup()` guardrail exceptions.
-   Current guardrail cap: `39` direct `tsz_solver` import files outside
-   solver/checker, matching the post-#7602 `main` baseline. New work should
-   reduce this count or justify any cap bump in the same PR.
+   and `TypeData`/`lookup()` guardrail exceptions. The current direct
+   `tsz_solver` import guard outside solver/checker is pinned at `39`; reduce
+   it through focused compiler-service/front-door PRs instead of broad cleanup.
 8. `Printer` and `DeclarationEmitter` ambient state fields, especially fields
    added for one transform or one baseline family.
 9. Emitter/DTS tests that assert fragments instead of exact output or structured
