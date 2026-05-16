@@ -273,12 +273,12 @@ impl<'a> Printer<'a> {
 
     /// Finish printing and return the result.
     pub fn finish(mut self) -> PrintResult {
-        let code = self.inner.get_output().to_string();
         let source_map = if self.source_map_enabled {
             self.inner.generate_source_map_json()
         } else {
             None
         };
+        let code = self.inner.take_output();
         PrintResult { code, source_map }
     }
 }

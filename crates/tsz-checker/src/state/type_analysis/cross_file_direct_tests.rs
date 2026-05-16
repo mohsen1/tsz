@@ -540,6 +540,11 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
             .symbol_arenas
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
+        let protocol_method_interface = state.symbol_declares_direct_actual_lib_protocol_method(
+            sym_id,
+            &symbol,
+            delegate_arena.expect("generic lib symbol should have a delegate arena"),
+        );
         assert!(
             state.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol),
             "{name} should expose actual-lib interface type parameters",
@@ -551,7 +556,7 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
             delegate_arena,
             false,
         );
-        if matches!(name, "Iterator" | "Promise" | "PromiseLike") {
+        if protocol_method_interface {
             let (ty, params) = lowered
                 .unwrap_or_else(|| panic!("{name} should lower through the direct lib path"));
             assert_ne!(ty, TypeId::UNKNOWN, "{name} should not lower to UNKNOWN");

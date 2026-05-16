@@ -740,15 +740,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // creating unbounded stack growth. Cap at 100 levels.
         thread_local! {
             static ALIAS_RESOLVE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            static ALIAS_RESOLVE_STACK: std::cell::RefCell<Vec<tsz_solver::def::DefId>> =
+                const { std::cell::RefCell::new(Vec::new()) };
         }
         let depth = ALIAS_RESOLVE_DEPTH.get();
         if depth >= 100 {
             return;
         }
+        if ALIAS_RESOLVE_STACK.with(|stack| stack.borrow().contains(&def_id)) {
+            return;
+        }
         // Dynamic stack growth: if remaining stack is low, grow it.
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
             ALIAS_RESOLVE_DEPTH.set(depth + 1);
+            ALIAS_RESOLVE_STACK.with(|stack| stack.borrow_mut().push(def_id));
             self.ensure_type_alias_resolved_inner(sym_id, def_id);
+            ALIAS_RESOLVE_STACK.with(|stack| {
+                let popped = stack.borrow_mut().pop();
+                debug_assert_eq!(popped, Some(def_id));
+            });
             ALIAS_RESOLVE_DEPTH.set(depth);
         });
     }
