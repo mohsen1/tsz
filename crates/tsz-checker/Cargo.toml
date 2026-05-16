@@ -1257,5 +1257,9 @@ path = "tests/homomorphic_indexed_access_tests.rs"
 name = "homomorphic_indexed_access_edge_cases"
 path = "tests/homomorphic_indexed_access_edge_cases.rs"
 
+[[test]]
+name = "track8_debt_contract_tests"
+path = "tests/track8_debt_contract_tests.rs"
+
 [lints]
 workspace = true
