@@ -25,6 +25,9 @@
 : "${LARGE_TS_REF:=e1b22bda18664a507ed0da19c155e0365d585b18}"
 : "${TYPE_CHALLENGES_REPO:=https://github.com/type-challenges/type-challenges.git}"
 : "${TYPE_CHALLENGES_REF:=0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1}"
+: "${TYPE_CHALLENGES_SOLUTIONS_REPO:=https://github.com/ghaiklor/type-challenges-solutions.git}"
+: "${TYPE_CHALLENGES_SOLUTIONS_REF:=91a6d2986650475f29eeb3bd18ebd025128aa07e}"
+: "${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED:=78}"
 
 tsz_ensure_git_fixture() {
   local name="$1"
@@ -244,6 +247,116 @@ tsz_write_kysely_config() {
     "**/util/object-utils.ts",
     "**/util/performance-now.ts"
   ]
+}
+JSON
+}
+
+tsz_write_type_challenges_solutions_config() {
+  local source_dir="$1"
+  local compile_dir="$2"
+
+  rm -rf "$compile_dir"
+  mkdir -p "$compile_dir/solutions"
+
+  local generated=0
+  local markdown
+  while IFS= read -r markdown; do
+    local id title level base output tmp
+    id="$(awk -F': ' '/^id: / { print $2; exit }' "$markdown")"
+    title="$(awk -F': ' '/^title: / { print $2; exit }' "$markdown")"
+    level="$(awk -F': ' '/^level: / { print $2; exit }' "$markdown")"
+    base="$(basename "$markdown" .md)"
+    output="$compile_dir/solutions/${base}.ts"
+    tmp="$compile_dir/solutions/.${base}.tmp"
+
+    perl -0ne '
+      my ($solution) = /## Solution\n(.*?)(?:\n## References|\z)/s;
+      next unless defined $solution;
+
+      my @order;
+      my %block_by_name;
+      while ($solution =~ /```(?:ts|typescript)\n(.*?)```/sg) {
+        my $block = $1;
+        my @names;
+        while ($block =~ /^\s*(?:export\s+)?(?:declare\s+)?(?:type|interface|namespace)\s+([A-Za-z_\$][A-Za-z0-9_\$]*)/mg) {
+          push @names, $1;
+        }
+        while ($block =~ /^\s*declare\s+(?:function|const)\s+([A-Za-z_\$][A-Za-z0-9_\$]*)/mg) {
+          push @names, $1;
+        }
+        next unless @names;
+
+        for my $name (@names) {
+          push @order, $name unless exists $block_by_name{$name};
+          $block_by_name{$name} = $block;
+        }
+      }
+
+      my %emitted;
+      for my $name (@order) {
+        next if $emitted{$block_by_name{$name}}++;
+        print $block_by_name{$name};
+        print "\n" unless $block_by_name{$name} =~ /\n\z/;
+      }
+    ' "$markdown" > "$tmp"
+
+    if [[ ! -s "$tmp" ]]; then
+      rm -f "$tmp"
+      continue
+    fi
+
+    {
+      printf '// Generated from ghaiklor/type-challenges-solutions %s\n' "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      printf '// Source: en/%s.md\n' "$base"
+      printf '// Challenge id: %s; level: %s; title: %s\n\n' "$id" "$level" "$title"
+      cat "$tmp"
+      printf '\nexport {};\n'
+    } > "$output"
+    rm -f "$tmp"
+    generated=$((generated + 1))
+  done < <(find "$source_dir/en" -maxdepth 1 -name '*.md' ! -name 'index.md' | sort)
+
+  if [[ "$generated" -eq 0 ]]; then
+    echo "error: no Type Challenges solution sources were generated from $source_dir/en" >&2
+    return 1
+  fi
+  if [[ "$generated" -ne "$TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED" ]]; then
+    echo "error: generated ${generated} Type Challenges solution sources; expected ${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED} for ${TYPE_CHALLENGES_SOLUTIONS_REF}" >&2
+    return 1
+  fi
+
+  cat > "$compile_dir/type-challenges-globals.d.ts" <<'TYPES'
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2)
+    ? true
+    : false;
+
+interface TreeNode {
+  val: number;
+  left: TreeNode | null;
+  right: TreeNode | null;
+}
+TYPES
+
+  cat > "$compile_dir/tsconfig.tsz-guard.json" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "lib": ["ESNext"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "noEmit": true,
+    "types": [],
+    "noImplicitReturns": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["solutions/**/*.ts", "type-challenges-globals.d.ts"]
 }
 JSON
 }

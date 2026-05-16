@@ -80,10 +80,16 @@ try {
   assert.equal(typeChallengesPage.failed, true);
   assert.match(typeChallengesPage.status_label, /compile canary/i);
 
+  const typeChallengesSolutionsPage = pages.find((page) => page.name === "type-challenges-solutions-project");
+  assert.ok(typeChallengesSolutionsPage, "expected compile-canary type-challenges solutions page");
+  assert.equal(typeChallengesSolutionsPage.failed, true);
+  assert.match(typeChallengesSolutionsPage.status_label, /compile canary/i);
+
   const charts = getBenchmarkCharts();
   assert.match(charts, /External libraries/);
   assert.match(charts, /Compile canaries and incomplete project timings/);
   assert.match(charts, /type-challenges project/);
+  assert.match(charts, /type-challenges solutions project/);
 
   const slugs = new Map();
   for (const page of pages) {
