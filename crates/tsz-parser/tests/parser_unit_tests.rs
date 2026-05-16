@@ -1345,6 +1345,51 @@ fn decl_enum_with_initializers() {
 }
 
 #[test]
+fn decl_enum_invalid_separator_recovery_keeps_members() {
+    let (parser, root) = parse_source(
+        "enum E13 { postSemicolon; postColonValueComma: 2, postColonValueSemicolon: 3; }\n\
+enum E14 { a, b: any \"hello\" += 1, c, d }",
+    );
+    assert_has_errors(&parser, "invalid enum separators");
+
+    let arena = parser.get_arena();
+    let statements = get_statements(arena, root);
+    let enum_member_names = |stmt_idx| {
+        let stmt_node = arena.get(stmt_idx).expect("enum statement");
+        let enum_data = arena.get_enum(stmt_node).expect("enum data");
+        enum_data
+            .members
+            .nodes
+            .iter()
+            .map(|&member_idx| {
+                let member_node = arena.get(member_idx).expect("enum member");
+                let member = arena.get_enum_member(member_node).expect("member data");
+                arena
+                    .get_identifier_text(member.name)
+                    .or_else(|| arena.get_literal_text(member.name))
+                    .expect("member name text")
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        enum_member_names(statements[0]),
+        [
+            "postSemicolon",
+            "postColonValueComma",
+            "2",
+            "postColonValueSemicolon",
+            "3"
+        ]
+    );
+    assert_eq!(
+        enum_member_names(statements[1]),
+        ["a", "b", "any", "hello", "1", "c", "d"]
+    );
+}
+
+#[test]
 fn decl_const_enum() {
     // `const enum Flags { A, B }`
     let (parser, root) = parse_source("const enum Flags { A, B }");

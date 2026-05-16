@@ -1413,8 +1413,10 @@ impl ParserState {
                 self.parse_identifier_name()
             };
 
-            // Check for unexpected token after enum member name - emit TS1357
-            // Valid tokens after name are: '=', ',', '}'
+            // Check for unexpected token after enum member name - emit TS1357.
+            // `tsc` still records the malformed member before recovering, so emit
+            // continues to allocate enum values for invalid names such as
+            // `name: 1` and `name;`.
             if !self.is_token(SyntaxKind::EqualsToken)
                 && !self.is_token(SyntaxKind::CommaToken)
                 && !self.is_token(SyntaxKind::CloseBraceToken)
@@ -1425,74 +1427,22 @@ impl ParserState {
                     diagnostic_codes::AN_ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY_A_OR,
                 );
 
-                // If `:` was the unexpected token (like `a: 1`), recover by
-                // simulating tsc's parseDelimitedList loop: after the `:`, for
-                // each namelike token (identifier/keyword/string/numeric/bigint),
-                // treat it as a "recovered name" and check whether the following
-                // token is a valid separator. If not, emit TS1357 at that
-                // follow-up token and continue. This mirrors tsc emitting
-                // TS1357 at each failed parseExpected(Comma) without creating
-                // real enum member nodes (so the checker does not subsequently
-                // emit TS2452 for skipped numeric literals).
-                if self.is_token(SyntaxKind::ColonToken) {
-                    self.next_token(); // past ':'
-                    loop {
-                        if self.is_token(SyntaxKind::CommaToken)
-                            || self.is_token(SyntaxKind::CloseBraceToken)
-                            || self.is_token(SyntaxKind::EndOfFileToken)
-                        {
-                            break;
-                        }
-                        let is_namelike = self.is_token(SyntaxKind::StringLiteral)
-                            || self.is_token(SyntaxKind::NumericLiteral)
-                            || self.is_token(SyntaxKind::BigIntLiteral)
-                            || self.is_identifier_or_keyword();
-                        if is_namelike {
-                            self.next_token(); // past the namelike "recovered name"
-                            if self.is_token(SyntaxKind::CommaToken)
-                                || self.is_token(SyntaxKind::CloseBraceToken)
-                                || self.is_token(SyntaxKind::EndOfFileToken)
-                            {
-                                break;
-                            }
-                            // `name =` pattern: consume the `= initializer` so
-                            // the outer loop is not left staring at a bare `=`
-                            // (which would emit TS1003 "Identifier expected").
-                            if self.is_token(SyntaxKind::EqualsToken) {
-                                self.next_token(); // past '='
-                                while !self.is_token(SyntaxKind::CommaToken)
-                                    && !self.is_token(SyntaxKind::CloseBraceToken)
-                                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                                {
-                                    self.next_token();
-                                }
-                                break;
-                            }
-                            // Unexpected follow-up: emit TS1357 at the offending
-                            // token. Do not advance — next iteration will handle
-                            // the token (either parse it as another namelike or
-                            // advance past a non-namelike like '+=' or ';').
-                            self.parse_error_at_current_token(
-                                "An enum member name must be followed by a ',', '=', or '}'.",
-                                diagnostic_codes::AN_ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY_A_OR,
-                            );
-                        } else {
-                            // Non-namelike filler (e.g. '+=', ';'): advance one
-                            // token so the recovery can make progress.
-                            self.next_token();
-                        }
-                    }
-                    self.parse_optional(SyntaxKind::CommaToken);
-                    continue;
-                }
+                let member_end = self.arena.get(name).map_or(start_pos, |node| node.end);
+                let member = self.arena.add_enum_member(
+                    syntax_kind_ext::ENUM_MEMBER,
+                    start_pos,
+                    member_end,
+                    EnumMemberData {
+                        name,
+                        initializer: NodeIndex::NONE,
+                    },
+                );
+                members.push(member);
 
-                // Other unexpected token after the member name (e.g. ';').
-                // Advance one token and let the outer loop try parsing the next
-                // token as a new enum member. This matches tsc's "skip one and
-                // retry" behavior driven by abortParsingListOrMoveToNextToken.
-                // If the current token could itself start a member (identifier,
-                // string literal, etc.), don't advance — the outer loop will
-                // pick it up.
+                // Recover by moving past one offending token unless that token
+                // can itself start the next enum member. This keeps namelike
+                // recovery tokens (`any`, `"hello"`, `1`) available to the next
+                // iteration, matching `tsc`'s invalid-member AST.
                 let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
                     || self.is_token(SyntaxKind::StringLiteral)
                     || self.is_token(SyntaxKind::NumericLiteral)
