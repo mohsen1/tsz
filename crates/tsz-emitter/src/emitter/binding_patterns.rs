@@ -19,6 +19,24 @@ enum ExcludedProp {
     Dynamic(String),
 }
 
+enum ArrayObjectRestDeferred {
+    ObjectRest {
+        pattern: NodeIndex,
+        temp: String,
+        initializer: NodeIndex,
+    },
+    BindingPattern {
+        pattern: NodeIndex,
+        temp: String,
+        initializer: NodeIndex,
+    },
+    SimpleDefault {
+        name: NodeIndex,
+        temp: String,
+        initializer: NodeIndex,
+    },
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Binding Patterns
@@ -241,14 +259,26 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
-            self.emit_object_rest_var_decl(decl.name, decl.initializer, None);
-        } else {
-            // Non-object pattern (array or identifier) — emit normally
-            self.emit_decl_name(decl.name);
-            if decl.initializer.is_some() {
-                self.write(" = ");
-                self.emit_expression(decl.initializer);
+        match name_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                self.emit_object_rest_var_decl(decl.name, decl.initializer, None);
+            }
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                if decl.initializer.is_some() {
+                    self.emit_array_object_rest_var_decl_from_initializer(
+                        decl.name,
+                        decl.initializer,
+                    );
+                } else {
+                    self.emit_decl_name(decl.name);
+                }
+            }
+            _ => {
+                self.emit_decl_name(decl.name);
+                if decl.initializer.is_some() {
+                    self.write(" = ");
+                    self.emit_expression(decl.initializer);
+                }
             }
         }
     }
@@ -560,6 +590,26 @@ impl<'a> Printer<'a> {
                 self.write(&key_temp);
                 self.write("]");
 
+                if self.is_binding_pattern(elem.name) {
+                    let pattern_temp = if elem.initializer.is_some() {
+                        let defaulted_name = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&defaulted_name);
+                        self.write(" = ");
+                        self.write(&value_name);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(elem.initializer);
+                        self.write(" : ");
+                        self.write(&value_name);
+                        defaulted_name
+                    } else {
+                        value_name
+                    };
+                    self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
+                    excluded_props.push(ExcludedProp::Dynamic(key_temp));
+                    continue;
+                }
+
                 if elem.initializer.is_some() {
                     self.write(", ");
                     self.write(&var_name);
@@ -581,7 +631,8 @@ impl<'a> Printer<'a> {
                     static_name.clone()
                 };
 
-                let value_name = if elem.initializer.is_some() {
+                let value_name = if elem.initializer.is_some() || self.is_binding_pattern(elem.name)
+                {
                     self.get_temp_var_name()
                 } else {
                     var_name.clone()
@@ -591,6 +642,32 @@ impl<'a> Printer<'a> {
                 self.write(&source_name);
                 self.write(".");
                 self.write(&prop_name);
+
+                if self.is_binding_pattern(elem.name) {
+                    let pattern_temp = if elem.initializer.is_some() {
+                        let defaulted_name = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&defaulted_name);
+                        self.write(" = ");
+                        self.write(&value_name);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(elem.initializer);
+                        self.write(" : ");
+                        self.write(&value_name);
+                        defaulted_name
+                    } else {
+                        value_name
+                    };
+                    self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
+                    let is_str_lit =
+                        is_static_computed || self.is_string_literal_property_name(elem_idx);
+                    if is_str_lit {
+                        excluded_props.push(ExcludedProp::StringLiteral(prop_name));
+                    } else {
+                        excluded_props.push(ExcludedProp::Identifier(prop_name));
+                    }
+                    continue;
+                }
 
                 if elem.initializer.is_some() {
                     self.write(", ");
@@ -640,7 +717,7 @@ impl<'a> Printer<'a> {
 
     /// Emit an object binding pattern but skip the rest element.
     /// Used when lowering: `{ a, b, ...rest } = x` → `{ a, b } = x`
-    fn emit_object_pattern_without_rest(&mut self, elements: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_object_pattern_without_rest(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("{}");
             return;
@@ -765,6 +842,26 @@ impl<'a> Printer<'a> {
         pattern_idx: NodeIndex,
         source: &str,
     ) {
+        self.emit_array_object_rest_var_decl_from_source(pattern_idx, |printer| {
+            printer.write(source);
+        });
+    }
+
+    fn emit_array_object_rest_var_decl_from_initializer(
+        &mut self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) {
+        self.emit_array_object_rest_var_decl_from_source(pattern_idx, |printer| {
+            printer.emit_expression(initializer_idx);
+        });
+    }
+
+    fn emit_array_object_rest_var_decl_from_source(
+        &mut self,
+        pattern_idx: NodeIndex,
+        emit_source: impl FnOnce(&mut Self),
+    ) {
         let Some(node) = self.arena.get(pattern_idx) else {
             return;
         };
@@ -773,7 +870,8 @@ impl<'a> Printer<'a> {
         };
 
         let elements = pattern.elements.nodes.clone();
-        let mut nested_patterns = Vec::new();
+        let mut deferred = Vec::new();
+        let mut has_deferred_prior = false;
 
         self.write("[");
         for (i, &elem_idx) in elements.iter().enumerate() {
@@ -789,21 +887,124 @@ impl<'a> Printer<'a> {
                 continue;
             };
 
-            if self.pattern_has_object_rest(elem.name) {
+            let contains_object_rest = self.pattern_has_object_rest(elem.name);
+            let default_needs_deferred = elem.initializer.is_some()
+                && !self.array_object_rest_is_simple_inlineable_expression(elem.initializer);
+            let needs_deferred_after_prior = has_deferred_prior
+                && (default_needs_deferred || self.is_binding_pattern(elem.name));
+
+            if !elem.dot_dot_dot_token && (contains_object_rest || needs_deferred_after_prior) {
                 let temp = self.get_temp_var_name();
                 self.write(&temp);
-                nested_patterns.push((elem.name, temp));
+                if contains_object_rest {
+                    has_deferred_prior = true;
+                    deferred.push(ArrayObjectRestDeferred::ObjectRest {
+                        pattern: elem.name,
+                        temp,
+                        initializer: elem.initializer,
+                    });
+                } else if self.is_binding_pattern(elem.name) {
+                    deferred.push(ArrayObjectRestDeferred::BindingPattern {
+                        pattern: elem.name,
+                        temp,
+                        initializer: elem.initializer,
+                    });
+                } else {
+                    deferred.push(ArrayObjectRestDeferred::SimpleDefault {
+                        name: elem.name,
+                        temp,
+                        initializer: elem.initializer,
+                    });
+                }
             } else {
                 self.emit(elem_idx);
             }
         }
         self.write("] = ");
-        self.write(source);
+        emit_source(self);
 
-        for (nested_idx, temp) in nested_patterns {
-            self.write(", ");
-            self.emit_object_rest_var_decl_from_pattern(nested_idx, &temp);
+        for item in deferred {
+            self.emit_array_object_rest_deferred(item);
         }
+    }
+
+    fn emit_array_object_rest_deferred(&mut self, item: ArrayObjectRestDeferred) {
+        match item {
+            ArrayObjectRestDeferred::ObjectRest {
+                pattern,
+                temp,
+                initializer,
+            } => {
+                let source = self.emit_array_object_rest_default_temp(temp, initializer);
+                self.write(", ");
+                self.emit_object_rest_var_decl_from_pattern(pattern, &source);
+            }
+            ArrayObjectRestDeferred::BindingPattern {
+                pattern,
+                temp,
+                initializer,
+            } => {
+                let source = self.emit_array_object_rest_default_temp(temp, initializer);
+                self.write(", ");
+                self.emit_decl_name(pattern);
+                self.write(" = ");
+                self.write(&source);
+            }
+            ArrayObjectRestDeferred::SimpleDefault {
+                name,
+                temp,
+                initializer,
+            } => {
+                self.write(", ");
+                self.write_identifier_text(name);
+                self.write(" = ");
+                self.write(&temp);
+                self.write(" === void 0 ? ");
+                self.emit_expression(initializer);
+                self.write(" : ");
+                self.write(&temp);
+            }
+        }
+    }
+
+    fn emit_array_object_rest_default_temp(
+        &mut self,
+        temp: String,
+        initializer: NodeIndex,
+    ) -> String {
+        if initializer.is_none() {
+            return temp;
+        }
+
+        let defaulted = self.get_temp_var_name();
+        self.write(", ");
+        self.write(&defaulted);
+        self.write(" = ");
+        self.write(&temp);
+        self.write(" === void 0 ? ");
+        self.emit_expression(initializer);
+        self.write(" : ");
+        self.write(&temp);
+        defaulted
+    }
+
+    fn array_object_rest_is_simple_inlineable_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        let Some(kind) = tsz_scanner::SyntaxKind::try_from_u16(expr_node.kind) else {
+            return false;
+        };
+
+        matches!(
+            kind,
+            tsz_scanner::SyntaxKind::StringLiteral
+                | tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral
+                | tsz_scanner::SyntaxKind::NumericLiteral
+                | tsz_scanner::SyntaxKind::BigIntLiteral
+        ) || (kind >= tsz_scanner::SyntaxKind::FIRST_KEYWORD
+            && kind <= tsz_scanner::SyntaxKind::LAST_KEYWORD)
     }
 
     /// Get the property name text from a binding element (for __rest exclude list).

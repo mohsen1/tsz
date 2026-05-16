@@ -967,6 +967,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.is_static_block_await_identifier(shorthand.name) {
+            self.emit(shorthand.name);
+            self.write(": ");
+            return;
+        }
+
         // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
         // ES5 doesn't support shorthand property syntax (ES6 feature)
         if self.ctx.target_es5 {

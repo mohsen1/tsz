@@ -21,8 +21,8 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, SymbolRef, TemplateSpan, TypeData,
-    TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, SymbolRef, TemplateSpan,
+    TypeData, TypeId, TypeListId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -690,6 +690,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .type_list(members)
                 .iter()
                 .any(|&member| self.type_contains_readonly_array_syntax(member))
+        })
+    }
+
+    fn array_source_satisfies_minimal_indexed_array_target(
+        &mut self,
+        source_elem: TypeId,
+        target_elem: TypeId,
+        target_props: &[PropertyInfo],
+    ) -> bool {
+        if !self.check_subtype(source_elem, target_elem).is_true() {
+            return false;
+        }
+
+        let length = self.interner.intern_string("length");
+        target_props.iter().all(|prop| {
+            prop.optional
+                || (prop.name == length
+                    && self.check_subtype(TypeId::NUMBER, prop.type_id).is_true())
         })
     }
 
@@ -2512,6 +2530,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }) && let Some(result) = self.check_array_interface_subtype(elem, target)
                 {
                     return result;
+                }
+                if let Some(ref num_idx) = t_shape.number_index
+                    && let Some(elem) = array_element_type(self.interner, source).or_else(|| {
+                        crate::type_queries::get_tuple_element_type_union(self.interner, source)
+                    })
+                    && self.array_source_satisfies_minimal_indexed_array_target(
+                        elem,
+                        num_idx.value_type,
+                        &t_shape.properties,
+                    )
+                {
+                    return SubtypeResult::True;
                 }
                 // Trace: Array/tuple not compatible with indexed object with non-empty properties
                 if let Some(tracer) = &mut self.tracer

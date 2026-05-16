@@ -84,8 +84,40 @@ For project benchmark harness changes, measure failed-row overhead as part of
 the benchmark contract. A project row that fails pre-validation should record
 exit class and first diagnostic deltas from the first compiler invocation; it
 should not rerun the failing compiler just to populate compatibility metadata.
+Generated flat project `tsconfig` files are benchmark-owned artifacts and must
+be rewritten whenever their fixture is prepared. External fixture caches may
+outlive script revisions; stale generated configs can invalidate project rows
+by keeping old include/exclude rules.
+
+For project compatibility blockers, keep the reduced repro and project row
+tied together. The PR should name the failing benchmark row, the reduced
+compile command, the structural compiler rule being fixed, and the targeted
+test that preserves that rule. A temporary `/tmp` repro is useful evidence, but
+the durable artifact is the solver/checker test or guard row that would fail if
+the project-specific spelling changed.
 
 Do not run full conformance, full emit, or full fourslash locally.
+
+## Project Compile Guard Contract
+
+`project-compile-guard.sh` is the cheap compile-only gate for rows that are
+already fixture-reduced enough for CI. It must work in the same workspaces used
+by developers and CI:
+
+1. The default `TSZ_BIN` follows `CARGO_TARGET_DIR` when that environment
+   variable is set, otherwise it falls back to `.target/dist-fast/tsz`.
+2. `TSZ_PROJECT_COMPILE_FILTER='<row-regex>'` runs only matching rows, so agents
+   can verify one project without cloning or checking every earlier fixture.
+3. Generated app prerequisites (`node` and `npm`) are required only when a
+   generated app row is selected.
+
+Use the guard to answer "does this row compile?" Do not treat it as the full
+benchmark dashboard: rows like `zod-project` can still fail in
+`bench-vs-tsgo.sh` even when the compile guard's smaller row set is green. A
+current `zod-project` failure is the contextual generic-constructor path at
+`src/types.ts:280`, where tsz widens the nested `Effect<any>` discriminant and
+emits `TS2322` while `tsc` accepts the project. That belongs to checker/solver
+contextual typing, not benchmark harness code.
 
 ## Durable Design Constraints
 

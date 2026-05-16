@@ -4,6 +4,7 @@ use crate::query_boundaries::checkers::generic as query;
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use std::hash::{Hash, Hasher};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
@@ -19,6 +20,21 @@ pub(crate) struct CallTypeArgumentValidation {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn type_reference_arg_validation_scope_key(&self) -> u64 {
+        let mut entries = self
+            .ctx
+            .type_parameter_scope
+            .iter()
+            .map(|(name, type_id)| (name.as_str(), type_id.0))
+            .collect::<Vec<_>>();
+        entries.sort_unstable_by(|left, right| left.0.cmp(right.0));
+
+        let mut hasher = rustc_hash::FxHasher::default();
+        self.ctx.in_conditional_extends_depth.hash(&mut hasher);
+        entries.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Check if a type node is an `infer` type, looking through parentheses.
     /// Returns true for `infer T`, `(infer T)`, `((infer T))`, etc.
     fn is_infer_type_node_through_parens(&self, mut node_idx: NodeIndex) -> bool {
@@ -746,6 +762,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let validation_cache_key = (
+            type_ref_idx.0,
+            sym_id.0,
+            self.type_reference_arg_validation_scope_key(),
+        );
+        if self
+            .ctx
+            .type_reference_arg_validation_cache
+            .contains(&validation_cache_key)
+        {
+            return false;
+        }
+
         if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
             let lib_binders = self.get_lib_binders();
             if let Some(name) = self
@@ -856,13 +885,20 @@ impl<'a> CheckerState<'a> {
         let min_required = self
             .count_required_type_params_from_ast(sym_id)
             .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, &base_name));
-        self.validate_type_reference_type_arguments_against_params(
+        let diagnostics_before = self.ctx.diagnostics.len();
+        let count_mismatch = self.validate_type_reference_type_arguments_against_params(
             &type_params,
             min_required,
             type_args_list,
             type_arg_error_anchor,
             &display_name,
-        )
+        );
+        if !count_mismatch && self.ctx.diagnostics.len() == diagnostics_before {
+            self.ctx
+                .type_reference_arg_validation_cache
+                .insert(validation_cache_key);
+        }
+        count_mismatch
     }
 
     pub(crate) fn validate_type_reference_type_arguments_against_params(
@@ -998,10 +1034,13 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
-            let type_arg_display = self.format_type_diagnostic(type_arg);
-            if type_arg_display.contains("HTMLElementDeprecatedTagNameMap[")
-                && self.format_type_diagnostic(constraint_for_check) == "Element"
-            {
+            if self.indexed_access_into_object_uniformly_satisfies_constraint(
+                type_arg,
+                constraint_for_check,
+            ) {
+                continue;
+            }
+            if self.array_element_infer_alias_satisfies_constraint(type_arg, constraint_for_check) {
                 continue;
             }
             let error_anchor = type_args_list
@@ -1251,6 +1290,7 @@ impl<'a> CheckerState<'a> {
 
 mod array_like_constraint_helpers;
 mod callable_constraint_helpers;
+mod constraint_syntax_instantiation;
 mod constraint_validation;
 mod constructor_accessibility_helpers;
 mod infer_conditional_constraints;

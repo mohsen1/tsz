@@ -70,6 +70,10 @@ name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 
 [[test]]
+name = "new_expression_regression_tests"
+path = "tests/new_expression_regression_tests.rs"
+
+[[test]]
 name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
@@ -80,6 +84,10 @@ path = "tests/array_subclass_inheritance_tests.rs"
 [[test]]
 name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
+
+[[test]]
+name = "recursive_alias_resolution_tests"
+path = "tests/recursive_alias_resolution_tests.rs"
 
 [[test]]
 name = "tuple_rest_array_canonicalization_tests"
@@ -1014,6 +1022,10 @@ name = "indexed_access_unconstrained_param_tests"
 path = "tests/indexed_access_unconstrained_param_tests.rs"
 
 [[test]]
+name = "indexed_access_callback_tests"
+path = "tests/indexed_access_callback_tests.rs"
+
+[[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"
 path = "tests/js_exports_surface_fallback_for_named_imports_tests.rs"
 
@@ -1236,6 +1248,18 @@ path = "tests/satisfies_object_property_position_tests.rs"
 [[test]]
 name = "nested_infer_extends_scope_tests"
 path = "tests/nested_infer_extends_scope_tests.rs"
+
+[[test]]
+name = "homomorphic_indexed_access_tests"
+path = "tests/homomorphic_indexed_access_tests.rs"
+
+[[test]]
+name = "homomorphic_indexed_access_edge_cases"
+path = "tests/homomorphic_indexed_access_edge_cases.rs"
+
+[[test]]
+name = "track8_debt_contract_tests"
+path = "tests/track8_debt_contract_tests.rs"
 
 [lints]
 workspace = true

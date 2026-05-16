@@ -13,6 +13,7 @@ impl<'a> Printer<'a> {
         system_plan: &SystemDependencyPlan,
     ) -> Vec<String> {
         self.system_empty_binding_temps.clear();
+        self.system_object_rest_export_temps.clear();
         let mut names = Vec::new();
         let mut deferred_named_export_names = Vec::new();
         let mut seen_deferred_named_export_names = HashSet::new();
@@ -452,6 +453,26 @@ impl<'a> Printer<'a> {
                         continue;
                     }
 
+                    if is_exported_variable
+                        && self
+                            .collect_object_rest_export_parts(decl.name)
+                            .is_some_and(|parts| {
+                                parts.needs_source_temp(
+                                    self.reusable_object_rest_export_source(decl.initializer)
+                                        .is_some(),
+                                )
+                            })
+                    {
+                        let source_temp = self.make_unique_name();
+                        if seen.insert(source_temp.clone()) {
+                            names.push(source_temp.clone());
+                        }
+                        if let Some(name_node) = self.arena.get(decl.name) {
+                            self.system_object_rest_export_temps
+                                .insert(name_node.pos, source_temp);
+                        }
+                    }
+
                     let mut binding_names = Vec::new();
                     self.collect_binding_names(decl.name, &mut binding_names);
                     for name in binding_names {
@@ -559,6 +580,26 @@ impl<'a> Printer<'a> {
                     continue;
                 };
                 if decl.initializer.is_none() || !self.binding_pattern_is_empty(decl.name) {
+                    if is_exported
+                        && decl.initializer.is_some()
+                        && self
+                            .collect_object_rest_export_parts(decl.name)
+                            .is_some_and(|parts| {
+                                parts.needs_source_temp(
+                                    self.reusable_object_rest_export_source(decl.initializer)
+                                        .is_some(),
+                                )
+                            })
+                    {
+                        let source_temp = self.make_unique_name();
+                        if seen.insert(source_temp.clone()) {
+                            names.push(source_temp.clone());
+                        }
+                        if let Some(name_node) = self.arena.get(decl.name) {
+                            self.system_object_rest_export_temps
+                                .insert(name_node.pos, source_temp);
+                        }
+                    }
                     continue;
                 }
                 let source_temp = self.make_unique_name();

@@ -81,7 +81,8 @@ impl<'a> CheckerContext<'a> {
             return Outcome::MultipleDeclarations;
         }
 
-        if !symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE)
+        if !symbol
+            .has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)
             && !self.stable_annotated_variable_symbol(symbol, delegate_arena)
         {
             return Outcome::NotClassOrInterface;
@@ -670,6 +671,20 @@ mod tests {
             "export const leaf1: { value: number } = { value: 1 };",
             "leaf1",
         );
+        let ctx = shared_context(
+            arena.as_ref(),
+            &binder,
+            &types,
+            Arc::new(DefinitionStore::new()),
+        );
+
+        assert!(ctx.symbol_arena_symbol_type_cache_is_stable(sym_id, arena.as_ref()));
+    }
+
+    #[test]
+    fn stable_source_file_symbol_type_cache_accepts_type_alias() {
+        let (arena, binder, types, sym_id) =
+            bound_symbol_context("export type Leaf<T> = { value: T };", "Leaf");
         let ctx = shared_context(
             arena.as_ref(),
             &binder,
