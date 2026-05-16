@@ -387,16 +387,41 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let base_def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)?;
-        if self.ctx.actual_lib_def_id_for_bare_name("Pick")? != base_def_id {
+        let is_actual_lib_pick = self
+            .ctx
+            .actual_lib_def_id_for_bare_name("Pick")
+            .is_some_and(|def_id| def_id == base_def_id)
+            || self
+                .ctx
+                .def_symbol_identity(base_def_id)
+                .is_some_and(|(sym_id, _)| {
+                    self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        && self
+                            .get_symbol_globally(sym_id)
+                            .is_some_and(|symbol| symbol.escaped_name == "Pick")
+                });
+        if !is_actual_lib_pick {
             return None;
         }
 
         let object_type = args[0];
         let key_type = args[1];
+        let evaluated_object_type = self.evaluate_type_with_env(object_type);
         let shape =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)?;
-        let keys = crate::query_boundaries::common::union_members(self.ctx.types, key_type)
-            .unwrap_or_else(|| vec![key_type]);
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        evaluated_object_type,
+                    )
+                })?;
+        let evaluated_key_type = self.evaluate_type_with_env(key_type);
+        let keys =
+            crate::query_boundaries::common::union_members(self.ctx.types, evaluated_key_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::union_members(self.ctx.types, key_type)
+                })
+                .unwrap_or_else(|| vec![evaluated_key_type]);
         if keys.len() != shape.properties.len() {
             return None;
         }

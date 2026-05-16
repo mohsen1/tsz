@@ -478,9 +478,15 @@ fn lib_test_roots() -> Vec<PathBuf> {
 }
 
 /// Lib basenames that broadly cover `Promise` / `Iterable` / `Symbol` /
-/// DOM / esnext typings used by checker tests. Tests that need a smaller
-/// or differently-shaped set should call [`load_lib_files`] with an
-/// explicit slice.
+/// `AsyncGenerator` / `AsyncIterableIterator` / DOM / esnext typings used by
+/// checker tests. The set mirrors what `tsc --target ESNext` loads by default
+/// (see `default_libs_for_target("esnext")` in `crates/conformance/src/options_convert.rs`).
+///
+/// ES2016–ES2019 files are included so that async generator syntax and types
+/// (`AsyncGenerator<T,U,V>`, `AsyncIterableIterator`, `Symbol.asyncIterator`)
+/// resolve correctly in any test that uses [`load_default_lib_files`].
+/// Tests that need a smaller or differently-shaped set should call
+/// [`load_lib_files`] with an explicit slice.
 pub const DEFAULT_LIB_NAMES: &[&str] = &[
     "es5.d.ts",
     "es2015.d.ts",
@@ -493,8 +499,22 @@ pub const DEFAULT_LIB_NAMES: &[&str] = &[
     "es2015.reflect.d.ts",
     "es2015.symbol.d.ts",
     "es2015.symbol.wellknown.d.ts",
+    "es2016.array.include.d.ts",
+    "es2017.arraybuffer.d.ts",
+    "es2017.date.d.ts",
+    "es2017.object.d.ts",
+    "es2017.sharedmemory.d.ts",
+    "es2017.string.d.ts",
+    "es2017.typedarrays.d.ts",
+    "es2018.asynciterable.d.ts",
+    "es2018.asyncgenerator.d.ts",
+    "es2018.promise.d.ts",
+    "es2018.regexp.d.ts",
+    "es2019.array.d.ts",
+    "es2019.object.d.ts",
+    "es2019.string.d.ts",
+    "es2019.symbol.d.ts",
     "dom.d.ts",
-    "dom.generated.d.ts",
     "dom.iterable.d.ts",
     "esnext.d.ts",
 ];
