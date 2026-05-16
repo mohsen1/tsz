@@ -53,7 +53,7 @@ fn needs_property_name_quotes(name: &str) -> bool {
     }
 }
 
-fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
+const fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
     Cow::Borrowed(name)
 }
 
