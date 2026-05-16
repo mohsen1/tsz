@@ -540,12 +540,10 @@ _UNIT_TEST_PACKAGES=(
 
 # Temporary runway: the `tsz-checker` lib-test target currently exceeds the
 # self-hosted runner memory limit even with one Cargo job and serialized
-# codegen. Keep compiling/running checker integration tests while the heavy
-# behavior gates (conformance, emit, fourslash) protect checker semantics.
-_CHECKER_INTEGRATION_TEST_PACKAGES=(
-  -p tsz-checker
-  --tests
-)
+# codegen. `cargo test --tests -p tsz-checker` still compiles that lib-test
+# target, so keep `tsz-checker` out of the unit job while the heavy behavior
+# gates (conformance, emit, fourslash, project compile) protect checker
+# semantics.
 
 # Resolve the active package set for `run_unit_tests` / `build_unit_test_archive`.
 #
@@ -591,11 +589,6 @@ run_unit_tests() {
     cargo nextest run --profile ci --cargo-profile ci-unit \
       --build-jobs "$CARGO_BUILD_JOBS" \
       "${pkg_args[@]}"
-  fi
-  if [[ -z "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" || " ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE} " == *" tsz-checker "* ]]; then
-    cargo nextest run --profile ci --cargo-profile ci-unit \
-      --build-jobs "$CARGO_BUILD_JOBS" \
-      "${_CHECKER_INTEGRATION_TEST_PACKAGES[@]}"
   fi
 }
 
