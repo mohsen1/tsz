@@ -998,10 +998,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
-            let type_arg_display = self.format_type_diagnostic(type_arg);
-            if type_arg_display.contains("HTMLElementDeprecatedTagNameMap[")
-                && self.format_type_diagnostic(constraint_for_check) == "Element"
-            {
+            if self.indexed_access_into_object_uniformly_satisfies_constraint(
+                type_arg,
+                constraint_for_check,
+            ) {
                 continue;
             }
             let error_anchor = type_args_list
@@ -1251,6 +1251,7 @@ impl<'a> CheckerState<'a> {
 
 mod array_like_constraint_helpers;
 mod callable_constraint_helpers;
+mod constraint_syntax_instantiation;
 mod constraint_validation;
 mod constructor_accessibility_helpers;
 mod infer_conditional_constraints;

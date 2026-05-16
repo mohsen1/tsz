@@ -148,7 +148,11 @@ impl<'a> Printer<'a> {
                 self.write("void 0");
             } else {
                 self.write_char(quote);
-                self.emit_escaped_string(text, quote);
+                if self.ctx.target_es5 {
+                    self.emit_escaped_string_with_es5_surrogates(text, quote);
+                } else {
+                    self.emit_escaped_string(text, quote);
+                }
                 self.write_char(quote);
             }
         }

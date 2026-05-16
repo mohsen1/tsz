@@ -1,10 +1,19 @@
-//! Regression coverage for `super.<accessor>` reads and writes.
+//! Coverage for `super.<member>` accessibility checks (TS2340 and TS2855).
 //!
-//! Structural rule (matches `tsc`):
+//! Structural rules (match `tsc`):
 //!
-//! > When the receiver of a property access is the `super` keyword, target
-//! > ES5 only permits base-class methods. Accessors remain valid in ES2015+
-//! > targets, but emit TS2340 under ES5.
+//! **Target-driven rule (ES5):** When the receiver of a property access is the
+//! `super` keyword, target ES5 only permits base-class methods. Accessors remain
+//! valid in ES2015+ targets, but emit TS2340 under ES5.
+//!
+//! **Visibility-driven rule (all targets):** When the receiver of a property access
+//! is the `super` keyword:
+//! > - If the base-class member is **public** or **protected** (method, accessor,
+//! >   or static), the access is valid — no TS2340.
+//! > - If the base-class member is **private** (method, accessor, or static),
+//! >   emit TS2340: "Only public and protected methods of the base class are
+//! >   accessible via the 'super' keyword."  (NOT TS2341, which is the error for
+//! >   ordinary `instance.privateMember` accesses.)
 //!
 //! `super.<field>` reads still emit TS2855 via the separate field path,
 //! which is exercised below.
@@ -16,6 +25,7 @@ use tsz_common::common::ScriptTarget;
 use tsz_common::options::checker::CheckerOptions;
 
 const TS2340: u32 = 2340;
+const TS2341: u32 = 2341;
 const TS2855: u32 = 2855;
 
 fn assert_no_ts2340(source: &str) {
@@ -43,6 +53,19 @@ fn check_es2015(source: &str) -> Vec<(u32, String)> {
             ..CheckerOptions::default()
         },
     ))
+}
+
+fn assert_ts2340(source: &str) {
+    let d = check_source_code_messages(source);
+    assert!(
+        has_diagnostic_code(&d, TS2340),
+        "expected TS2340 but got: {d:?}"
+    );
+    // TS2340 and TS2341 must not both fire for the same `super.x` access.
+    assert!(
+        !has_diagnostic_code(&d, TS2341),
+        "TS2341 must not fire alongside TS2340, got: {d:?}"
+    );
 }
 
 #[test]
@@ -241,6 +264,8 @@ class Derived extends Base {
     );
 }
 
+// --- ES5 target tests ---
+
 #[test]
 fn es5_super_get_accessor_read_emits_ts2340() {
     let d = check_es5(
@@ -394,5 +419,127 @@ class Derived extends Base {
     assert!(
         !has_diagnostic_code(&d, TS2340),
         "ES2015 super accessor read should not emit TS2340, got: {d:?}",
+    );
+}
+
+// --- Visibility-driven tests (private members via super emit TS2340) ---
+
+#[test]
+fn super_private_method_emits_ts2340() {
+    assert_ts2340(
+        r#"
+class Base {
+  private greet(): string {
+    return "hello";
+  }
+}
+
+class Derived extends Base {
+  greet(): string {
+    return super.greet();
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn super_private_method_renamed_emits_ts2340() {
+    assert_ts2340(
+        r#"
+class Animal {
+  private speak(): string {
+    return "...";
+  }
+}
+
+class Dog extends Animal {
+  speak(): string {
+    return super.speak();
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn super_private_get_accessor_emits_ts2340() {
+    assert_ts2340(
+        r#"
+class Base {
+  private get value(): number {
+    return 0;
+  }
+}
+
+class Derived extends Base {
+  get value(): number {
+    return super.value + 1;
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn super_private_set_accessor_emits_ts2340() {
+    assert_ts2340(
+        r#"
+class Base {
+  private set count(_v: number) {}
+}
+
+class Derived extends Base {
+  set count(v: number) {
+    super.count = v;
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn super_private_static_method_emits_ts2340() {
+    assert_ts2340(
+        r#"
+class Base {
+  private static factory(): Base {
+    return new Base();
+  }
+}
+
+class Derived extends Base {
+  static create(): Derived {
+    super.factory();
+    return new Derived();
+  }
+}
+"#,
+    );
+}
+
+#[test]
+fn regular_instance_private_access_still_ts2341_not_ts2340() {
+    // When the receiver is NOT `super` (e.g. an instance), tsz must emit TS2341,
+    // not TS2340. This guards against over-applying the super rule.
+    let source = r#"
+class Base {
+  private secret: number = 42;
+}
+
+class Derived extends Base {
+  read(b: Base): number {
+    return b.secret;
+  }
+}
+"#;
+    let d = check_source_code_messages(source);
+    assert!(
+        !has_diagnostic_code(&d, TS2340),
+        "instance access must not emit TS2340, got: {d:?}"
+    );
+    assert!(
+        has_diagnostic_code(&d, TS2341),
+        "instance private access must emit TS2341, got: {d:?}"
     );
 }

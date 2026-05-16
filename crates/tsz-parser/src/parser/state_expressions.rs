@@ -3362,6 +3362,9 @@ impl ParserState {
                 }
             }
             let end_pos = self.token_end();
+            if self.is_token(SyntaxKind::AtToken) {
+                self.next_token();
+            }
             self.arena
                 .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
         }
