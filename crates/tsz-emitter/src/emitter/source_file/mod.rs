@@ -128,7 +128,6 @@ mod tests {
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -161,7 +160,6 @@ mod tests {
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
