@@ -4,17 +4,19 @@
 //! and computed property display names. Split from the excess-property module
 //! (`property`) for LOC hygiene.
 
-use crate::query_boundaries::state::checking as query;
+use crate::query_boundaries::{common, state::checking as query};
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
+use rustc_hash::FxHashSet;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn simple_member_name_in_arena(
-        arena: &tsz_parser::parser::node::NodeArena,
-        member_idx: NodeIndex,
-    ) -> Option<String> {
+    fn simple_member_name_in_arena(arena: &NodeArena, member_idx: NodeIndex) -> Option<String> {
         let member = arena.get(member_idx)?;
         let name_idx = arena
             .get_signature(member)
@@ -30,7 +32,292 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn recover_lazy_interface_member_type(
+    fn member_is_optional_method_in_arena(arena: &NodeArena, member_idx: NodeIndex) -> bool {
+        let Some(member) = arena.get(member_idx) else {
+            return false;
+        };
+        member.kind == syntax_kind_ext::METHOD_SIGNATURE
+            && arena
+                .get_signature(member)
+                .is_some_and(|signature| signature.question_token)
+    }
+
+    fn combine_recovered_interface_member_types(
+        &self,
+        member_types: Vec<TypeId>,
+    ) -> Option<TypeId> {
+        if member_types.is_empty() {
+            return None;
+        }
+        if member_types.len() == 1 {
+            return member_types.first().copied();
+        }
+
+        let mut call_signatures = Vec::new();
+        for member_type in member_types {
+            if let Some(shape) = common::function_shape_for_type(self.ctx.types, member_type) {
+                call_signatures.push(tsz_solver::CallSignature {
+                    type_params: shape.type_params.clone(),
+                    params: shape.params.clone(),
+                    this_type: shape.this_type,
+                    return_type: shape.return_type,
+                    type_predicate: shape.type_predicate.clone(),
+                    is_method: shape.is_method,
+                });
+                continue;
+            }
+
+            let shape = common::callable_shape_for_type(self.ctx.types, member_type)?;
+            if !shape.construct_signatures.is_empty()
+                || !shape.properties.is_empty()
+                || shape.string_index.is_some()
+                || shape.number_index.is_some()
+            {
+                return None;
+            }
+            call_signatures.extend(shape.call_signatures.iter().cloned());
+        }
+
+        (!call_signatures.is_empty()).then(|| {
+            self.ctx
+                .types
+                .factory()
+                .callable(tsz_solver::CallableShape {
+                    call_signatures,
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                    is_abstract: false,
+                })
+        })
+    }
+
+    fn recover_interface_own_member_type_in_arena(
+        &mut self,
+        interface_idx: NodeIndex,
+        arena: &NodeArena,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        let interface = arena
+            .get(interface_idx)
+            .and_then(|node| arena.get_interface(node))?;
+        let member_indices: Vec<_> = interface
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&member_idx| {
+                Self::simple_member_name_in_arena(arena, member_idx).as_deref() == Some(prop_name)
+            })
+            .collect();
+
+        if member_indices.is_empty() {
+            return None;
+        }
+        if member_indices
+            .iter()
+            .any(|&member_idx| Self::member_is_optional_method_in_arena(arena, member_idx))
+        {
+            return None;
+        }
+
+        let member_types = if std::ptr::eq(arena, self.ctx.arena) {
+            member_indices
+                .iter()
+                .map(|&member_idx| self.get_type_of_interface_member_simple(member_idx))
+                .collect()
+        } else {
+            let lowered = self.delegate_cross_arena_interface_member_simple_types(
+                interface_idx,
+                &member_indices,
+                arena,
+                None,
+            )?;
+            member_indices
+                .iter()
+                .filter_map(|member_idx| lowered.get(member_idx).copied())
+                .collect()
+        };
+
+        self.combine_recovered_interface_member_types(member_types)
+    }
+
+    fn interface_heritage_base_symbols_in_arena(
+        &self,
+        interface_idx: NodeIndex,
+        arena: &NodeArena,
+    ) -> Vec<SymbolId> {
+        let Some(interface) = arena
+            .get(interface_idx)
+            .and_then(|node| arena.get_interface(node))
+        else {
+            return Vec::new();
+        };
+        let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut bases = Vec::new();
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause) = arena
+                .get(clause_idx)
+                .and_then(|node| arena.get_heritage_clause(node))
+            else {
+                continue;
+            };
+            if clause.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            for &type_idx in &clause.types.nodes {
+                let Some(type_node) = arena.get(type_idx) else {
+                    continue;
+                };
+                let (expr_idx, has_type_args) =
+                    if let Some(expr_type_args) = arena.get_expr_type_args(type_node) {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args
+                                .type_arguments
+                                .as_ref()
+                                .is_some_and(|args| !args.nodes.is_empty()),
+                        )
+                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        if let Some(type_ref) = arena.get_type_ref(type_node) {
+                            (
+                                type_ref.type_name,
+                                type_ref
+                                    .type_arguments
+                                    .as_ref()
+                                    .is_some_and(|args| !args.nodes.is_empty()),
+                            )
+                        } else {
+                            (type_idx, false)
+                        }
+                    } else {
+                        (type_idx, false)
+                    };
+
+                // Generic heritage needs substitution through the derived interface
+                // type parameters. Fall back to the normal full-interface path.
+                if has_type_args {
+                    continue;
+                }
+
+                let Some(base_name) = entity_name_text_in_arena(arena, expr_idx)
+                    .or_else(|| expression_name_text_in_arena(arena, expr_idx))
+                else {
+                    continue;
+                };
+                let Some(base_sym_id) = self
+                    .resolve_entity_name_text_to_def_id_for_lowering(&base_name)
+                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+                    .or_else(|| {
+                        let file_idx = self.ctx.get_file_idx_for_arena(arena)?;
+                        let binder = self.ctx.all_binders.as_ref()?.get(file_idx)?;
+                        binder.file_locals.get(&base_name)
+                    })
+                else {
+                    continue;
+                };
+                if !bases.contains(&base_sym_id) {
+                    bases.push(base_sym_id);
+                }
+            }
+        }
+
+        bases
+    }
+
+    fn recover_interface_member_type_from_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        prop_name: &str,
+        visited: &mut FxHashSet<SymbolId>,
+    ) -> Option<TypeId> {
+        if !visited.insert(sym_id) {
+            return None;
+        }
+
+        let (is_interface, declarations) = {
+            let symbol = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
+            (
+                symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE),
+                symbol.declarations.clone(),
+            )
+        };
+        if !is_interface {
+            return None;
+        }
+
+        let mut inherited_bases = Vec::new();
+        for decl_idx in declarations {
+            if self
+                .ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_interface(node))
+                .is_some()
+            {
+                if let Some(member_type) = self.recover_interface_own_member_type_in_arena(
+                    decl_idx,
+                    self.ctx.arena,
+                    prop_name,
+                ) {
+                    return Some(member_type);
+                }
+                inherited_bases.extend(
+                    self.interface_heritage_base_symbols_in_arena(decl_idx, self.ctx.arena),
+                );
+            }
+
+            let declaration_arenas = self
+                .ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .cloned()
+                .unwrap_or_default();
+            for arena in declaration_arenas {
+                let arena = arena.as_ref();
+                if arena
+                    .get(decl_idx)
+                    .and_then(|node| arena.get_interface(node))
+                    .is_none()
+                {
+                    continue;
+                }
+                if let Some(member_type) =
+                    self.recover_interface_own_member_type_in_arena(decl_idx, arena, prop_name)
+                {
+                    return Some(member_type);
+                }
+                inherited_bases
+                    .extend(self.interface_heritage_base_symbols_in_arena(decl_idx, arena));
+            }
+        }
+
+        let mut inherited_member_types = Vec::new();
+        for base_sym_id in inherited_bases {
+            if let Some(member_type) =
+                self.recover_interface_member_type_from_symbol(base_sym_id, prop_name, visited)
+            {
+                inherited_member_types.push(member_type);
+            }
+        }
+
+        match inherited_member_types.len() {
+            0 => None,
+            1 => inherited_member_types.pop(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn recover_lazy_interface_member_type(
         &mut self,
         original_object_type: TypeId,
         prop_name: &str,
@@ -43,62 +330,17 @@ impl<'a> CheckerState<'a> {
                         .find_def_for_type(original_object_type)
                 })?;
         let sym_id = self.ctx.def_to_symbol_id(def_id)?;
-        let symbol = self.get_cross_file_symbol(sym_id)?;
-        if !symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
-            return None;
+        let mut visited = FxHashSet::default();
+        let member_type =
+            self.recover_interface_member_type_from_symbol(sym_id, prop_name, &mut visited)?;
+        if common::contains_this_type(self.ctx.types, member_type) {
+            return Some(common::substitute_this_type(
+                self.ctx.types,
+                member_type,
+                original_object_type,
+            ));
         }
-
-        let declarations = symbol.declarations.clone();
-        for decl_idx in declarations {
-            if let Some(interface) = self
-                .ctx
-                .arena
-                .get(decl_idx)
-                .and_then(|node| self.ctx.arena.get_interface(node))
-            {
-                for &member_idx in &interface.members.nodes {
-                    if Self::simple_member_name_in_arena(self.ctx.arena, member_idx).as_deref()
-                        == Some(prop_name)
-                    {
-                        return Some(self.get_type_of_interface_member_simple(member_idx));
-                    }
-                }
-            }
-
-            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
-                continue;
-            };
-            for arena in arenas.clone() {
-                let Some(interface) = arena
-                    .get(decl_idx)
-                    .and_then(|node| arena.get_interface(node))
-                else {
-                    continue;
-                };
-                for &member_idx in &interface.members.nodes {
-                    if Self::simple_member_name_in_arena(arena.as_ref(), member_idx).as_deref()
-                        != Some(prop_name)
-                    {
-                        continue;
-                    }
-                    if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
-                        return Some(self.get_type_of_interface_member_simple(member_idx));
-                    }
-                    if let Some(member_type) = self
-                        .delegate_cross_arena_interface_member_simple_type(
-                            decl_idx,
-                            member_idx,
-                            arena.as_ref(),
-                            None,
-                        )
-                    {
-                        return Some(member_type);
-                    }
-                }
-            }
-        }
-
-        None
+        Some(member_type)
     }
 
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {
@@ -1013,6 +1255,64 @@ class A<P extends MyPartial<Foo>> {
             formatted.contains("=> void") && formatted.contains("undefined"),
             "expected MyReadonly<P>.foo to preserve optional method type, got {formatted}",
         );
+    }
+
+    #[test]
+    fn lazy_interface_property_lookup_preserves_inherited_overloads() {
+        let source = r#"
+interface Base {
+    select<T extends string>(value: T): T;
+    select<T extends number>(value: T): T;
+}
+interface Derived extends Base {}
+declare const d: Derived;
+const s = d.select<string>("x");
+const n = d.select<number>(1);
+const sCheck: string = s;
+const nCheck: number = n;
+"#;
+
+        let diags = check_source_diagnostics(source);
+        let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+        assert!(
+            relevant.is_empty(),
+            "expected inherited overloads to resolve without semantic diagnostics, got: {:?}",
+            relevant
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+
+        let (parser, root, binder, types) = build_checker(source);
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(root);
+
+        let derived_sym = checker
+            .ctx
+            .binder
+            .file_locals
+            .get("Derived")
+            .expect("Derived symbol");
+        let derived_type = checker.type_reference_symbol_type(derived_sym);
+        let result = checker.resolve_property_access_with_env(derived_type, "select");
+        let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
+            result
+        else {
+            panic!("expected Derived.select property, got {result:?}");
+        };
+        let overloads = tsz_solver::type_queries::data::get_overload_call_signatures(
+            checker.ctx.types,
+            type_id,
+        )
+        .expect("select should remain overloaded");
+        assert_eq!(overloads.len(), 2);
     }
 
     #[test]

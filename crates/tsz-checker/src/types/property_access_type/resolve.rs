@@ -1641,6 +1641,19 @@ impl<'a> CheckerState<'a> {
                     }
                 });
 
+            if !enum_instance_like_access
+                && !hidden_qualified_namespace_member
+                && let Some(member_type) =
+                    self.recover_lazy_interface_member_type(object_type, property_name)
+            {
+                return self.finalize_property_access_result(
+                    idx,
+                    member_type,
+                    skip_flow_narrowing,
+                    false,
+                );
+            }
+
             let mut object_type_for_access = if enum_instance_like_access {
                 self.apparent_enum_instance_type(object_type)
                     .unwrap_or_else(|| self.resolve_type_for_property_access(object_type))

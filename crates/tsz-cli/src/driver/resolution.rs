@@ -685,7 +685,7 @@ pub(crate) fn collect_module_requests_from_text(
     let mut parser = ParserState::new(file_name, text.to_string());
     let source_file = parser.parse_source_file();
     let (arena, _diagnostics) = parser.into_parts();
-    let mut requests: Vec<_> = collect_module_specifiers(&arena, source_file)
+    let mut requests: Vec<_> = collect_module_specifiers_for_source_discovery(&arena, source_file)
         .into_iter()
         .map(
             |(specifier, specifier_idx, import_kind, resolution_mode_override)| {
@@ -862,6 +862,21 @@ pub(crate) fn collect_module_specifiers(
     arena: &NodeArena,
     source_file: NodeIndex,
 ) -> Vec<CollectedModuleSpecifier> {
+    collect_module_specifiers_impl(arena, source_file, true)
+}
+
+fn collect_module_specifiers_for_source_discovery(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+) -> Vec<CollectedModuleSpecifier> {
+    collect_module_specifiers_impl(arena, source_file, false)
+}
+
+fn collect_module_specifiers_impl(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    include_non_relative_ambient_module_declarations: bool,
+) -> Vec<CollectedModuleSpecifier> {
     use tsz::module_resolver::ImportKind;
 
     let Some(source) = arena.get_source_file_at(source_file) else {
@@ -966,12 +981,16 @@ pub(crate) fn collect_module_specifiers(
                 })
             });
             if has_declare && let Some(text) = arena.get_literal_text(module_decl.name) {
-                specifiers.push((
-                    strip_quotes(text),
-                    module_decl.name,
-                    ImportKind::EsmImport,
-                    None,
-                ));
+                let specifier = strip_quotes(text);
+                // A non-relative `declare module "x"` name declares an ambient
+                // module; it is not a source-discovery dependency. Relative names
+                // can be module augmentations of concrete sibling files, so keep
+                // those discoverable.
+                if include_non_relative_ambient_module_declarations
+                    || tsz::module_resolver::is_path_relative(&specifier)
+                {
+                    specifiers.push((specifier, module_decl.name, ImportKind::EsmImport, None));
+                }
             }
             if let Some(body_node) = arena.get(module_decl.body)
                 && let Some(block) = arena.get_module_block(body_node)

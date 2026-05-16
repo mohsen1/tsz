@@ -567,9 +567,10 @@ impl<'a> CheckerState<'a> {
         // the parameter type becomes `number` (after substituting T=number), and we can
         // correctly check if `"string"` is assignable to `number`.
         let mut callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
-            self.apply_type_arguments_to_callable_type(
+            self.apply_type_arguments_to_callable_type_for_call(
                 callee_type,
                 explicit_call_type_arguments.as_ref(),
+                args,
             )
         } else {
             callee_type
@@ -589,9 +590,10 @@ impl<'a> CheckerState<'a> {
                 self.explicit_identifier_callee_annotation_type(call.expression)
         {
             callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
-                self.apply_type_arguments_to_callable_type(
+                self.apply_type_arguments_to_callable_type_for_call(
                     annotated_callee_type,
                     explicit_call_type_arguments.as_ref(),
+                    args,
                 )
             } else {
                 annotated_callee_type
@@ -607,9 +609,10 @@ impl<'a> CheckerState<'a> {
                 self.direct_function_call_type_for_type_argument_validation(call.expression)
         {
             callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
-                self.apply_type_arguments_to_callable_type(
+                self.apply_type_arguments_to_callable_type_for_call(
                     direct_callee_type,
                     explicit_call_type_arguments.as_ref(),
+                    args,
                 )
             } else {
                 direct_callee_type

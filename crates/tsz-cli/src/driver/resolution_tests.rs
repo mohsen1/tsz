@@ -918,6 +918,47 @@ fn test_collect_module_requests_from_text_carries_type_json_attribute() {
 }
 
 #[test]
+fn test_collect_module_requests_from_text_skips_non_relative_ambient_declaration_names() {
+    let path = Path::new("types.d.ts");
+    let requests = collect_module_requests_from_text(
+        path,
+        r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#,
+    );
+    let specifiers: Vec<_> = requests
+        .iter()
+        .map(|(specifier, _, _, _)| specifier.as_str())
+        .collect();
+
+    assert!(
+        !specifiers.contains(&"*.css"),
+        "ambient wildcard declarations are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.contains(&"virtual:asset"),
+        "bare ambient declarations are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.contains(&"pkg"),
+        "ambient declaration names are not source dependencies: {specifiers:?}"
+    );
+    assert!(
+        specifiers.contains(&"./augment"),
+        "relative module augmentation names can target concrete files: {specifiers:?}"
+    );
+    assert!(
+        specifiers.contains(&"dep"),
+        "real re-exports inside ambient module bodies remain dependencies: {specifiers:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_mixed_import_kinds() {
     use tsz::module_resolver::ImportKind;
     let text = r#"

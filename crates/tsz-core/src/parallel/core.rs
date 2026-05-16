@@ -1107,11 +1107,13 @@ pub fn load_lib_files_for_binding_strict(
 /// user-file binders. Checker-facing lib contexts and lib-file checks need fresh binder state
 /// so declaration merging and semantic lookups run against clean lib binders.
 ///
-/// The clone re-parses and re-binds every lib file (parse+bind is the heavy step in
-/// `LibFile::from_source`). With ~40 lib files in the full ES2020+DOM lib set, doing
-/// this sequentially leaves all but one core idle. Run the parse+bind across rayon's
-/// global pool, mirroring `load_lib_files_for_binding_strict`. Output order matches
-/// input order via rayon's order-preserving `collect`.
+/// The clone needs an independent parsed + bound copy of every lib file.
+/// Reusing `parse_and_bind_lib_file` lets the checker-facing clone hit the
+/// same content-addressed lib snapshot cache as the initial bind load. With
+/// ~40 lib files in the full ES2020+DOM lib set, cache misses still run
+/// parse + bind across rayon's global pool, mirroring
+/// `load_lib_files_for_binding_strict`. Output order matches input order via
+/// rayon's order-preserving `collect`.
 #[must_use]
 pub fn clone_lib_files_for_checker(
     lib_files: &[Arc<lib_loader::LibFile>],
@@ -1122,10 +1124,14 @@ pub fn clone_lib_files_for_checker(
             .arena
             .get_source_file_at(lib.root_index)
             .unwrap_or_else(|| panic!("missing source text for lib file {}", lib.file_name));
-        Arc::new(lib_loader::LibFile::from_source(
-            lib.file_name.clone(),
-            source.text.to_string(),
-        ))
+        parse_and_bind_lib_file(lib.file_name.clone(), source.text.to_string()).unwrap_or_else(
+            |err| {
+                panic!(
+                    "failed to clone lib file {} for checker: {err:#}",
+                    lib.file_name
+                )
+            },
+        )
     };
 
     if should_clone_libs_in_parallel {
@@ -1147,10 +1153,10 @@ pub fn clone_lib_files_for_checker(
 
 /// Parse and bind a single lib file, returning a `LibFile` or error.
 ///
-/// When `TSZ_LIB_CACHE=1` is set, this consults the disk-backed snapshot
-/// cache before parsing. On a hit the parsed arena and bound state are
-/// loaded from disk (skipping both parse and bind). On a miss the
-/// parse + bind result is written back. See
+/// This consults the disk-backed snapshot cache before parsing unless
+/// `TSZ_LIB_CACHE` explicitly disables it. On a hit the parsed arena and
+/// bound state are loaded from disk, skipping both parse and bind. On a
+/// miss the parse + bind result is written back. See
 /// `crates/tsz-core/src/parallel/lib_snapshot.rs` and
 /// `docs/plan/PERFORMANCE_PLAN.md`.
 fn parse_and_bind_lib_file(

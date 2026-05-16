@@ -436,7 +436,7 @@ fn direct_source_file_variable_annotation_accepts_same_file_simple_interface() {
         "fixture.ts".to_string(),
         CheckerOptions::default(),
     );
-    let state = CheckerState { ctx };
+    let mut state = CheckerState { ctx };
     let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
 
     let result = state
@@ -469,7 +469,7 @@ fn direct_source_file_variable_annotation_rejects_type_alias_reference() {
         "fixture.ts".to_string(),
         CheckerOptions::default(),
     );
-    let state = CheckerState { ctx };
+    let mut state = CheckerState { ctx };
     let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
 
     assert!(
@@ -1109,17 +1109,35 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .get(&heritage_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("AddEventListenerOptions should have a delegate arena");
+    let (heritage_ty, heritage_params) = state
+        .direct_cross_file_interface_lowering(
+            heritage_sym_id,
+            state.ctx.binder,
+            heritage_arena,
+            false,
+            false,
+        )
+        .expect("builtin dom interfaces with heritage should lower directly");
+    assert!(heritage_params.is_empty());
+    let once = state.ctx.types.intern_string("once");
     assert!(
-        state
-            .direct_cross_file_interface_lowering(
-                heritage_sym_id,
-                state.ctx.binder,
-                heritage_arena,
-                false,
-                false,
-            )
-            .is_none(),
-        "builtin dom interfaces with heritage stay on the fallback path",
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            heritage_ty,
+            once,
+        )
+        .is_some(),
+        "AddEventListenerOptions should include its own members",
+    );
+    let capture = state.ctx.types.intern_string("capture");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            heritage_ty,
+            capture,
+        )
+        .is_some(),
+        "AddEventListenerOptions should include inherited EventListenerOptions members",
     );
 }
 
@@ -1406,6 +1424,64 @@ fn direct_actual_lib_symbol_type_handles_property_key_alias_body_query() {
     assert_ne!(ty, TypeId::UNKNOWN);
     assert_ne!(ty, TypeId::ERROR);
     assert!(params.is_empty(), "PropertyKey should remain non-generic");
+}
+
+#[test]
+fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut source_binder = BinderState::new();
+    source_binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(source_binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let sym_id = binder
+        .file_locals
+        .get("CanvasImageSource")
+        .expect("CanvasImageSource should resolve to a DOM lib type alias");
+    let delegate_arena = binder
+        .symbol_arenas
+        .get(&sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("CanvasImageSource should have a delegate arena");
+
+    let (ty, params) = state
+        .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
+        .expect("non-generic DOM declaration type alias should lower directly");
+
+    assert!(params.is_empty(), "CanvasImageSource is non-generic");
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::union_members(&types, ty).is_some(),
+        "CanvasImageSource should lower to its union body",
+    );
+    let (cached_ty, cached_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(sym_id)
+        .expect("builtin declaration alias should populate the lib delegation cache");
+    assert_eq!(cached_ty, ty);
+    assert!(cached_params.is_empty());
 }
 
 #[test]

@@ -120,13 +120,20 @@ fn global_declared_modules_matches_vite_style_asset_patterns() {
             "*.css".to_string(),
             "*.svg".to_string(),
             "*.module.css".to_string(),
+            "*?worker".to_string(),
         ],
     );
 
-    assert!(dm.pattern_set.is_some());
+    assert!(dm.pattern_set.is_none());
+    assert_eq!(
+        dm.suffix_patterns,
+        vec![".css", ".module.css", ".svg", "?worker"],
+    );
     assert!(dm.matches_wildcard("./style.css"));
     assert!(dm.matches_wildcard("./assets/logo.svg"));
     assert!(dm.matches_wildcard("components/button.module.css"));
+    assert!(dm.matches_wildcard("./worker?worker"));
+    assert!(!dm.matches_wildcard("./workerXworker"));
     assert!(!dm.matches_wildcard("./main.ts"));
 }
 

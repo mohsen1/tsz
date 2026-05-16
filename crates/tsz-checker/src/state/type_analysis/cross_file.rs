@@ -734,36 +734,60 @@ impl<'a> CheckerState<'a> {
                 return Some(result);
             }
 
-            let direct_target = if let Some(file_idx) = cross_file_idx {
-                let arena = self.ctx.get_arena_for_file(file_idx as u32);
-                let binder = self
-                    .ctx
-                    .get_binder_for_file(file_idx)
-                    .unwrap_or(self.ctx.binder);
-                Some((arena, binder, Some(file_idx)))
+            let current_binder = self.ctx.binder;
+            let all_arenas = self.ctx.all_arenas.clone();
+            let all_binders = self.ctx.all_binders.clone();
+            let direct_target_owned = if let Some(file_idx) = cross_file_idx {
+                all_arenas
+                    .as_ref()
+                    .and_then(|arenas| arenas.get(file_idx).cloned())
+                    .map(|arena| {
+                        let binder = all_binders
+                            .as_ref()
+                            .and_then(|binders| binders.get(file_idx).cloned());
+                        (arena, binder, Some(file_idx))
+                    })
             } else {
-                delegate_arena.map(|arena| {
-                    let binder = if std::ptr::eq(arena, self.ctx.arena) {
-                        self.ctx.binder
-                    } else {
-                        self.ctx
-                            .get_binder_for_arena(arena)
-                            .unwrap_or(self.ctx.binder)
-                    };
+                delegate_arena.and_then(|arena| {
                     let file_idx = if std::ptr::eq(arena, self.ctx.arena) {
                         Some(self.ctx.current_file_idx)
                     } else {
                         self.ctx.get_file_idx_for_arena(arena)
                     };
-                    (arena, binder, file_idx)
+                    let arena_arc = file_idx
+                        .and_then(|idx| {
+                            all_arenas
+                                .as_ref()
+                                .and_then(|arenas| arenas.get(idx).cloned())
+                        })
+                        .or_else(|| self.ctx.binder.symbol_arenas.get(&sym_id).cloned())
+                        .or_else(|| {
+                            self.ctx.binder.declaration_arenas.iter().find_map(
+                                |((candidate_sym, _), arenas)| {
+                                    (*candidate_sym == sym_id).then(|| {
+                                        arenas.iter().find_map(|candidate| {
+                                            std::ptr::eq(candidate.as_ref(), arena)
+                                                .then(|| candidate.clone())
+                                        })
+                                    })?
+                                },
+                            )
+                        });
+                    let binder = file_idx.and_then(|idx| {
+                        all_binders
+                            .as_ref()
+                            .and_then(|binders| binders.get(idx).cloned())
+                    });
+                    arena_arc.map(|arena| (arena, binder, file_idx))
                 })
             };
-            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
+            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) =
+                direct_target_owned.as_ref()
                 && let Some((direct_type, direct_params)) = self
                     .direct_cross_file_interface_lowering(
                         sym_id,
-                        delegate_binder,
-                        symbol_arena,
+                        delegate_binder.as_deref().unwrap_or(current_binder),
+                        symbol_arena.as_ref(),
                         false,
                         symbol_type_cache_from_symbol_arena,
                     )
@@ -797,11 +821,20 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, direct_params));
             }
 
-            if let Some(direct_type) = self.direct_source_file_variable_annotation_result(
-                sym_id,
-                direct_target,
-                symbol_type_cache_from_symbol_arena,
-            ) {
+            let direct_variable_type = direct_target_owned.as_ref().and_then(
+                |(symbol_arena, delegate_binder, delegate_file_idx)| {
+                    self.direct_source_file_variable_annotation_result(
+                        sym_id,
+                        Some((
+                            symbol_arena.as_ref(),
+                            delegate_binder.as_deref().unwrap_or(current_binder),
+                            *delegate_file_idx,
+                        )),
+                        symbol_type_cache_from_symbol_arena,
+                    )
+                },
+            );
+            if let Some(direct_type) = direct_variable_type {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
                     self.ctx.cache_stable_source_file_symbol_arena_type(
@@ -813,6 +846,45 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 return Some((direct_type, Vec::new()));
+            }
+
+            let declaration_alias_arena = if let Some(file_idx) = cross_file_idx {
+                self.ctx
+                    .all_arenas
+                    .as_ref()
+                    .and_then(|arenas| arenas.get(file_idx).cloned())
+            } else {
+                self.ctx.binder.symbol_arenas.get(&sym_id).cloned()
+            };
+            let declaration_alias_file_idx = declaration_alias_arena
+                .as_deref()
+                .and_then(|arena| self.ctx.get_file_idx_for_arena(arena));
+            if let Some(symbol_arena) = declaration_alias_arena
+                && let Some((direct_type, direct_params)) =
+                    self.direct_declaration_file_type_alias_result(sym_id, symbol_arena.as_ref())
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx.or(declaration_alias_file_idx)
+                    && direct_params.is_empty()
+                {
+                    if symbol_type_cache_from_symbol_arena {
+                        self.ctx.cache_stable_source_file_symbol_arena_type(
+                            sym_id,
+                            file_idx as u32,
+                            source_cache_scope,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    } else {
+                        self.ctx.cache_cross_file_symbol_type(
+                            sym_id,
+                            file_idx as u32,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    }
+                }
+                return Some((direct_type, direct_params));
             }
 
             let direct_target_file_idx =
@@ -1307,15 +1379,11 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         // Prefer the symbol's declared arena, but fall back to explicit
         // cross-file ownership when the current binder does not know it.
-        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
+        let mut delegate_arena = self.ctx.binder.symbol_arenas.get(&sym_id).cloned();
         let mut delegate_file_idx = None;
 
         let needs_cross_file_delegation = delegate_arena
+            .as_deref()
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx
@@ -1329,11 +1397,17 @@ impl<'a> CheckerState<'a> {
             let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
                 "needs_cross_file_delegation derived from has_symbol_file_index returning true",
             );
-            delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
+            delegate_arena = self
+                .ctx
+                .all_arenas
+                .as_ref()
+                .and_then(|arenas| arenas.get(file_idx).cloned());
             delegate_file_idx = Some(file_idx);
         }
 
-        let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
+        let symbol_arena_arc =
+            delegate_arena.filter(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena))?;
+        let symbol_arena = symbol_arena_arc.as_ref();
         let query_file_idx =
             delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
         if let Some(file_idx) = query_file_idx
@@ -1348,18 +1422,14 @@ impl<'a> CheckerState<'a> {
                 .register_type_to_def(cached_type, def_id);
             return Some(cached_type);
         }
-        let delegate_binder = if let Some(file_idx) = delegate_file_idx {
+        let current_binder = self.ctx.binder;
+        let delegate_binder_owned = delegate_file_idx.or(query_file_idx).and_then(|file_idx| {
             self.ctx
-                .get_binder_for_file(file_idx)
-                .unwrap_or(self.ctx.binder)
-        } else {
-            // Use the target arena's binder so that node→symbol lookups
-            // (e.g. `get_node_symbol` for private member `parent_id`)
-            // resolve correctly instead of returning `None`.
-            self.ctx
-                .get_binder_for_arena(symbol_arena)
-                .unwrap_or(self.ctx.binder)
-        };
+                .all_binders
+                .as_ref()
+                .and_then(|binders| binders.get(file_idx).cloned())
+        });
+        let delegate_binder = delegate_binder_owned.as_deref().unwrap_or(current_binder);
 
         if let Some((direct_type, direct_params)) = self.direct_cross_file_interface_lowering(
             sym_id,

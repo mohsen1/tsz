@@ -36,19 +36,18 @@
 //! repopulate lazily on first lookup; this is the lazy-rebuild
 //! invariant established in PR #3.
 //!
-//! # Opt-in
+//! # Enablement
 //!
-//! Cache reads + writes are gated on `TSZ_LIB_CACHE=1` (or `=on`,
-//! `=true`, `=yes`). Default off so this PR is safe to land without
-//! changing existing behaviour. PR #5 of the campaign will flip the
-//! default after CI sampling confirms the win.
+//! Cache reads + writes are enabled by default. Set `TSZ_LIB_CACHE=0`
+//! (or `=off`, `=false`, `=no`) to force the parse + bind path for
+//! debugging, local bisects, or cache-behaviour comparisons.
 
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_parser::NodeIndex;
@@ -58,7 +57,7 @@ use tsz_parser::parser::node::NodeArena;
 /// changes that break round-trip.
 const SNAPSHOT_MAGIC: &[u8; 8] = b"TSZSNAP\x03";
 
-/// Environment variable that opts the cache in.
+/// Environment variable that controls the lib snapshot cache.
 const ENV_VAR: &str = "TSZ_LIB_CACHE";
 
 /// Cache directory environment variable override.
@@ -114,17 +113,36 @@ fn is_enabled() -> bool {
     if INITIALISED.load(Ordering::Relaxed) {
         return CACHED.load(Ordering::Relaxed);
     }
-    let enabled = match std::env::var(ENV_VAR) {
-        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "on" | "true" | "yes"),
-        Err(_) => false,
-    };
+    let enabled = enabled_from_env_value(std::env::var(ENV_VAR).ok().as_deref());
     CACHED.store(enabled, Ordering::Relaxed);
     INITIALISED.store(true, Ordering::Relaxed);
     enabled
 }
 
+fn enabled_from_env_value(value: Option<&str>) -> bool {
+    match value.map(|v| v.trim().to_ascii_lowercase()) {
+        Some(v) if matches!(v.as_str(), "0" | "off" | "false" | "no") => false,
+        _ => true,
+    }
+}
+
 fn snapshot_path(dir: &Path, hash: u64) -> PathBuf {
     dir.join(format!("{hash:016x}.bin"))
+}
+
+fn snapshot_temp_path(path: &Path) -> PathBuf {
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let counter = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("snapshot");
+    path.with_file_name(format!(
+        "{file_name}.{}.{}.tmp",
+        std::process::id(),
+        counter
+    ))
 }
 
 /// Try to load a cached snapshot. Returns `None` on miss / format
@@ -174,16 +192,15 @@ pub(super) fn try_store(file_name: &str, source_text: &str, lib: &Arc<LibFile>) 
 
     let encoded = encode_snapshot(&snapshot)?;
 
-    // Atomic-rename pattern: write to a sibling temp file then rename.
-    // Two concurrent processes that both miss may race here; the last
-    // writer wins but neither produces a torn file.
-    let tmp = path.with_extension("bin.tmp");
+    // Atomic-rename pattern: write to a unique sibling temp file then
+    // rename. Two concurrent processes that both miss may race here; the
+    // last writer wins but neither shares a temp file with another writer.
+    let tmp = snapshot_temp_path(&path);
     {
         let mut f = fs::File::create(&tmp)
             .with_context(|| format!("create snapshot tmp {}", tmp.display()))?;
         f.write_all(&encoded)
             .with_context(|| format!("write snapshot tmp {}", tmp.display()))?;
-        f.sync_all().ok();
     }
     fs::rename(&tmp, &path)
         .with_context(|| format!("rename snapshot {} -> {}", tmp.display(), path.display()))?;
@@ -257,10 +274,44 @@ mod tests {
     }
 
     #[test]
-    fn cache_disabled_returns_none() {
-        if std::env::var(ENV_VAR).is_err() {
-            assert!(try_load("never_cached.ts", "const x = 1").is_none());
-        }
+    fn cache_enablement_defaults_on_and_accepts_off_values() {
+        assert!(enabled_from_env_value(None));
+        assert!(enabled_from_env_value(Some("")));
+        assert!(enabled_from_env_value(Some("1")));
+        assert!(enabled_from_env_value(Some("on")));
+        assert!(enabled_from_env_value(Some("true")));
+        assert!(enabled_from_env_value(Some("yes")));
+
+        assert!(!enabled_from_env_value(Some("0")));
+        assert!(!enabled_from_env_value(Some("off")));
+        assert!(!enabled_from_env_value(Some("false")));
+        assert!(!enabled_from_env_value(Some("no")));
+        assert!(!enabled_from_env_value(Some(" OFF ")));
+    }
+
+    #[test]
+    fn snapshot_temp_paths_are_unique_siblings() {
+        let path = Path::new("/tmp/0123456789abcdef.bin");
+        let first = snapshot_temp_path(path);
+        let second = snapshot_temp_path(path);
+
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), path.parent());
+        assert_eq!(second.parent(), path.parent());
+        assert!(
+            first
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        );
+        assert!(
+            second
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".tmp")
+        );
     }
 
     /// End-to-end disk round-trip: write a snapshot, read it back, and
