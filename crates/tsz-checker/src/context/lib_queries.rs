@@ -77,21 +77,15 @@ impl<'a> CheckerContext<'a> {
         sym_id: SymbolId,
         name: &str,
     ) -> bool {
-        if self
-            .binder
-            .global_augmentations
-            .get(name)
-            .is_some_and(|augmentations| !augmentations.is_empty())
-        {
-            return false;
-        }
-
         let Some(symbol) = self.binder.get_symbol(sym_id) else {
             return false;
         };
         symbol.declarations.iter().any(|&decl_idx| {
             if let Some(arenas) = self.binder.declaration_arenas.get(&(sym_id, decl_idx))
                 && arenas.iter().any(|arena| {
+                    if self.is_global_augmentation_declaration(name, arena.as_ref(), decl_idx) {
+                        return false;
+                    }
                     std::ptr::eq(arena.as_ref(), self.arena)
                         && self.type_declaration_name_matches(arena.as_ref(), decl_idx, name)
                 })
@@ -99,8 +93,31 @@ impl<'a> CheckerContext<'a> {
                 return true;
             }
 
+            if self.is_global_augmentation_declaration(name, self.arena, decl_idx) {
+                return false;
+            }
             self.type_declaration_name_matches(self.arena, decl_idx, name)
         })
+    }
+
+    fn is_global_augmentation_declaration(
+        &self,
+        name: &str,
+        arena: &tsz_parser::parser::NodeArena,
+        decl_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        self.binder
+            .global_augmentations
+            .get(name)
+            .is_some_and(|augmentations| {
+                augmentations.iter().any(|augmentation| {
+                    augmentation.node == decl_idx
+                        && augmentation.arena.as_ref().map_or_else(
+                            || std::ptr::eq(arena, self.arena),
+                            |aug_arena| std::ptr::eq(arena, aug_arena.as_ref()),
+                        )
+                })
+            })
     }
 
     fn type_declaration_name_matches(

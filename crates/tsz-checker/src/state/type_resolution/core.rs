@@ -827,41 +827,6 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
-                if !is_intrinsic_type
-                    && !is_builtin_array
-                    && type_param.is_none()
-                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
-                    && let Some(def_id) = self.ctx.actual_lib_def_id_for_bare_name(name)
-                    && let Some(args) = &type_ref.type_arguments
-                    && !args.nodes.is_empty()
-                {
-                    let _ = self.resolve_lib_type_by_name(name);
-                    let type_args = args
-                        .nodes
-                        .iter()
-                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                        .collect::<Vec<_>>();
-                    if name == "Readonly"
-                        && let Some(&arg_type) = type_args.first()
-                    {
-                        let resolved_arg = self.evaluate_type_with_resolution(arg_type);
-                        let array_like =
-                            crate::query_boundaries::type_checking_utilities::classify_array_like(
-                                self.ctx.types,
-                                resolved_arg,
-                            );
-                        if matches!(
-                            array_like,
-                            crate::query_boundaries::common::ArrayLikeKind::Array(_)
-                                | crate::query_boundaries::common::ArrayLikeKind::Tuple
-                                | crate::query_boundaries::common::ArrayLikeKind::Readonly(_)
-                        ) {
-                            return self.ctx.types.factory().readonly_type(resolved_arg);
-                        }
-                    }
-                    let base = self.ctx.types.factory().lazy(def_id);
-                    return self.ctx.types.factory().application(base, type_args);
-                }
                 if !is_builtin_array && let Some(sym_id) = sym_id {
                     // Generic user-defined references lower to Application(Lazy(def), args).
                     // Ensure the base symbol has already materialized its structural
