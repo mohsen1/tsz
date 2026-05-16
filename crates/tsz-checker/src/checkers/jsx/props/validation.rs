@@ -15,6 +15,7 @@ use crate::error_reporter::{
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -346,7 +347,7 @@ impl<'a> CheckerState<'a> {
             && def.kind == tsz_solver::DefKind::TypeAlias
             && let Some(body) = def.body
         {
-            let instantiated_body = self.instantiate_type_alias_body_from_display_name(
+            let instantiated_body = self.instantiate_type_alias_body_from_application(
                 normalized,
                 &def.type_params,
                 body,
@@ -380,136 +381,215 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn instantiate_type_alias_body_from_display_name(
+    fn instantiate_type_alias_body_from_application(
         &mut self,
         alias_type: TypeId,
         type_params: &[tsz_solver::TypeParamInfo],
         body: TypeId,
     ) -> TypeId {
-        if let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, alias_type)
-            && args.len() == type_params.len()
-            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
-        {
-            let (base_body, base_params) = self.type_reference_symbol_type_with_params(sym_id);
-            if base_body != TypeId::ANY
-                && base_body != TypeId::ERROR
-                && base_params.len() == args.len()
-            {
-                let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-                    self.ctx.types,
-                    &base_params,
-                    &args,
-                );
-                return crate::query_boundaries::common::instantiate_type(
-                    self.ctx.types,
-                    base_body,
-                    &substitution,
-                );
-            }
-        }
-
-        if type_params.is_empty() {
-            return body;
-        }
-        let display = self.format_type(alias_type);
-        let Some(start) = display.find('<') else {
+        let application =
+            crate::query_boundaries::common::application_info(self.ctx.types, alias_type).or_else(
+                || {
+                    self.ctx
+                        .types
+                        .get_display_alias(alias_type)
+                        .and_then(|alias| {
+                            crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                        })
+                },
+            );
+        let Some((base, args)) = application else {
             return body;
         };
-        let Some(end) = display.rfind('>') else {
-            return body;
-        };
-        let arg_text = &display[start + 1..end];
-        let mut args = Vec::with_capacity(type_params.len());
-        for part in arg_text.split(',') {
-            let name = part.trim();
-            let Some(param) = self
-                .ctx
-                .type_parameter_scope
-                .get(name)
-                .copied()
-                .or_else(|| self.find_type_parameter_by_name_in_type(alias_type, name))
-            else {
-                return body;
-            };
-            args.push(param);
-        }
         if args.len() != type_params.len() {
+            return body;
+        }
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return body;
+        };
+        let (base_body, base_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if base_body == TypeId::ANY || base_body == TypeId::ERROR || base_params.len() != args.len()
+        {
             return body;
         }
         let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
-            type_params,
+            &base_params,
             &args,
         );
-        crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &substitution)
+        crate::query_boundaries::common::instantiate_type(self.ctx.types, base_body, &substitution)
     }
 
-    fn find_type_parameter_by_name_in_type(&self, type_id: TypeId, name: &str) -> Option<TypeId> {
-        let target = self.ctx.types.intern_string(name);
-        crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id)
-            .into_iter()
-            .find(|&candidate| {
-                crate::query_boundaries::common::type_param_info(self.ctx.types, candidate)
-                    .is_some_and(|info| info.name == target)
-            })
-    }
-
-    pub(in crate::checkers_domain::jsx) fn jsx_alias_source_has_prop_text(
-        &self,
+    pub(in crate::checkers_domain::jsx) fn jsx_alias_declares_string_prop(
+        &mut self,
         type_id: TypeId,
         prop_name: &str,
-        prop_type_text: &str,
     ) -> bool {
-        let alias_name = self.format_type(type_id);
-        let alias_name = alias_name.split('<').next().unwrap_or(alias_name.as_str());
-        if alias_name.is_empty() {
+        self.type_or_alias_declares_string_prop(type_id, prop_name, &mut Vec::new())
+    }
+
+    fn type_or_alias_declares_string_prop(
+        &mut self,
+        type_id: TypeId,
+        prop_name: &str,
+        visited: &mut Vec<TypeId>,
+    ) -> bool {
+        if visited.contains(&type_id) {
             return false;
         }
+        visited.push(type_id);
 
-        for node_idx in 0..self.ctx.arena.nodes.len() {
-            let idx = NodeIndex(node_idx as u32);
-            let Some(node) = self.ctx.arena.get(idx) else {
-                continue;
-            };
-            if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                continue;
+        if self.type_declares_string_prop_from_alias(type_id, prop_name) {
+            return true;
+        }
+
+        if let Some(alias) = self.ctx.types.get_display_alias(type_id)
+            && alias != type_id
+            && self.type_or_alias_declares_string_prop(alias, prop_name, visited)
+        {
+            return true;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+            && members
+                .iter()
+                .any(|&member| self.type_or_alias_declares_string_prop(member, prop_name, visited))
+        {
+            return true;
+        }
+
+        if let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        {
+            if self.type_declares_string_prop_from_alias(base, prop_name) {
+                return true;
             }
-            let Some(alias) = self.ctx.arena.get_type_alias(node) else {
-                continue;
-            };
-            if self
-                .ctx
-                .arena
-                .get(alias.name)
-                .and_then(|node| self.ctx.arena.get_identifier(node))
-                .map(|ident| self.ctx.arena.resolve_identifier_text(ident))
-                != Some(alias_name)
+            if args
+                .iter()
+                .any(|&arg| self.type_or_alias_declares_string_prop(arg, prop_name, visited))
             {
-                continue;
-            }
-            if self.type_node_source_has_prop_text(alias.type_node, prop_name, prop_type_text) {
                 return true;
             }
         }
+
+        let normalized = self.normalize_jsx_required_props_target(type_id);
+        if normalized != type_id
+            && normalized != TypeId::ERROR
+            && self.type_or_alias_declares_string_prop(normalized, prop_name, visited)
+        {
+            return true;
+        }
+
         false
     }
 
-    fn type_node_source_has_prop_text(
+    fn type_declares_string_prop_from_alias(&self, type_id: TypeId, prop_name: &str) -> bool {
+        let alias_type = crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            .map_or(type_id, |(base, _)| base);
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(alias_type))
+            .or_else(|| {
+                self.ctx
+                    .definition_store
+                    .find_type_alias_by_body(alias_type)
+            })
+            .or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(alias_type)
+                    .and_then(|alias| {
+                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias)
+                            .or_else(|| self.ctx.definition_store.find_def_for_type(alias))
+                            .or_else(|| self.ctx.definition_store.find_type_alias_by_body(alias))
+                    })
+            });
+        let Some(def_id) = def_id else {
+            return false;
+        };
+        if self
+            .ctx
+            .definition_store
+            .get(def_id)
+            .and_then(|def| def.body)
+            .is_some_and(|body| {
+                self.type_structurally_declares_string_prop(body, prop_name, &mut Vec::new())
+            })
+        {
+            return true;
+        }
+        let Some(symbol_id) = self
+            .ctx
+            .definition_store
+            .get(def_id)
+            .and_then(|def| def.symbol_id)
+            .map(tsz_binder::SymbolId)
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(node) else {
+                return false;
+            };
+            self.type_node_declares_string_prop(alias.type_node, prop_name)
+        })
+    }
+
+    fn type_structurally_declares_string_prop(
         &self,
-        type_node_idx: NodeIndex,
+        type_id: TypeId,
         prop_name: &str,
-        prop_type_text: &str,
+        visited: &mut Vec<TypeId>,
     ) -> bool {
+        if visited.contains(&type_id) {
+            return false;
+        }
+        visited.push(type_id);
+
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+            && shape.properties.iter().any(|prop| {
+                self.ctx.types.resolve_atom(prop.name) == prop_name
+                    && crate::query_boundaries::common::remove_undefined(
+                        self.ctx.types,
+                        prop.type_id,
+                    ) == TypeId::STRING
+            })
+        {
+            return true;
+        }
+
+        crate::query_boundaries::common::intersection_members(self.ctx.types, type_id).is_some_and(
+            |members| {
+                members.iter().any(|&member| {
+                    self.type_structurally_declares_string_prop(member, prop_name, visited)
+                })
+            },
+        )
+    }
+
+    fn type_node_declares_string_prop(&self, type_node_idx: NodeIndex, prop_name: &str) -> bool {
         let Some(node) = self.ctx.arena.get(type_node_idx) else {
             return false;
         };
         if node.kind == syntax_kind_ext::INTERSECTION_TYPE
             && let Some(composite) = self.ctx.arena.get_composite_type(node)
         {
-            return composite.types.nodes.iter().any(|&member| {
-                self.type_node_source_has_prop_text(member, prop_name, prop_type_text)
-            });
+            return composite
+                .types
+                .nodes
+                .iter()
+                .any(|&member| self.type_node_declares_string_prop(member, prop_name));
         }
         if node.kind != syntax_kind_ext::TYPE_LITERAL {
             return false;
@@ -524,15 +604,14 @@ impl<'a> CheckerState<'a> {
             let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                 return false;
             };
-            self.ctx
-                .arena
-                .get(sig.name)
-                .and_then(|node| self.ctx.arena.get_identifier(node))
-                .map(|ident| self.ctx.arena.resolve_identifier_text(ident))
+            crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, sig.name)
+                .as_deref()
                 == Some(prop_name)
                 && self
-                    .node_text(sig.type_annotation)
-                    .is_some_and(|text| text.trim() == prop_type_text)
+                    .ctx
+                    .arena
+                    .get(sig.type_annotation)
+                    .is_some_and(|type_node| type_node.kind == SyntaxKind::StringKeyword as u16)
         })
     }
 
