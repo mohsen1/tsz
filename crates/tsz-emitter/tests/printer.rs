@@ -1758,6 +1758,45 @@ fn test_top_level_enum_uses_var_at_es5() {
 }
 
 #[test]
+fn merged_enum_forward_references_to_later_block_emit_zero() {
+    let source = r#"enum E {
+    A = B,
+    A1 = E["B"],
+    B = 1,
+    C = E.D,
+    C1 = E["D"]
+}
+
+enum E {
+    D = 4
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(r#"E[E["A"] = 0] = "A";"#),
+        "Bare forward refs in the same enum block should emit 0.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"E[E["A1"] = 0] = "A1";"#),
+        "Element forward refs in the same enum block should emit 0.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"E[E["C"] = 0] = "C";"#),
+        "Property refs to later merged enum blocks should emit 0.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"E[E["C1"] = 0] = "C1";"#),
+        "Element refs to later merged enum blocks should emit 0.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_extends_optional_chain_parenthesized_downlevel() {
     // When target < ES2020, `A?.B` is lowered to a conditional expression.
     // In an `extends` clause, this must be wrapped in parens because
