@@ -129,6 +129,22 @@ The smoke script lists mutants only. Run a real mutation campaign deliberately
 with a tight file glob and `--test-tool nextest` once the baseline command is
 known to be fast enough.
 
+### SemVer Checks
+
+`cargo-semver-checks` audits public Rust API compatibility for the publishable
+workspace crates. It is manual-only in the `Quality Tools` workflow because
+TSZ is pre-1.0 and internal public APIs still move often; use it before
+releases or when a PR changes a public crate boundary. It is not a substitute
+for TypeScript conformance.
+
+```bash
+cargo install cargo-semver-checks --version 0.47.0 --locked
+scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_BASELINE_REV=origin/main scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_BASELINE_REV=v0.1.9 scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_PACKAGES="tsz-core tsz-checker" scripts/quality/run-semver-checks.sh
+```
+
 ### Sanitizers
 
 Sanitizer smoke tests are Linux/nightly-only and target narrow native library
@@ -156,6 +172,11 @@ For CPU investigations, prefer the existing flame profile:
 cargo build --profile flame --bin tsz
 samply record --save-only -o /tmp/tsz-profile.json -- .target/flame/tsz check benches/
 ```
+
+Lower-priority overlaps are deliberately kept out of the default quality
+workflow: `cargo-audit` is covered by `cargo-deny` advisories, broad formal
+verification is too expensive without a specific proof target, and extra
+binary-size/profiling tools should stay tied to a measured performance question.
 
 ## Conformance Testing
 
