@@ -1981,6 +1981,16 @@ fn test_comment_preserved_after_erased_function_return_type() {
 }
 
 #[test]
+fn variable_initializer_line_comment_indents_initializer() {
+    let output = parse_lower_print("var x = // c\n1;\n", PrintOptions::es6());
+
+    assert!(
+        output.contains("var x = // c\n 1;"),
+        "Initializer after a line comment should keep tsc's single-space continuation indentation.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_async_arrow_destructuring_default_param_temp_var_no_collision() {
     // Regression: async arrow with a destructuring default param AND an
     // awaited call must not produce two `var _a;` hoists or two `_a = ...`
