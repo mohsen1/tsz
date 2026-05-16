@@ -119,6 +119,10 @@ name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
 
 [[test]]
+name = "destructuring_control_flow_recovery_tests"
+path = "tests/destructuring_control_flow_recovery_tests.rs"
+
+[[test]]
 name = "tc39_named_class_expression_set_function_name_tests"
 path = "tests/tc39_named_class_expression_set_function_name_tests.rs"
 
