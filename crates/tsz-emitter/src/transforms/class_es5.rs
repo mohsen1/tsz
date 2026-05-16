@@ -35,6 +35,7 @@ use crate::context::transform::TransformContext;
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
+use tsz_common::common::ModuleKind;
 use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -114,7 +115,12 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
+        self.transformer.set_module_kind(options.module);
         self.printer_options = Some(options);
+    }
+
+    pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {
+        self.transformer.set_module_kind(module_kind);
     }
 
     pub fn set_commonjs_import_substitutions(

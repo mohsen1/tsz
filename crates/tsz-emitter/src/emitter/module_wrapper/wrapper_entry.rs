@@ -385,6 +385,12 @@ impl<'a> Printer<'a> {
         {
             self.write("\"use strict\";");
             self.write_line();
+            if self.source_has_dynamic_import_call(&source.statements) {
+                self.write(
+                    "var __syncRequire = typeof module === \"object\" && typeof module.exports === \"object\";",
+                );
+                self.write_line();
+            }
             self.ctx.options.suppress_use_strict = true;
         }
 

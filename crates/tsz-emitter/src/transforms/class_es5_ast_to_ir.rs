@@ -4,6 +4,7 @@
 //! into IR nodes, avoiding `ASTRef` when possible.
 
 use super::*;
+use tsz_common::common::ModuleKind;
 
 #[derive(Clone)]
 enum ThisSubstitution {
@@ -14,6 +15,7 @@ enum ThisSubstitution {
 /// Convert an AST node to IR, avoiding `ASTRef` when possible
 pub struct AstToIr<'a> {
     arena: &'a NodeArena,
+    source_text: Option<&'a str>,
     /// Track if we're inside an arrow function that captures `this`
     this_captured: Cell<bool>,
     /// Transform directives from `LoweringPass`
@@ -32,12 +34,17 @@ pub struct AstToIr<'a> {
     temp_var_counter: Cell<u32>,
     /// Temp variable names that need `var` declarations at an enclosing scope
     hoisted_temps: RefCell<Vec<String>>,
+    /// Counter for AMD/UMD dynamic import promise callback names.
+    dynamic_import_promise_counter: Cell<u32>,
+    /// Original module kind when this converter runs inside a module wrapper.
+    module_kind: ModuleKind,
 }
 
 impl<'a> AstToIr<'a> {
     pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
+            source_text: None,
             this_captured: Cell::new(false),
             transforms: None,
             current_this_substitution: Cell::new(None),
@@ -47,6 +54,8 @@ impl<'a> AstToIr<'a> {
             identifier_substitution: None,
             temp_var_counter: Cell::new(0),
             hoisted_temps: RefCell::new(Vec::new()),
+            dynamic_import_promise_counter: Cell::new(1),
+            module_kind: ModuleKind::None,
         }
     }
 
@@ -75,6 +84,16 @@ impl<'a> AstToIr<'a> {
     /// Set transform directives from `LoweringPass`
     pub fn with_transforms(mut self, transforms: TransformContext) -> Self {
         self.transforms = Some(transforms);
+        self
+    }
+
+    pub const fn with_module_kind(mut self, module_kind: ModuleKind) -> Self {
+        self.module_kind = module_kind;
+        self
+    }
+
+    pub const fn with_source_text(mut self, source_text: &'a str) -> Self {
+        self.source_text = Some(source_text);
         self
     }
 
@@ -769,6 +788,15 @@ impl<'a> AstToIr<'a> {
                 vec![]
             };
 
+            if matches!(
+                self.module_kind,
+                ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System
+            ) && let Some(callee_node) = self.arena.get(call.expression)
+                && callee_node.kind == SyntaxKind::ImportKeyword as u16
+            {
+                return self.convert_wrapped_dynamic_import(call.arguments.as_ref());
+            }
+
             // Check for bare super(args) → _this = _super.call(this, args) || this
             // This handles super() in expression contexts (e.g. computed property names).
             if self.has_super {
@@ -811,6 +839,98 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    fn convert_wrapped_dynamic_import(&self, args: Option<&NodeList>) -> IRNode {
+        let first_arg = self.first_dynamic_import_argument(args);
+        let first_arg_is_string_like =
+            first_arg.is_none_or(|arg| self.dynamic_import_arg_is_string_like(arg));
+
+        let mut specifier = first_arg
+            .map(|arg| self.emit_ir_fragment_to_string(&self.convert_expression(arg)))
+            .unwrap_or_default();
+        let mut prefix = String::new();
+
+        if first_arg.is_some() && !first_arg_is_string_like {
+            let temp = self.generate_hoisted_temp();
+            prefix = format!("{temp} = {specifier}, ");
+            specifier = temp;
+        }
+
+        if matches!(self.module_kind, ModuleKind::System) {
+            return IRNode::Raw(format!("context_1.import({specifier})").into());
+        }
+
+        let amd_branch = self.dynamic_import_amd_branch(&specifier);
+        if matches!(self.module_kind, ModuleKind::UMD) {
+            return IRNode::Raw(
+                format!(
+                    "{prefix}__syncRequire ? {} : {amd_branch}",
+                    self.dynamic_import_commonjs_branch(&specifier)
+                )
+                .into(),
+            );
+        }
+
+        IRNode::Raw(format!("{prefix}{amd_branch}").into())
+    }
+
+    fn first_dynamic_import_argument(&self, args: Option<&NodeList>) -> Option<NodeIndex> {
+        args.and_then(|args| {
+            args.nodes
+                .iter()
+                .copied()
+                .find(|&idx| self.call_argument_should_emit(idx))
+        })
+    }
+
+    fn call_argument_should_emit(&self, idx: NodeIndex) -> bool {
+        if idx.is_none() {
+            return false;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.end <= node.pos || node.kind == SyntaxKind::Unknown as u16 {
+            return false;
+        }
+        self.arena
+            .get_identifier(node)
+            .is_none_or(|ident| !ident.escaped_text.is_empty())
+    }
+
+    fn dynamic_import_arg_is_string_like(&self, arg: NodeIndex) -> bool {
+        self.arena.get(arg).is_some_and(|node| {
+            node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || node.end <= node.pos
+        })
+    }
+
+    fn emit_ir_fragment_to_string(&self, ir: &IRNode) -> String {
+        let mut printer = if let Some(source_text) = self.source_text {
+            IRPrinter::with_arena_and_source(self.arena, source_text)
+        } else {
+            IRPrinter::with_arena(self.arena)
+        };
+        if let Some(transforms) = self.transforms.as_ref() {
+            printer.set_transforms(transforms.clone());
+        }
+        printer.emit(ir).to_string()
+    }
+
+    fn dynamic_import_commonjs_branch(&self, specifier: &str) -> String {
+        format!(
+            "Promise.resolve().then(function () {{ return __importStar(require({specifier})); }})"
+        )
+    }
+
+    fn dynamic_import_amd_branch(&self, specifier: &str) -> String {
+        let id = self.dynamic_import_promise_counter.get();
+        self.dynamic_import_promise_counter.set(id + 1);
+        format!(
+            "new Promise(function (resolve_{id}, reject_{id}) {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
+        )
     }
 
     /// Check if a call expression callee is super.method or super[expr] and transform to
