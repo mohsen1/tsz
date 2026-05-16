@@ -485,9 +485,7 @@ impl<'a> CheckerContext<'a> {
     /// Callers should use this instead of the inline `main_sym_id.unwrap_or(sym_id)`
     /// recovery pattern.
     pub fn canonical_lib_sym_id(&self, name: &str, per_lib_sym_id: SymbolId) -> SymbolId {
-        if let Some(sym_id) = self.binder.file_locals.get(name)
-            && !self.symbol_has_current_file_type_declaration(sym_id, name)
-        {
+        if let Some(sym_id) = self.binder.file_locals.get(name) {
             return sym_id;
         }
 
@@ -495,15 +493,7 @@ impl<'a> CheckerContext<'a> {
             .global_file_locals_index
             .as_ref()
             .and_then(|idx| idx.get(name))
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .filter(|&&(_, sym_id)| {
-                        self.symbol_is_from_actual_or_cloned_lib(sym_id)
-                            && !self.symbol_has_current_file_type_declaration(sym_id, name)
-                    })
-                    .max_by_key(|(_, sym)| sym.0)
-            })
+            .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
             .map(|&(_, sym)| sym)
         {
             return sym_id;
@@ -572,9 +562,7 @@ impl<'a> CheckerContext<'a> {
                     defs.into_iter()
                         .filter(|def_id| {
                             self.definition_store.get(*def_id).is_some_and(|info| {
-                                info.symbol_id.is_some_and(|sym_id| {
-                                    self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
-                                }) && matches!(
+                                matches!(
                                     info.kind,
                                     tsz_solver::def::DefKind::TypeAlias
                                         | tsz_solver::def::DefKind::Interface

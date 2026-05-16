@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use tsz_binder::SymbolId;
-use tsz_parser::parser::node::NodeAccess;
 
 use super::CheckerContext;
 
@@ -38,7 +37,6 @@ impl<'a> CheckerContext<'a> {
     fn actual_lib_symbol_id_for_bare_name(&self, name: &str) -> Option<SymbolId> {
         if let Some(sym_id) = self.binder.file_locals.get(name)
             && self.symbol_is_from_actual_or_cloned_lib(sym_id)
-            && !self.symbol_has_current_file_type_declaration(sym_id, name)
         {
             return Some(sym_id);
         }
@@ -61,64 +59,12 @@ impl<'a> CheckerContext<'a> {
         self.binder.file_locals.get(name).is_some_and(|sym_id| {
             let is_actual_or_merged_lib = self.symbol_is_from_actual_lib(sym_id)
                 || self.binder.lib_symbol_ids.contains(&sym_id);
-            if is_actual_or_merged_lib {
-                return self.symbol_has_current_file_type_declaration(sym_id, name);
-            }
             !is_actual_or_merged_lib
                 && self
                     .binder
                     .get_symbol(sym_id)
                     .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
         })
-    }
-
-    pub(crate) fn symbol_has_current_file_type_declaration(
-        &self,
-        sym_id: SymbolId,
-        name: &str,
-    ) -> bool {
-        if self
-            .binder
-            .global_augmentations
-            .get(name)
-            .is_some_and(|augmentations| !augmentations.is_empty())
-        {
-            return false;
-        }
-
-        let Some(symbol) = self.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        symbol.declarations.iter().any(|&decl_idx| {
-            if let Some(arenas) = self.binder.declaration_arenas.get(&(sym_id, decl_idx))
-                && arenas.iter().any(|arena| {
-                    std::ptr::eq(arena.as_ref(), self.arena)
-                        && self.type_declaration_name_matches(arena.as_ref(), decl_idx, name)
-                })
-            {
-                return true;
-            }
-
-            self.type_declaration_name_matches(self.arena, decl_idx, name)
-        })
-    }
-
-    fn type_declaration_name_matches(
-        &self,
-        arena: &tsz_parser::parser::NodeArena,
-        decl_idx: tsz_parser::parser::NodeIndex,
-        name: &str,
-    ) -> bool {
-        let Some(node) = arena.get(decl_idx) else {
-            return false;
-        };
-        let name_node = arena
-            .get_interface(node)
-            .map(|decl| decl.name)
-            .or_else(|| arena.get_type_alias(node).map(|decl| decl.name))
-            .or_else(|| arena.get_class(node).map(|decl| decl.name))
-            .or_else(|| arena.get_enum(node).map(|decl| decl.name));
-        name_node.is_some_and(|name_node| arena.get_identifier_text(name_node) == Some(name))
     }
 
     /// Check if the Promise constructor VALUE is available.
