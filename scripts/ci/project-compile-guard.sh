@@ -122,6 +122,12 @@ write_type_challenges_config() {
 JSON
 }
 
+write_type_challenges_solutions_config() {
+  tsz_write_type_challenges_solutions_config \
+    "$FIXTURE_ROOT/type-challenges-solutions" \
+    "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile"
+}
+
 check_project() {
   local name="$1"
   local tsconfig="$2"
@@ -228,6 +234,12 @@ if should_check_project "type-challenges-project"; then
   ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
   write_type_challenges_config
   check_project "type-challenges-project" "$FIXTURE_ROOT/type-challenges/.tsz-compile/tsconfig.tsz-guard.json"
+fi
+
+if should_check_project "type-challenges-solutions-project"; then
+  ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
+  write_type_challenges_solutions_config
+  check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json"
 fi
 }
 
