@@ -287,7 +287,7 @@ impl<'a> CheckerState<'a> {
             params,
             this_type,
             return_type: sig.return_type,
-            type_predicate: sig.type_predicate.clone(),
+            type_predicate: sig.type_predicate,
             is_method: sig.is_method,
         }
     }

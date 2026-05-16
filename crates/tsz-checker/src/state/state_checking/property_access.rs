@@ -61,7 +61,7 @@ impl<'a> CheckerState<'a> {
                     params: shape.params.clone(),
                     this_type: shape.this_type,
                     return_type: shape.return_type,
-                    type_predicate: shape.type_predicate.clone(),
+                    type_predicate: shape.type_predicate,
                     is_method: shape.is_method,
                 });
                 continue;
@@ -310,10 +310,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        match inherited_member_types.len() {
-            0 => None,
-            1 => inherited_member_types.pop(),
-            _ => None,
+        if inherited_member_types.len() == 1 {
+            inherited_member_types.pop()
+        } else {
+            None
         }
     }
 

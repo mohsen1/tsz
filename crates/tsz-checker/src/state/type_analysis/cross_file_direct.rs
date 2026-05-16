@@ -1945,17 +1945,14 @@ impl<'a> CheckerState<'a> {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 return None;
             }
-        } else if !allow_complex_declarations
-            && (has_unsupported_computed_names || (has_heritage && !builtin_lib_declaration_arena))
-        {
-            record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
-            return None;
-        } else if builtin_lib_declaration_arena
-            && has_heritage
-            && self.interface_declarations_have_in_progress_builtin_heritage_base(
-                &declarations,
-                &symbol.escaped_name,
-            )
+        } else if (!allow_complex_declarations
+            && (has_unsupported_computed_names || (has_heritage && !builtin_lib_declaration_arena)))
+            || (builtin_lib_declaration_arena
+                && has_heritage
+                && self.interface_declarations_have_in_progress_builtin_heritage_base(
+                    &declarations,
+                    &symbol.escaped_name,
+                ))
         {
             record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
             return None;
