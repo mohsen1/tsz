@@ -451,6 +451,35 @@ fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
 }
 
 #[test]
+fn test_diagnostic_source_preservation_does_not_hardcode_mapped_iterator_names() {
+    let files = [
+        "src/error_reporter/core/diagnostic_source/assignment_source_preservation.rs",
+        "src/error_reporter/core/diagnostic_source/assignment_formatting.rs",
+    ];
+    let mut violations = Vec::new();
+
+    for path in files {
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read diagnostic-source file {path}"));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            if line.contains("[P in ") || line.contains("[K in ") {
+                violations.push(format!("{}:{}: {}", path, line_index + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "diagnostic source preservation must recognize mapped clauses by syntax shape, not hardcoded iterator names:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
     let src = fs::read_to_string("src/state/state_checking_members/ambient_signature_checks.rs").expect(
         "failed to read state/state_checking_members/ambient_signature_checks.rs for architecture guard",
