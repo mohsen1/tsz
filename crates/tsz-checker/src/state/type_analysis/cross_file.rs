@@ -1242,7 +1242,9 @@ impl<'a> CheckerState<'a> {
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+        checker.ctx.current_file_idx = query_file_idx
+            .or(delegate_file_idx)
+            .unwrap_or(self.ctx.current_file_idx);
         for &id in &self.ctx.class_instance_resolution_set {
             checker.ctx.class_instance_resolution_set.insert(id);
         }

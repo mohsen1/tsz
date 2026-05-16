@@ -991,7 +991,10 @@ impl<'a> CheckerState<'a> {
                         })
             })
             .collect();
-        if local_interface_decls.len() == declarations.len() && !self.ctx.is_declaration_file() {
+        if local_interface_decls.len() == declarations.len()
+            && !self.ctx.is_declaration_file()
+            && !Self::in_cross_arena_interface_delegation()
+        {
             let mut merged = TypeId::ERROR;
             for decl_idx in local_interface_decls {
                 let interface_type = self.get_type_of_interface(decl_idx);
@@ -1070,7 +1073,9 @@ impl<'a> CheckerState<'a> {
         .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
-        let lowering = if self.ctx.is_declaration_file() && !self.ctx.lib_contexts.is_empty() {
+        let lowering = if (self.ctx.is_declaration_file() && !self.ctx.lib_contexts.is_empty())
+            || Self::in_cross_arena_interface_delegation()
+        {
             lowering.prefer_name_def_id_resolution()
         } else {
             lowering

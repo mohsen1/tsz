@@ -418,7 +418,10 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
                                     .and_then(|def_id| {
                                         self.ctx.def_to_symbol_id_with_fallback(def_id)
                                     })
@@ -427,13 +430,19 @@ impl<'a> CheckerState<'a> {
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
                             })
                         };
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                .or_else(|| {
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                                })
                         };
                         tsz_lowering::TypeLowering::with_hybrid_resolver(
                             decl_arena,
@@ -461,7 +470,10 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
                                     .and_then(|def_id| {
                                         self.ctx.def_to_symbol_id_with_fallback(def_id)
                                     })
@@ -470,13 +482,19 @@ impl<'a> CheckerState<'a> {
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    .or_else(|| {
+                                        self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                                    })
                             })
                         };
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                .or_else(|| {
+                                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                                })
                         };
                         tsz_lowering::TypeLowering::with_hybrid_resolver(
                             decl_arena,
