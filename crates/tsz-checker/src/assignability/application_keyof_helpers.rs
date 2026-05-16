@@ -43,10 +43,7 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::flow_analysis::is_promise_like_type(
                     self.ctx.types,
                     target,
-                )
-                || self.application_has_callable_then_member(source)
-                || self.application_has_callable_then_member(target)
-                || self.application_base_declares_then_method(source_base))
+                ))
     }
 
     fn application_has_callable_then_member(&self, type_id: TypeId) -> bool {

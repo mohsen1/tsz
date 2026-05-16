@@ -1431,12 +1431,18 @@ impl<'a> CheckerState<'a> {
                         if is_weak {
                             let class_instance_type =
                                 self.get_class_instance_type(class_idx, class_data);
-                            let analysis = self
-                                .analyze_assignability_failure(class_instance_type, interface_type);
-                            if matches!(
-                                analysis.failure_reason,
-                                Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
-                            ) {
+                            let outcome = {
+                                use crate::query_boundaries::assignability::RelationRequest;
+                                let (prepared_source, prepared_target) = self
+                                    .prepare_assignability_inputs(
+                                        class_instance_type,
+                                        interface_type,
+                                    );
+                                let request =
+                                    RelationRequest::assign(prepared_source, prepared_target);
+                                self.execute_relation_request(&request)
+                            };
+                            if outcome.weak_union_violation {
                                 let class_str = self.format_type(class_instance_type);
                                 let iface_str = self.format_type(interface_type);
                                 let message = crate::diagnostics::format_message(
@@ -1489,43 +1495,48 @@ impl<'a> CheckerState<'a> {
                         } else {
                             interface_type
                         };
-                        if !self.is_assignable_to(class_instance_type, target_type) {
-                            let analysis = self
-                                .analyze_assignability_failure(class_instance_type, target_type);
+                        let outcome = {
+                            use crate::query_boundaries::assignability::RelationRequest;
+                            let (prepared_source, prepared_target) =
+                                self.prepare_assignability_inputs(class_instance_type, target_type);
+                            let request = RelationRequest::assign(prepared_source, prepared_target);
+                            self.execute_relation_request(&request)
+                        };
+                        if !outcome.related {
                             let suppress_index_member_duplicate = !is_class
                                 && interface_has_index_signature
                                 && self.class_index_signatures_satisfy_interface(
                                     class_instance_type,
                                     target_type,
                                 )
-                                && matches!(
-                                    analysis.failure_reason,
-                                    Some(
+                                && outcome.failure.as_ref().is_some_and(|failure| {
+                                    matches!(
+                                        failure.to_solver_failure_reason(),
                                         tsz_solver::SubtypeFailureReason::IndexSignatureMismatch {
                                             ..
                                         } | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
                                             ..
                                         }
                                     )
-                                );
+                                });
                             if !is_class
                                 && let Some(
-                                    tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+                                    crate::query_boundaries::relation_types::RelationFailure::IncompatiblePropertyValue {
                                         property_name,
                                         source_property_type,
                                         target_property_type,
                                         ..
                                     },
-                                ) = analysis.failure_reason
+                                ) = outcome.failure.as_ref()
                             {
                                 let member_name =
-                                    self.ctx.types.resolve_atom(property_name).to_string();
+                                    self.ctx.types.resolve_atom(*property_name).to_string();
                                 let class_member_idx = class_members
                                     .get(&member_name)
                                     .copied()
                                     .unwrap_or(class_error_idx);
-                                let expected_str = self.format_type(target_property_type);
-                                let actual_str = self.format_type(source_property_type);
+                                let expected_str = self.format_type(*target_property_type);
+                                let actual_str = self.format_type(*source_property_type);
                                 incompatible_members.push((
                                     class_member_idx,
                                     member_name,

@@ -40,7 +40,21 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> bool {
-        use crate::query_boundaries::common::SubtypeFailureReason;
+        self.try_elaborate_array_literal_mismatch_with_relation_failure(
+            arg_idx,
+            source_type,
+            target_type,
+            None,
+        )
+    }
+
+    pub(in crate::error_reporter::call_errors) fn try_elaborate_array_literal_mismatch_with_relation_failure(
+        &mut self,
+        arg_idx: NodeIndex,
+        source_type: TypeId,
+        target_type: TypeId,
+        relation_failure: Option<&crate::query_boundaries::relation_types::RelationFailure>,
+    ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         if source_type.is_any_unknown_or_error() || target_type.is_any_unknown_or_error() {
@@ -77,10 +91,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let analysis = self.analyze_assignability_failure(source_type, target_type);
+        let fallback_analysis;
+        let fallback_reason;
+        let failure = if let Some(failure) = relation_failure {
+            Some(failure)
+        } else {
+            fallback_analysis = self.analyze_assignability_failure(source_type, target_type);
+            fallback_reason = fallback_analysis
+                .failure_reason
+                .map(crate::query_boundaries::relation_types::RelationFailure::from_solver_reason);
+            fallback_reason.as_ref()
+        };
         #[allow(clippy::match_same_arms)] // explicit TupleElementMismatch arm carries rationale
-        match analysis.failure_reason {
-            Some(SubtypeFailureReason::TupleElementTypeMismatch {
+        match failure {
+            Some(
+                crate::query_boundaries::relation_types::RelationFailure::TupleElementTypeMismatch {
                 index,
                 source_element,
                 target_element,
@@ -96,11 +121,11 @@ impl<'a> CheckerState<'a> {
                         crate::query_boundaries::common::tuple_leading_fixed_count_before_trailing(
                             &target_elements,
                         )
-                    && index >= n_leading
+                    && *index >= n_leading
                 {
                     return false;
                 }
-                let Some(&elem_idx) = arr.elements.nodes.get(index) else {
+                let Some(&elem_idx) = arr.elements.nodes.get(*index) else {
                     return false;
                 };
                 let is_spread = self
@@ -112,17 +137,17 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
                 if self
-                    .array_elaboration_widening_required_for_display(source_element, target_element)
+                    .array_elaboration_widening_required_for_display(*source_element, *target_element)
                 {
                     self.error_type_not_assignable_at_with_widened_source_display(
-                        source_element,
-                        target_element,
+                        *source_element,
+                        *target_element,
                         elem_idx,
                     );
                 } else {
                     self.error_type_not_assignable_at_with_anchor(
-                        source_element,
-                        target_element,
+                        *source_element,
+                        *target_element,
                         elem_idx,
                     );
                 }
@@ -134,7 +159,8 @@ impl<'a> CheckerState<'a> {
             // sub-message under TS2345/TS2322 and does not drill into a specific
             // source element, so the outer caller renders the arity-aware
             // diagnostic directly.
-            Some(SubtypeFailureReason::ArrayElementMismatch {
+            Some(
+                crate::query_boundaries::relation_types::RelationFailure::ArrayElementMismatch {
                 source_element: _,
                 target_element,
             }) => {
@@ -151,20 +177,20 @@ impl<'a> CheckerState<'a> {
                     if elem_type.is_any_unknown_or_error() {
                         continue;
                     }
-                    if !self.is_assignable_to(elem_type, target_element) {
+                    if !self.is_assignable_to(elem_type, *target_element) {
                         if self.array_elaboration_widening_required_for_display(
                             elem_type,
-                            target_element,
+                            *target_element,
                         ) {
                             self.error_type_not_assignable_at_with_widened_source_display(
                                 elem_type,
-                                target_element,
+                                *target_element,
                                 elem_idx,
                             );
                         } else {
                             self.error_type_not_assignable_at_with_anchor(
                                 elem_type,
-                                target_element,
+                                *target_element,
                                 elem_idx,
                             );
                         }

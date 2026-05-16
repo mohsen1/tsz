@@ -1,4 +1,7 @@
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::diagnostics::{
+    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+    diagnostic_messages, format_message,
+};
 use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
@@ -213,13 +216,28 @@ impl<'a> CheckerState<'a> {
                 visibility,
                 None,
             );
-            return Diagnostic::error(
+            let mut diag = Diagnostic::error(
                 file_name,
                 start,
                 length,
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
+            let property_name = self.ctx.types.intern_string(&prop_name);
+            if let Some(detail) = self.nominal_mismatch_detail(source, target, property_name) {
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: diag.file.clone(),
+                    start: diag.start,
+                    length: diag.length,
+                    message_text: detail,
+                    category: DiagnosticCategory::Message,
+                    code: tsz_solver::SubtypeFailureReason::PropertyNominalMismatch {
+                        property_name,
+                    }
+                    .diagnostic_code(),
+                });
+            }
+            return diag;
         }
 
         // Skip single-missing-property lookup when the target is an intersection type.
@@ -261,13 +279,30 @@ impl<'a> CheckerState<'a> {
                             &[&source_display, &target_display],
                         )
                     });
-                return Diagnostic::error(
+                let mut diag = Diagnostic::error(
                     file_name,
                     start,
                     length,
                     message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
+                let display_property_name = self.ctx.types.intern_string(&source_display);
+                if let Some(detail) =
+                    self.nominal_mismatch_detail(source, target, display_property_name)
+                {
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: diag.file.clone(),
+                        start: diag.start,
+                        length: diag.length,
+                        message_text: detail,
+                        category: DiagnosticCategory::Message,
+                        code: tsz_solver::SubtypeFailureReason::PropertyNominalMismatch {
+                            property_name: display_property_name,
+                        }
+                        .diagnostic_code(),
+                    });
+                }
+                return diag;
             }
             if let Some(display) =
                 self.checked_js_global_element_access_fallback_target_display(idx)

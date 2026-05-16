@@ -231,7 +231,9 @@ impl<'a> CheckerState<'a> {
         // boundary so we never fall back to checker-local property enumeration.
         use crate::query_boundaries::assignability::RelationRequest;
         let (ps, pt) = self.prepare_assignability_inputs(source, target);
-        let built_outcome = self.execute_relation_request(&RelationRequest::assign(ps, pt));
+        let built_outcome = self.execute_relation_request(
+            &RelationRequest::assign(ps, pt).with_property_classification(),
+        );
         if let Some(ref cls) = built_outcome.property_classification {
             if cls.excess_properties.is_empty() {
                 return false;
@@ -317,21 +319,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if self.is_assignable_to(source, target) {
-            return true;
-        }
-        if self.is_nested_same_wrapper_application_assignment(source, target) {
-            return true;
-        }
-
         // Build a RelationRequest so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        {
+        let relation_outcome = {
             use crate::query_boundaries::assignability::RelationRequest;
             let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            let request = RelationRequest::assign(ps, pt);
+            let request = RelationRequest::assign(ps, pt).with_property_classification();
             let outcome = self.execute_relation_request(&request);
+            if outcome.related {
+                return true;
+            }
+            if self.is_nested_same_wrapper_application_assignment(source, target) {
+                return true;
+            }
             if self.should_skip_weak_union_error_with_outcome(
                 source,
                 target,
@@ -344,7 +345,8 @@ impl<'a> CheckerState<'a> {
                 self.error_no_common_properties(source, target, diag_idx);
                 return false;
             }
-        }
+            outcome
+        };
 
         // tsc 6.0: `satisfies` ignores readonly-to-mutable mismatches.
         // `[1,2,3] as const satisfies unknown[]` is accepted because `satisfies`
@@ -391,7 +393,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx, keyword_pos);
+        self.error_type_does_not_satisfy_the_expected_type_with_outcome(
+            source,
+            target,
+            diag_idx,
+            keyword_pos,
+            Some(&relation_outcome),
+        );
         false
     }
 
@@ -616,13 +624,17 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check assignability using the actual types (return types)
-        if self.is_assignable_to(source, target) {
+        let outcome = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (prepared_source, prepared_target) =
+                self.prepare_assignability_inputs(source, target);
+            let request = RelationRequest::assign(prepared_source, prepared_target);
+            self.execute_relation_request(&request)
+        };
+
+        if outcome.related {
             return true;
         }
-
-        // Get the failure reason using the check types
-        let analysis = self.analyze_assignability_failure(source, target);
 
         // Try to elaborate the source error first
         if self.try_elaborate_assignment_source_error(source_idx, target) {
@@ -630,11 +642,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Report the error using the display types (full function types)
-        if let Some(ref reason) = analysis.failure_reason {
+        if let Some(ref failure) = outcome.failure {
+            let reason = failure.to_solver_failure_reason();
             // For simple type mismatches (TypeMismatch, IntrinsicTypeMismatch, LiteralTypeMismatch),
             // use the error_reporter method to render with display types
             if matches!(
-                reason,
+                &reason,
                 tsz_solver::SubtypeFailureReason::TypeMismatch { .. }
                     | tsz_solver::SubtypeFailureReason::IntrinsicTypeMismatch { .. }
                     | tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }
@@ -650,7 +663,7 @@ impl<'a> CheckerState<'a> {
                 self.error_type_not_assignable_with_reason_and_display(
                     source_for_display,
                     target_for_display,
-                    reason,
+                    &reason,
                     diag_idx,
                 );
             }
@@ -770,12 +783,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Canonical relation path: execute a RelationRequest to get both the
-        // assignability result and structured failure info in one boundary call.
-
-        // Reset the relation depth flag before the assignability check so we
-        // can detect fresh depth exceedance from this particular relation.
+        // Canonical relation path: execute one RelationRequest and use both its
+        // boolean projection and structured failure info. This keeps diagnostic
+        // paths from doing a boolean relation pass and then repeating the same
+        // relation as failure analysis setup.
         self.ctx.relation_depth_exceeded.set(false);
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (prepared_source, prepared_target) =
+                self.prepare_assignability_inputs(source, target);
+            RelationRequest::assign(prepared_source, prepared_target).with_property_classification()
+        };
+        let outcome = self.execute_relation_request(&request);
         let assignable = self.is_assignable_to(source, target);
         // TS2859: if the solver hit its recursion/complexity limit during the check
         // (including the constituent-count overflow guard in check_subtype_inner),
@@ -810,15 +829,6 @@ impl<'a> CheckerState<'a> {
             }
             return true;
         }
-        // Build a RelationRequest for the Assign kind so the weak-union hint
-        // can be collected alongside the failure reason.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
 
         // Use the pre-computed RelationOutcome to avoid re-enumerating
         // properties and re-checking assignability inside the skip logic.
@@ -857,7 +867,7 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+        self.diagnose_assignment_failure_with_relation_outcome(source, target, diag_idx, &outcome);
         false
     }
 
@@ -1029,7 +1039,7 @@ impl<'a> CheckerState<'a> {
         let request = {
             use crate::query_boundaries::assignability::RelationRequest;
             let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
+            RelationRequest::assign(ps, pt).with_property_classification()
         };
         let outcome = self.execute_relation_request(&request);
         if self.should_skip_weak_union_error_with_outcome(
@@ -1079,7 +1089,7 @@ impl<'a> CheckerState<'a> {
         let request = {
             use crate::query_boundaries::assignability::RelationRequest;
             let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
+            RelationRequest::assign(ps, pt).with_property_classification()
         };
         let outcome = self.execute_relation_request(&request);
         if self.should_skip_weak_union_error_with_outcome(
@@ -1127,7 +1137,7 @@ impl<'a> CheckerState<'a> {
         let request = {
             use crate::query_boundaries::assignability::RelationRequest;
             let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
+            RelationRequest::assign(ps, pt).with_property_classification()
         };
         let outcome = self.execute_relation_request(&request);
         if self.should_skip_weak_union_error_with_outcome(
@@ -1170,10 +1180,25 @@ impl<'a> CheckerState<'a> {
         if target == TypeId::NEVER && self.generic_indexed_access_argument_surface(source) {
             return true;
         }
-        let checker_only_mismatch = self
-            .checker_only_assignability_failure_reason(source, target)
-            .is_some();
-        if self.is_assignable_to(source, target) && !checker_only_mismatch {
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (prepared_source, prepared_target) =
+                self.prepare_assignability_inputs(source, target);
+            RelationRequest::call_arg(prepared_source, prepared_target)
+                .with_property_classification()
+        };
+        let outcome = self.execute_relation_request(&request);
+        self.report_argument_assignability_with_outcome(source, target, arg_idx, outcome)
+    }
+
+    pub(crate) fn report_argument_assignability_with_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        arg_idx: NodeIndex,
+        outcome: crate::query_boundaries::assignability::RelationOutcome,
+    ) -> bool {
+        if outcome.related {
             return true;
         }
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
@@ -1187,16 +1212,6 @@ impl<'a> CheckerState<'a> {
         ) {
             return true;
         }
-
-        // Build a CallArg relation request to collect the weak-union hint
-        // without a separate solver call.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::call_arg(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
 
         if self.should_skip_weak_union_error_with_outcome(source, target, arg_idx, Some(&outcome)) {
             return true;
@@ -1240,7 +1255,7 @@ impl<'a> CheckerState<'a> {
         // parameter), contextual typing cannot supply types for the extra
         // source parameters, and the parameter-count mismatch ("Target
         // signature provides too few arguments") must surface as TS2345.
-        if !checker_only_mismatch
+        if outcome.failure.is_none()
             && self.arg_is_callback_with_unannotated_params(arg_idx)
             && self.target_can_contextually_type_callback_params(arg_idx, target)
         {
@@ -1256,7 +1271,12 @@ impl<'a> CheckerState<'a> {
         if self.try_elaborate_callback_body_diagnostics(arg_idx, target) {
             return false;
         }
-        self.error_argument_not_assignable_at(source, target, arg_idx);
+        self.error_argument_not_assignable_at_with_relation_failure(
+            source,
+            target,
+            arg_idx,
+            outcome.failure.as_ref(),
+        );
         false
     }
 
@@ -2224,8 +2244,11 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.analyze_assignability_failure(source, target)
-            .weak_union_violation
+        use crate::query_boundaries::assignability::RelationRequest;
+
+        let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
+        let request = RelationRequest::assign(prepared_source, prepared_target);
+        self.execute_relation_request(&request).weak_union_violation
     }
 
     /// Emit TS2559 ("Type 'X' has no properties in common with type 'Y'")

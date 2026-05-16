@@ -218,18 +218,6 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if let Some(&arg_idx) = type_args_list.nodes.get(i)
-                    && self.syntax_instantiated_type_arg_satisfies_constraint(
-                        type_arg,
-                        arg_idx,
-                        type_params,
-                        &type_args,
-                        constraint,
-                    )
-                {
-                    continue;
-                }
-
                 if self.emit_invalid_remapped_mapped_template_index_constraint_error(
                     type_arg,
                     constraint,
@@ -1465,7 +1453,6 @@ impl<'a> CheckerState<'a> {
                             );
                             continue;
                         }
-                        self.ensure_refs_resolved(base);
                         let base_for_check = self.resolve_lazy_members_in_union(base);
                         let base_for_check = self.evaluate_type_for_assignability(base_for_check);
                         let mut is_satisfied = self
@@ -1624,16 +1611,22 @@ impl<'a> CheckerState<'a> {
                             )
                             .is_some_and(|sigs| !sigs.is_empty())
                     });
+                let all_optional_non_primitive = constraint_is_all_optional
+                    && !query::is_primitive_type(self.ctx.types.as_type_database(), type_arg);
+                let mut constraint_relation_outcome = None;
                 let mut is_satisfied = !callable_arity_failure
                     && !constructor_accessibility_failure
                     && (primitive_satisfies_weak
-                        || if constraint_is_all_optional
-                            && !query::is_primitive_type(
-                                self.ctx.types.as_type_database(),
-                                type_arg,
-                            )
-                        {
-                            self.is_assignable_to(type_arg, instantiated_constraint)
+                        || if all_optional_non_primitive {
+                            use crate::query_boundaries::assignability::RelationRequest;
+                            let (prepared_arg, prepared_constraint) = self
+                                .prepare_assignability_inputs(type_arg, instantiated_constraint);
+                            let request =
+                                RelationRequest::assign(prepared_arg, prepared_constraint);
+                            let outcome = self.execute_relation_request(&request);
+                            let related = outcome.related;
+                            constraint_relation_outcome = Some(outcome);
+                            related
                         } else {
                             self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint)
                         });
@@ -1642,15 +1635,13 @@ impl<'a> CheckerState<'a> {
                 // separately check for weak type violation (TS2559).
                 // Non-primitive type arguments with NO common properties should
                 // fail, e.g., MyObjA {x: string} vs ObjA {y?: string}.
-                if is_satisfied && constraint_is_all_optional && !primitive_satisfies_weak {
-                    let analysis =
-                        self.analyze_assignability_failure(type_arg, instantiated_constraint);
-                    if matches!(
-                        analysis.failure_reason,
-                        Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
-                    ) {
-                        is_satisfied = false;
-                    }
+                if is_satisfied
+                    && !primitive_satisfies_weak
+                    && constraint_relation_outcome
+                        .as_ref()
+                        .is_some_and(|outcome| outcome.weak_union_violation)
+                {
+                    is_satisfied = false;
                 }
 
                 // Fallback for recursive generic constraints (coinductive semantics).
@@ -1747,12 +1738,19 @@ impl<'a> CheckerState<'a> {
                     // and the type argument shares no common properties, tsc emits TS2559
                     // instead of TS2344. However, primitive types satisfy weak type
                     // constraints in tsc (e.g., `bigint extends {t?: string}` is valid).
-                    let analysis =
-                        self.analyze_assignability_failure(type_arg, instantiated_constraint);
-                    if matches!(
-                        analysis.failure_reason,
-                        Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
-                    ) {
+                    let weak_constraint_violation = if let Some(outcome) =
+                        constraint_relation_outcome.as_ref()
+                    {
+                        outcome.weak_union_violation
+                    } else {
+                        use crate::query_boundaries::assignability::RelationRequest;
+                        let (prepared_arg, prepared_constraint) =
+                            self.prepare_assignability_inputs(type_arg, instantiated_constraint);
+                        let request = RelationRequest::assign(prepared_arg, prepared_constraint);
+                        let outcome = self.execute_relation_request(&request);
+                        outcome.weak_union_violation
+                    };
+                    if weak_constraint_violation {
                         // Primitives satisfy weak type constraints — skip TS2559
                         if !query::is_primitive_type(self.ctx.types.as_type_database(), type_arg) {
                             self.error_no_common_properties_constraint(

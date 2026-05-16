@@ -1370,56 +1370,6 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.in_const_assertion = prev_in_const_assertion;
 
-        if is_generic_new
-            && inferred_new_type_args.is_none()
-            && let Some(shape) = constructor_shape.as_ref()
-        {
-            let evaluated_shape = {
-                let new_params: Vec<_> = shape
-                    .params
-                    .iter()
-                    .map(|p| tsz_solver::ParamInfo {
-                        name: p.name,
-                        type_id: self.evaluate_type_with_env(p.type_id),
-                        optional: p.optional,
-                        rest: p.rest,
-                    })
-                    .collect();
-                tsz_solver::FunctionShape {
-                    params: new_params,
-                    return_type: shape.return_type,
-                    this_type: shape.this_type,
-                    type_params: shape.type_params.clone(),
-                    type_predicate: shape.type_predicate,
-                    is_constructor: shape.is_constructor,
-                    is_method: shape.is_method,
-                }
-            };
-            let mut substitution = {
-                let env = self.ctx.type_env.borrow();
-                call_checker::compute_contextual_types_with_context(
-                    self.ctx.types,
-                    &self.ctx,
-                    &env,
-                    &evaluated_shape,
-                    &arg_types,
-                    contextual_type,
-                )
-            };
-            let seeded_literal_constraint_type_arg =
-                self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
-            let type_args: Vec<TypeId> = shape
-                .type_params
-                .iter()
-                .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
-                .collect();
-            if seeded_literal_constraint_type_arg
-                && self.new_type_args_are_applyable(shape, &type_args, &substitution)
-            {
-                inferred_new_type_args = Some(type_args);
-            }
-        }
-
         // For generic constructors (without const type params), widen scalar literal
         // arg types for error display. During arg collection, preserve_literal_types
         // was true so that generic inference gets precise literal types (e.g., `true`
@@ -1445,22 +1395,8 @@ impl<'a> CheckerState<'a> {
                 self.apply_type_argument_ids_to_constructor_type(constructor_type, type_args);
         }
 
-        let arg_types_for_resolution: Vec<TypeId> = if is_generic_new
-            && inferred_new_type_args.is_none()
-            && !has_const_type_params
-        {
-            arg_types
-                .iter()
-                .map(|&arg_type| {
-                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, arg_type)
-                })
-                .collect()
-        } else {
-            arg_types.clone()
-        };
-
         self.ensure_relation_input_ready(constructor_type);
-        self.ensure_relation_inputs_ready(&arg_types_for_resolution);
+        self.ensure_relation_inputs_ready(&arg_types);
 
         // When the constructor type is still a Lazy(DefId) reference (e.g., for
         // `declare var Proxy: ProxyConstructor` where ProxyConstructor's DefId→SymbolId
@@ -1509,20 +1445,20 @@ impl<'a> CheckerState<'a> {
         // Delegate to Solver for constructor resolution, passing contextual type
         // so generic constructors like `new Promise(...)` can infer type parameters
         // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
-        let result = self.resolve_new_with_checker_adapter(
+        let new_resolution = self.resolve_new_with_checker_adapter_evidence(
             constructor_type,
-            &arg_types_for_resolution,
+            &arg_types,
             false,
             contextual_type,
         );
+        let result = new_resolution.result;
+        let relation_evidence = new_resolution.relation_evidence;
+
         match result {
             CallResult::Success(mut return_type) => {
-                if is_generic_new {
-                    return_type = self.default_current_infer_placeholders_to_unknown(return_type);
-                }
                 if let Some(fixed_return) = self.typed_array_length_constructor_return_type(
                     new_expr.expression,
-                    &arg_types_for_resolution,
+                    &arg_types,
                     return_type,
                 ) {
                     return_type = fixed_return;
@@ -1577,13 +1513,6 @@ impl<'a> CheckerState<'a> {
                         self.class_instance_type_for_circular_new(new_expr.expression)
                 {
                     return fixed;
-                }
-                if let Some(ref type_args) = inferred_new_type_args
-                    && self.ctx.types.get_display_alias(return_type).is_none()
-                    && let Some(app) =
-                        self.explicit_class_new_application(new_expr.expression, type_args.clone())
-                {
-                    self.ctx.types.store_display_alias(return_type, app);
                 }
                 // When explicit type arguments were provided (e.g., `new D<string>()`),
                 // the checker pre-applied them to the construct signature, making
@@ -1847,18 +1776,14 @@ impl<'a> CheckerState<'a> {
                             false
                         };
                         if !elaborated {
-                            let _ =
-                                self.check_argument_assignable_or_report(actual, expected, arg_idx);
+                            let _ = self.report_argument_assignability_with_evidence(
+                                &relation_evidence,
+                                actual,
+                                expected,
+                                arg_idx,
+                            );
                         }
                     }
-                }
-                if let Some(contextual_type) = contextual_type
-                    && self.constructor_mismatch_recovery_matches_contextual_return(
-                        constructor_type,
-                        contextual_type,
-                    )
-                {
-                    return contextual_type;
                 }
                 if let Some(ref type_args_list) = explicit_new_type_arguments
                     && !type_args_list.nodes.is_empty()
@@ -1960,5 +1885,65 @@ impl<'a> CheckerState<'a> {
         } else {
             type_id
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::diagnostics::diagnostic_codes;
+
+    #[test]
+    fn ts1209_invalid_optional_chain_from_new_anchors_question_dot() {
+        let source = r#"
+class A {
+    b() {}
+}
+new A?.b();
+"#;
+        let diagnostics = crate::test_utils::check_source_diagnostics(source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| {
+                d.code
+                    == diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL
+            })
+            .expect("expected TS1209");
+
+        let question_dot_start = source.find("?.").expect("expected optional chain token") as u32;
+        assert_eq!(
+            diag.start, question_dot_start,
+            "TS1209 should anchor at `?.`, got: {diag:?}"
+        );
+        assert_eq!(diag.length, 2, "TS1209 should cover only `?.`");
+    }
+
+    /// Regression: `var a = new C(<bad-args>)` must keep `a` typed as the
+    /// constructor's instance type so subsequent property accesses still
+    /// emit TS2339 when the property doesn't exist. Previously, the solver
+    /// returned `TypeId::ERROR` on argument mismatch, which silenced TS2339
+    /// on `a.foo`.
+    #[test]
+    fn new_with_bad_arg_still_emits_ts2339_on_subsequent_member_access() {
+        let source = r#"
+class C1 {
+    constructor(n: number) {}
+}
+var a = new C1("bad");
+a.foo;
+"#;
+        let codes: Vec<u32> = crate::test_utils::check_source_diagnostics(source)
+            .iter()
+            .map(|d| d.code)
+            .collect();
+        assert!(
+            codes.contains(
+                &diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            ),
+            "Expected TS2345 for bad constructor arg: {codes:?}"
+        );
+        assert!(
+            codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "Expected TS2339 on `a.foo` even when `new C1` had bad args: {codes:?}"
+        );
     }
 }

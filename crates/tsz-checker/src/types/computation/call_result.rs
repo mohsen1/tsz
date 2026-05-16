@@ -1,5 +1,6 @@
 //! Call-result handling helpers shared by call expression computation.
 
+use crate::checkers_domain::call_checker::CallRelationEvidence;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
@@ -22,9 +23,41 @@ pub(super) struct CallResultContext<'a> {
     pub(super) is_super_call: bool,
     pub(super) is_optional_chain: bool,
     pub(super) allow_contextual_mismatch_deferral: bool,
+    pub(super) relation_evidence: &'a [CallRelationEvidence],
 }
 
 impl<'a> CheckerState<'a> {
+    fn relation_evidence_for_pair<'e>(
+        relation_evidence: &'e [CallRelationEvidence],
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<&'e crate::query_boundaries::assignability::RelationOutcome> {
+        relation_evidence
+            .iter()
+            .rev()
+            .find(|evidence| evidence.source == source && evidence.target == target)
+            .map(|evidence| &evidence.outcome)
+    }
+
+    pub(crate) fn report_argument_assignability_with_evidence(
+        &mut self,
+        relation_evidence: &[CallRelationEvidence],
+        source: TypeId,
+        target: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        if let Some(outcome) = Self::relation_evidence_for_pair(relation_evidence, source, target) {
+            self.report_argument_assignability_with_outcome(
+                source,
+                target,
+                arg_idx,
+                outcome.clone(),
+            )
+        } else {
+            self.check_argument_assignable_or_report(source, target, arg_idx)
+        }
+    }
+
     fn correlated_union_call_recovery_return(
         &mut self,
         callee_type: TypeId,
@@ -820,6 +853,7 @@ impl<'a> CheckerState<'a> {
             is_super_call,
             is_optional_chain,
             allow_contextual_mismatch_deferral,
+            relation_evidence,
             ..
         } = context;
         match result {
@@ -1258,11 +1292,6 @@ impl<'a> CheckerState<'a> {
                         index,
                         actual,
                     );
-                    let suppress_cascading_constraint_mismatch = self
-                        .callable_mismatch_cascades_from_constraint_diagnostic(
-                            reported_actual,
-                            reported_expected,
-                        );
                     let resolved_reported_actual = self.resolve_lazy_type(reported_actual);
                     let evaluated_reported_expected =
                         self.evaluate_type_with_env(reported_expected);
@@ -1280,7 +1309,6 @@ impl<'a> CheckerState<'a> {
                             });
                     if !suppress_weak
                         && !elaborated
-                        && !suppress_cascading_constraint_mismatch
                         && !suppress_correlated_index_access_never_mismatch
                     {
                         let spread_rest_tuple_display = (!aggregate_rest_mismatch)
@@ -1315,7 +1343,8 @@ impl<'a> CheckerState<'a> {
                                 arg_idx,
                             );
                         } else {
-                            let _ = self.check_argument_assignable_or_report(
+                            let _ = self.report_argument_assignability_with_evidence(
+                                relation_evidence,
                                 reported_actual,
                                 reported_expected,
                                 arg_idx,
@@ -1358,7 +1387,8 @@ impl<'a> CheckerState<'a> {
                                 aggregate_anchor_override.unwrap_or(call_idx),
                             );
                         } else {
-                            let _ = self.check_argument_assignable_or_report(
+                            let _ = self.report_argument_assignability_with_evidence(
+                                relation_evidence,
                                 reported_actual,
                                 reported_expected,
                                 call_idx,
@@ -1401,7 +1431,8 @@ impl<'a> CheckerState<'a> {
                                 aggregate_anchor_override.unwrap_or(last_arg),
                             );
                         } else {
-                            let _ = self.check_argument_assignable_or_report(
+                            let _ = self.report_argument_assignability_with_evidence(
+                                relation_evidence,
                                 reported_actual,
                                 reported_expected,
                                 last_arg,
@@ -1425,7 +1456,8 @@ impl<'a> CheckerState<'a> {
                             aggregate_anchor_override.unwrap_or(call_idx),
                         );
                     } else {
-                        let _ = self.check_argument_assignable_or_report(
+                        let _ = self.report_argument_assignability_with_evidence(
+                            relation_evidence,
                             reported_actual,
                             reported_expected,
                             call_idx,

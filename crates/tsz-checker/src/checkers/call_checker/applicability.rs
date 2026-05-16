@@ -1,6 +1,6 @@
 //! Adapter methods for routing call/new resolution through the solver.
 
-use super::CheckerCallAssignabilityAdapter;
+use super::{CheckerCallAssignabilityAdapter, CheckerCallResolution};
 use crate::query_boundaries::checkers::call::{
     resolve_call, resolve_call_with_arg_sources, resolve_new,
 };
@@ -119,12 +119,33 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> tsz_solver::operations::CallWithCheckerResult {
+        self.resolve_call_with_checker_adapter_evidence(
+            func_type,
+            arg_types,
+            force_bivariant_callbacks,
+            contextual_type,
+            actual_this_type,
+        )
+        .into_solver_tuple()
+    }
+
+    pub(crate) fn resolve_call_with_checker_adapter_evidence(
+        &mut self,
+        func_type: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+        actual_this_type: Option<TypeId>,
+    ) -> CheckerCallResolution {
         self.ensure_relation_input_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
-        let mut checker = CheckerCallAssignabilityAdapter { state: self };
-        resolve_call(
+        let mut checker = CheckerCallAssignabilityAdapter {
+            state: self,
+            relation_evidence: Vec::new(),
+        };
+        let (result, selected_type_predicate, instantiated_params) = resolve_call(
             db,
             &mut checker,
             func_type,
@@ -132,7 +153,13 @@ impl<'a> CheckerState<'a> {
             force_bivariant_callbacks,
             contextual_type,
             actual_this_type,
-        )
+        );
+        CheckerCallResolution {
+            result,
+            selected_type_predicate,
+            instantiated_params,
+            relation_evidence: checker.relation_evidence,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -145,12 +172,36 @@ impl<'a> CheckerState<'a> {
         actual_this_type: Option<TypeId>,
         arg_source_is_type_annotation: &[bool],
     ) -> tsz_solver::operations::CallWithCheckerResult {
+        self.resolve_call_with_checker_adapter_and_arg_sources_evidence(
+            func_type,
+            arg_types,
+            force_bivariant_callbacks,
+            contextual_type,
+            actual_this_type,
+            arg_source_is_type_annotation,
+        )
+        .into_solver_tuple()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_call_with_checker_adapter_and_arg_sources_evidence(
+        &mut self,
+        func_type: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+        actual_this_type: Option<TypeId>,
+        arg_source_is_type_annotation: &[bool],
+    ) -> CheckerCallResolution {
         self.ensure_relation_input_ready(func_type);
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
-        let mut checker = CheckerCallAssignabilityAdapter { state: self };
-        resolve_call_with_arg_sources(
+        let mut checker = CheckerCallAssignabilityAdapter {
+            state: self,
+            relation_evidence: Vec::new(),
+        };
+        let (result, selected_type_predicate, instantiated_params) = resolve_call_with_arg_sources(
             db,
             &mut checker,
             func_type,
@@ -159,7 +210,13 @@ impl<'a> CheckerState<'a> {
             contextual_type,
             actual_this_type,
             arg_source_is_type_annotation,
-        )
+        );
+        CheckerCallResolution {
+            result,
+            selected_type_predicate,
+            instantiated_params,
+            relation_evidence: checker.relation_evidence,
+        }
     }
 
     pub(crate) fn resolve_new_with_checker_adapter(
@@ -169,18 +226,43 @@ impl<'a> CheckerState<'a> {
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
     ) -> CallResult {
+        self.resolve_new_with_checker_adapter_evidence(
+            type_id,
+            arg_types,
+            force_bivariant_callbacks,
+            contextual_type,
+        )
+        .result
+    }
+
+    pub(crate) fn resolve_new_with_checker_adapter_evidence(
+        &mut self,
+        type_id: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+    ) -> CheckerCallResolution {
         self.ensure_relation_input_ready(type_id);
         self.ensure_relation_inputs_ready(arg_types);
 
         let db = self.ctx.types;
-        let mut checker = CheckerCallAssignabilityAdapter { state: self };
-        resolve_new(
+        let mut checker = CheckerCallAssignabilityAdapter {
+            state: self,
+            relation_evidence: Vec::new(),
+        };
+        let result = resolve_new(
             db,
             &mut checker,
             type_id,
             arg_types,
             force_bivariant_callbacks,
             contextual_type,
-        )
+        );
+        CheckerCallResolution {
+            result,
+            selected_type_predicate: None,
+            instantiated_params: None,
+            relation_evidence: checker.relation_evidence,
+        }
     }
 }

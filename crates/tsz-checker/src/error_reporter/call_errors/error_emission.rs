@@ -96,6 +96,18 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         idx: NodeIndex,
     ) {
+        self.error_argument_not_assignable_at_with_relation_failure(
+            arg_type, param_type, idx, None,
+        );
+    }
+
+    pub(crate) fn error_argument_not_assignable_at_with_relation_failure(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        idx: NodeIndex,
+        relation_failure: Option<&crate::query_boundaries::relation_types::RelationFailure>,
+    ) {
         if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
             return;
         }
@@ -153,17 +165,33 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        if self.try_elaborate_array_literal_mismatch_from_failure_reason(idx, arg_type, param_type)
-        {
+        if self.try_elaborate_array_literal_mismatch_with_relation_failure(
+            idx,
+            arg_type,
+            param_type,
+            relation_failure,
+        ) {
             return;
         }
         if self.try_elaborate_callback_body_diagnostics(idx, param_type) {
             return;
         }
-        // Run failure analysis to produce elaboration as related information,
-        // matching tsc's behavior of emitting TS2741/TS2739/TS2740 etc. as
-        // related diagnostics under the primary TS2345.
-        let analysis = self.analyze_assignability_failure(arg_type, param_type);
+        // Use relation evidence from the caller when available. Legacy callers
+        // build a boundary request here so TS2345 fallback rendering still goes
+        // through the same relation/failure path.
+        let fallback_outcome;
+        let failure_reason = if let Some(reason) = relation_failure {
+            Some(reason.to_solver_failure_reason())
+        } else {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (prepared_arg, prepared_param) =
+                self.prepare_assignability_inputs(arg_type, param_type);
+            let request = RelationRequest::call_arg(prepared_arg, prepared_param);
+            fallback_outcome = self.execute_relation_request(&request);
+            fallback_outcome.failure.as_ref().map(
+                crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason,
+            )
+        };
 
         // When the failure reason is NoCommonProperties (weak types with no
         // properties in common), tsc emits TS2559 directly instead of TS2345.
@@ -173,7 +201,7 @@ impl<'a> CheckerState<'a> {
         // literal types (e.g., "12" not "number", "false" not "boolean") in
         // "has no properties in common" messages.
         if matches!(
-            &analysis.failure_reason,
+            &failure_reason,
             Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
         ) {
             // Try to get the literal expression display (unwidened) from the AST
@@ -237,10 +265,9 @@ impl<'a> CheckerState<'a> {
                 argument_idx: idx,
             },
         );
-        if let Some(display) = self.mapped_property_mismatch_parameter_display(
-            &param_str,
-            analysis.failure_reason.as_ref(),
-        ) {
+        if let Some(display) =
+            self.mapped_property_mismatch_parameter_display(&param_str, failure_reason.as_ref())
+        {
             param_str = display;
         }
         if let Some(display) =
@@ -275,7 +302,7 @@ impl<'a> CheckerState<'a> {
             &[&arg_str, &param_str],
         );
 
-        let request = if let Some(reason) = analysis.failure_reason {
+        let request = if let Some(reason) = failure_reason {
             DiagnosticRenderRequest::with_failure_reason(
                 DiagnosticAnchorKind::Exact,
                 diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
@@ -851,10 +878,17 @@ impl<'a> CheckerState<'a> {
                     all_same = false;
                     break;
                 };
-                let analysis = self.analyze_assignability_failure(*arg_type, *param_type);
+                use crate::query_boundaries::assignability::RelationRequest;
+                let (prepared_arg, prepared_param) =
+                    self.prepare_assignability_inputs(*arg_type, *param_type);
+                let request = RelationRequest::call_arg(prepared_arg, prepared_param);
+                let outcome = self.execute_relation_request(&request);
                 let Some(tsz_solver::SubtypeFailureReason::ExcessProperty {
                     property_name, ..
-                }) = analysis.failure_reason
+                }) = outcome
+                    .failure
+                    .as_ref()
+                    .map(crate::query_boundaries::relation_types::RelationFailure::to_solver_failure_reason)
                 else {
                     all_same = false;
                     break;

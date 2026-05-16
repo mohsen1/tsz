@@ -87,6 +87,17 @@ pub(crate) enum RelationFailure {
         source_count: usize,
         target_count: usize,
     },
+    /// Tuple element type mismatch at a specific element index.
+    TupleElementTypeMismatch {
+        index: usize,
+        source_element: TypeId,
+        target_element: TypeId,
+    },
+    /// Array element type mismatch.
+    ArrayElementMismatch {
+        source_element: TypeId,
+        target_element: TypeId,
+    },
     /// Return type incompatibility.
     ReturnTypeMismatch {
         source_return: TypeId,
@@ -125,6 +136,131 @@ pub(crate) enum RelationFailure {
 }
 
 impl RelationFailure {
+    /// Convert this checker-facing failure back to the legacy solver reason
+    /// shape while renderers are still migrating variant by variant.
+    pub(crate) fn to_solver_failure_reason(&self) -> SubtypeFailureReason {
+        match self {
+            Self::MissingProperty {
+                property_name,
+                source_type,
+                target_type,
+            } => SubtypeFailureReason::MissingProperty {
+                property_name: *property_name,
+                source_type: *source_type,
+                target_type: *target_type,
+            },
+            Self::MissingProperties {
+                property_names,
+                source_type,
+                target_type,
+            } => SubtypeFailureReason::MissingProperties {
+                property_names: property_names.clone(),
+                source_type: *source_type,
+                target_type: *target_type,
+            },
+            Self::ExcessProperty {
+                property_name,
+                target_type,
+            } => SubtypeFailureReason::ExcessProperty {
+                property_name: *property_name,
+                target_type: *target_type,
+            },
+            Self::IncompatiblePropertyValue {
+                property_name,
+                source_property_type,
+                target_property_type,
+                nested,
+            } => SubtypeFailureReason::PropertyTypeMismatch {
+                property_name: *property_name,
+                source_property_type: *source_property_type,
+                target_property_type: *target_property_type,
+                nested_reason: nested
+                    .as_ref()
+                    .map(|nested| Box::new(nested.to_solver_failure_reason())),
+            },
+            Self::NoApplicableSignature {
+                source_type,
+                target_type,
+            } => SubtypeFailureReason::TypeMismatch {
+                source_type: *source_type,
+                target_type: *target_type,
+            },
+            Self::TupleArityMismatch {
+                source_count,
+                target_count,
+            } => SubtypeFailureReason::TupleElementMismatch {
+                source_count: *source_count,
+                target_count: *target_count,
+            },
+            Self::TupleElementTypeMismatch {
+                index,
+                source_element,
+                target_element,
+            } => SubtypeFailureReason::TupleElementTypeMismatch {
+                index: *index,
+                source_element: *source_element,
+                target_element: *target_element,
+            },
+            Self::ArrayElementMismatch {
+                source_element,
+                target_element,
+            } => SubtypeFailureReason::ArrayElementMismatch {
+                source_element: *source_element,
+                target_element: *target_element,
+            },
+            Self::ReturnTypeMismatch {
+                source_return,
+                target_return,
+                nested,
+            } => SubtypeFailureReason::ReturnTypeMismatch {
+                source_return: *source_return,
+                target_return: *target_return,
+                nested_reason: nested
+                    .as_ref()
+                    .map(|nested| Box::new(nested.to_solver_failure_reason())),
+            },
+            Self::ParameterTypeMismatch {
+                param_index,
+                source_param,
+                target_param,
+                inner,
+            } => SubtypeFailureReason::ParameterTypeMismatch {
+                param_index: *param_index,
+                source_param: *source_param,
+                target_param: *target_param,
+                inner_reason: inner
+                    .as_ref()
+                    .map(|inner| Box::new(inner.to_solver_failure_reason())),
+            },
+            Self::ParameterCountMismatch {
+                source_count,
+                target_count,
+            } => SubtypeFailureReason::ParameterCountMismatch {
+                source_count: *source_count,
+                target_count: *target_count,
+            },
+            Self::PropertyModifierMismatch { property_name } => {
+                SubtypeFailureReason::PropertyNominalMismatch {
+                    property_name: *property_name,
+                }
+            }
+            Self::WeakUnionViolation {
+                source_type,
+                target_type,
+            } => SubtypeFailureReason::NoCommonProperties {
+                source_type: *source_type,
+                target_type: *target_type,
+            },
+            Self::TypeMismatch {
+                source_type,
+                target_type,
+            } => SubtypeFailureReason::TypeMismatch {
+                source_type: *source_type,
+                target_type: *target_type,
+            },
+        }
+    }
+
     /// Convert a solver `SubtypeFailureReason` into checker-facing `RelationFailure`.
     pub(crate) fn from_solver_reason(reason: SubtypeFailureReason) -> Self {
         match reason {
@@ -232,9 +368,9 @@ impl RelationFailure {
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
                 target_element,
-            } => Self::TypeMismatch {
-                source_type: source_element,
-                target_type: target_element,
+            } => Self::ArrayElementMismatch {
+                source_element,
+                target_element,
             },
             SubtypeFailureReason::IndexSignatureMismatch {
                 source_value_type,
@@ -264,12 +400,13 @@ impl RelationFailure {
                 Self::PropertyModifierMismatch { property_name }
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
+                index,
                 source_element,
                 target_element,
-                ..
-            } => Self::TypeMismatch {
-                source_type: source_element,
-                target_type: target_element,
+            } => Self::TupleElementTypeMismatch {
+                index,
+                source_element,
+                target_element,
             },
             SubtypeFailureReason::MissingIndexSignature { .. }
             | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {

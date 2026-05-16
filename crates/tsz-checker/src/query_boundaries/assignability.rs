@@ -118,6 +118,13 @@ pub(crate) struct RelationRequest {
     /// erased signatures. This is a targeted interface property compatibility
     /// mode, not the default assignment relation.
     pub allow_erased_generic_signature_retry: bool,
+    /// Whether the caller needs object property classification in the outcome.
+    ///
+    /// Property classification can perform additional relation checks for
+    /// matching properties and trimmed object shapes. Keep it opt-in so a
+    /// diagnostic relation request can be cheap when it only needs the boolean
+    /// result and structured failure reason.
+    pub collect_property_classification: bool,
 }
 
 impl RelationRequest {
@@ -130,6 +137,7 @@ impl RelationRequest {
             missing_property_mode: MissingPropertyMode::Report,
             source_is_fresh: false,
             allow_erased_generic_signature_retry: false,
+            collect_property_classification: false,
         }
     }
 
@@ -185,6 +193,12 @@ impl RelationRequest {
     /// Allow a failed generic-signature inference to retry with erased signatures.
     pub(crate) fn with_erased_generic_signature_retry(mut self) -> Self {
         self.allow_erased_generic_signature_retry = true;
+        self
+    }
+
+    /// Request property-level evidence for EPC/weak-union prioritization.
+    pub(crate) fn with_property_classification(mut self) -> Self {
+        self.collect_property_classification = true;
         self
     }
 }
@@ -619,6 +633,18 @@ pub(crate) struct RelationOutcome {
     pub property_classification: Option<super::relation_types::PropertyClassification>,
 }
 
+impl Clone for RelationOutcome {
+    fn clone(&self) -> Self {
+        Self {
+            related: self.related,
+            depth_exceeded: self.depth_exceeded,
+            failure: self.failure.clone(),
+            weak_union_violation: self.weak_union_violation,
+            property_classification: self.property_classification.clone(),
+        }
+    }
+}
+
 /// Execute a `RelationRequest` through the canonical boundary.
 ///
 /// This is the single authoritative entry point for relation queries that
@@ -706,19 +732,23 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     });
 
     let (weak_union_violation, failure) = match analysis {
-        Some(a) => (
-            a.weak_union_violation,
-            a.failure_reason
-                .map(super::relation_types::RelationFailure::from_solver_reason),
-        ),
+        Some(a) => {
+            let failure = a
+                .failure_reason
+                .map(super::relation_types::RelationFailure::from_solver_reason);
+            (a.weak_union_violation, failure)
+        }
         None => (false, None),
     };
 
-    // Always populate property classification when the relation fails.
-    // This provides the canonical property-level analysis that callers like
-    // `should_skip_weak_union_error` need without re-enumerating properties.
-    let property_classification =
-        classify_object_properties(db.as_type_database(), request.source, request.target);
+    // Property classification is useful for EPC/weak-union prioritization, but
+    // it is not free: it may perform additional subtype checks for matching
+    // properties and trimmed object shapes. Collect it only when the caller
+    // asks for that diagnostic evidence.
+    let property_classification = request
+        .collect_property_classification
+        .then(|| classify_object_properties(db.as_type_database(), request.source, request.target))
+        .flatten();
 
     // Suppress ExcessProperty failure when the target has structural features
     // that make EPC inapplicable.

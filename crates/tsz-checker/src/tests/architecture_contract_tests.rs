@@ -3413,6 +3413,8 @@ fn test_relation_failure_covers_semantic_families() {
         "IncompatiblePropertyValue",
         "NoApplicableSignature",
         "TupleArityMismatch",
+        "TupleElementTypeMismatch",
+        "ArrayElementMismatch",
         "ReturnTypeMismatch",
         "ParameterTypeMismatch",
         "ParameterCountMismatch",
@@ -3480,15 +3482,13 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
     );
     assert!(
         source.contains("SubtypeFailureReason::ArrayElementMismatch {")
-            && source.contains("source_type: source_element,")
-            && source.contains("target_type: target_element,")
+            && source.contains("=> Self::ArrayElementMismatch")
+            && source.contains("SubtypeFailureReason::TupleElementTypeMismatch {")
+            && source.contains("=> Self::TupleElementTypeMismatch")
             && source.contains("SubtypeFailureReason::IndexSignatureMismatch {")
             && source.contains("source_type: source_value_type,")
-            && source.contains("target_type: target_value_type,")
-            && source.contains("SubtypeFailureReason::TupleElementTypeMismatch {")
-            && source.contains("source_type: source_element,")
-            && source.contains("target_type: target_element,"),
-        "element/index-specific solver mismatches must normalize through TypeMismatch using the concrete element/value types"
+            && source.contains("target_type: target_value_type,"),
+        "array/tuple element mismatches must retain element detail, while index-signature mismatches normalize through TypeMismatch"
     );
 }
 
@@ -4221,10 +4221,9 @@ fn test_checker_file_size_ceiling() {
     // (#1869); 3095→3105 for the globalThis property/element access TS7017/
     // TS7053 emission fix and intersection-annotation TS2339 receiver display;
     // 3105→3130 for contextual implicit-any deferral and class recovery guards;
-    // 3130→3145 for generic assertion predicate instantiation fix (issue #5790);
-    // 3145→3148 for the Kysely alias-identity included-alias assignability path.
+    // 3130→3145 for generic assertion predicate instantiation fix (issue #5790).
     // Track a future split as a follow-up.
-    const MAX_LOC_CEILING: usize = 3148;
+    const MAX_LOC_CEILING: usize = 3145;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest checker source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \

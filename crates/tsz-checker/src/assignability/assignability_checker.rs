@@ -706,8 +706,14 @@ impl<'a> CheckerState<'a> {
                 .and_then(|def_id| self.ctx.definition_store.get(def_id))
                 .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
         };
-        if is_type_alias_application(source)
-            && is_type_alias_application(target)
+        let alias_application_args = |type_id: TypeId| {
+            crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+                .and_then(|app| is_type_alias_application(type_id).then(|| app.args.clone()))
+        };
+        if let (Some(source_args), Some(target_args)) = (
+            alias_application_args(source),
+            alias_application_args(target),
+        ) && source_args == target_args
             && crate::query_boundaries::assignability::are_types_structurally_identical(
                 self.ctx.types,
                 &self.ctx,
@@ -2025,11 +2031,15 @@ impl<'a> CheckerState<'a> {
         // can downgrade via deferred conditional types or other checker-specific
         // semantic rules.
         if outcome.related
-            && self
-                .checker_only_assignability_failure_reason(request.source, request.target)
-                .is_some()
+            && let Some(reason) =
+                self.checker_only_assignability_failure_reason(request.source, request.target)
         {
             outcome.related = false;
+            outcome.failure = Some(
+                crate::query_boundaries::relation_types::RelationFailure::from_solver_reason(
+                    reason,
+                ),
+            );
         }
 
         outcome

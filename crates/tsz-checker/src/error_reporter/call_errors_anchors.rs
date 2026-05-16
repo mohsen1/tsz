@@ -320,7 +320,8 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         param_type: TypeId,
     ) -> Option<NodeIndex> {
-        use crate::query_boundaries::common::SubtypeFailureReason;
+        use crate::query_boundaries::assignability::RelationRequest;
+        use crate::query_boundaries::relation_types::RelationFailure;
         use tsz_parser::parser::syntax_kind_ext;
 
         let source_type = self.get_type_of_node(arg_idx);
@@ -379,12 +380,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let analysis = self.analyze_assignability_failure(source_type, effective_param_type);
-        match analysis.failure_reason.as_ref() {
+        let (prepared_source, prepared_target) =
+            self.prepare_assignability_inputs(source_type, effective_param_type);
+        let request = RelationRequest::assign(prepared_source, prepared_target);
+        let outcome = self.execute_relation_request(&request);
+        match outcome.failure.as_ref() {
             Some(
-                SubtypeFailureReason::MissingProperty { .. }
-                | SubtypeFailureReason::MissingProperties { .. }
-                | SubtypeFailureReason::OptionalPropertyRequired { .. },
+                RelationFailure::MissingProperty { .. }
+                | RelationFailure::MissingProperties { .. }
+                | RelationFailure::PropertyModifierMismatch { .. },
             ) => Some(arg_idx),
             _ => None,
         }

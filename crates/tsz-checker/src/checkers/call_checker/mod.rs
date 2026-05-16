@@ -50,8 +50,34 @@ pub(crate) struct OverloadResolution {
     pub(crate) selected_type_predicate: SelectedTypePredicate,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CallRelationEvidence {
+    pub(crate) source: TypeId,
+    pub(crate) target: TypeId,
+    pub(crate) outcome: crate::query_boundaries::assignability::RelationOutcome,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CheckerCallResolution {
+    pub(crate) result: CallResult,
+    pub(crate) selected_type_predicate: SelectedTypePredicate,
+    pub(crate) instantiated_params: Option<Vec<tsz_solver::ParamInfo>>,
+    pub(crate) relation_evidence: Vec<CallRelationEvidence>,
+}
+
+impl CheckerCallResolution {
+    pub(crate) fn into_solver_tuple(self) -> tsz_solver::operations::CallWithCheckerResult {
+        (
+            self.result,
+            self.selected_type_predicate,
+            self.instantiated_params,
+        )
+    }
+}
+
 pub(super) struct CheckerCallAssignabilityAdapter<'s, 'ctx> {
     pub(super) state: &'s mut CheckerState<'ctx>,
+    pub(super) relation_evidence: Vec<CallRelationEvidence>,
 }
 
 impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
@@ -66,7 +92,21 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        if self.state.is_assignable_to(source, target) {
+        let (prepared_source, prepared_target) =
+            self.state.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::call_arg(
+            prepared_source,
+            prepared_target,
+        )
+        .with_property_classification();
+        let outcome = self.state.execute_relation_request(&request);
+        let related = outcome.related;
+        if related {
+            self.relation_evidence.push(CallRelationEvidence {
+                source: prepared_source,
+                target: prepared_target,
+                outcome,
+            });
             return true;
         }
         if self
@@ -75,6 +115,11 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return true;
         }
+        self.relation_evidence.push(CallRelationEvidence {
+            source: prepared_source,
+            target: prepared_target,
+            outcome,
+        });
         false
     }
     fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {

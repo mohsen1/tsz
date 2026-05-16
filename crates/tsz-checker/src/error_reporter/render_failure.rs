@@ -496,13 +496,42 @@ impl<'a> CheckerState<'a> {
                     *source_visibility,
                     *target_visibility,
                 );
-                Diagnostic::error(
+                let mut diag = Diagnostic::error(
                     file_name,
                     start,
                     length,
                     base,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                )
+                );
+                let nominal_detail = self
+                    .nominal_mismatch_detail(source, target, *property_name)
+                    .or_else(|| {
+                        (source_visibility == target_visibility
+                            && *source_visibility != tsz_solver::Visibility::Public)
+                            .then(|| match source_visibility {
+                                tsz_solver::Visibility::Private => format_message(
+                                    diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
+                                    &[&prop_name],
+                                ),
+                                tsz_solver::Visibility::Protected => format!(
+                                    "Types have separate declarations of a protected property '{prop_name}'."
+                                ),
+                                tsz_solver::Visibility::Public => unreachable!(
+                                    "public visibility is excluded by the enclosing guard"
+                                ),
+                            })
+                    });
+                if let Some(detail) = nominal_detail {
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: diag.file.clone(),
+                        start: diag.start,
+                        length: diag.length,
+                        message_text: detail,
+                        category: DiagnosticCategory::Message,
+                        code: reason.diagnostic_code(),
+                    });
+                }
+                diag
             }
             SubtypeFailureReason::PropertyNominalMismatch { property_name } => self
                 .render_property_nominal_mismatch(
@@ -1049,6 +1078,26 @@ impl<'a> CheckerState<'a> {
                 )
             }
         }
+    }
+
+    /// Render the checker-facing relation failure shape produced by
+    /// `query_boundaries`.
+    ///
+    /// This is intentionally parallel to `render_failure_reason` during the
+    /// migration: diagnostic paths can consume boundary-owned evidence without
+    /// re-running solver failure analysis, while specialized renderer logic can
+    /// move over variant by variant.
+    pub(crate) fn render_relation_failure(
+        &mut self,
+        reason: &crate::query_boundaries::relation_types::RelationFailure,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+        depth: u32,
+    ) -> Diagnostic {
+        let solver_reason = reason.to_solver_failure_reason();
+
+        self.render_failure_reason(&solver_reason, source, target, idx, depth)
     }
 
     fn object_literal_property_literal_union_alias_target_display(
@@ -2750,13 +2799,24 @@ impl<'a> CheckerState<'a> {
                 visibility,
                 None,
             );
-            return Diagnostic::error(
+            let mut diag = Diagnostic::error(
                 file_name,
                 start,
                 length,
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
+            if let Some(detail) = self.nominal_mismatch_detail(source, target, property_name) {
+                diag.related_information.push(DiagnosticRelatedInformation {
+                    file: diag.file.clone(),
+                    start: diag.start,
+                    length: diag.length,
+                    message_text: detail,
+                    category: DiagnosticCategory::Message,
+                    code: reason.diagnostic_code(),
+                });
+            }
+            return diag;
         }
 
         let (source_str, target_str) =

@@ -498,6 +498,7 @@ impl<'a> CheckerState<'a> {
                 is_super_call: false,
                 is_optional_chain: false,
                 allow_contextual_mismatch_deferral: true,
+                relation_evidence: &[],
             },
         );
 
