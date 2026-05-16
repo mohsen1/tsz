@@ -59,7 +59,6 @@ impl<'a> CheckerState<'a> {
 
                     let same_key_space = self.contextual_keyof_parameter_types_share_key_space(
                         param_type,
-                        candidate_type,
                         candidate_keyof,
                     );
                     if same_key_space
@@ -88,41 +87,16 @@ impl<'a> CheckerState<'a> {
     fn contextual_keyof_parameter_types_share_key_space(
         &mut self,
         param_type: TypeId,
-        candidate_type: TypeId,
         candidate_keyof: TypeId,
     ) -> bool {
         if self.types_are_mutually_assignable(param_type, candidate_keyof) {
             return true;
         }
 
-        if self.keyof_operand_matches_candidate_type(param_type, candidate_type) {
-            return true;
-        }
-
         self.ctx
             .types
             .get_display_alias(param_type)
-            .is_some_and(|alias| {
-                alias == candidate_keyof
-                    || self.types_are_mutually_assignable(alias, candidate_keyof)
-                    || self.keyof_operand_matches_candidate_type(alias, candidate_type)
-            })
-    }
-
-    fn keyof_operand_matches_candidate_type(
-        &mut self,
-        keyed_type: TypeId,
-        candidate_type: TypeId,
-    ) -> bool {
-        let Some(operand) = query_common::keyof_inner_type(self.ctx.types, keyed_type) else {
-            return false;
-        };
-
-        operand == candidate_type
-            || self.ctx.types.get_display_alias(operand) == Some(candidate_type)
-            || self.ctx.types.get_display_alias(candidate_type) == Some(operand)
-            || self.evaluate_type_for_assignability(operand)
-                == self.evaluate_type_for_assignability(candidate_type)
+            .is_some_and(|alias| alias == candidate_keyof)
     }
 
     fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
