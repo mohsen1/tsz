@@ -3715,3 +3715,116 @@ fn test_completions_suppressed_after_numeric_dot_with_jsdoc_trivia() {
         "Completions must be suppressed after `0.<jsdoc>` since the prior token is numeric, got: {items:?}"
     );
 }
+
+// ── Function / callable member completions ──────────────────────────────────
+
+/// Helper that returns the member-completion names for `<source><suffix>`
+/// where the cursor is right after the suffix (at the end of the file).
+fn member_names_at_end(source: &str) -> Vec<String> {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+#[test]
+fn test_completions_function_prototype_members_on_named_function() {
+    let names = member_names_at_end("function add(a,b){return a+b;}\nadd.");
+    for expected in ["name", "length", "apply", "call", "bind", "prototype"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected function member '{expected}' in completions, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_function_prototype_members_on_arrow_function() {
+    let names = member_names_at_end("const mul = (x: number, y: number) => x * y;\nmul.");
+    for expected in ["name", "length", "apply", "call", "bind"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected function member '{expected}' in arrow-function completions, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_function_prototype_members_on_function_expression() {
+    let names = member_names_at_end("const fn = function compute(x: number) { return x; };\nfn.");
+    for expected in ["name", "length", "apply", "call", "bind"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected function member '{expected}' in function-expression completions, got: {names:?}"
+        );
+    }
+}
+
+// ── Array member completions ─────────────────────────────────────────────────
+
+#[test]
+fn test_completions_array_prototype_methods_on_array_literal() {
+    let names = member_names_at_end("const arr = [1, 2, 3];\narr.");
+    for expected in [
+        "length",
+        "push",
+        "pop",
+        "shift",
+        "unshift",
+        "slice",
+        "splice",
+        "map",
+        "filter",
+        "forEach",
+        "find",
+        "findIndex",
+        "some",
+        "every",
+        "indexOf",
+        "lastIndexOf",
+        "join",
+        "reverse",
+        "sort",
+        "concat",
+        "reduce",
+        "reduceRight",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected array member '{expected}' in completions, got: {names:?}"
+        );
+    }
+}
+
+// ── Tuple member completions ─────────────────────────────────────────────────
+
+#[test]
+fn test_completions_array_prototype_methods_on_tuple() {
+    let names = member_names_at_end("const t: [string, number] = [\"a\", 1];\nt.");
+    for expected in [
+        "length", "push", "pop", "map", "filter", "forEach", "slice", "concat",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected array member '{expected}' in tuple completions, got: {names:?}"
+        );
+    }
+}

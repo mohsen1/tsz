@@ -1,6 +1,7 @@
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -90,7 +91,7 @@ impl<'a> CheckerState<'a> {
                     } => {
                         type_id == TypeId::ANY
                             && !from_index_signature
-                            && !self.source_text_declares_property_name(&prop_ident.escaped_text)
+                            && !self.program_declares_property_name(&prop_ident.escaped_text)
                     }
                     _ => false,
                 };
@@ -124,40 +125,83 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_text_declares_property_name(&self, property_name: &str) -> bool {
+    fn program_declares_property_name(&self, property_name: &str) -> bool {
         // DOM replacement interfaces can resolve inherited members to a bare
         // `any` in this synthetic recovery path. Treat well-known DOM members as
         // declared so the recovery reports only genuinely missing properties.
-        if matches!(
-            property_name,
-            "innerText"
-                | "innerHTML"
-                | "outerHTML"
-                | "textContent"
-                | "style"
-                | "id"
-                | "className"
-                | "children"
-                | "parentElement"
-                | "addEventListener"
-                | "removeEventListener"
-        ) {
+        if is_known_dom_callback_property(property_name) {
             return true;
         }
-        let property_pattern = format!("{property_name}:");
-        let readonly_property_pattern = format!("readonly {property_name}:");
-        let method_pattern = format!("{property_name}(");
-        let source_has_decl = |source: &tsz_parser::parser::node::SourceFileData| {
-            let text = source.text.as_ref();
-            text.contains(&property_pattern)
-                || text.contains(&readonly_property_pattern)
-                || text.contains(&method_pattern)
-        };
-        self.ctx.arena.source_files.iter().any(source_has_decl)
+
+        arena_declares_property_name(self.ctx.arena, property_name)
             || self.ctx.all_arenas.as_ref().is_some_and(|arenas| {
                 arenas
                     .iter()
-                    .any(|arena| arena.source_files.iter().any(source_has_decl))
+                    .any(|arena| arena_declares_property_name(arena, property_name))
             })
     }
+}
+
+fn is_known_dom_callback_property(property_name: &str) -> bool {
+    matches!(
+        property_name,
+        "innerText"
+            | "innerHTML"
+            | "outerHTML"
+            | "textContent"
+            | "style"
+            | "id"
+            | "className"
+            | "children"
+            | "parentElement"
+            | "addEventListener"
+            | "removeEventListener"
+    )
+}
+
+fn arena_declares_property_name(arena: &NodeArena, property_name: &str) -> bool {
+    arena
+        .nodes
+        .iter()
+        .any(|node| declared_property_name(arena, node).as_deref() == Some(property_name))
+}
+
+fn declared_property_name(arena: &NodeArena, node: &Node) -> Option<String> {
+    let name_idx = match node.kind {
+        k if k == syntax_kind_ext::PROPERTY_SIGNATURE || k == syntax_kind_ext::METHOD_SIGNATURE => {
+            arena.get_signature(node)?.name
+        }
+        k if k == syntax_kind_ext::PROPERTY_DECLARATION => arena.get_property_decl(node)?.name,
+        k if k == syntax_kind_ext::METHOD_DECLARATION => arena.get_method_decl(node)?.name,
+        k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+            arena.get_accessor(node)?.name
+        }
+        _ => return None,
+    };
+
+    literal_or_computed_property_name(arena, name_idx)
+}
+
+fn literal_or_computed_property_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<String> {
+    if let Some(name) =
+        crate::types_domain::queries::core::get_literal_property_name(arena, name_idx)
+    {
+        return Some(name);
+    }
+
+    let name_node = arena.get(name_idx)?;
+    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+        && let Some(computed) = arena.get_computed_property(name_node)
+    {
+        let expr_node = arena.get(computed.expression)?;
+        if arena.get_identifier(expr_node).is_some() {
+            return None;
+        }
+        return crate::types_domain::queries::core::get_literal_property_name(
+            arena,
+            computed.expression,
+        );
+    }
+
+    None
 }

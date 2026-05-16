@@ -229,6 +229,11 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(&scoped))
                 })
                 .or_else(|| {
+                    (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                        .then(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
+                        .flatten()
+                })
+                .or_else(|| {
                     resolve_decl_type_def_id(type_name)
                         .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 })
