@@ -11,6 +11,7 @@ use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
@@ -120,29 +121,15 @@ impl<'a> CheckerState<'a> {
         callee_expr: NodeIndex,
     ) -> Option<TypeId> {
         let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
-        let crate::symbol_resolver::TypeSymbolResolution::Type(type_sym_id) =
-            self.resolve_identifier_symbol_in_type_position(callee_expr)
-        else {
-            trace!(
-                callee_name,
-                "lib_constructor_return_type_for_type_shadow: no type-position shadow"
-            );
-            return None;
-        };
-        if self.ctx.symbol_is_from_actual_or_cloned_lib(type_sym_id) {
-            trace!(
-                callee_name,
-                type_sym_id = type_sym_id.0,
-                "lib_constructor_return_type_for_type_shadow: type symbol is lib"
-            );
-            return None;
-        }
+        let value_sym_id = self.find_value_symbol_in_libs(callee_name)?;
+        let type_sym_id = self.type_only_non_lib_constructor_shadow(callee_expr, callee_name)?;
         let resolved = self
             .resolve_lib_type_by_name(callee_name)
             .filter(|&ty| !matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN));
         trace!(
             callee_name,
             type_sym_id = type_sym_id.0,
+            value_sym_id = value_sym_id.0,
             resolved = ?resolved,
             "lib_constructor_return_type_for_type_shadow"
         );
@@ -151,30 +138,12 @@ impl<'a> CheckerState<'a> {
 
     fn lib_constructor_type_for_type_shadow(&mut self, callee_expr: NodeIndex) -> Option<TypeId> {
         let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
-        let crate::symbol_resolver::TypeSymbolResolution::Type(type_sym_id) =
-            self.resolve_identifier_symbol_in_type_position(callee_expr)
-        else {
-            trace!(
-                callee_name,
-                "lib_constructor_type_for_type_shadow: no type-position shadow"
-            );
-            return None;
-        };
-        if self.ctx.symbol_is_from_actual_or_cloned_lib(type_sym_id) {
-            trace!(
-                callee_name,
-                type_sym_id = type_sym_id.0,
-                "lib_constructor_type_for_type_shadow: type symbol is lib"
-            );
-            return None;
-        }
+        let value_sym_id = self.find_value_symbol_in_libs(callee_name)?;
+        let type_sym_id = self.type_only_non_lib_constructor_shadow(callee_expr, callee_name)?;
         let constructor_name = format!("{callee_name}Constructor");
         let constructor_type = self
             .resolve_lib_type_by_name(&constructor_name)
-            .or_else(|| {
-                let value_sym_id = self.find_value_symbol_in_libs(callee_name)?;
-                Some(self.get_type_of_symbol(value_sym_id))
-            })?;
+            .or_else(|| Some(self.get_type_of_symbol(value_sym_id)))?;
         trace!(
             callee_name,
             type_sym_id = type_sym_id.0,
@@ -187,6 +156,45 @@ impl<'a> CheckerState<'a> {
         );
         crate::query_boundaries::common::has_construct_signatures(self.ctx.types, constructor_type)
             .then_some(constructor_type)
+    }
+
+    fn type_only_non_lib_constructor_shadow(
+        &mut self,
+        callee_expr: NodeIndex,
+        callee_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let crate::symbol_resolver::TypeSymbolResolution::Type(type_sym_id) =
+            self.resolve_identifier_symbol_in_type_position(callee_expr)
+        else {
+            trace!(
+                callee_name,
+                "lib constructor shadow: no type-position shadow"
+            );
+            return None;
+        };
+        if self.ctx.symbol_is_from_actual_or_cloned_lib(type_sym_id) {
+            trace!(
+                callee_name,
+                type_sym_id = type_sym_id.0,
+                "lib constructor shadow: type symbol is lib"
+            );
+            return None;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(type_sym_id) else {
+            return None;
+        };
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        if symbol.has_any_flags(value_flags_except_module) && !symbol.is_type_only {
+            trace!(
+                callee_name,
+                type_sym_id = type_sym_id.0,
+                "lib constructor shadow: local type also has a value constructor"
+            );
+            return None;
+        }
+
+        Some(type_sym_id)
     }
 
     ///
