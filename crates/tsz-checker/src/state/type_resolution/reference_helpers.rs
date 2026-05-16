@@ -11,6 +11,33 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_type_only_import_alias_target_symbol(
+        &mut self,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let alias_sym_id = self.ctx.binder.file_locals.get(name)?;
+        let alias_symbol = self.ctx.binder.get_symbol(alias_sym_id)?;
+        if !alias_symbol.has_any_flags(symbol_flags::ALIAS) || !alias_symbol.is_type_only {
+            return None;
+        }
+        let module_name = alias_symbol.import_module.clone()?;
+        let import_name = alias_symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(name)
+            .to_owned();
+        let target_sym_id = self.resolve_cross_file_export_from_file(
+            &module_name,
+            &import_name,
+            Some(self.ctx.current_file_idx),
+        )?;
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(target_sym_id) {
+            self.ctx
+                .register_symbol_file_target(target_sym_id, file_idx);
+        }
+        Some(target_sym_id)
+    }
+
     pub(crate) fn get_reference_type_params_for_symbol(
         &mut self,
         sym_id: SymbolId,
@@ -223,39 +250,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 TypeSymbolResolution::ValueOnly(sym_id) => {
-                    if let Some(alias_sym_id) = self.ctx.binder.file_locals.get(name)
-                        && let Some(alias_symbol) = self.ctx.binder.get_symbol(alias_sym_id)
-                        && alias_symbol.has_any_flags(symbol_flags::ALIAS)
-                        && alias_symbol.is_type_only
-                        && let Some(module_name) = alias_symbol.import_module.as_ref()
+                    if let Some(target_sym_id) =
+                        self.resolve_type_only_import_alias_target_symbol(name)
                     {
-                        let import_name = alias_symbol.import_name.as_deref().unwrap_or(name);
-                        let source_file_idx = self.ctx.current_file_idx;
-                        if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
-                            module_name,
-                            import_name,
-                            Some(source_file_idx),
-                        ) {
-                            if let Some(file_idx) =
-                                self.ctx.resolve_symbol_file_index(target_sym_id)
-                            {
-                                self.ctx
-                                    .register_symbol_file_target(target_sym_id, file_idx);
-                            }
-                            return self.type_reference_symbol_type(target_sym_id);
-                        }
-                    }
-                    if let Some(def_id) = self.resolve_entity_name_text_to_def_id_for_lowering(name)
-                    {
-                        if let Some((type_sym_id, owner_file_idx)) =
-                            self.ctx.def_symbol_identity(def_id)
-                        {
-                            if let Some(file_idx) = owner_file_idx {
-                                self.ctx.register_symbol_file_target(type_sym_id, file_idx);
-                            }
-                            return self.type_reference_symbol_type(type_sym_id);
-                        }
-                        return factory.lazy(def_id);
+                        return self.type_reference_symbol_type(target_sym_id);
                     }
                     self.report_wrong_meaning(
                         name,

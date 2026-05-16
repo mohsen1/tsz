@@ -477,6 +477,10 @@ impl<'a> CheckerState<'a> {
                 let is_array_like_name = matches!(name, "Array" | "ReadonlyArray" | "ConcatArray");
                 if has_libs
                     && !is_array_like_name
+                    && !matches!(
+                        name,
+                        "NoInfer" | "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize"
+                    )
                     && !self.ctx.file_local_type_shadow_for_lib_name(name)
                     && let Some(def_id) = self.ctx.actual_lib_def_id_for_bare_name(name)
                     && let Some(lib_type) = self.resolve_lib_type_by_name(name)
@@ -534,11 +538,10 @@ impl<'a> CheckerState<'a> {
                         Some(sym_id)
                     }
                     TypeSymbolResolution::ValueOnly(_) => {
-                        if let Some(sym_id) = self
-                            .resolve_type_symbol_for_lowering(type_name_idx)
-                            .map(tsz_binder::SymbolId)
+                        if let Some(target_sym_id) =
+                            self.resolve_type_only_import_alias_target_symbol(name)
                         {
-                            Some(sym_id)
+                            Some(target_sym_id)
                         } else {
                             // Route through wrong-meaning boundary: value used as type
                             use crate::query_boundaries::name_resolution::NameLookupKind;

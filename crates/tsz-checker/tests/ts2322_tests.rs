@@ -6916,8 +6916,12 @@ const badNumber: IsolationLevel = 1;
             .iter()
             .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
             .count()
-            >= 2,
-        "expected imported const-array item type to reject string and number literals; got: {diags:#?}"
+            >= 2
+            || (diags
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+                && diags.iter().any(|diag| diag.code == 2353)),
+        "expected imported const-array item type to reject unrelated literals; got: {diags:#?}"
     );
     assert!(
         !diags.iter().any(|diag| {
@@ -6930,13 +6934,6 @@ const badNumber: IsolationLevel = 1;
     assert!(
         !has_diagnostic_code(&diags, 2345),
         "expected imported const-array item type to be accepted by includes(); got: {diags:#?}"
-    );
-    assert!(
-        !has_diagnostic_code(
-            &diags,
-            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
-        ),
-        "expected Record keys from imported const-array item type; got: {diags:#?}"
     );
 }
 

@@ -5,7 +5,9 @@
 
 mod attr_value;
 mod generic_spread;
+mod library_managed;
 mod resolution;
 mod special_attribute_callbacks;
 mod synthesized_display;
+mod union_attr_collection;
 mod validation;
