@@ -83,7 +83,7 @@ impl<'a> LoweringPass<'a> {
                             });
 
                         if need_downlevel_read {
-                            self.transforms.helpers_mut().read = true;
+                            self.transforms.helpers_mut().mark_read();
                         }
                     }
                     for &decl in &decl_list.declarations.nodes {
@@ -146,7 +146,7 @@ impl<'a> LoweringPass<'a> {
                                 })
                         })
                     {
-                        self.transforms.helpers_mut().rest = true;
+                        self.transforms.helpers_mut().mark_rest();
                     }
                     if is_destructuring_assignment {
                         let prev = self.in_assignment_target;
@@ -513,7 +513,7 @@ impl<'a> LoweringPass<'a> {
                                 .is_some_and(|elem| elem.dot_dot_dot_token)
                         })
                     {
-                        self.transforms.helpers_mut().rest = true;
+                        self.transforms.helpers_mut().mark_rest();
                     }
                     for &elem in &pattern.elements.nodes {
                         self.visit(elem);
@@ -640,7 +640,7 @@ impl<'a> LoweringPass<'a> {
                         && self.ctx.needs_es2018_lowering
                         && self.assignment_pattern_has_object_rest(idx)
                     {
-                        self.transforms.helpers_mut().rest = true;
+                        self.transforms.helpers_mut().mark_rest();
                     }
 
                     // Skip transform if this is the left side of a destructuring assignment
@@ -683,11 +683,11 @@ impl<'a> LoweringPass<'a> {
                             TransformDirective::ES5ArrayLiteral { array_literal: idx },
                         );
                         // Flag that __spreadArray helper is needed
-                        self.transforms.helpers_mut().spread_array = true;
+                        self.transforms.helpers_mut().mark_spread_array();
                         // When downlevelIteration is enabled, spread on iterables
                         // needs __read to convert iterator results to arrays.
                         if self.ctx.options.downlevel_iteration {
-                            self.transforms.helpers_mut().read = true;
+                            self.transforms.helpers_mut().mark_read();
                         }
                     }
 

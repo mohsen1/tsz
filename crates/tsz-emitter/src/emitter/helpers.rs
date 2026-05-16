@@ -827,10 +827,22 @@ impl<'a> Printer<'a> {
                 && binary.operator_token == SyntaxKind::EqualsToken as u16
                 && self.assignment_pattern_has_object_rest(binary.left)
             {
-                let source_simple = self
+                let mut source_simple = self
                     .arena
                     .get(binary.right)
                     .is_some_and(|n| n.is_identifier());
+                if source_simple {
+                    let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        binary.right,
+                    );
+                    if let Some(left_node) = self.arena.get(binary.left)
+                        && !rhs_name.is_empty()
+                        && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+                    {
+                        source_simple = false;
+                    }
+                }
                 count +=
                     self.estimate_object_rest_assignment_pattern_temps(binary.left, source_simple);
             }
@@ -882,16 +894,34 @@ impl<'a> Printer<'a> {
                 };
                 if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
                     && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                    && self.assignment_pattern_has_object_rest(prop.initializer)
                 {
-                    let nested_source_simple = self
-                        .arena
-                        .get(prop.initializer)
-                        .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
-                    count += self.estimate_object_rest_assignment_pattern_temps(
-                        prop.initializer,
-                        nested_source_simple,
-                    );
+                    let is_dynamic_computed =
+                        self.arena.get(prop.name).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        }) && self.get_property_key_text(prop.name).is_none();
+                    if is_dynamic_computed {
+                        count += 1;
+                        if self.arena.get(prop.initializer).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        }) {
+                            count += 1;
+                        }
+                    }
+
+                    if self.assignment_pattern_has_object_rest(prop.initializer) {
+                        let nested_source_simple = self
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+                        count += self.estimate_object_rest_assignment_pattern_temps(
+                            prop.initializer,
+                            nested_source_simple,
+                        );
+                    }
                 }
             }
 

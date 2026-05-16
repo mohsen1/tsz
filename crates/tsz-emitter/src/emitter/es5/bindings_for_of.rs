@@ -902,12 +902,14 @@ impl<'a> Printer<'a> {
                                 &lit.elements.nodes,
                                 &temp,
                                 &mut first,
+                                None,
                             );
                         } else {
                             self.emit_assignment_object_destructuring(
                                 &lit.elements.nodes,
                                 &element_expr,
                                 &mut first,
+                                None,
                             );
                         }
                     }
