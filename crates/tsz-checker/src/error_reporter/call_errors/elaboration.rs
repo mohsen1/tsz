@@ -57,10 +57,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let same_key_space = (self.is_assignable_to(param_type, candidate_keyof)
-                        && self.is_assignable_to(candidate_keyof, param_type))
-                        || self.format_type_for_assignability_message(param_type)
-                            == self.format_type_for_assignability_message(candidate_keyof);
+                    let same_key_space = self.contextual_keyof_parameter_types_share_key_space(
+                        param_type,
+                        candidate_keyof,
+                    );
                     if same_key_space
                         && query_common::type_has_displayable_name(
                             self.ctx.types.as_type_database(),
@@ -82,6 +82,25 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn contextual_keyof_parameter_types_share_key_space(
+        &mut self,
+        param_type: TypeId,
+        candidate_keyof: TypeId,
+    ) -> bool {
+        if self.types_are_mutually_assignable(param_type, candidate_keyof) {
+            return true;
+        }
+
+        self.ctx
+            .types
+            .get_display_alias(param_type)
+            .is_some_and(|alias| alias == candidate_keyof)
+    }
+
+    fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
+        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
     }
 
     pub(in crate::error_reporter::call_errors) fn contextual_constraint_parameter_display(
