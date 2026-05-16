@@ -62,17 +62,23 @@ default_cargo_build_jobs() {
   mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
   case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
     unit|unit-archive|unit-shard)
-      # Unit builds compile large lib-test targets concurrently with downstream
-      # crates. tsz-checker's lib-test is the peak RSS consumer (~6-8 GiB at
-      # cgu=4). Sizing at 8192 MiB/job gives 32 GiB / 8 GiB = 4 cargo build
-      # jobs on the 32 GiB cloud runners — restoring the historical default
-      # (commit 111d24ba98 used 7168 MiB/job globally, also yielding 4 jobs).
-      # The 16384 MiB/job cap was added in commit 1bddbbfbf4 alongside the
-      # sccache disablement as a bundled defensive move; with sccache still
-      # off the smaller cap is safe. If rustc starts hitting SIGKILL on the
-      # checker lib-test compile, override via TSZ_CI_UNIT_CARGO_MB_PER_JOB
-      # (12288 → 2 jobs, 16384 → 2 jobs).
-      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-8192}"
+      # Unit lib-test compiles peak at ~10-12 GiB RSS per rustc when multiple
+      # downstream crates link the workspace's interned-types graph in parallel.
+      # The 8192 MiB/job sizing tried in PR #7573 (4 cargo build jobs) caused
+      # SIGKILL on tsz-solver / tsz-checker / tsz-emitter lib-test compiles
+      # under sustained PR load on 16 May 2026 — observed in unit_compile logs
+      # as `(signal: 9, SIGKILL: kill)` after main was warmed with sccache-built
+      # rlibs that triggered different fingerprint paths during PR rebuilds.
+      #
+      # 12288 MiB/job → floor(32/12) = 2 cargo build jobs. That matches the
+      # known-safe behavior from commit 1bddbbfbf4 (16384 MiB/job, also 2 jobs)
+      # while leaving a thin margin for the 10-12 GiB lib-test peak. We do not
+      # restore the 16384 MiB cap because the empirical peak fits in 12 GiB and
+      # giving 2 jobs full reservation rights to 32 GiB wastes parallelism.
+      #
+      # Override via TSZ_CI_UNIT_CARGO_MB_PER_JOB on the runner if you need to
+      # bisect — 16384 was the very-conservative pre-#7573 default.
+      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-12288}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
