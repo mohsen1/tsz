@@ -30,6 +30,7 @@ TypeScript/tests/cases/compiler/objectFreeze.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/ramdaToolsNoInfinite2.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
+TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts
 TypeScript/tests/cases/compiler/relationComplexityError.ts
 TypeScript/tests/cases/compiler/strictOptionalProperties1.ts
 TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
@@ -39,7 +40,6 @@ TypeScript/tests/cases/compiler/temporal.ts
 TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
 TypeScript/tests/cases/compiler/unspecializedConstraints.ts
-TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBlock26.ts
 TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts
 TypeScript/tests/cases/conformance/controlFlow/controlFlowAliasing.ts
 TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts

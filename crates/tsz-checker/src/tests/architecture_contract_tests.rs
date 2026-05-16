@@ -2092,7 +2092,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 // Prompt 4.2 — Dependency Direction Tests
 // =============================================================================
 
-/// Helper: recursively walk a directory collecting .rs files (skipping tests/).
+/// Helper: recursively walk a directory collecting production `.rs` files.
 fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -2106,6 +2106,9 @@ fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
             }
             walk_rs_files_recursive(&path, files);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
+            if path.file_name().is_some_and(|name| name == "tests.rs") {
+                continue;
+            }
             files.push(path);
         }
     }
@@ -2229,6 +2232,14 @@ fn test_emitter_source_text_recovery_surface_does_not_grow() {
 
     let mut source_text_lines = Vec::new();
     for path in files {
+        let rel = path
+            .strip_prefix(&emitter_src)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel.ends_with("tests.rs") || rel.contains("/tests/") {
+            continue;
+        }
         let src = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
         for (line_num, line) in src.lines().enumerate() {
@@ -2242,7 +2253,7 @@ fn test_emitter_source_text_recovery_surface_does_not_grow() {
         }
     }
 
-    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 909;
+    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 828;
     assert!(
         source_text_lines.len() <= SOURCE_TEXT_RECOVERY_LINE_CEILING,
         "Emitter source-text recovery surface grew to {} lines (ceiling: {}). \

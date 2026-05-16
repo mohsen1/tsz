@@ -646,6 +646,41 @@ impl<'a> Printer<'a> {
                     if let Some(cn) = self.arena.get(export.export_clause)
                         && let Some(class) = self.arena.get_class(cn)
                     {
+                        if let Some(class_name) = self.get_identifier_text_opt(class.name) {
+                            if self.ctx.target_es5 {
+                                if let Some(output) = self.render_simple_tc39_decorated_class_es5(
+                                    cn,
+                                    export.export_clause,
+                                    &class_name,
+                                    &class_name,
+                                ) {
+                                    self.write(&output);
+                                    if !self.writer.is_at_line_start() {
+                                        self.write_line();
+                                    }
+                                    self.write("export default ");
+                                    self.write(&class_name);
+                                    self.write(";");
+                                    return;
+                                }
+                            } else {
+                                if let Some(expr) = self.capture_tc39_decorated_class_expression(
+                                    export.export_clause,
+                                    &class_name,
+                                ) {
+                                    self.write("let ");
+                                    self.write(&class_name);
+                                    self.write(" = ");
+                                    self.write(&expr);
+                                    self.write(";");
+                                    self.write_line();
+                                    self.write("export default ");
+                                    self.write(&class_name);
+                                    self.write(";");
+                                    return;
+                                }
+                            }
+                        }
                         if class.name.is_none() {
                             if self.ctx.target_es5 {
                                 if let Some(output) = self.render_simple_tc39_decorated_class_es5(
@@ -660,23 +695,15 @@ impl<'a> Printer<'a> {
                                     return;
                                 }
                             } else {
-                                let before_len = self.writer.len();
-                                if self.emit_tc39_decorated_class_expression(
+                                if let Some(expr) = self.capture_tc39_decorated_class_expression(
                                     export.export_clause,
                                     "default",
                                 ) {
-                                    let after_len = self.writer.len();
-                                    let full_output = self.writer.get_output().to_string();
-                                    let expr = full_output[before_len..after_len]
-                                        .trim_end_matches('\n')
-                                        .to_string();
-                                    self.writer.truncate(before_len);
                                     self.write("export default ");
                                     self.write(&expr);
                                     self.write(";");
                                     return;
                                 }
-                                self.writer.truncate(before_len);
                             }
                         }
 
@@ -694,6 +721,7 @@ impl<'a> Printer<'a> {
                             true,
                             None,
                             None,
+                            false,
                         );
                     }
                 } else {
@@ -967,7 +995,14 @@ impl<'a> Printer<'a> {
                 self.write("export ");
             }
             // Emit the class with modifiers suppressed (decorators already emitted)
-            self.emit_class_es6_with_options(clause_node, export.export_clause, true, None, None);
+            self.emit_class_es6_with_options(
+                clause_node,
+                export.export_clause,
+                true,
+                None,
+                None,
+                false,
+            );
         } else {
             if !is_merged_subsequent && !clause_emits_export_prefix {
                 self.write("export ");

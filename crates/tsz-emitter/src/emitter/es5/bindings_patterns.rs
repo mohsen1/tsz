@@ -2213,9 +2213,8 @@ impl<'a> Printer<'a> {
             // Then: const env = ...; try { const d1 = __addDisposable(env, d1_1, ...); body } catch/finally
             let value_temp = loop_result_name.clone();
 
-            // Emit value assignment to a temp that was declared in the hoisted vars
-            let value_assign_temp = self.get_temp_var_name();
-            self.hoisted_for_of_temps.push(value_assign_temp.clone());
+            // Emit value assignment to the temp already reserved with the loop temps.
+            let value_assign_temp = value_temp_name.clone();
             self.write(&value_assign_temp);
             self.write(" = ");
             self.write(&value_temp);
@@ -2230,9 +2229,13 @@ impl<'a> Printer<'a> {
             self.generated_temp_names
                 .insert(error_container_name.clone());
 
-            // Generate temp name for the renamed variable: d1 -> d1_1
-            let (env_name, error_name, result_name) = self.next_disposable_env_names();
-            let temp_var_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
+            // Generate temp name for the renamed variable: d1 -> d1_1.
+            // The surrounding for-await transform already owns e_1, but tsc
+            // still uses env_1/result_1 for the resource region and only
+            // bumps the catch variable to e_2.
+            let (env_name, error_name, result_name, env_id) =
+                self.next_disposable_env_names_allowing_error_gap();
+            let temp_var_name = format!("{var_name}_{env_id}");
             self.generated_temp_names.insert(temp_var_name.clone());
 
             // Determine if we use const or var based on target
