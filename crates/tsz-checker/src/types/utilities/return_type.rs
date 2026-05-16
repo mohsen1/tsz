@@ -419,6 +419,11 @@ impl<'a> CheckerState<'a> {
         if self.return_expression_is_const_assertion(expr_idx) {
             return type_id;
         }
+        if self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == tsz_parser::parser::syntax_kind_ext::CONDITIONAL_EXPRESSION
+        }) {
+            return type_id;
+        }
         if self.is_fresh_literal_expression(expr_idx) {
             return self.widen_literal_type(type_id);
         }

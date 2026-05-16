@@ -14,6 +14,7 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
     (parser, root)
 }
 
+mod assignment_checker_return_inference_tests;
 mod assignment_checker_typebox_tests;
 
 fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {

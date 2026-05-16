@@ -1844,12 +1844,10 @@ impl<'a> InferenceContext<'a> {
                         } else {
                             bindings.push((var, String::new()));
                         }
-                    } else if let Some(next_pos) =
-                        match_template_segment_prefix(self.interner, source, pos, *type_id)
-                    {
-                        pos = next_pos;
                     } else {
-                        return None;
+                        let next_pos =
+                            match_template_segment_prefix(self.interner, source, pos, *type_id)?;
+                        pos = next_pos;
                     }
                 }
             }
