@@ -733,7 +733,7 @@ impl<'a> Printer<'a> {
             || static_initializer_needs_class_alias
             || private_member_def_needs_class_alias
         {
-            Some(self.make_unique_name())
+            Some(self.make_class_static_temp_name(_idx))
         } else {
             None
         };
@@ -1216,7 +1216,7 @@ impl<'a> Printer<'a> {
             let temp = if let Some(ref alias) = private_class_alias {
                 alias.clone()
             } else {
-                self.make_unique_name_hoisted()
+                self.make_class_static_temp_name_hoisted(_idx)
             };
             if class_expr_comma_needs_parens {
                 self.write("(");
@@ -1369,17 +1369,18 @@ impl<'a> Printer<'a> {
         {
             static_initializer_class_alias
                 .clone()
-                .or_else(|| Some(self.make_unique_name_hoisted()))
+                .or_else(|| Some(self.make_class_static_temp_name_hoisted(_idx)))
         } else {
             None
         };
         let static_super_base_alias = if static_initializer_needs_super_alias
             && !externalized_static_initializer_uses_undefined_receiver
         {
-            Some(self.make_unique_name_hoisted())
+            Some(self.make_class_static_temp_name_hoisted(_idx))
         } else {
             None
         };
+        self.finish_file_level_class_temp_reservation(_idx);
         let static_initializer_this_binding =
             if externalized_static_initializer_uses_undefined_receiver
                 && static_initializer_needs_this_alias

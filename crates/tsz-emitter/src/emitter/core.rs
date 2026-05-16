@@ -238,6 +238,7 @@ pub(crate) struct ParamTransformPlan {
 pub(crate) struct TempScopeState {
     pub(crate) temp_var_counter: u32,
     pub(crate) generated_temp_names: FxHashSet<String>,
+    pub(crate) reserved_nested_temp_names: FxHashSet<String>,
     pub(crate) first_for_of_emitted: bool,
     pub(crate) preallocated_temp_names: VecDeque<String>,
     pub(crate) preallocated_assignment_temps: VecDeque<String>,
@@ -579,6 +580,18 @@ pub struct Printer<'a> {
 
     /// Temp names reserved ahead-of-time and consumed before generating new names.
     pub(crate) preallocated_temp_names: VecDeque<String>,
+
+    /// Temp names that must not be reused by nested temp scopes.
+    pub(crate) reserved_nested_temp_names: FxHashSet<String>,
+
+    /// Source-file class static temp reservations, in top-level statement order.
+    pub(crate) file_level_class_temp_reservation_plan: Vec<(NodeIndex, usize)>,
+
+    /// Pre-generated class static temp names consumed when their class is emitted.
+    pub(crate) file_level_class_temp_reservations: FxHashMap<NodeIndex, VecDeque<String>>,
+
+    /// Top-level classes whose class static temp allocation has already been planned.
+    pub(crate) completed_file_level_class_temp_reservations: FxHashSet<NodeIndex>,
 
     /// Temp names for ES5 iterator-based for-of lowering that must be emitted
     /// as top-level `var` declarations (e.g., `e_1, _a, e_2, _b`).
@@ -1018,6 +1031,10 @@ impl<'a> Printer<'a> {
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),
+            reserved_nested_temp_names: FxHashSet::default(),
+            file_level_class_temp_reservation_plan: Vec::new(),
+            file_level_class_temp_reservations: FxHashMap::default(),
+            completed_file_level_class_temp_reservations: FxHashSet::default(),
             hoisted_for_of_temps: Vec::new(),
             commonjs_named_import_substitutions: FxHashMap::default(),
             wrapped_export_module_substitutions: FxHashMap::default(),

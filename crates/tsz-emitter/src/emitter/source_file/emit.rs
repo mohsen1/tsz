@@ -82,6 +82,7 @@ impl<'a> Printer<'a> {
             self.wrapped_export_module_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.reserved_nested_temp_names.clear();
         self.async_generator_inner_name_counts.clear();
         self.reserved_disposable_env_names.clear();
         self.node_esm_create_require_names = None;
@@ -90,6 +91,7 @@ impl<'a> Printer<'a> {
         self.first_for_of_emitted = false;
         self.namespace_all_exported_names.clear();
         self.collect_all_namespace_exports(&source.statements);
+        self.prepare_file_level_class_temp_reservations(&source.statements);
 
         // Pre-pass: collect const enum values for inlining at usage sites.
         // tsc replaces property/element access to const enum members with their

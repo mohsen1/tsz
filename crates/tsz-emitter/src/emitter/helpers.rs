@@ -511,8 +511,13 @@ impl<'a> Printer<'a> {
     /// Used when entering a function to reset temp names (_a, _b, etc.)
     /// since each function scope has its own temp naming.
     pub(super) fn push_temp_scope(&mut self) {
+        if self.temp_scope_stack.is_empty() {
+            self.reserve_pending_file_level_class_temps();
+        }
+
         let saved_counter = self.ctx.destructuring_state.temp_var_counter;
         let saved_names = std::mem::take(&mut self.generated_temp_names);
+        let saved_reserved = self.reserved_nested_temp_names.clone();
         let saved_for_of = self.first_for_of_emitted;
         let saved_preallocated = std::mem::take(&mut self.preallocated_temp_names);
         let saved_preallocated_assignment_temps =
@@ -526,6 +531,7 @@ impl<'a> Printer<'a> {
         self.temp_scope_stack.push(super::TempScopeState {
             temp_var_counter: saved_counter,
             generated_temp_names: saved_names,
+            reserved_nested_temp_names: saved_reserved,
             first_for_of_emitted: saved_for_of,
             preallocated_temp_names: saved_preallocated,
             preallocated_assignment_temps: saved_preallocated_assignment_temps,
@@ -544,6 +550,7 @@ impl<'a> Printer<'a> {
         if let Some(state) = self.temp_scope_stack.pop() {
             self.ctx.destructuring_state.temp_var_counter = state.temp_var_counter;
             self.generated_temp_names = state.generated_temp_names;
+            self.reserved_nested_temp_names = state.reserved_nested_temp_names;
             self.first_for_of_emitted = state.first_for_of_emitted;
             self.preallocated_temp_names = state.preallocated_temp_names;
             self.preallocated_assignment_temps = state.preallocated_assignment_temps;
@@ -579,7 +586,9 @@ impl<'a> Printer<'a> {
                 format!("_{}", counter - 26)
             };
 
-            if !self.file_identifiers.contains(&name) && !self.generated_temp_names.contains(&name)
+            if !self.file_identifiers.contains(&name)
+                && !self.generated_temp_names.contains(&name)
+                && !self.reserved_nested_temp_names.contains(&name)
             {
                 self.generated_temp_names.insert(name.clone());
                 return name;
@@ -597,6 +606,12 @@ impl<'a> Printer<'a> {
 
     pub(super) fn make_unique_name_fresh(&mut self) -> String {
         self.generate_fresh_temp_name()
+    }
+
+    pub(super) fn make_unique_name_reserved_for_nested(&mut self) -> String {
+        let name = self.generate_fresh_temp_name();
+        self.reserved_nested_temp_names.insert(name.clone());
+        name
     }
 
     pub(super) fn make_unique_name_from_base(&mut self, base: &str) -> String {

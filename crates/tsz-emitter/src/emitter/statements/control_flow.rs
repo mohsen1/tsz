@@ -1181,6 +1181,13 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.ctx.emit_await_as_yield && self.get_identifier_text_idx(labeled.label) == "await" {
+            self.write("yield ;");
+            self.write_line();
+            self.emit(labeled.statement);
+            return;
+        }
+
         self.emit(labeled.label);
         self.write(": ");
         if (self.ctx.is_commonjs() || self.in_system_execute_body)
