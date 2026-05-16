@@ -17,6 +17,10 @@ mod tests {
         (parser, root)
     }
 
+    fn set_emitter_source<'a>(printer: &mut EmitterPrinter<'a>, source: &'a str) {
+        printer.set_source_text(source);
+    }
+
     #[test]
     fn emit_source_file_strips_top_level_blank_lines_for_js_files() {
         // tsc strips inter-statement blank lines even from JS source files.
@@ -72,7 +76,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        printer.set_source_text(source);
+        set_emitter_source(&mut printer, source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -99,7 +103,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        printer.set_source_text(source);
+        set_emitter_source(&mut printer, source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -308,6 +312,29 @@ mod tests {
     }
 
     #[test]
+    fn strict_prologue_leading_comment_moves_before_helpers() {
+        let source = "// issue comment\n\"use strict\";\nclass A {}\nclass B extends A { constructor() { super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.starts_with("// issue comment\n\"use strict\";\nvar __extends = "),
+            "Leading comments attached to a source strict prologue should move before helpers with the prologue.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn class_static_block_await_recovery_matches_native_emit() {
         let source = "class C {\n    static {\n        ({ [await]: 1 });\n        ({ await });\n        await:\n        break await;\n        const ff = (await) => { }\n        const fff = await => { }\n    }\n}\n";
 
@@ -333,7 +360,7 @@ mod tests {
             "Bare await shorthand in static blocks should recover as an empty property assignment.\nOutput:\n{output}"
         );
         assert!(
-            output.contains("await ;\n        break ;\n        await ;"),
+            output.contains("await ;\n        break;\n        await ;"),
             "Bare await labels and break labels in static blocks should recover as separate statements.\nOutput:\n{output}"
         );
         assert!(
@@ -341,6 +368,33 @@ mod tests {
                 "const ff = (await );\n        { }\n        const fff = await ;\n        { }"
             ),
             "Arrows with await parameters in static blocks should emit recovered parameter expressions plus body blocks.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_with_prefix_statements_returns_tail_super_call() {
+        let source = "class A {}\nclass B extends A { constructor() { \"ngInject\"; console.log(\"B\"); super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("\"ngInject\";\n        console.log(\"B\");\n        return _super.call(this) || this;"),
+            "Derived constructor with final super() should not materialize _this when no later statement needs it.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var _this = _super.call(this) || this;"),
+            "Tail super return should avoid the _this temp.\nOutput:\n{output}"
         );
     }
 
@@ -1465,6 +1519,82 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
                 "(_a = c.x, _b = _a === void 0 ? d : _a, a = _b.a, b = __rest(_b, [\"a\"]));"
             ),
             "ES5 nested object rest must use the resolved default source, not the default expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_block_scoped_destructuring_uses_renamed_binding_targets() {
+        let source = "var z0: any, z1: any, z2: any;\n{\n    let [z0] = [1];\n    use(z0);\n    let { a: z1 } = { a: 1 };\n    use(z1);\n    let [...z2] = [1, 2];\n    use(z2);\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var z0_1 = [1][0];"),
+            "Array binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z0_1);"),
+            "Array binding references should match the declaration target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z1_1 = { a: 1 }.a;"),
+            "Object binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z1_1);"),
+            "Object binding references should match the declaration target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z2_1 = [1, 2].slice(0);"),
+            "Array rest binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z2_1);"),
+            "Array rest references should match the declaration target.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_single_leaf_nested_destructuring_inlines_access_path() {
+        let source = "var z1: any, z3: any;\n{\n    const [{ a: z1 }] = [{ a: 1 }];\n    use(z1);\n    const { a: { b: z3 } } = { a: { b: 1 } };\n    use(z3);\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var z1_1 = [{ a: 1 }][0].a;"),
+            "Single-leaf array/object destructuring should inline the access path.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z3_1 = { a: { b: 1 } }.a.b;"),
+            "Single-leaf nested object destructuring should inline the access path.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var _a = [{ a: 1 }]") && !output.contains("var _b = _a[0]"),
+            "Single-leaf nested destructuring should not allocate avoidable temps.\nOutput:\n{output}"
         );
     }
 

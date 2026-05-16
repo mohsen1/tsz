@@ -98,6 +98,9 @@ FORCE_REBUILD=false
 PREPARE_ONLY=false
 NEXTJS_BENCHMARK_ENABLED="${NEXTJS_BENCHMARK_ENABLED:-0}"
 TSZ_BENCH_INCLUDE_COMPILE_CANARIES="${TSZ_BENCH_INCLUDE_COMPILE_CANARIES:-0}"
+BENCH_NPM_INSTALL_TIMEOUT="${BENCH_NPM_INSTALL_TIMEOUT:-900}"
+BENCH_PGO_TSZ_TIMEOUT="${BENCH_PGO_TSZ_TIMEOUT:-900}"
+BENCH_CARGO_BUILD_TIMEOUT="${BENCH_CARGO_BUILD_TIMEOUT:-1200}"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
@@ -137,6 +140,8 @@ while [[ $# -gt 0 ]]; do
             echo "  BENCH_PGO=0            Skip PGO training (default: 1 when llvm-profdata is available)"
             echo "  BENCH_PGO_CACHE=0      Don't reuse the cached profdata across runs (default: 1)"
             echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
+            echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
+            echo "  BENCH_CARGO_BUILD_TIMEOUT=<seconds>  Timeout for each cargo build in check_prerequisites (default: 1200)"
             echo "  BENCH_PGO_EXTRA_INPUTS=<path[:path]>  Extra .ts or tsconfig files to feed the PGO trainer"
             echo "  BENCH_PGO_VERBOSE=1    Print per-input wall time during PGO Step 2"
             exit 0
@@ -287,6 +292,23 @@ run_with_timeout() {
     # SIGKILL exit code is 137 (128+9)
     if [ "$exit_code" -eq 137 ]; then
         return 124
+    fi
+    return "$exit_code"
+}
+
+run_cargo_build() {
+    local description="$1"
+    shift
+
+    if (cd "$PROJECT_ROOT" && run_with_timeout "$BENCH_CARGO_BUILD_TIMEOUT" env "$@"); then
+        return 0
+    fi
+
+    local exit_code=$?
+    if [ "$exit_code" -eq 124 ]; then
+        echo -e "${RED}✗ $description timed out after ${BENCH_CARGO_BUILD_TIMEOUT}s${NC}"
+    else
+        echo -e "${RED}✗ $description failed (exit $exit_code)${NC}"
     fi
     return "$exit_code"
 }
@@ -496,12 +518,16 @@ ensure_tsgo() {
 
     if [ ! -x "$TSGO_LOCAL_BIN" ] || [ "$installed_spec" != "$TSGO_NPM_SPEC" ]; then
         echo -e "${CYAN}Installing tsgo locally (${TSGO_NPM_SPEC})...${NC}"
-        npm install \
+        if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
             --prefix "$TSGO_TOOL_DIR" \
             --no-audit \
             --no-fund \
             --loglevel=error \
-            "$TSGO_NPM_SPEC" >/dev/null
+            "$TSGO_NPM_SPEC" >/dev/null; then
+            echo -e "${RED}✗ tsgo install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
+            echo -e "${RED}  command: npm install --prefix \"$TSGO_TOOL_DIR\" \"$TSGO_NPM_SPEC\"${NC}"
+            exit 1
+        fi
         printf '%s\n' "$TSGO_NPM_SPEC" > "$spec_file"
     fi
 
@@ -562,12 +588,16 @@ ensure_tsc() {
 
     if [ ! -x "$TSC_LOCAL_BIN" ] || [ "$installed_spec" != "$resolved_spec" ]; then
         echo -e "${CYAN}Installing tsc locally (${resolved_spec})...${NC}"
-        npm install \
+        if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
             --prefix "$TSC_TOOL_DIR" \
             --no-audit \
             --no-fund \
             --loglevel=error \
-            "typescript@${resolved_spec}" >/dev/null
+            "typescript@${resolved_spec}" >/dev/null; then
+            echo -e "${RED}✗ tsc install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
+            echo -e "${RED}  command: npm install --prefix \"$TSC_TOOL_DIR\" \"typescript@${resolved_spec}\"${NC}"
+            exit 1
+        fi
         printf '%s\n' "$resolved_spec" > "$spec_file"
     fi
 
@@ -595,17 +625,32 @@ collect_pgo_workload() {
     local env_prefix=()
     [[ -n "${TSZ_LIB_DIR:-}" ]] && env_prefix=("TSZ_LIB_DIR=$TSZ_LIB_DIR")
 
-    _pgo_run() {
+_pgo_run() {
         local label="$1"
         shift
+        local run_status=0
         if [[ "${BENCH_PGO_VERBOSE:-0}" == "1" ]]; then
             local t0 t1
             t0=$(date +%s)
-            env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1 || true
+            if ! run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=$?
+                if [ "$run_status" -eq 124 ]; then
+                    echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
+                else
+                    echo -e "${YELLOW}PGO training input \"$label\" failed (exit $run_status)${NC}"
+                fi
+            fi
             t1=$(date +%s)
             echo -e "  ${CYAN}pgo${NC} $label ($((t1 - t0))s)"
         else
-            env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1 || true
+            if ! run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=$?
+                if [ "$run_status" -eq 124 ]; then
+                    echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
+                else
+                    echo -e "${YELLOW}PGO training input \"$label\" failed (exit $run_status)${NC}"
+                fi
+            fi
         fi
     }
 
@@ -753,6 +798,7 @@ check_prerequisites() {
 
         if [ "$use_pgo" = true ] && [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
             local skip_pgo_collect=false
+            local profdata_ready=false
             if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" ]]; then
                 local newer_src
                 newer_src="$(find "$PROJECT_ROOT" \
@@ -763,6 +809,7 @@ check_prerequisites() {
                     mkdir -p "$pgo_dir"
                     cp "$pgo_cache_profdata" "$pgo_merged"
                     skip_pgo_collect=true
+                    profdata_ready=true
                 else
                     echo -e "${YELLOW}PGO cache stale (source changed: $newer_src); regenerating profile data${NC}"
                 fi
@@ -772,10 +819,18 @@ check_prerequisites() {
                 echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
                 rm -rf "$pgo_dir"
                 mkdir -p "$pgo_dir"
-                (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$pgo_target_dir" \
+                # Use panic=unwind for the instrumented build so LLVM's profiling
+                # runtime atexit handlers fire even when tsz panics on a training
+                # input.  The dist profile's panic=abort strategy prevents atexit
+                # from being called on panic, which silently drops all profraw
+                # files and causes "llvm-profdata merge *.profraw" to fail with no
+                # inputs.  This binary is only used for training, not shipping.
+                run_cargo_build \
+                    "PGO Step 1/3: instrumented binary build" \
+                    CARGO_TARGET_DIR="$pgo_target_dir" \
                     CARGO_INCREMENTAL=0 \
-                    RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
-                    cargo build --profile dist -p tsz-cli --bin tsz)
+                    RUSTFLAGS="-Cprofile-generate=$pgo_dir -Cpanic=unwind" \
+                    cargo build --profile dist -p tsz-cli --bin tsz || true
 
                 # Ensure the smallest external bench fixture is present so PGO
                 # trains on workload shapes the website actually measures (mapped/
@@ -784,39 +839,64 @@ check_prerequisites() {
                 # opportunistically used when they were already prepared by an
                 # earlier bench run, but never fetched here — that would more
                 # than double cold-start wall time on first run.
+                # The clone is best-effort: a transient network failure should not
+                # abort bench-prepare entirely; PGO still trains on synthetic inputs.
                 if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
-                    ensure_utility_types_fixture
+                    if ! ensure_utility_types_fixture; then
+                        echo -e "${YELLOW}Warning: utility-types fetch failed; PGO trains on synthetic inputs only${NC}"
+                    fi
                 fi
 
                 echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
                 local pgo_tsz="$pgo_target_dir/dist/tsz"
                 collect_pgo_workload "$pgo_tsz"
 
-                "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
-
-                # Persist the merged profdata for the next run's cache lookup.
-                if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
-                    mkdir -p "$pgo_cache_dir"
-                    cp "$pgo_merged" "$pgo_cache_profdata"
+                # An empty glob (bash without nullglob) passes a literal "*.profraw"
+                # path to llvm-profdata and fails; array-glob + -e avoids the fork
+                # and the TOCTOU window between a count check and the merge call.
+                local profraw_files=("$pgo_dir"/*.profraw)
+                if [[ -e "${profraw_files[0]}" ]]; then
+                    "$llvm_profdata" merge -o "$pgo_merged" "${profraw_files[@]}"
+                    profdata_ready=true
+                    if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
+                        mkdir -p "$pgo_cache_dir"
+                        cp "$pgo_merged" "$pgo_cache_profdata"
+                    fi
+                else
+                    echo -e "${YELLOW}PGO training produced no profraw files; skipping PGO optimization${NC}"
                 fi
             fi
 
-            echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
-            if ! (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
-                CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli --bin tsz); then
-                # LLVM PGO can fail when the profile-use link step encounters
-                # incompatible bitcode/ProfileSummary metadata in this toolchain.
-                # Fall back to a clean non-PGO dist build so benchmark runs still
-                # complete successfully.
-                echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+            if [[ "$profdata_ready" == true ]]; then
+                echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
+                if ! run_cargo_build \
+                    "PGO Step 3/3: optimized binary build" \
+                    CARGO_TARGET_DIR="$optimized_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                    cargo build --profile dist -p tsz-cli --bin tsz; then
+                    # LLVM PGO can fail when the profile-use link step encounters
+                    # incompatible bitcode/ProfileSummary metadata in this toolchain.
+                    echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+                    rm -rf "$optimized_target_dir"
+                    optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+                    run_cargo_build \
+                        "PGO Step 3 fallback: standard dist build" \
+                        CARGO_TARGET_DIR="$optimized_target_dir" \
+                        CARGO_INCREMENTAL=0 \
+                        RUSTFLAGS="-Ctarget-cpu=native" \
+                        cargo build --profile dist -p tsz-cli --bin tsz
+                fi
+            else
+                echo -e "${YELLOW}PGO Step 3/3: no profile data available; using standard dist build${NC}"
                 rm -rf "$optimized_target_dir"
                 optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
-                (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                run_cargo_build \
+                    "PGO Step 3: standard dist build" \
+                    CARGO_TARGET_DIR="$optimized_target_dir" \
                     CARGO_INCREMENTAL=0 \
                     RUSTFLAGS="-Ctarget-cpu=native" \
-                    cargo build --profile dist -p tsz-cli --bin tsz)
+                    cargo build --profile dist -p tsz-cli --bin tsz
             fi
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
@@ -828,10 +908,12 @@ check_prerequisites() {
             else
                 echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
             fi
-            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+            run_cargo_build \
+                "Standard dist build" \
+                CARGO_TARGET_DIR="$optimized_target_dir" \
                 CARGO_INCREMENTAL=0 \
                 RUSTFLAGS="-Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli --bin tsz)
+                cargo build --profile dist -p tsz-cli --bin tsz
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
             rm -rf "$optimized_target_dir"

@@ -1114,6 +1114,10 @@ name = "template_literal_recursive_replace_tests"
 path = "tests/template_literal_recursive_replace_tests.rs"
 
 [[test]]
+name = "template_literal_union_separator_tests"
+path = "tests/template_literal_union_separator_tests.rs"
+
+[[test]]
 name = "object_element_access_diagnostics_tests"
 path = "tests/object_element_access_diagnostics_tests.rs"
 
@@ -1276,6 +1280,10 @@ path = "tests/homomorphic_indexed_access_edge_cases.rs"
 [[test]]
 name = "union_tuple_source_display_tests"
 path = "tests/union_tuple_source_display_tests.rs"
+
+[[test]]
+name = "distributive_conditional_default_tests"
+path = "tests/distributive_conditional_default_tests.rs"
 
 [[test]]
 name = "track8_debt_contract_tests"
