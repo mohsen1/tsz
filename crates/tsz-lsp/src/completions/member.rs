@@ -1264,16 +1264,11 @@ impl<'a> Completions<'a> {
         }
     }
 
-    pub(super) const fn literal_intrinsic_kind(
+    pub(super) fn literal_intrinsic_kind(
         &self,
         literal: &tsz_solver::LiteralValue,
     ) -> Option<IntrinsicKind> {
-        match literal {
-            tsz_solver::LiteralValue::String(_) => Some(IntrinsicKind::String),
-            tsz_solver::LiteralValue::Number(_) => Some(IntrinsicKind::Number),
-            tsz_solver::LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-            tsz_solver::LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
-        }
+        Some(tsz_solver::literal_value_intrinsic_kind(literal))
     }
 
     pub(super) fn add_property_completion(

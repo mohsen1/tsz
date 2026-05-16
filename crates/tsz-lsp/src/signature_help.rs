@@ -14,7 +14,10 @@ use tsz_common::position::Position;
 use tsz_parser::parser::node::{CallExprData, NodeAccess};
 use tsz_parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, TypeData, TypeId, TypePredicateTarget, visitor};
+use tsz_solver::{
+    FunctionShape, IntrinsicKind, ParamInfo, TypeData, TypeId, TypePredicateTarget,
+    apparent_primitive_method_params, literal_value_intrinsic_kind, visitor,
+};
 #[cfg(test)]
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
@@ -409,6 +412,20 @@ impl<'a> SignatureHelpProvider<'a> {
             &callee_name,
             has_explicit_type_args,
             &explicit_type_arg_texts,
+        );
+
+        // For primitive intrinsic methods resolved via the no-lib fallback, the type
+        // system synthesizes (...args: any[]) => ReturnType.  Replace with actual
+        // parameter names/types from the intrinsic parameter table so that signature
+        // help shows e.g. `toLowerCase(): string` instead of `toLowerCase(...args: any[]): string`.
+        self.try_rewrite_intrinsic_signatures(
+            callee_expr,
+            callee_type,
+            &mut checker,
+            &callee_name,
+            has_explicit_type_args,
+            &explicit_type_arg_texts,
+            &mut signatures,
         );
 
         if let Some(docs) = docs {
@@ -2474,6 +2491,105 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         vec![]
+    }
+
+    /// Returns the return type when `type_id` is the synthetic apparent method type created by
+    /// `make_apparent_method_type`: a single nameless rest parameter of type `any[]`.
+    /// Distinguishes the no-lib fallback shape from real function types with a rest parameter.
+    fn synthetic_apparent_method_return_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let shape_id = visitor::function_shape_id(self.interner, type_id)?;
+        let shape = self.interner.function_shape(shape_id);
+        if shape.params.len() != 1 {
+            return None;
+        }
+        let p = &shape.params[0];
+        if p.rest && p.name.is_none() && p.type_id == self.interner.array(TypeId::ANY) {
+            Some(shape.return_type)
+        } else {
+            None
+        }
+    }
+
+    fn intrinsic_kind_for_type(&self, type_id: TypeId) -> Option<IntrinsicKind> {
+        visitor::intrinsic_kind(self.interner, type_id).or_else(|| {
+            visitor::literal_value(self.interner, type_id)
+                .map(|lit| literal_value_intrinsic_kind(&lit))
+        })
+    }
+
+    /// If `callee_expr` is a property-access on a primitive intrinsic type and the
+    /// resolved callee type is the synthetic `...args: any[]` fallback, replace the
+    /// signature with one derived from the known intrinsic parameter table.
+    ///
+    /// This corrects display like `toLowerCase(...args: any[]): string` →
+    /// `toLowerCase(): string` without altering any type-checking behaviour.
+    fn try_rewrite_intrinsic_signatures(
+        &self,
+        callee_expr: NodeIndex,
+        callee_type: TypeId,
+        checker: &mut CheckerState,
+        callee_name: &str,
+        has_explicit_type_args: bool,
+        explicit_type_arg_texts: &[String],
+        signatures: &mut Vec<SignatureCandidate>,
+    ) {
+        let Some(return_type) = self.synthetic_apparent_method_return_type(callee_type) else {
+            return;
+        };
+        let Some(callee_node) = self.arena.get(callee_expr) else {
+            return;
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return;
+        };
+        let Some(method_name) = self.arena.get_identifier_text(access.name_or_argument) else {
+            return;
+        };
+        let raw_obj_type = checker.get_type_of_node(access.expression);
+        let obj_type = checker.resolve_lazy_type(raw_obj_type);
+        let Some(kind) = self.intrinsic_kind_for_type(obj_type) else {
+            return;
+        };
+        let Some(param_specs) = apparent_primitive_method_params(kind, method_name) else {
+            return;
+        };
+
+        let params: Vec<ParamInfo> = param_specs
+            .iter()
+            .map(|spec| {
+                let base_ty = spec.ty.to_type_id();
+                let type_id = if spec.rest {
+                    self.interner.array(base_ty)
+                } else {
+                    base_ty
+                };
+                ParamInfo {
+                    name: Some(self.interner.intern_string(spec.name)),
+                    type_id,
+                    optional: spec.optional,
+                    rest: spec.rest,
+                }
+            })
+            .collect();
+
+        let shape = FunctionShape {
+            type_params: Vec::new(),
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+
+        *signatures = self.signature_candidates_for_shape(
+            &shape,
+            checker,
+            false,
+            callee_name,
+            has_explicit_type_args,
+            explicit_type_arg_texts,
+        );
     }
 
     fn signature_candidates_for_shape(
