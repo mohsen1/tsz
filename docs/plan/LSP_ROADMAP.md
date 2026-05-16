@@ -208,19 +208,19 @@ Other observations:
 
 ### GitHub work in flight
 
-**Snapshot taken 2026-05-16. Verify before acting — issue/PR state moves
-fast.**
+**Snapshot taken 2026-05-16 and refreshed later the same day by
+`M1-LSP`. Verify before acting — issue/PR state moves fast.**
 
 | Bucket | Count | Notes |
 |---|---:|---|
-| Open issues labelled `lsp` | **100** | All created today (`#7406`–`#7505`) by an automated audit tool (`SparkStudioLSP`). Zero pre-existing labelled issues remain. |
+| Open issues labelled `lsp` | **2** | Audit-batch completion/signature issues were closed after landed fixes were verified. Current non-low-priority follow-up addresses `#7469`; remaining out-of-scope item is lower-priority perf (`#7590`). |
 | Closed issues labelled `lsp` | 3 | One-shot capability gaps closed in the last week (`#4758`, `#4735`, `#4744`). |
 | Closed issues with `lsp` in title (broader) | 8 | Each maps 1:1 to a merged `fix(lsp): …` PR. |
-| Open PRs touching LSP | **0** | No LSP-labelled, LSP-titled, "playground"-titled, or "server"-titled open PRs. |
+| Open PRs touching LSP | **2** | `#7712` and `#7715` are active primitive-completion follow-ups; verify status before duplicating. |
 | Merged PRs mentioning `lsp` in title, last 60d | 60 | Plus 26 with `fourslash in:title`, 76 with `server in:title`. |
 | Recent commits touching LSP paths, last 60d | ~490 | `crates/tsz-lsp`, `crates/tsz-cli/src/bin/tsz_server`, `crates/tsz-wasm`. |
 
-**The 100 open issues are one wave with one root-cause class.** All 100
+**The audit-batch issues were one wave with one root-cause class.** They
 were filed within ~10 minutes today against the playground
 (`localhost:8080/playground/`) and hit builtin-symbol resolution:
 
@@ -242,10 +242,9 @@ projects the builtin `lib.*.d.ts` symbol space for completion and
 signature-help responses**. They are not 100 separate fixes — they are
 one fix with 100 witnesses. **See Track L11** below.
 
-**No active LSP work to coordinate with.** A new agent picking up the
-audit class will not duplicate any in-flight PR. The most recent
-substantive LSP PR was `#7190` ("fix(lsp): repair hover and rename edge
-cases", merged 2026-05-15, agent `m5-pro-48g-gpt5`).
+**Active LSP work exists.** Coordinate before touching primitive completion
+projection: `#7712` is ready but has merge conflicts, and `#7715` is still
+draft/WIP.
 
 **Recent merged themes (60 days):** hover display correctness for
 overloads and cache staleness, cross-file navigation (call hierarchy,
@@ -560,6 +559,19 @@ Exit:
 - The remaining issues are explicitly documented (e.g., legitimate
   divergences) or have a follow-up issue with a documented rationale.
 - New tests cover ≥3 shape variants for each symptom class.
+
+Status refresh 2026-05-16 (`M1-LSP`):
+
+- Primitive string/number/boolean extra-completion issues and string
+  signature-help mismatch issues are verified fixed on `main` and closed.
+- Array, tuple, and function missing-completion witnesses are verified fixed
+  on `main`; exact ratchet coverage was added for the remaining array/function
+  names before closing those issues.
+- Last concrete audit-batch item: `#7469` (`Map` exposes
+  `[Symbol.iterator]`). Treat it as a separate dot-access/computed-member
+  projection rule, not part of the primitive/array/function completion fix.
+- The Classes/private-field playground issue `#7733` was retested against
+  current `main`, produced no diagnostics, and was closed as stale.
 
 Anti-pattern: per-method allowlists/denylists. The fix must be
 structural over the builtin symbol space, not "skip these specific names
