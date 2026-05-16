@@ -211,12 +211,17 @@ pub fn literal_string(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom>
 ///
 /// Combines `intrinsic_kind` (handles `string`, `number`, etc.) with the
 /// literal-value path (handles `"foo"`, `42`, `true`) so callers don't need
-/// to duplicate the two-step pattern.
+/// to duplicate the two-step pattern.  Uses a single `types.lookup()` call to
+/// avoid the double shard-lock that sequential `intrinsic_kind` + `literal_value`
+/// would pay for literal types.
 pub fn apparent_intrinsic_kind(types: &dyn TypeDatabase, type_id: TypeId) -> Option<IntrinsicKind> {
-    intrinsic_kind(types, type_id).or_else(|| {
-        literal_value(types, type_id)
-            .map(|lit| crate::objects::apparent::literal_value_intrinsic_kind(&lit))
-    })
+    match types.lookup(type_id)? {
+        TypeData::Intrinsic(kind) => Some(kind),
+        TypeData::Literal(lit) => {
+            Some(crate::objects::apparent::literal_value_intrinsic_kind(&lit))
+        }
+        _ => None,
+    }
 }
 
 /// Extract the numeric literal if this is a number literal type.

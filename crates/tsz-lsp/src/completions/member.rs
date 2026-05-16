@@ -440,21 +440,12 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(literal) = visitor::literal_value(interner, evaluated) {
-            self.collect_intrinsic_members(
-                tsz_solver::literal_value_intrinsic_kind(&literal),
-                interner,
-                props,
-            );
-            return;
-        }
-
         if visitor::template_literal_id(interner, evaluated).is_some() {
             self.collect_intrinsic_members(IntrinsicKind::String, interner, props);
             return;
         }
 
-        if let Some(kind) = visitor::intrinsic_kind(interner, evaluated) {
+        if let Some(kind) = tsz_solver::apparent_intrinsic_kind(interner, evaluated) {
             self.collect_intrinsic_members(kind, interner, props);
         }
     }

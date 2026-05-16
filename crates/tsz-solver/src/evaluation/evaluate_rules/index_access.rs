@@ -24,7 +24,7 @@ use super::super::evaluate::{
 };
 use super::apparent::make_apparent_method_type;
 use super::string_index_helpers::string_index_signature_applies;
-use crate::objects::apparent::is_member;
+use crate::objects::apparent::{is_member, literal_value_intrinsic_kind};
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
 /// Lazily compute and cache array member types (length + apparent methods).
@@ -436,9 +436,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        self.evaluate_apparent_primitive(crate::objects::apparent::literal_value_intrinsic_kind(
-            value,
-        ))
+        self.evaluate_apparent_primitive(literal_value_intrinsic_kind(value))
     }
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {

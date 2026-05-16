@@ -8,31 +8,27 @@ use tsz_solver::{IntrinsicKind, TypeId};
 
 /// Type hint for a parameter in an intrinsic method signature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IntrinsicParamTypeHint {
+pub(crate) enum IntrinsicParamTypeHint {
     String,
     Number,
-    Boolean,
-    Any,
 }
 
 impl IntrinsicParamTypeHint {
-    pub const fn to_type_id(self) -> TypeId {
+    pub(crate) const fn to_type_id(self) -> TypeId {
         match self {
             Self::String => TypeId::STRING,
             Self::Number => TypeId::NUMBER,
-            Self::Boolean => TypeId::BOOLEAN,
-            Self::Any => TypeId::ANY,
         }
     }
 }
 
 /// One parameter of an intrinsic primitive method for LSP display.
 #[derive(Clone, Copy, Debug)]
-pub struct IntrinsicParamSpec {
-    pub name: &'static str,
-    pub ty: IntrinsicParamTypeHint,
-    pub optional: bool,
-    pub rest: bool,
+pub(crate) struct IntrinsicParamSpec {
+    pub(crate) name: &'static str,
+    pub(crate) ty: IntrinsicParamTypeHint,
+    pub(crate) optional: bool,
+    pub(crate) rest: bool,
 }
 
 static PARAMS_SEARCH_AND_POS: [IntrinsicParamSpec; 2] = [
@@ -171,7 +167,7 @@ static PARAMS_OPT_RADIX: [IntrinsicParamSpec; 1] = [IntrinsicParamSpec {
 /// Returns `None` for methods whose parameter shapes are too complex to represent
 /// here (e.g. `replace`, `split`, which take `RegExp` overloads).  The caller
 /// falls back to the synthetic `...args: any[]` shape in that case.
-pub fn intrinsic_method_params(
+pub(crate) fn intrinsic_method_params(
     kind: IntrinsicKind,
     method: &str,
 ) -> Option<&'static [IntrinsicParamSpec]> {

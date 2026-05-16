@@ -2516,9 +2516,7 @@ impl<'a> SignatureHelpProvider<'a> {
 
     /// If `callee_expr` is a property-access on a primitive intrinsic type and the
     /// resolved callee type is the synthetic `...args: any[]` fallback, return
-    /// signatures built from the known intrinsic parameter table.  Returns `None`
-    /// when the callee is not an intrinsic method or the method isn't in the table,
-    /// so the caller can fall back to `get_signatures_from_type`.
+    /// signatures built from the known intrinsic parameter table.
     fn try_build_intrinsic_signatures(
         &self,
         callee_expr: NodeIndex,
