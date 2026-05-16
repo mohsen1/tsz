@@ -88,6 +88,44 @@ fn async_es5_uses_ambient_value_for_custom_promise_constructor() {
 }
 
 #[test]
+fn class_method_for_of_delegates_es5_statement_lowering() {
+    let output = emit_es5_with_comments(
+        r#"
+class Operation {
+    validate(parameterValues: any) {
+        let result: any = null;
+        for (const parameterLocation of Object.keys(parameterValues)) {
+            const parameter = (this as any).getParameter();
+            // keep loop comment
+            result = parameterLocation;
+        }
+        return result;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output
+            .contains("for (var _i = 0, _a = Object.keys(parameterValues); _i < _a.length; _i++)"),
+        "Class method for-of should use the normal ES5 array-index lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var parameterLocation = _a[_i];"),
+        "Loop variable should be bound from the generated array temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var parameter = this.getParameter();"),
+        "Type-erased `(this as any)` should print through the normal AST expression path.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(" of Object.keys(parameterValues)")
+            && !output.contains("(this).getParameter()"),
+        "Class method for-of must not leak raw for-of syntax or redundant type-erasure parens.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_es5_labeled_block_break_after_await_lowers_to_generator_jump() {
     let output = emit_es5(
         "async function f() {\n\

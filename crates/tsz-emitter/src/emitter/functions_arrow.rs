@@ -21,9 +21,9 @@ impl<'a> Printer<'a> {
         // Parser recovery parity: malformed return type like `(a): => {}` should
         // preserve recovered shape instead of applying arrow lowering.
         if self.is_recovery_arrow_missing_return_type(node, func) {
-            self.write("(");
+            self.open_paren();
             self.emit_function_parameters_js(&func.parameters.nodes);
-            self.write(")");
+            self.close_paren();
             if let Some(body_node) = self.arena.get(func.body)
                 && body_node.kind == syntax_kind_ext::BLOCK
             {
@@ -139,7 +139,7 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-            self.write("(");
+            self.open_paren();
         }
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.emit_function_parameters_js(&func.parameters.nodes);
@@ -155,7 +155,7 @@ impl<'a> Printer<'a> {
                     .map_or(0, |n| n.pos);
                 self.map_closing_paren_backward(search_start, body_node.pos);
             }
-            self.write(")");
+            self.close_paren();
         }
 
         // Map `=>` arrow to source position (split space from token to get correct mapping column)

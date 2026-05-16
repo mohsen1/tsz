@@ -379,7 +379,7 @@ impl<'a> CheckerState<'a> {
         if name.is_empty() || name == "__type" {
             return None;
         }
-        if name == "Iterator"
+        if self.class_symbol_is_actual_lib_iterator(sym_id)
             && let Some(formatted) =
                 self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
         {
