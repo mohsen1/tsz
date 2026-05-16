@@ -793,6 +793,14 @@ impl<'a> Printer<'a> {
             return 0;
         };
 
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && self.assignment_pattern_has_object_rest(binary.left)
+        {
+            return 2 + self.estimate_object_rest_assignment_pattern_temps(binary.left, true);
+        }
+
         if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(node) else {
                 return 0;
