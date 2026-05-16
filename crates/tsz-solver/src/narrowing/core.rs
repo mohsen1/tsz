@@ -300,6 +300,38 @@ pub struct DiscriminantInfo {
 
 type DiscriminantMembers = FxHashMap<TypeId, Vec<TypeId>>;
 type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
+type PropertyCacheKey = (TypeId, u64, Atom);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CachedPropertyType {
+    pub type_id: TypeId,
+    pub from_index_signature: bool,
+}
+
+impl CachedPropertyType {
+    pub const fn new(type_id: TypeId, from_index_signature: bool) -> Self {
+        Self {
+            type_id,
+            from_index_signature,
+        }
+    }
+
+    pub const fn explicit(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            from_index_signature: false,
+        }
+    }
+
+    pub const fn index_signature(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            from_index_signature: true,
+        }
+    }
+}
+
+type NarrowedPropertyCache = FxHashMap<PropertyCacheKey, Option<CachedPropertyType>>;
+type RequiredPropertyCache = FxHashMap<PropertyCacheKey, bool>;
 
 /// Narrowing context for type guards and control flow analysis.
 /// Shared across multiple narrowing contexts to persist resolution results.
@@ -312,8 +344,11 @@ pub struct NarrowingCache {
     /// can re-enter before a cache entry exists. Returning the original deferred
     /// type on a cycle preserves generic form and prevents stack overflow.
     pub resolve_visiting: RefCell<FxHashSet<TypeId>>,
-    /// Cache for top-level property type lookups (TypeId, `PropName`) -> `PropType`
-    pub property_cache: RefCell<FxHashMap<(TypeId, Atom), Option<TypeId>>>,
+    /// Cache for top-level property type lookups (`TypeId`, resolver generation, `PropName`) -> `PropType`
+    pub property_cache: RefCell<NarrowedPropertyCache>,
+    /// Cache for required-property checks in `in`-operator negative narrowing
+    /// (`obj` in `!("prop" in obj)`).
+    pub required_property_cache: RefCell<RequiredPropertyCache>,
     /// Cache for split-nullish decomposition (TypeId -> (`non_nullish`, nullish)).
     /// Reused by checker optional-chain/property-access hot paths.
     pub split_nullish_cache: RefCell<FxHashMap<TypeId, SplitNullishParts>>,
@@ -363,6 +398,10 @@ impl NarrowingCache {
             resolve_visiting: RefCell::new(FxHashSet::default()),
             property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
+                Default::default(),
+            )),
+            required_property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                256,
                 Default::default(),
             )),
             split_nullish_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
@@ -443,7 +482,7 @@ impl<'a> NarrowingContext<'a> {
         flags
     }
 
-    fn resolver_generation(&self) -> u64 {
+    pub(crate) fn resolver_generation(&self) -> u64 {
         self.resolver
             .map(|resolver| resolver.resolver_generation().saturating_add(1))
             .unwrap_or(0)

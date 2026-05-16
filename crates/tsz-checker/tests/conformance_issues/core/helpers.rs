@@ -1311,6 +1311,28 @@ c?.foo;
 }
 
 #[test]
+fn test_in_narrowing_cache_preserves_no_property_access_from_index_signature() {
+    let source = r#"
+// @noPropertyAccessFromIndexSignature: true
+interface B { [k: string]: string }
+declare const b: B;
+function hasFoo(value: B) {
+    return "foo" in value;
+}
+hasFoo(b);
+b.foo;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts4111_count = diagnostics.iter().filter(|(code, _)| *code == 4111).count();
+
+    assert_eq!(
+        ts4111_count, 1,
+        "`in` narrowing must not cache an index-signature property as a named property. Diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_variance_annotations_require_direct_supported_type_alias_bodies() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

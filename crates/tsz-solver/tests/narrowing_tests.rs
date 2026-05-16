@@ -237,6 +237,161 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
     assert_eq!(cache.narrow_type_cache.borrow().len(), 5);
 }
 
+#[test]
+fn test_in_property_narrowing_reuses_property_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let kind_name = interner.intern_string("kind");
+
+    let obj = interner.object(vec![PropertyInfo::new(kind_name, TypeId::STRING)]);
+    let union = interner.union(vec![obj, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(kind_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, obj);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    let narrow_again = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrow_again, obj);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    let resolver_generation = ctx.resolver_generation();
+
+    let ctx_false = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed_false = ctx_false.narrow_type(union, &guard, GuardSense::Negative);
+    let expected = TypeId::NUMBER;
+    assert_eq!(narrowed_false, expected);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    // Ensure the property cache includes the resolved object-shape lookup path
+    // and can be reused across guard sense changes.
+    let kind_key = (obj, resolver_generation, kind_name);
+    let cached_kind = cache
+        .property_cache
+        .borrow()
+        .get(&kind_key)
+        .and_then(|entry| *entry)
+        .expect("expected cached explicit property lookup");
+    assert_eq!(cached_kind.type_id, TypeId::STRING);
+    assert!(!cached_kind.from_index_signature);
+}
+
+#[test]
+fn test_in_property_narrowing_preserves_index_signature_cache_origin() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let key_name = interner.intern_string("dynamic");
+
+    let record_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let union = interner.union(vec![record_type, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(key_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, record_type);
+
+    let key = (record_type, ctx.resolver_generation(), key_name);
+    let cached_entry = cache
+        .property_cache
+        .borrow()
+        .get(&key)
+        .and_then(|entry| *entry)
+        .expect("expected cached index-signature property lookup");
+    assert_eq!(cached_entry.type_id, TypeId::STRING);
+    assert!(cached_entry.from_index_signature);
+}
+
+#[test]
+fn test_negative_in_property_narrowing_reuses_required_property_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let kind_name = interner.intern_string("kind");
+
+    let required_prop = PropertyInfo {
+        name: kind_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let optional_prop = PropertyInfo {
+        name: kind_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+
+    let required_obj = interner.object(vec![required_prop]);
+    let optional_obj = interner.object(vec![optional_prop]);
+    let union = interner.union(vec![required_obj, optional_obj, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(kind_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let required_direct = ctx.is_property_required(required_obj, kind_name);
+    let optional_direct = ctx.is_property_required(optional_obj, kind_name);
+    let number_direct = ctx.is_property_required(TypeId::NUMBER, kind_name);
+    assert!(required_direct);
+    assert!(!optional_direct);
+    assert!(!number_direct);
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
+    let expected = interner.union(vec![optional_obj, TypeId::NUMBER]);
+    assert_eq!(narrowed, expected);
+
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+    let required_cached =
+        cache
+            .required_property_cache
+            .borrow()
+            .iter()
+            .any(|((type_id, _, prop), is_required)| {
+                *type_id == required_obj && *prop == kind_name && *is_required
+            });
+    assert!(required_cached);
+
+    let optional_cached = cache
+        .required_property_cache
+        .borrow()
+        .iter()
+        .filter(|((type_id, _, prop), _)| *type_id == optional_obj && *prop == kind_name)
+        .all(|(_, is_required)| !*is_required);
+    assert!(optional_cached);
+
+    let narrowed_again = ctx.narrow_type(union, &guard, GuardSense::Negative);
+    assert_eq!(narrowed_again, expected);
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+}
+
 // =============================================================================
 // Narrowing by Discriminant Tests
 // =============================================================================
