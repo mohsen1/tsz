@@ -1604,6 +1604,15 @@ impl<'a> CheckerState<'a> {
                             &sig_arg_types,
                             |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
                         );
+                        for (i, &arg_idx) in args.iter().enumerate() {
+                            if let Some(param_type) =
+                                sig_helper.get_parameter_type_for_call(i, args.len())
+                            {
+                                self.try_emit_polymorphic_this_object_literal_arg_errors(
+                                    arg_idx, param_type,
+                                );
+                            }
+                        }
 
                         return Some(OverloadResolution {
                             arg_types: sig_arg_types,
@@ -1641,6 +1650,15 @@ impl<'a> CheckerState<'a> {
                         &sig_arg_types,
                         |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
                     );
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if let Some(param_type) =
+                            sig_helper.get_parameter_type_for_call(i, args.len())
+                        {
+                            self.try_emit_polymorphic_this_object_literal_arg_errors(
+                                arg_idx, param_type,
+                            );
+                        }
+                    }
 
                     return Some(OverloadResolution {
                         arg_types: sig_arg_types,
