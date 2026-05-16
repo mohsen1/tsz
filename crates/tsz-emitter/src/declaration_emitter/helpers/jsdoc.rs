@@ -937,6 +937,50 @@ impl<'a> DeclarationEmitter<'a> {
             .collect()
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_overload_function_node_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            return Some(stmt_idx);
+        }
+
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let export = self.arena.get_export_decl(stmt_node)?;
+            let clause_node = self.arena.get(export.export_clause)?;
+            if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                return Some(export.export_clause);
+            }
+        }
+
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn hoisted_jsdoc_source_comment_is_multiline(
+        &self,
+        pos: u32,
+    ) -> bool {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return true;
+        };
+        let Some(comment) = self.all_comments.iter().rev().find(|comment| {
+            comment.end <= pos
+                && is_jsdoc_comment(comment, text)
+                && text
+                    .get(comment.end as usize..pos as usize)
+                    .is_some_and(|between| between.trim().is_empty())
+        }) else {
+            return true;
+        };
+        text.get(comment.pos as usize..comment.end as usize)
+            .is_none_or(|raw| raw.contains('\n'))
+    }
+
     fn parse_jsdoc_overload_signatures(jsdoc: &str) -> Vec<JsdocOverloadSignature> {
         let lines = Self::normalized_jsdoc_lines(jsdoc);
         let overload_positions: Vec<usize> = lines
