@@ -1156,7 +1156,7 @@ fn cross_file_jsx_diagnostics_with_options_and_default_libs(
     checker.ctx.set_lib_contexts(checker_lib_contexts);
     checker
         .ctx
-        .set_actual_lib_file_count(default_lib_files.len() + 1);
+        .set_actual_lib_file_count(default_lib_files.len());
 
     checker.check_source_file(root_main);
     checker

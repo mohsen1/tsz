@@ -627,11 +627,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
   color: var(--text);
 }
 
-.bench-project-category .bench-name,
-.bench-project-category .bench-focus {
-  display: none;
-}
-
 .bench-meta {
   font-size: 0.8rem;
   color: var(--text-tertiary);
@@ -716,6 +711,29 @@ tr:nth-child(even) { background: var(--table-stripe); }
 
 .bench-row-error {
   opacity: 0.7;
+}
+
+.bench-failure-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.bench-failure-list li {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.86rem;
+}
+
+.bench-failure-list span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-align: right;
 }
 
 .bench-bar-status {
