@@ -48,6 +48,105 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Emit the assignment target for a CommonJS-exported local when the target
+    /// must update live named exports. Returns `true` when it handled the target.
+    pub(in crate::emitter) fn emit_commonjs_live_export_assignment_target(
+        &mut self,
+        target_idx: NodeIndex,
+    ) -> bool {
+        let Some(target_node) = self.arena.get(target_idx) else {
+            return false;
+        };
+        if target_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident) = self.arena.get_identifier(target_node) else {
+            return false;
+        };
+        let local_name = ident.escaped_text.clone();
+        self.emit_commonjs_live_export_assignment_target_name(&local_name)
+    }
+
+    pub(in crate::emitter) fn emit_commonjs_live_export_assignment_target_name(
+        &mut self,
+        local_name: &str,
+    ) -> bool {
+        if local_name.is_empty() || !self.ctx.is_commonjs() {
+            return false;
+        }
+
+        let is_shadowed = self
+            .commonjs_exported_var_shadow_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(local_name));
+        let inline_export = !is_shadowed && self.commonjs_exported_var_names.contains(local_name);
+
+        let mut export_names = self
+            .deferred_local_export_bindings_all
+            .as_ref()
+            .and_then(|bindings| bindings.get(local_name))
+            .cloned()
+            .unwrap_or_default();
+        if export_names.is_empty()
+            && let Some(export_name) = self
+                .deferred_local_export_bindings
+                .as_ref()
+                .and_then(|bindings| bindings.get(local_name))
+        {
+            export_names.push(export_name.clone());
+        }
+
+        if !inline_export && export_names.is_empty() {
+            return false;
+        }
+
+        let mut written_exports: Vec<String> = Vec::new();
+        for export_name in export_names.into_iter().rev() {
+            if inline_export && export_name == local_name {
+                continue;
+            }
+            if written_exports.contains(&export_name) {
+                continue;
+            }
+            self.write_export_property_access(&export_name);
+            self.write(" = ");
+            written_exports.push(export_name);
+        }
+
+        if inline_export {
+            self.write_export_property_access(local_name);
+        } else {
+            self.write_identifier(local_name);
+        }
+        true
+    }
+
+    pub(in crate::emitter) fn commonjs_live_export_assignment_target_name_needs_chain(
+        &self,
+        local_name: &str,
+    ) -> bool {
+        if local_name.is_empty() || !self.ctx.is_commonjs() {
+            return false;
+        }
+        let is_shadowed = self
+            .commonjs_exported_var_shadow_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(local_name));
+        if !is_shadowed && self.commonjs_exported_var_names.contains(local_name) {
+            return true;
+        }
+        self.deferred_local_export_bindings_all
+            .as_ref()
+            .and_then(|bindings| bindings.get(local_name))
+            .is_some_and(|names| !names.is_empty())
+            || self
+                .deferred_local_export_bindings
+                .as_ref()
+                .is_some_and(|bindings| bindings.contains_key(local_name))
+    }
+
     /// Write a CJS/System export assignment for a named or default export.
     /// In System modules, uses `exports_1("name", value)` format.
     /// In CJS modules, uses `exports.name = value` format.

@@ -1873,11 +1873,19 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
+                let prev_deferred_local_export_bindings_all = if use_deferred_nested_cjs_exports {
+                    self.deferred_local_export_bindings_all
+                        .replace(cjs_deferred_export_bindings_all.clone())
+                } else {
+                    None
+                };
 
                 self.emit(stmt_idx);
 
                 if use_deferred_nested_cjs_exports {
                     self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+                    self.deferred_local_export_bindings_all =
+                        prev_deferred_local_export_bindings_all;
                 }
             }
             let emitted_output = self.writer.len() > before_len;

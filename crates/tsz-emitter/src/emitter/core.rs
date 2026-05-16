@@ -522,6 +522,11 @@ pub struct Printer<'a> {
     /// statements can append the right export binding after initialization.
     pub(crate) deferred_local_export_bindings: Option<FxHashMap<String, String>>,
 
+    /// All deferred local export aliases active for the current wrapped region.
+    /// Assignment targets use this to preserve CommonJS live binding chains such
+    /// as `exports.y = exports.x = x = value`.
+    pub(crate) deferred_local_export_bindings_all: Option<FxHashMap<String, Vec<String>>>,
+
     /// When true, an inline block comment (`/* ... */`) was just emitted without a trailing
     /// newline. The next `write()` call should insert a space before non-whitespace text.
     /// This avoids double-spacing with expression emitters that handle their own comment spacing.
@@ -1029,6 +1034,7 @@ impl<'a> Printer<'a> {
             commonjs_exported_var_names: FxHashSet::default(),
             commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,
+            deferred_local_export_bindings_all: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
             pending_class_field_inits: Vec::new(),
