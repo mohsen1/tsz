@@ -851,10 +851,20 @@ impl<'a> Printer<'a> {
         let recovered_arrow_return = recovered_async_arrow_return
             .as_ref()
             .or(recovered_bare_arrow_return.as_ref());
+        let recovered_arrow_property_tail = if recovered_arrow_return.is_none() {
+            self.recovered_parenthesized_arrow_property_tail(&var_stmt.declarations)
+        } else {
+            None
+        };
         if !using_is_lowered {
             if let Some(return_name) = recovered_arrow_return {
                 self.write(", ");
                 self.write(return_name);
+            } else if let Some((tail_name, consumed_span)) = recovered_arrow_property_tail {
+                self.write(", ");
+                self.write(&tail_name);
+                self.consumed_recovered_expression_statement_span =
+                    Some((consumed_span.0, consumed_span.1, tail_name));
             }
             if let Some(last_end) =
                 self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations)
@@ -1479,6 +1489,10 @@ impl<'a> Printer<'a> {
         let Some(expr_stmt) = self.arena.get_expression_statement(node) else {
             return;
         };
+
+        if self.consume_recovered_expression_statement(node) {
+            return;
+        }
 
         // Suppress bare `declare;` expression statements that are artifacts of the parser
         // not recognizing `declare` as a modifier before certain keywords (e.g.,

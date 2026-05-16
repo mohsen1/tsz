@@ -609,7 +609,7 @@ impl<'a> CheckerState<'a> {
     /// compatible declaration merges still avoid TS2344, while incompatible
     /// merges such as `interface Node { kind: SyntaxKind }` are allowed to
     /// report the same lib diagnostics as tsc.
-    fn indexed_access_into_object_uniformly_satisfies_constraint(
+    pub(crate) fn indexed_access_into_object_uniformly_satisfies_constraint(
         &mut self,
         type_arg: TypeId,
         constraint: TypeId,
