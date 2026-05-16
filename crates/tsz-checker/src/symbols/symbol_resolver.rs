@@ -1655,10 +1655,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(module_name) = alias_symbol.import_module.as_ref()
                     && let Some(import_name) = alias_symbol.import_name.as_deref()
                 {
-                    let source_file_idx = self
-                        .ctx
-                        .resolve_symbol_file_index(sym_id)
-                        .unwrap_or(self.ctx.current_file_idx);
+                    let source_file_idx = self.ctx.current_file_idx;
                     if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
                         module_name,
                         import_name,

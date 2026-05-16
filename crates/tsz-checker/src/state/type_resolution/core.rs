@@ -475,6 +475,25 @@ impl<'a> CheckerState<'a> {
 
             if has_type_args {
                 let is_array_like_name = matches!(name, "Array" | "ReadonlyArray" | "ConcatArray");
+                if has_libs
+                    && !is_array_like_name
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
+                    && let Some(def_id) = self.ctx.actual_lib_def_id_for_bare_name(name)
+                    && let Some(lib_type) = self.resolve_lib_type_by_name(name)
+                {
+                    if let Some(args) = &type_ref.type_arguments {
+                        let type_args: Vec<TypeId> = args
+                            .nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect();
+                        if !type_args.is_empty() {
+                            let base = self.ctx.types.factory().lazy(def_id);
+                            return self.ctx.types.factory().application(base, type_args);
+                        }
+                    }
+                    return lib_type;
+                }
                 let type_param = self.lookup_type_parameter(name);
                 if type_param.is_some() {
                     self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
@@ -515,17 +534,47 @@ impl<'a> CheckerState<'a> {
                         Some(sym_id)
                     }
                     TypeSymbolResolution::ValueOnly(_) => {
-                        // Route through wrong-meaning boundary: value used as type
-                        use crate::query_boundaries::name_resolution::NameLookupKind;
-                        self.report_wrong_meaning_diagnostic(
-                            name,
-                            type_name_idx,
-                            NameLookupKind::Value,
-                        );
-                        return TypeId::ERROR;
+                        if let Some(sym_id) = self
+                            .resolve_type_symbol_for_lowering(type_name_idx)
+                            .map(tsz_binder::SymbolId)
+                        {
+                            Some(sym_id)
+                        } else {
+                            // Route through wrong-meaning boundary: value used as type
+                            use crate::query_boundaries::name_resolution::NameLookupKind;
+                            self.report_wrong_meaning_diagnostic(
+                                name,
+                                type_name_idx,
+                                NameLookupKind::Value,
+                            );
+                            return TypeId::ERROR;
+                        }
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
+                let sym_id = self
+                    .resolve_type_symbol_for_lowering(type_name_idx)
+                    .map(tsz_binder::SymbolId)
+                    .or(sym_id);
+                let lib_binders = self.get_lib_binders();
+                let resolved_symbol_matches_name = sym_id.is_some_and(|sym_id| {
+                    self.get_cross_file_symbol(sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                        .is_some_and(|symbol| symbol.escaped_name == name)
+                });
+                let sym_id = if !resolved_symbol_matches_name
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
+                    && self.ctx.actual_lib_def_id_for_bare_name(name).is_some()
+                {
+                    None
+                } else {
+                    sym_id
+                };
+                let sym_owner_file_idx = sym_id.and_then(|sym_id| {
+                    self.ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .filter(|_| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
+                });
                 let is_builtin_array = is_array_like_name
                     && type_param.is_none()
                     && sym_id.is_none_or(|sym_id| self.ctx.symbol_is_from_actual_lib(sym_id));
@@ -756,6 +805,9 @@ impl<'a> CheckerState<'a> {
                         // symbols to type_env
                         let _ = self.get_type_from_type_node(arg_idx);
                     }
+                    if let (Some(sym_id), Some(file_idx)) = (sym_id, sym_owner_file_idx) {
+                        self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    }
                     // Validate type arguments against constraints (TS2344)
                     // Skip validation inside type parameter declarations (constraints/defaults)
                     if !is_builtin_array
@@ -771,6 +823,9 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 if !is_builtin_array && let Some(sym_id) = sym_id {
+                    if let Some(file_idx) = sym_owner_file_idx {
+                        self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    }
                     // Generic user-defined references lower to Application(Lazy(def), args).
                     // Ensure the base symbol has already materialized its structural
                     // body in the type environment before we hand the Application to
@@ -780,6 +835,9 @@ impl<'a> CheckerState<'a> {
                 // Ensure the symbol's DefId has type params cached and body
                 // registered so the Solver can expand Application(Lazy(DefId), Args).
                 if let Some(sym_id) = sym_id {
+                    if let Some(file_idx) = sym_owner_file_idx {
+                        self.ctx.register_symbol_file_target(sym_id, file_idx);
+                    }
                     self.ensure_def_ready_for_lowering(sym_id, name);
                 }
                 let type_param_bindings = self.get_type_param_bindings();

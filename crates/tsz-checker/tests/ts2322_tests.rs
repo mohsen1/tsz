@@ -6889,7 +6889,8 @@ const badNumber: IsolationLevel = 1;
         "expected imported const-array item type to be accepted by includes() in defining module; got: {driver_diags:#?}"
     );
 
-    let diags = tsz_checker::test_utils::check_multi_file(
+    let libs = load_lib_files_for_test();
+    let diags = tsz_checker::test_utils::check_multi_file_with_libs(
         &[
             ("./src/util/type-error.ts", type_error),
             ("./src/util/type-utils.ts", type_utils.as_str()),
@@ -6904,6 +6905,7 @@ const badNumber: IsolationLevel = 1;
             strict: true,
             ..CheckerOptions::default()
         },
+        &libs,
     );
     assert!(
         has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),

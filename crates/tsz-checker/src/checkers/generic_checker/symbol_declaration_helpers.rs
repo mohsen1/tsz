@@ -14,7 +14,9 @@ impl<'a> CheckerState<'a> {
         sym_id: tsz_binder::SymbolId,
     ) -> bool {
         let lib_binders = self.get_lib_binders();
-        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
+        let symbol = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders));
         let Some(symbol) = symbol else {
             return false;
         };
@@ -114,7 +116,10 @@ impl<'a> CheckerState<'a> {
         sym_id: tsz_binder::SymbolId,
     ) -> bool {
         let lib_binders = self.get_lib_binders();
-        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+        else {
             return false;
         };
         if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {

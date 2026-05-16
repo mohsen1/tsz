@@ -737,7 +737,9 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_binder::symbol_flags;
         let mut sym_id = sym_id;
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        let owner_file_idx = self.ctx.resolve_symbol_file_index(sym_id);
+        if owner_file_idx.is_none_or(|file_idx| file_idx == self.ctx.current_file_idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
@@ -764,9 +766,8 @@ impl<'a> CheckerState<'a> {
 
         let lib_binders = self.get_lib_binders();
         let base_name = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(sym_id, &lib_binders)
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
             .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
         let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
         if type_params.is_empty() {

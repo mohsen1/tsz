@@ -108,7 +108,11 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         if name != "Array" && name != "ReadonlyArray" && name != "ConcatArray" {
-            match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
+            let type_resolution = self
+                .resolve_type_symbol_for_lowering(type_name_idx)
+                .map(|sym_id| TypeSymbolResolution::Type(tsz_binder::SymbolId(sym_id)))
+                .unwrap_or_else(|| self.resolve_identifier_symbol_in_type_position(type_name_idx));
+            match type_resolution {
                 TypeSymbolResolution::Type(sym_id) => {
                     self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
                     if self.ctx.has_lib_loaded()
@@ -211,8 +215,48 @@ impl<'a> CheckerState<'a> {
                             return factory.application(base_type_id, default_args);
                         }
                     }
+                    if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+                        && file_idx != self.ctx.current_file_idx
+                    {
+                        self.ctx.register_symbol_file_target(sym_id, file_idx);
+                        return self.type_reference_symbol_type(sym_id);
+                    }
                 }
                 TypeSymbolResolution::ValueOnly(sym_id) => {
+                    if let Some(alias_sym_id) = self.ctx.binder.file_locals.get(name)
+                        && let Some(alias_symbol) = self.ctx.binder.get_symbol(alias_sym_id)
+                        && alias_symbol.has_any_flags(symbol_flags::ALIAS)
+                        && alias_symbol.is_type_only
+                        && let Some(module_name) = alias_symbol.import_module.as_ref()
+                    {
+                        let import_name = alias_symbol.import_name.as_deref().unwrap_or(name);
+                        let source_file_idx = self.ctx.current_file_idx;
+                        if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
+                            module_name,
+                            import_name,
+                            Some(source_file_idx),
+                        ) {
+                            if let Some(file_idx) =
+                                self.ctx.resolve_symbol_file_index(target_sym_id)
+                            {
+                                self.ctx
+                                    .register_symbol_file_target(target_sym_id, file_idx);
+                            }
+                            return self.type_reference_symbol_type(target_sym_id);
+                        }
+                    }
+                    if let Some(def_id) = self.resolve_entity_name_text_to_def_id_for_lowering(name)
+                    {
+                        if let Some((type_sym_id, owner_file_idx)) =
+                            self.ctx.def_symbol_identity(def_id)
+                        {
+                            if let Some(file_idx) = owner_file_idx {
+                                self.ctx.register_symbol_file_target(type_sym_id, file_idx);
+                            }
+                            return self.type_reference_symbol_type(type_sym_id);
+                        }
+                        return factory.lazy(def_id);
+                    }
                     self.report_wrong_meaning(
                         name,
                         type_name_idx,
@@ -227,9 +271,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Create DefIds for type aliases (enables DefId-based resolution)
-        if let TypeSymbolResolution::Type(sym_id) =
-            self.resolve_identifier_symbol_in_type_position(type_name_idx)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        if let Some(sym_id) = self
+            .resolve_type_symbol_for_lowering(type_name_idx)
+            .map(tsz_binder::SymbolId)
+            && let Some(symbol) = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
             && symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
         {
             let _def_id = self.ctx.get_or_create_def_id(sym_id);

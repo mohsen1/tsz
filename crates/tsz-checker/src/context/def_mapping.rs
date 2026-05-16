@@ -318,6 +318,12 @@ impl<'a> CheckerContext<'a> {
             .symbols
             .get(sym_id)
             .filter(|symbol| symbol.escaped_name == expected_name)
+            .map(|symbol| {
+                (
+                    symbol,
+                    (self.current_file_idx != usize::MAX).then_some(self.current_file_idx as u32),
+                )
+            })
             .or_else(|| {
                 self.lib_contexts.iter().find_map(|lib_ctx| {
                     lib_ctx
@@ -325,20 +331,27 @@ impl<'a> CheckerContext<'a> {
                         .symbols
                         .get(sym_id)
                         .filter(|symbol| symbol.escaped_name == expected_name)
+                        .map(|symbol| {
+                            (
+                                symbol,
+                                (symbol.decl_file_idx != u32::MAX).then_some(symbol.decl_file_idx),
+                            )
+                        })
                 })
             })
             .or_else(|| {
                 self.all_binders.as_ref().and_then(|binders| {
-                    binders.iter().find_map(|binder| {
+                    binders.iter().enumerate().find_map(|(file_idx, binder)| {
                         binder
                             .symbols
                             .get(sym_id)
                             .filter(|symbol| symbol.escaped_name == expected_name)
+                            .map(|symbol| (symbol, Some(file_idx as u32)))
                     })
                 })
             });
 
-        let Some(symbol) = matching_symbol else {
+        let Some((symbol, owner_file_idx)) = matching_symbol else {
             return self.get_or_create_def_id(sym_id);
         };
         let is_current_file_local_symbol = self.binder.file_locals.get(expected_name)
@@ -373,11 +386,13 @@ impl<'a> CheckerContext<'a> {
         {
             return self.get_canonical_lib_def_id(expected_name, lib_sym_id);
         }
-        let file_idx = if is_current_file_local_symbol && self.current_file_idx != usize::MAX {
-            self.current_file_idx as u32
-        } else {
-            symbol.decl_file_idx
-        };
+        let file_idx = owner_file_idx.unwrap_or_else(|| {
+            if is_current_file_local_symbol && self.current_file_idx != usize::MAX {
+                self.current_file_idx as u32
+            } else {
+                symbol.decl_file_idx
+            }
+        });
         if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx)
             && self
                 .definition_store
