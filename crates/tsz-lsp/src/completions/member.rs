@@ -387,11 +387,14 @@ impl<'a> Completions<'a> {
                 }
             })
         });
-        if let Some(elem) = array_elem {
+        if let Some(_elem) = array_elem {
             if let Some(array_base) = interner.get_array_base_type() {
-                let app = interner.application(array_base, vec![elem]);
-                self.collect_properties_for_type_inner(
-                    app, interner, checker, visited, props, false,
+                self.collect_array_prototype_props(
+                    array_base,
+                    interner,
+                    visited,
+                    props,
+                    include_private,
                 );
             } else {
                 self.collect_array_member_fallback(interner, props);
@@ -478,14 +481,24 @@ impl<'a> Completions<'a> {
 
         if let Some(app) = visitor::application_id(interner, evaluated) {
             let app = interner.type_application(app);
-            self.collect_properties_for_type_inner(
-                app.base,
-                interner,
-                checker,
-                visited,
-                props,
-                include_private,
-            );
+            if interner.get_array_base_type() == Some(app.base) {
+                self.collect_array_prototype_props(
+                    app.base,
+                    interner,
+                    visited,
+                    props,
+                    include_private,
+                );
+            } else {
+                self.collect_properties_for_type_inner(
+                    app.base,
+                    interner,
+                    checker,
+                    visited,
+                    props,
+                    include_private,
+                );
+            }
             return;
         }
 
@@ -1287,6 +1300,56 @@ impl<'a> Completions<'a> {
             Some(normalized.to_string())
         } else {
             None
+        }
+    }
+
+    /// Collect Array.prototype members directly from the registered `array_base_type`,
+    /// without adding Function.prototype members.
+    ///
+    /// When the Array interface has construct signatures it is lowered to
+    /// `TypeData::Callable`. The generic callable path in
+    /// `collect_properties_for_type_inner` also appends Function.prototype
+    /// members (apply, call, bind) to every Callable — correct for function
+    /// types, wrong for array types. This helper skips that step.
+    ///
+    /// Handles all structural shapes the `array_base_type` can take:
+    ///   - Callable (Array interface with construct signatures)
+    ///   - Object / `ObjectWithIndex` (plain interface without call signatures)
+    ///   - Intersection (multiple lib-file declarations merged per file)
+    fn collect_array_prototype_props(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        include_private: bool,
+    ) {
+        if !visited.insert(type_id) {
+            return;
+        }
+        if let Some(id) = visitor::callable_shape_id(interner, type_id) {
+            let shape = interner.callable_shape(id);
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+        if let Some(id) = visitor::object_shape_id(interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(interner, type_id))
+        {
+            let shape = interner.object_shape(id);
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+        if let Some(members_id) = visitor::intersection_list_id(interner, type_id) {
+            let members = interner.type_list(members_id);
+            for &member in members.iter() {
+                self.collect_array_prototype_props(
+                    member,
+                    interner,
+                    visited,
+                    props,
+                    include_private,
+                );
+            }
         }
     }
 

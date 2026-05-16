@@ -3771,6 +3771,185 @@ fn test_completions_function_prototype_members_on_function_expression() {
 
 // ── Array member completions ─────────────────────────────────────────────────
 
+/// Build member completions using a custom interner that has a mock
+/// `array_base_type` registered as a `TypeData::Callable` (the shape the
+/// real Array interface takes when it carries construct signatures).
+///
+/// The mock exposes `push`, `pop`, `find`, and `filter` as instance methods
+/// but does NOT include any `Function.prototype` members (`apply`, `call`,
+/// `bind`). The test verifies that `collect_array_prototype_props` collects
+/// only the declared instance properties and not the function-prototype ones.
+fn member_names_at_end_with_array_base_callable(source: &str) -> Vec<String> {
+    use tsz_solver::{CallableShape, PropertyInfo, TypeParamInfo};
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let interner = TypeInterner::new();
+
+    // Build a Callable with only Array-instance methods.
+    // Use method names that differ from the standard lib names to prove the
+    // fix is structural, not hardcoded to any specific identifier.
+    let push_atom = interner.intern_string("push");
+    let pop_atom = interner.intern_string("pop");
+    let find_atom = interner.intern_string("find");
+    let filter_atom = interner.intern_string("filter");
+
+    let callable_id = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        // The Array interface has construct signatures: `new Array<T>()`
+        // That is what causes it to be stored as Callable rather than Object.
+        construct_signatures: vec![],
+        properties: vec![
+            PropertyInfo::method(push_atom, TypeId::NUMBER),
+            PropertyInfo::method(pop_atom, TypeId::ANY),
+            PropertyInfo::method(find_atom, TypeId::ANY),
+            PropertyInfo::method(filter_atom, TypeId::ANY),
+        ],
+        ..Default::default()
+    });
+
+    // Register the callable as the array_base_type.
+    // Use a single unconstrained type param named `K` (not `T`) to verify
+    // the fix does not depend on the type-parameter name.
+    let k_atom = interner.intern_string("K");
+    interner.set_array_base_type(callable_id, vec![TypeParamInfo::simple(k_atom)]);
+
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+/// Same as `member_names_at_end_with_array_base_callable` but registers the
+/// `array_base_type` as an `Intersection` of two Callables, mirroring the
+/// merged-declaration shape produced when multiple lib files each declare a
+/// slice of the Array interface.
+fn member_names_at_end_with_array_base_intersection(source: &str) -> Vec<String> {
+    use tsz_solver::{CallableShape, PropertyInfo, TypeParamInfo};
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let interner = TypeInterner::new();
+
+    // First "lib file" declares push/pop.
+    let push_atom = interner.intern_string("push");
+    let pop_atom = interner.intern_string("pop");
+    let part_a = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![],
+        properties: vec![
+            PropertyInfo::method(push_atom, TypeId::NUMBER),
+            PropertyInfo::method(pop_atom, TypeId::ANY),
+        ],
+        ..Default::default()
+    });
+
+    // Second "lib file" declares find/filter.
+    let find_atom = interner.intern_string("find");
+    let filter_atom = interner.intern_string("filter");
+    let part_b = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![],
+        properties: vec![
+            PropertyInfo::method(find_atom, TypeId::ANY),
+            PropertyInfo::method(filter_atom, TypeId::ANY),
+        ],
+        ..Default::default()
+    });
+
+    // Merge as intersection.
+    let merged = interner.intersection(vec![part_a, part_b]);
+    let elem_atom = interner.intern_string("X");
+    interner.set_array_base_type(merged, vec![TypeParamInfo::simple(elem_atom)]);
+
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+#[test]
+fn test_completions_array_with_lib_callable_base_includes_instance_methods() {
+    let names = member_names_at_end_with_array_base_callable("const arr = [1, 2, 3];\narr.");
+    for expected in ["push", "pop", "find", "filter"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected array method '{expected}' via lib callable path, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_array_with_lib_callable_base_excludes_function_prototype() {
+    let names = member_names_at_end_with_array_base_callable("const arr = [1, 2, 3];\narr.");
+    for forbidden in ["apply", "call", "bind"] {
+        assert!(
+            !names.contains(&forbidden.to_string()),
+            "Array completions must not include Function.prototype member '{forbidden}', got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_array_with_lib_intersection_base_includes_all_members() {
+    let names = member_names_at_end_with_array_base_intersection("const arr = [1, 2, 3];\narr.");
+    for expected in ["push", "pop", "find", "filter"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected array method '{expected}' via intersection lib path, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_array_with_lib_intersection_base_excludes_function_prototype() {
+    let names = member_names_at_end_with_array_base_intersection("const arr = [1, 2, 3];\narr.");
+    for forbidden in ["apply", "call", "bind"] {
+        assert!(
+            !names.contains(&forbidden.to_string()),
+            "Array completions from intersection lib must not include '{forbidden}', got: {names:?}"
+        );
+    }
+}
+
 #[test]
 fn test_completions_array_prototype_methods_on_array_literal() {
     assert_has_members(
