@@ -793,7 +793,12 @@ impl<'a> CheckerState<'a> {
                         || has_readonly_construct_props
                         || class_props_from_construct
                             .as_ref()
-                            .is_some_and(|props| self.format_type(*props).contains("Readonly<"));
+                            .is_some_and(|props| {
+                                crate::query_boundaries::common::contains_mapped_type_with_readonly_modifier(
+                                    self.ctx.types,
+                                    *props,
+                                )
+                            });
                     if !skip_react_class_return_check {
                         self.check_jsx_component_return_type(resolved_component_type, tag_name_idx);
                     }

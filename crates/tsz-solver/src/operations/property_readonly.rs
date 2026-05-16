@@ -246,6 +246,56 @@ pub fn is_mapped_type_with_readonly_modifier(interner: &dyn TypeDatabase, type_i
     }
 }
 
+/// Check whether a type surface contains a mapped type with an explicit
+/// `readonly` modifier.
+///
+/// This follows wrappers that preserve the visible surface (`Lazy`,
+/// `Application`, unions, and intersections), while avoiding arbitrary
+/// application-argument descent so `Box<Readonly<T>>` is not treated as a
+/// readonly object surface.
+pub fn contains_mapped_type_with_readonly_modifier(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let mut stack = vec![type_id];
+    let mut seen = Vec::new();
+
+    while let Some(current) = stack.pop() {
+        if current.is_intrinsic() || seen.contains(&current) {
+            continue;
+        }
+        seen.push(current);
+
+        match interner.lookup(current) {
+            Some(TypeData::Mapped(mapped_id)) => {
+                if interner.get_mapped(mapped_id).readonly_modifier == Some(MappedModifier::Add) {
+                    return true;
+                }
+            }
+            Some(TypeData::Application(app_id)) => {
+                let resolved = evaluate_type(interner, current);
+                if resolved != current {
+                    stack.push(resolved);
+                } else {
+                    stack.push(interner.type_application(app_id).base);
+                }
+            }
+            Some(TypeData::Lazy(_)) => {
+                let resolved = evaluate_type(interner, current);
+                if resolved != current {
+                    stack.push(resolved);
+                }
+            }
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+                stack.extend(interner.type_list(list_id).iter().copied());
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
 /// Check if a string represents a valid numeric property name.
 ///
 /// Returns `true` for numeric literals that TypeScript treats as valid numeric
