@@ -1051,7 +1051,7 @@ Second_$.two = 2;
 
     let missing_property_messages: Vec<_> = diagnostics
         .iter()
-        .filter(|diag| matches!(diag.code, 2739 | 2740 | 2741))
+        .filter(|diag| matches!(diag.code, 2739..=2741))
         .map(|diag| diag.message_text.as_str())
         .collect();
 
