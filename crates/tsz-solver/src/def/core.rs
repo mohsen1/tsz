@@ -398,6 +398,111 @@ impl DefinitionInfo {
         self.span = Some((start, end));
         self
     }
+
+    /// Convert `SemanticDefKind` to `DefKind`.
+    pub fn kind_from_semantic(kind: tsz_binder::SemanticDefKind) -> DefKind {
+        match kind {
+            tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
+            tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
+            tsz_binder::SemanticDefKind::Class => DefKind::Class,
+            tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
+            tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
+            tsz_binder::SemanticDefKind::Function => DefKind::Function,
+            tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
+        }
+    }
+
+    /// Create a `DefinitionInfo` from a binder `SemanticDefEntry`.
+    ///
+    /// Centralizes the conversion used by both `DefinitionStore::from_semantic_def_entries`
+    /// (merge pipeline) and `CheckerContext::populate_def_ids_from_semantic_defs`
+    /// (per-file checker construction). Single conversion path prevents field
+    /// divergence between the two code paths.
+    pub fn from_semantic_def(
+        entry: &tsz_binder::SemanticDefEntry,
+        sym_id: u32,
+        intern_string: &dyn Fn(&str) -> Atom,
+    ) -> Self {
+        let kind = Self::kind_from_semantic(entry.kind);
+        let name = intern_string(&entry.name);
+
+        let type_params = if entry.type_param_count > 0 {
+            (0..entry.type_param_count)
+                .map(|i| {
+                    let param_name = entry
+                        .type_param_names
+                        .get(i as usize)
+                        .map(|n| intern_string(n))
+                        .unwrap_or(Atom(0));
+                    crate::TypeParamInfo {
+                        name: param_name,
+                        constraint: None,
+                        default: None,
+                        is_const: false,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let enum_members: Vec<(Atom, EnumMemberValue)> = entry
+            .enum_member_names
+            .iter()
+            .map(|n| (intern_string(n), EnumMemberValue::Computed))
+            .collect();
+
+        Self {
+            kind,
+            name,
+            type_params,
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members,
+            exports: Vec::new(),
+            file_id: Some(entry.file_id),
+            span: Some((entry.span_start, entry.span_start)),
+            symbol_id: Some(sym_id),
+            heritage_names: entry.heritage_names(),
+            is_abstract: entry.is_abstract,
+            is_const: entry.is_const,
+            is_exported: entry.is_exported,
+            is_global_augmentation: entry.is_global_augmentation,
+            is_declare: entry.is_declare,
+        }
+    }
+
+    /// Create a `ClassConstructor` companion from a class `SemanticDefEntry`.
+    pub fn class_constructor_from_semantic_def(
+        entry: &tsz_binder::SemanticDefEntry,
+        sym_id: u32,
+        intern_string: &dyn Fn(&str) -> Atom,
+    ) -> Self {
+        Self {
+            kind: DefKind::ClassConstructor,
+            name: intern_string(&entry.name),
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports: Vec::new(),
+            file_id: Some(entry.file_id),
+            span: Some((entry.span_start, entry.span_start)),
+            symbol_id: Some(sym_id),
+            heritage_names: Vec::new(),
+            is_abstract: entry.is_abstract,
+            is_const: false,
+            is_exported: entry.is_exported,
+            is_global_augmentation: false,
+            is_declare: entry.is_declare,
+        }
+    }
 }
 
 // =============================================================================
@@ -1733,65 +1838,8 @@ impl DefinitionStore {
 
         // Pass 1: Create DefIds and DefinitionInfo for each entry.
         for (sym_id, entry) in semantic_defs {
-            let kind = match entry.kind {
-                tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
-                tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
-                tsz_binder::SemanticDefKind::Class => DefKind::Class,
-                tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
-                tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
-                tsz_binder::SemanticDefKind::Function => DefKind::Function,
-                tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
-            };
-
-            let name = intern_string(&entry.name);
-
-            let type_params = if entry.type_param_count > 0 {
-                (0..entry.type_param_count)
-                    .map(|i| {
-                        let param_name = entry
-                            .type_param_names
-                            .get(i as usize)
-                            .map(|n| intern_string(n))
-                            .unwrap_or(Atom(0));
-                        crate::TypeParamInfo {
-                            name: param_name,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            let enum_members: Vec<(Atom, EnumMemberValue)> = entry
-                .enum_member_names
-                .iter()
-                .map(|n| (intern_string(n), EnumMemberValue::Computed))
-                .collect();
-
-            let info = DefinitionInfo {
-                kind,
-                name,
-                type_params,
-                body: None,
-                instance_shape: None,
-                static_shape: None,
-                extends: None,
-                implements: Vec::new(),
-                enum_members,
-                exports: Vec::new(),
-                file_id: Some(entry.file_id),
-                span: Some((entry.span_start, entry.span_start)),
-                symbol_id: Some(sym_id.0),
-                heritage_names: entry.heritage_names(),
-                is_abstract: entry.is_abstract,
-                is_const: entry.is_const,
-                is_exported: entry.is_exported,
-                is_global_augmentation: entry.is_global_augmentation,
-                is_declare: entry.is_declare,
-            };
+            let info = DefinitionInfo::from_semantic_def(entry, sym_id.0, &intern_string);
+            let kind = info.kind;
 
             let def_id = DefId(next_id);
             next_id = next_id.saturating_add(1);
@@ -1806,31 +1854,14 @@ impl DefinitionStore {
                 info,
             );
 
-            // For classes, create a ClassConstructor companion DefId.
             if kind == DefKind::Class {
                 let ctor_def_id = DefId(next_id);
                 next_id = next_id.saturating_add(1);
-                let ctor_info = DefinitionInfo {
-                    kind: DefKind::ClassConstructor,
-                    name,
-                    type_params: Vec::new(),
-                    body: None,
-                    instance_shape: None,
-                    static_shape: None,
-                    extends: None,
-                    implements: Vec::new(),
-                    enum_members: Vec::new(),
-                    exports: Vec::new(),
-                    file_id: Some(entry.file_id),
-                    span: Some((entry.span_start, entry.span_start)),
-                    symbol_id: Some(sym_id.0),
-                    heritage_names: Vec::new(),
-                    is_abstract: entry.is_abstract,
-                    is_const: false,
-                    is_exported: entry.is_exported,
-                    is_global_augmentation: false,
-                    is_declare: entry.is_declare,
-                };
+                let ctor_info = DefinitionInfo::class_constructor_from_semantic_def(
+                    entry,
+                    sym_id.0,
+                    &intern_string,
+                );
                 record_preloaded_definition(
                     &mut def_infos,
                     &mut file_to_defs,
