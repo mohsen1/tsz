@@ -53,16 +53,8 @@ fn needs_property_name_quotes(name: &str) -> bool {
     }
 }
 
-fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
-    if let Some(type_arg) = name
-        .strip_prefix("Iterator<")
-        .and_then(|rest| rest.strip_suffix('>'))
-        && !type_arg.contains(',')
-    {
-        Cow::Owned(format!("Iterator<{type_arg}, undefined, unknown>"))
-    } else {
-        Cow::Borrowed(name)
-    }
+const fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
+    Cow::Borrowed(name)
 }
 
 /// Extracted info about a single class member (property, method, or accessor).
@@ -1599,15 +1591,14 @@ impl<'a> CheckerState<'a> {
 
         let (base_type_params, base_type_param_updates) =
             self.push_type_parameters(&base_class.type_parameters);
-        let base_name_without_args = base_class_name
-            .split_once('<')
-            .map_or(base_class_name.as_str(), |(name, _)| name)
-            .to_string();
+        let base_is_actual_lib_iterator = heritage_expr_idx
+            .and_then(|expr_idx| self.resolve_heritage_symbol(expr_idx))
+            .is_some_and(|sym_id| self.class_symbol_is_actual_lib_iterator(sym_id));
         if type_args.len() < base_type_params.len() {
             for (param_index, param) in base_type_params.iter().enumerate().skip(type_args.len()) {
-                let fallback = if base_name_without_args == "Iterator" && param_index == 1 {
+                let fallback = if base_is_actual_lib_iterator && param_index == 1 {
                     TypeId::UNDEFINED
-                } else if base_name_without_args == "Iterator" && param_index == 2 {
+                } else if base_is_actual_lib_iterator && param_index == 2 {
                     TypeId::UNKNOWN
                 } else {
                     param
@@ -1633,7 +1624,7 @@ impl<'a> CheckerState<'a> {
                 base_class_name.truncate(lt_pos);
             }
             let mut display_type_args = type_args.clone();
-            if base_name_without_args == "Iterator" {
+            if base_is_actual_lib_iterator {
                 if display_type_args.len() < 2 {
                     display_type_args.push(TypeId::UNDEFINED);
                 }
@@ -2588,6 +2579,13 @@ impl<'a> CheckerState<'a> {
             name.push_str(&param_names.join(", "));
             name.push('>');
         }
+    }
+
+    pub(crate) fn class_symbol_is_actual_lib_iterator(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        self.get_symbol_globally(sym_id).is_some_and(|symbol| {
+            symbol.escaped_name == "Iterator"
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+        })
     }
 
     /// Walk the inheritance chain from `class_idx` upward and compose type parameter
