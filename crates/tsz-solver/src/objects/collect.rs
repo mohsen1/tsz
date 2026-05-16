@@ -179,82 +179,95 @@ struct PropertyCollector<'a, R> {
 
 impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
     fn collect(&mut self, type_id: TypeId) {
-        // Prevent infinite recursion
-        if !self.seen.insert(type_id) {
-            return;
-        }
-        let Some(_depth_guard) = CollectPropertiesDepthGuard::enter(type_id) else {
-            return;
-        };
+        let mut stack = vec![type_id];
+        let mut processed = 0usize;
 
-        // 1. Resolve Lazy/Ref
-        let resolved = resolve_type(type_id, self.interner, self.resolver);
+        while let Some(type_id) = stack.pop() {
+            if processed >= MAX_COLLECT_PROPERTIES_DEPTH {
+                return;
+            }
+            processed += 1;
 
-        // 2. Handle different type variants
-        match self.interner.lookup(resolved) {
-            Some(TypeData::Intersection(members_id)) => {
-                // Recursively collect from all intersection members
-                for &member in self.interner.type_list(members_id).iter() {
-                    self.collect(member);
+            // Prevent infinite recursion
+            if !self.seen.insert(type_id) {
+                continue;
+            }
+            let Some(_depth_guard) = CollectPropertiesDepthGuard::enter(type_id) else {
+                continue;
+            };
+
+            // 1. Resolve Lazy/Ref
+            let resolved = resolve_type(type_id, self.interner, self.resolver);
+
+            // 2. Handle different type variants
+            match self.interner.lookup(resolved) {
+                Some(TypeData::Intersection(members_id)) => {
+                    let members: Vec<TypeId> = self
+                        .interner
+                        .type_list(members_id)
+                        .iter()
+                        .copied()
+                        .collect();
+                    stack.extend(members.into_iter().rev());
                 }
-            }
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                self.merge_shape(&shape);
-            }
-            Some(TypeData::Mapped(mapped_id)) => {
-                self.collect_finite_mapped_properties(mapped_id);
-            }
-            // Any type in intersection makes everything Any (commutative)
-            Some(TypeData::Intrinsic(IntrinsicKind::Any)) => {
-                self.found_any = true;
-            }
-            // Type parameter: collect properties from its constraint
-            Some(TypeData::TypeParameter(info)) => {
-                if let Some(constraint) = info.constraint {
-                    self.collect(constraint);
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                    let shape = self.interner.object_shape(shape_id);
+                    self.merge_shape(&shape);
                 }
-            }
-            Some(TypeData::Application(_)) => {
-                let mut evaluator = crate::evaluation::evaluate::TypeEvaluator::with_resolver(
-                    self.interner,
-                    self.resolver,
-                );
-                let evaluated = evaluator.evaluate(resolved);
-                if evaluated != resolved {
-                    self.collect(evaluated);
-                } else if let Some(expanded) = self.expand_application_with_resolver(resolved)
-                    && expanded != resolved
-                {
-                    self.collect(expanded);
+                Some(TypeData::Mapped(mapped_id)) => {
+                    self.collect_finite_mapped_properties(mapped_id);
                 }
-            }
-            // Conditional type: collect properties from its default constraint.
-            // For Extract-like patterns (T extends U ? T : never), the constraint
-            // is T & U, so we get U's properties. For general patterns, the
-            // constraint is true_type | false_type (union of both branches).
-            // This matches tsc's getApparentType → getBaseConstraintOfType →
-            // getConstraintOfConditionalType for conditional types.
-            Some(TypeData::Conditional(cond_id)) => {
-                let cond = self.interner.conditional_type(cond_id);
-                let constraint = if cond.true_type == cond.check_type {
-                    // Extract-like: T extends U ? T : never → T & U
-                    self.interner
-                        .intersection2(cond.check_type, cond.extends_type)
-                } else {
-                    // General: union of both branches
-                    self.interner.union2(cond.true_type, cond.false_type)
-                };
-                self.collect(constraint);
-            }
-            // Union: collect common properties (present in ALL members)
-            Some(TypeData::Union(members_id)) => {
-                self.collect_union_common(members_id);
-            }
-            // Never in intersection makes the whole thing Never
-            // This is handled by the caller, not here
-            _ => {
-                // Not an object or intersection - ignore (call signatures, primitives, etc.)
+                // Any type in intersection makes everything Any (commutative)
+                Some(TypeData::Intrinsic(IntrinsicKind::Any)) => {
+                    self.found_any = true;
+                }
+                // Type parameter: collect properties from its constraint
+                Some(TypeData::TypeParameter(info)) => {
+                    if let Some(constraint) = info.constraint {
+                        stack.push(constraint);
+                    }
+                }
+                Some(TypeData::Application(_)) => {
+                    let mut evaluator = crate::evaluation::evaluate::TypeEvaluator::with_resolver(
+                        self.interner,
+                        self.resolver,
+                    );
+                    let evaluated = evaluator.evaluate(resolved);
+                    if evaluated != resolved {
+                        stack.push(evaluated);
+                    } else if let Some(expanded) = self.expand_application_with_resolver(resolved)
+                        && expanded != resolved
+                    {
+                        stack.push(expanded);
+                    }
+                }
+                // Conditional type: collect properties from its default constraint.
+                // For Extract-like patterns (T extends U ? T : never), the constraint
+                // is T & U, so we get U's properties. For general patterns, the
+                // constraint is true_type | false_type (union of both branches).
+                // This matches tsc's getApparentType → getBaseConstraintOfType →
+                // getConstraintOfConditionalType for conditional types.
+                Some(TypeData::Conditional(cond_id)) => {
+                    let cond = self.interner.conditional_type(cond_id);
+                    let constraint = if cond.true_type == cond.check_type {
+                        // Extract-like: T extends U ? T : never → T & U
+                        self.interner
+                            .intersection2(cond.check_type, cond.extends_type)
+                    } else {
+                        // General: union of both branches
+                        self.interner.union2(cond.true_type, cond.false_type)
+                    };
+                    stack.push(constraint);
+                }
+                // Union: collect common properties (present in ALL members)
+                Some(TypeData::Union(members_id)) => {
+                    self.collect_union_common(members_id);
+                }
+                // Never in intersection makes the whole thing Never
+                // This is handled by the caller, not here
+                _ => {
+                    // Not an object or intersection - ignore (call signatures, primitives, etc.)
+                }
             }
         }
     }
