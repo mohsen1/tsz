@@ -1083,6 +1083,14 @@ impl Server {
         import_module_specifier_ending: Option<&str>,
         import_module_specifier_preference: Option<&str>,
     ) -> Vec<ImportCandidate> {
+        // No diagnostics → nothing can be fixed by adding an import. Skip the
+        // entire candidate scan (including the expensive "scan everything"
+        // fallback) to avoid O(project) work on every getCodeFixes call for
+        // error codes like 9007/9010 (isolated declarations) that are
+        // structurally unrelated to missing imports.
+        if diagnostics.is_empty() {
+            return Vec::new();
+        }
         let mut files = self.open_files.clone();
         let mut external_project_paths = rustc_hash::FxHashSet::default();
         for project_files in self.external_project_files.values() {
@@ -1145,8 +1153,20 @@ impl Server {
         if candidates.is_empty() {
             if fallback_names.is_empty() {
                 // Preserve legacy behavior for diagnostics whose message shape does not
-                // include a directly parseable missing identifier.
-                candidates.extend(project.get_import_candidates_for_prefix(current_file_path, ""));
+                // include a directly parseable missing identifier — but only when at
+                // least one diagnostic has a code that could plausibly be fixed by
+                // adding an import. Isolated-declarations (9007-9039), JSX syntax
+                // errors (17004/17010/17011), and similar structural errors can never
+                // be resolved by importing a symbol; running the O(project) full scan
+                // for them wastes tens of seconds on React-heavy test fixtures.
+                let has_import_eligible = diagnostics.iter().any(|d| {
+                    d.code
+                        .is_some_and(Self::diagnostic_code_may_need_import_fix)
+                });
+                if has_import_eligible {
+                    candidates
+                        .extend(project.get_import_candidates_for_prefix(current_file_path, ""));
+                }
             } else {
                 for missing_name in &fallback_names {
                     candidates.extend(
@@ -1246,6 +1266,29 @@ impl Server {
 
         reorder_import_candidates_for_package_roots(&mut deduped);
         deduped
+    }
+
+    /// Returns `false` for diagnostic codes that are structurally impossible to
+    /// fix by adding an import. Used to gate the expensive O(project)
+    /// `get_import_candidates_for_prefix(file, "")` fallback scan so that codes
+    /// like the isolated-declarations family (9007-9039), JSX syntax errors
+    /// (17004/17010/17011), and module-mode errors (1xxx) never trigger it.
+    ///
+    /// The rule: a code "may need an import fix" when it is in the
+    /// "cannot find name/namespace/module" family that `tsz-lsp`'s
+    /// `import_candidates_for_diagnostics` explicitly handles (2304, 2503) or
+    /// when the message contains a parseable missing identifier that a targeted
+    /// prefix search could satisfy. Everything else returns `false`, preventing
+    /// the full-project symbol scan.
+    pub(super) fn diagnostic_code_may_need_import_fix(code: u32) -> bool {
+        // Codes for which `import_candidates_for_diagnostics` produces candidates.
+        // 2304 = Cannot find name
+        // 2503 = Cannot find namespace
+        // 2583 = Cannot find name (target library variant)
+        // 2693 = Only refers to a type, but is being used as a value here
+        // 7016 = Could not find a declaration file for module
+        const IMPORT_ELIGIBLE: &[u32] = &[2304, 2503, 2583, 2693, 7016];
+        IMPORT_ELIGIBLE.contains(&code)
     }
 
     fn missing_name_from_diagnostic_message(message: &str) -> Option<String> {

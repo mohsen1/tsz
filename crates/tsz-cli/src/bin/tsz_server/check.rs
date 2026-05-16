@@ -831,6 +831,24 @@ impl Server {
         }
     }
 
+    pub(crate) fn parse_jsx_mode(jsx: &Option<String>) -> tsz_common::checker_options::JsxMode {
+        use tsz_common::checker_options::JsxMode;
+        match jsx.as_deref() {
+            Some("react") | Some("1") => JsxMode::React,
+            Some("react-jsx") | Some("4") => JsxMode::ReactJsx,
+            Some("react-jsxdev") | Some("5") => JsxMode::ReactJsxDev,
+            Some("preserve") | Some("2") => JsxMode::Preserve,
+            Some("react-native") | Some("3") => JsxMode::ReactNative,
+            _ => JsxMode::None,
+        }
+    }
+
+    /// Returns true when `moduleResolution` implies classic (non-node) path
+    /// resolution. This is rare in modern code; the default is node-style.
+    pub(crate) fn parse_implied_classic_resolution(module_resolution: &Option<String>) -> bool {
+        matches!(module_resolution.as_deref(), Some("classic") | Some("0"))
+    }
+
     pub(crate) fn build_checker_options(&self, options: &CheckOptions) -> CheckerOptions {
         let emitter_target = Self::parse_target(&options.target);
         let checker_target = checker_target_from_emitter(emitter_target);
@@ -880,7 +898,7 @@ impl Server {
             check_js: options.check_js,
             allow_js: options.allow_js,
             no_resolve: options.no_resolve,
-            isolated_declarations: false,
+            isolated_declarations: options.isolated_declarations,
             emit_declarations: options.declaration,
             no_unchecked_side_effect_imports: options.no_unchecked_side_effect_imports,
             no_implicit_override: options.no_implicit_override,
@@ -889,7 +907,7 @@ impl Server {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
-            jsx_mode: tsz_common::checker_options::JsxMode::None,
+            jsx_mode: Self::parse_jsx_mode(&options.jsx),
             module_explicitly_set: options.module.is_some(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
@@ -899,8 +917,10 @@ impl Server {
             // CLI/checker behavior for the same options.
             allow_importing_ts_extensions: options.allow_importing_ts_extensions,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
-            implied_classic_resolution: false,
-            jsx_import_source: String::new(),
+            implied_classic_resolution: Self::parse_implied_classic_resolution(
+                &options.module_resolution,
+            ),
+            jsx_import_source: options.jsx_import_source.clone().unwrap_or_default(),
             verbatim_module_syntax: options.verbatim_module_syntax,
             ignore_deprecations: false,
             allow_umd_global_access: options.allow_umd_global_access,
