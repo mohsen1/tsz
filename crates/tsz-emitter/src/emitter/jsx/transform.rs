@@ -631,7 +631,7 @@ impl<'a> Printer<'a> {
     // JSX Auto Import Injection
     // =========================================================================
 
-    pub(in super::super) fn effective_jsx_emit(&self) -> JsxEmit {
+    pub(in super::super) const fn effective_jsx_emit(&self) -> JsxEmit {
         if matches!(
             self.ctx.options.jsx,
             JsxEmit::Preserve | JsxEmit::ReactNative
