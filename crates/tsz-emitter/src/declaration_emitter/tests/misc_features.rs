@@ -723,6 +723,77 @@ fn test_call_expression_recovers_return_type_from_callee_type() {
 }
 
 #[test]
+fn test_source_call_uses_cached_generic_return_alias_arguments() {
+    let source = r#"
+    type Boxified<T> = { [P in keyof T]: { value: T[P] } };
+    type A = { a: string };
+    type B = { b: string };
+    function boxify<T>(obj: T) {
+        throw new Error();
+    }
+    function f1(x: A | B | undefined) {
+        return boxify(x);
+    }
+    "#;
+    let (parser, root) = parse_test_source(source);
+
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+            let call = parser.arena.get_call_expr(node)?;
+            (parser.arena.get_identifier_text(call.expression) == Some("boxify"))
+                .then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing boxify call");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let boxified_sym = binder
+        .file_locals
+        .get("Boxified")
+        .expect("missing Boxified symbol");
+    let boxify_sym = binder
+        .file_locals
+        .get("boxify")
+        .expect("missing boxify symbol");
+
+    let interner = TypeInterner::new();
+    let type_param = tsz_solver::types::TypeParamInfo::simple(interner.intern_string("T"));
+    let boxified_def = DefId(7010);
+    let return_type = interner.application(
+        interner.lazy(boxified_def),
+        vec![interner.type_param(type_param)],
+    );
+    let function_type = interner.function(FunctionShape {
+        type_params: vec![type_param],
+        params: Vec::new(),
+        this_type: None,
+        return_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(boxified_def, boxified_sym);
+    type_cache.symbol_types.insert(boxify_sym, function_type);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .call_expression_source_return_type_text(call_idx)
+        .expect("expected source call return type");
+
+    assert_eq!(type_text, "Boxified<A | B | undefined>");
+}
+
+#[test]
 fn test_export_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts_with_usage_analysis(
         r#"
