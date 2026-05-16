@@ -21,6 +21,7 @@ use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
+use super::template_anchor::{find_leftmost_occurrence, find_next_anchor_alternatives};
 use super::template_segment_prefix::match_template_segment_prefix;
 
 impl<'a> InferenceContext<'a> {
@@ -1822,22 +1823,26 @@ impl<'a> InferenceContext<'a> {
                             let captured = source[pos..].to_string();
                             bindings.push((var, captured));
                             pos = source.len();
+                        } else if let Some(alternatives) =
+                            find_next_anchor_alternatives(self.interner, spans, i, |type_id| {
+                                if type_id.is_intrinsic() {
+                                    return false;
+                                }
+                                matches!(
+                                    self.interner.lookup(type_id),
+                                    Some(
+                                        TypeData::Infer(param_info)
+                                            | TypeData::TypeParameter(param_info)
+                                    ) if self.find_type_param(param_info.name).is_some()
+                                )
+                            })
+                        {
+                            let capture_end = find_leftmost_occurrence(source, pos, &alternatives)?;
+                            let captured = source[pos..capture_end].to_string();
+                            bindings.push((var, captured));
+                            pos = capture_end;
                         } else {
-                            // Non-last span: capture until next literal anchor (non-greedy)
-                            // Find the next text span to use as an anchor
-                            if let Some(anchor_text) = self.find_next_text_anchor(spans, i) {
-                                let anchor = self.interner.resolve_atom(anchor_text).to_string();
-                                // Find the first occurrence of the anchor (non-greedy)
-                                let capture_end = source[pos..].find(&anchor)? + pos;
-                                let captured = source[pos..capture_end].to_string();
-                                bindings.push((var, captured));
-                                pos = capture_end;
-                            } else {
-                                // No text anchor found (e.g., `${infer A}${infer B}`)
-                                // Capture empty string for non-greedy match and continue
-                                bindings.push((var, String::new()));
-                                // pos remains unchanged - next infer var starts here
-                            }
+                            bindings.push((var, String::new()));
                         }
                     } else if let Some(next_pos) =
                         match_template_segment_prefix(self.interner, source, pos, *type_id)
@@ -1852,17 +1857,6 @@ impl<'a> InferenceContext<'a> {
 
         // Must have consumed the entire source string
         (pos == source.len()).then_some(bindings)
-    }
-
-    /// Find the next text span after a given index to use as a matching anchor.
-    fn find_next_text_anchor(&self, spans: &[TemplateSpan], start_idx: usize) -> Option<Atom> {
-        spans.iter().skip(start_idx + 1).find_map(|span| {
-            if let TemplateSpan::Text(text) = span {
-                Some(*text)
-            } else {
-                None
-            }
-        })
     }
 
     /// Get the "partially inferable" version of a type for property inference.
