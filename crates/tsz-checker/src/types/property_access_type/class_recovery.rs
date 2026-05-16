@@ -195,7 +195,10 @@ impl<'a> CheckerState<'a> {
 
         let summary = self.summarize_class_chain(self.nearest_enclosing_class(receiver_expr)?);
         let member = summary.member_info(property_name, false, true)?;
+        let member_is_method_like = member.is_method || member.is_accessor;
         if member.from_interface
+            || (member_is_method_like
+                && !matches!(prop_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
             || matches!(
                 member.type_id,
                 TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
@@ -205,7 +208,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some((member.type_id, member.is_method || member.is_accessor))
+        Some((member.type_id, member_is_method_like))
     }
 
     fn enclosing_class_declares_member(&self, property_name: &str) -> bool {
