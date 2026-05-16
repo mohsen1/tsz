@@ -511,7 +511,7 @@ impl Project {
     fn file_has_wildcard_reexport(&self, file_name: &str) -> bool {
         self.files
             .get(file_name)
-            .map_or(false, |f| f.has_wildcard_reexport)
+            .is_some_and(|f| f.has_wildcard_reexport)
     }
 
     fn reexported_names_with_prefix(&self, file_name: &str, prefix: &str) -> Vec<String> {
@@ -3257,6 +3257,38 @@ export = ts;
                 file.file_name
             );
         }
+    }
+
+    #[test]
+    fn has_wildcard_reexport_cache_updates_with_project_file_source_changes() {
+        use super::super::ProjectFile;
+
+        let mut file = ProjectFile::new(
+            "/barrel.ts".to_string(),
+            "export { x } from './a';".to_string(),
+        );
+        assert!(
+            !file.has_wildcard_reexport,
+            "named-only re-export should start with cached flag off"
+        );
+
+        file.update_source("export * from './a';".to_string());
+        assert!(
+            file.has_wildcard_reexport,
+            "full source update adding export * should refresh cached flag"
+        );
+
+        file.update_source("export { default } from './a';".to_string());
+        assert!(
+            file.has_wildcard_reexport,
+            "full source update adding default re-export should keep cached flag on"
+        );
+
+        file.update_source("export { x } from './a';".to_string());
+        assert!(
+            !file.has_wildcard_reexport,
+            "full source update removing wildcard/default re-export should refresh cached flag off"
+        );
     }
 
     #[test]

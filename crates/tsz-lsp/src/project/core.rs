@@ -547,8 +547,10 @@ impl ProjectFile {
         self.binder.bind_source_file(arena, self.root);
 
         self.line_map = LineMap::build(self.parser.get_source_text());
+        let has_wildcard_reexport = compute_has_wildcard_reexport(arena, self.root);
         self.reset_analysis_state();
         self.export_signature = ExportSignature::compute(&self.binder, &self.file_name);
+        self.has_wildcard_reexport = has_wildcard_reexport;
     }
 
     /// Invalidate all caches for this file.
@@ -736,8 +738,10 @@ impl ProjectFile {
             }
             self.binder.bind_source_file(arena, self.root);
         }
+        let has_wildcard_reexport = compute_has_wildcard_reexport(arena, self.root);
         self.reset_analysis_state();
         self.export_signature = ExportSignature::compute(&self.binder, &self.file_name);
+        self.has_wildcard_reexport = has_wildcard_reexport;
 
         true
     }
