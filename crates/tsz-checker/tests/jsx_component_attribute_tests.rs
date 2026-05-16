@@ -4588,7 +4588,7 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
         has_code_with_message_pos(
             &diags,
             diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU,
-            "expected type of 'children' is '(x: number) => string'"
+            "expected type of 'children' is '(x: number) => string"
         ),
         "Plain function children text diagnostic should use the declared function type, got: {diags:?}"
     );
@@ -4646,6 +4646,31 @@ let mixedText = <Blah3>Hello unexpected text!</Blah3>;
                 && (msg.contains("Cb[] | Cb") || msg.contains("Cb | Cb[]"))
         }),
         "Union child TS2322 should be anchored at the JSX child expression, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_children_diagnostic_uses_string_literal_children_property_name() {
+    let source = format!(
+        r#"
+{JSX_CHILDREN_PREAMBLE}
+interface Props {{
+    "children": (x: number) => string;
+}}
+function Blah(props: Props) {{ return <div></div>; }}
+
+let text = <Blah>Hello unexpected text!</Blah>;
+"#
+    );
+
+    let diags = jsx_diagnostics_with_pos(&source);
+    assert!(
+        has_code_with_message_pos(
+            &diags,
+            diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU,
+            "expected type of 'children' is '(x: number) => string"
+        ),
+        "String-literal children property diagnostic should use the declared function type, got: {diags:?}"
     );
 }
 

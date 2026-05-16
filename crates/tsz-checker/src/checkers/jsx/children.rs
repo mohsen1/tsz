@@ -491,7 +491,7 @@ impl<'a> CheckerState<'a> {
             let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                 continue;
             };
-            let prop_name_text = self.node_text(sig.name)?.trim().to_string();
+            let prop_name_text = self.get_property_name(sig.name)?;
             if prop_name_text != children_prop_name || sig.type_annotation.is_none() {
                 continue;
             }
