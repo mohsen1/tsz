@@ -87,6 +87,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return None;
             }
 
+            if !type_name.contains('.')
+                && !self.ctx.file_local_type_shadow_for_lib_name(type_name)
+                && let Some(def_id) = self.ctx.actual_lib_def_id_for_bare_name(type_name)
+            {
+                return Some(def_id);
+            }
+
             let expected_name = type_name.rsplit('.').next().unwrap_or(type_name);
 
             if !type_name.contains('.')

@@ -22,12 +22,12 @@ impl<'a> CheckerContext<'a> {
         }
 
         if let Some(sym_id) = self.actual_lib_symbol_id_for_bare_name(name) {
-            return Some(self.get_or_create_def_id_for_symbol_name(sym_id, name));
+            return Some(self.get_canonical_lib_def_id(name, sym_id));
         }
 
         for lib_ctx in self.lib_contexts.iter().take(self.actual_lib_file_count) {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-                return Some(self.get_or_create_def_id_for_symbol_name(sym_id, name));
+                return Some(self.get_canonical_lib_def_id(name, sym_id));
             }
         }
 
@@ -57,7 +57,7 @@ impl<'a> CheckerContext<'a> {
         use tsz_binder::symbol_flags;
 
         self.binder.file_locals.get(name).is_some_and(|sym_id| {
-            !self.symbol_is_from_actual_lib(sym_id)
+            !self.symbol_is_from_actual_or_cloned_lib(sym_id)
                 && self
                     .binder
                     .get_symbol(sym_id)
