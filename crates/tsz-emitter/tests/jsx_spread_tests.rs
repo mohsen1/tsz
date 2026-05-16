@@ -28,6 +28,73 @@ fn emit_jsx_with_printer_options(source: &str, opts: PrinterOptions) -> String {
     printer.get_output().to_string()
 }
 
+fn emit_classic_cjs_jsx(source: &str) -> String {
+    emit_jsx_with_printer_options(
+        source,
+        PrinterOptions {
+            jsx: JsxEmit::React,
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn classic_named_import_factory_from_pragma_is_runtime_dependency() {
+    let source = r#"/** @jsx dom */
+import { dom } from "./renderer";
+export const element = <h />;
+"#;
+    let output = emit_classic_cjs_jsx(source);
+
+    assert!(
+        output.contains("const renderer_1 = require(\"./renderer\");"),
+        "Named JSX factory import must be preserved as a runtime dependency.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(0, renderer_1.dom)(\"h\", null);"),
+        "Classic JSX should call the CommonJS named-import substitution for @jsx dom.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\ndom(\"h\", null);"),
+        "Classic JSX factory should not bypass CommonJS import substitution.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn classic_renamed_import_factory_uses_imported_property_name() {
+    let source = r#"/** @jsx h */
+import { dom as h } from "./renderer";
+export const element = <h />;
+"#;
+    let output = emit_classic_cjs_jsx(source);
+
+    assert!(
+        output.contains("const renderer_1 = require(\"./renderer\");"),
+        "Renamed factory import must be preserved as a runtime dependency.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(0, renderer_1.dom)(\"h\", null);"),
+        "CommonJS substitution should use the imported property name, not the local alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn classic_fragment_factory_reference_uses_substitution_without_indirect_call() {
+    let source = r#"/** @jsx h */
+/** @jsxFrag Frag */
+import { h, Fragment as Frag } from "./renderer";
+export const element = <></>;
+"#;
+    let output = emit_classic_cjs_jsx(source);
+
+    assert!(
+        output.contains("(0, renderer_1.h)(renderer_1.Fragment, null);"),
+        "Fragment factory is a value argument, so only the call target gets `(0, ...)`.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Spread flattening: {...{...a, ...b}} → ...a, ...b
 // =============================================================================
