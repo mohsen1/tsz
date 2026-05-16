@@ -865,7 +865,34 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx.in_const_assertion = true;
         }
-        let return_type = self.get_type_of_node_with_request(expr_idx, &request);
+        let mut return_type = self.get_type_of_node_with_request(expr_idx, &request);
+        if let Some(contextual_type) = effective_return_context
+            && self
+                .ctx
+                .arena
+                .get(expr_idx)
+                .is_some_and(|expr_node| expr_node.kind == syntax_kind_ext::NEW_EXPRESSION)
+            && (self.contextual_application_recovers_unknown_result(return_type, contextual_type)
+                || self.contextual_application_recovers_type_param_result(
+                    return_type,
+                    contextual_type,
+                )
+                || (crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    return_type,
+                ) && self
+                    .ctx
+                    .arena
+                    .get_call_expr_at(expr_idx)
+                    .is_some_and(|new_expr| {
+                        self.contextual_application_matches_new_target(
+                            new_expr.expression,
+                            contextual_type,
+                        )
+                    })))
+        {
+            return_type = contextual_type;
+        }
         self.ctx.in_const_assertion = prev_const_assertion;
         self.ctx.preserve_literal_types = prev_preserve_literals;
         return_type

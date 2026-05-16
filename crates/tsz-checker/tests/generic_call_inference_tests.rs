@@ -3371,6 +3371,147 @@ class ZodEffects<
 }
 
 #[test]
+fn contextual_generic_new_return_recovers_unresolved_constructor_type_params() {
+    let source = r#"
+type ParseReturnType<T> = { ok: true; value: T } | { ok: false };
+interface BaseDef {}
+
+abstract class Schema<Out, Def extends BaseDef = BaseDef, In = Out> {
+    readonly _output!: Out;
+    readonly _input!: In;
+    readonly _def!: Def;
+    abstract _parse(): ParseReturnType<Out>;
+    constructor(def: Def) {}
+}
+
+type AnySchema = Schema<any, any, any>;
+type Effect<T> = { type: "refinement"; refine: (arg: T) => unknown };
+
+interface WrapperDef<S extends AnySchema = AnySchema> extends BaseDef {
+    schema: S;
+    effect: Effect<any>;
+}
+
+class Wrapper<
+    S extends AnySchema,
+    Out = S["_output"],
+    In = S["_input"]
+> extends Schema<Out, WrapperDef<S>, In> {
+    _parse(): ParseReturnType<Out> {
+        return null as never;
+    }
+
+    static make = <Source extends AnySchema>(
+        schema: Source,
+        effect: Effect<Source["_output"]>
+    ): Wrapper<Source, Source["_output"]> => {
+        return new Wrapper({ schema, effect });
+    };
+}
+
+interface DecoratedDef<Item extends AnyCarrier = AnyCarrier> extends BaseDef {
+    item: Item;
+    hook: Hook<any>;
+}
+
+abstract class Carrier<Value, Def extends BaseDef = BaseDef, Raw = Value> {
+    readonly value!: Value;
+    readonly raw!: Raw;
+    readonly def!: Def;
+    abstract parse(): ParseReturnType<Value>;
+    constructor(def: Def) {}
+}
+
+type AnyCarrier = Carrier<any, any, any>;
+type Hook<T> = { run: (value: T) => unknown };
+
+class Decorated<
+    Item extends AnyCarrier,
+    Value = Item["value"],
+    Raw = Item["raw"]
+> extends Carrier<Value, DecoratedDef<Item>, Raw> {
+    parse(): ParseReturnType<Value> {
+        return null as never;
+    }
+
+    static build = <Entity extends AnyCarrier>(
+        item: Entity,
+        hook: Hook<Entity["value"]>
+    ): Decorated<Entity, Entity["value"]> => {
+        return new Decorated({ item, hook });
+    };
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2322 && *code != 2739),
+        "contextual generic new returns should recover the enclosing application when constructor args leave class params unresolved. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn contextual_generic_new_return_keeps_different_constructor_base_mismatch() {
+    let source = r#"
+type ParseReturnType<T> = { ok: true; value: T } | { ok: false };
+interface BaseDef {}
+
+abstract class Schema<Out, Def extends BaseDef = BaseDef, In = Out> {
+    readonly _output!: Out;
+    readonly _input!: In;
+    readonly _def!: Def;
+    abstract _parse(): ParseReturnType<Out>;
+    constructor(def: Def) {}
+}
+
+type AnySchema = Schema<any, any, any>;
+type Effect<T> = { type: "refinement"; refine: (arg: T) => unknown };
+
+interface WrapperDef<S extends AnySchema = AnySchema> extends BaseDef {
+    schema: S;
+    marker: "wrapper";
+    effect: Effect<any>;
+}
+
+interface OtherDef<S extends AnySchema = AnySchema> extends BaseDef {
+    other: S;
+    marker: "other";
+}
+
+class Wrapper<
+    S extends AnySchema,
+    Out = S["_output"],
+    In = S["_input"]
+> extends Schema<Out, WrapperDef<S>, In> {
+    _parse(): ParseReturnType<Out> {
+        return null as never;
+    }
+}
+
+class Other<
+    S extends AnySchema,
+    Out = S["_output"],
+    In = S["_input"]
+> extends Schema<Out, OtherDef<S>, In> {
+    _parse(): ParseReturnType<Out> {
+        return null as never;
+    }
+}
+
+function wrong<Source extends AnySchema>(
+    schema: Source,
+    effect: Effect<Source["_output"]>
+): Other<Source, Source["_output"]> {
+    return new Wrapper({ schema, marker: "wrapper", effect });
+}
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "contextual recovery must not hide a different constructor application base. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn conflicting_contextual_instantiation_keeps_enclosing_return_type_param() {
     let source = r#"
 declare function accept<R>(fn: (a: string, b: number) => R): R;

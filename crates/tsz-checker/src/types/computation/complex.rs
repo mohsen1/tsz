@@ -1498,7 +1498,16 @@ impl<'a> CheckerState<'a> {
                         });
                     let contextual_app =
                         query::get_application_info(self.ctx.types, contextual_type);
-                    if let (Some((result_base, result_args)), Some((ctx_base, ctx_args))) =
+                    if constructor_shape.as_ref().is_some_and(|shape| {
+                        self.contextual_application_recovers_unresolved_constructor_result(
+                            new_expr.expression,
+                            return_type,
+                            contextual_type,
+                            &shape.type_params,
+                        )
+                    }) {
+                        return_type = contextual_type;
+                    } else if let (Some((result_base, result_args)), Some((ctx_base, ctx_args))) =
                         (result_app, contextual_app)
                         && result_base == ctx_base
                         && result_args.len() == ctx_args.len()
@@ -1848,7 +1857,7 @@ impl<'a> CheckerState<'a> {
             CallResult::TypeParameterConstraintViolation {
                 inferred_type,
                 constraint_type,
-                return_type,
+                mut return_type,
             } => {
                 // Type parameter constraint violations are argument-level
                 // mismatches. tsc reports TS2345 at the argument.
@@ -1858,6 +1867,18 @@ impl<'a> CheckerState<'a> {
                     constraint_type,
                     anchor,
                 );
+                if let Some(contextual_type) = contextual_type
+                    && constructor_shape.as_ref().is_some_and(|shape| {
+                        self.contextual_application_recovers_unresolved_constructor_result(
+                            new_expr.expression,
+                            return_type,
+                            contextual_type,
+                            &shape.type_params,
+                        )
+                    })
+                {
+                    return_type = contextual_type;
+                }
                 return_type
             }
             CallResult::NoOverloadMatch {
