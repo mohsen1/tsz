@@ -753,6 +753,7 @@ check_prerequisites() {
 
         if [ "$use_pgo" = true ] && [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
             local skip_pgo_collect=false
+            local profdata_ready=false
             if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" ]]; then
                 local newer_src
                 newer_src="$(find "$PROJECT_ROOT" \
@@ -763,6 +764,7 @@ check_prerequisites() {
                     mkdir -p "$pgo_dir"
                     cp "$pgo_cache_profdata" "$pgo_merged"
                     skip_pgo_collect=true
+                    profdata_ready=true
                 else
                     echo -e "${YELLOW}PGO cache stale (source changed: $newer_src); regenerating profile data${NC}"
                 fi
@@ -772,9 +774,15 @@ check_prerequisites() {
                 echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
                 rm -rf "$pgo_dir"
                 mkdir -p "$pgo_dir"
+                # Use panic=unwind for the instrumented build so LLVM's profiling
+                # runtime atexit handlers fire even when tsz panics on a training
+                # input.  The dist profile's panic=abort strategy prevents atexit
+                # from being called on panic, which silently drops all profraw
+                # files and causes "llvm-profdata merge *.profraw" to fail with no
+                # inputs.  This binary is only used for training, not shipping.
                 (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$pgo_target_dir" \
                     CARGO_INCREMENTAL=0 \
-                    RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
+                    RUSTFLAGS="-Cprofile-generate=$pgo_dir -Cpanic=unwind" \
                     cargo build --profile dist -p tsz-cli --bin tsz)
 
                 # Ensure the smallest external bench fixture is present so PGO
@@ -784,33 +792,52 @@ check_prerequisites() {
                 # opportunistically used when they were already prepared by an
                 # earlier bench run, but never fetched here — that would more
                 # than double cold-start wall time on first run.
+                # The clone is best-effort: a transient network failure should not
+                # abort bench-prepare entirely; PGO still trains on synthetic inputs.
                 if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
-                    ensure_utility_types_fixture
+                    if ! ensure_utility_types_fixture; then
+                        echo -e "${YELLOW}Warning: utility-types fetch failed; PGO trains on synthetic inputs only${NC}"
+                    fi
                 fi
 
                 echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
                 local pgo_tsz="$pgo_target_dir/dist/tsz"
                 collect_pgo_workload "$pgo_tsz"
 
-                "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
-
-                # Persist the merged profdata for the next run's cache lookup.
-                if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
-                    mkdir -p "$pgo_cache_dir"
-                    cp "$pgo_merged" "$pgo_cache_profdata"
+                # An empty glob (bash without nullglob) passes a literal "*.profraw"
+                # path to llvm-profdata and fails; array-glob + -e avoids the fork
+                # and the TOCTOU window between a count check and the merge call.
+                local profraw_files=("$pgo_dir"/*.profraw)
+                if [[ -e "${profraw_files[0]}" ]]; then
+                    "$llvm_profdata" merge -o "$pgo_merged" "${profraw_files[@]}"
+                    profdata_ready=true
+                    if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
+                        mkdir -p "$pgo_cache_dir"
+                        cp "$pgo_merged" "$pgo_cache_profdata"
+                    fi
+                else
+                    echo -e "${YELLOW}PGO training produced no profraw files; skipping PGO optimization${NC}"
                 fi
             fi
 
-            echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
-            if ! (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
-                CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli --bin tsz); then
-                # LLVM PGO can fail when the profile-use link step encounters
-                # incompatible bitcode/ProfileSummary metadata in this toolchain.
-                # Fall back to a clean non-PGO dist build so benchmark runs still
-                # complete successfully.
-                echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+            if [[ "$profdata_ready" == true ]]; then
+                echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
+                if ! (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                    cargo build --profile dist -p tsz-cli --bin tsz); then
+                    # LLVM PGO can fail when the profile-use link step encounters
+                    # incompatible bitcode/ProfileSummary metadata in this toolchain.
+                    echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+                    rm -rf "$optimized_target_dir"
+                    optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+                    (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                        CARGO_INCREMENTAL=0 \
+                        RUSTFLAGS="-Ctarget-cpu=native" \
+                        cargo build --profile dist -p tsz-cli --bin tsz)
+                fi
+            else
+                echo -e "${YELLOW}PGO Step 3/3: no profile data available; using standard dist build${NC}"
                 rm -rf "$optimized_target_dir"
                 optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
                 (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \

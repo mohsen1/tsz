@@ -8013,3 +8013,45 @@ const cwp: CallableWithProps = Object.assign(myFn, { version: "1.0" });
         "Expected no errors: named function + Object.assign should satisfy callable interface. Got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn ts2820_preserves_generic_interface_target_surface_structurally() {
+    let source = r#"
+interface Box<T> { kind: T; count: 1; }
+declare let got: Box<"frist">;
+let expected: Box<"first" | "second"> = got;
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        1,
+        "expected one TS2322 spelling-suggestion diagnostic, got: {messages:#?}"
+    );
+    let message = &messages[0];
+    assert!(
+        message.contains("Box<\"first\" | \"second\">"),
+        "generic interface target surface should be preserved structurally, got: {message}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_renamed_generic_alias_target_surface_structurally() {
+    let source = r#"
+type Wrapper<Value> = { kind: Value; count: 1 };
+declare let got: Wrapper<"frist">;
+let expected: Wrapper<"first" | "second"> = got;
+"#;
+
+    let messages = ts2322_messages(source);
+    assert_eq!(
+        messages.len(),
+        1,
+        "expected one TS2322 spelling-suggestion diagnostic, got: {messages:#?}"
+    );
+    let message = &messages[0];
+    assert!(
+        message.contains("Wrapper<\"first\" | \"second\">"),
+        "generic alias target surface should be preserved independent of parameter name, got: {message}"
+    );
+}
