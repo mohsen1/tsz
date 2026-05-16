@@ -370,38 +370,15 @@ impl<'a> Printer<'a> {
                 && self
                     .arena
                     .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword);
-            if let Some(ref alias) = alias_name {
-                // Emit: `Name = Name_1 = __decorate([...], Name);`
-                // We intercept the normal pattern and insert the alias assignment
-                let before_len = self.writer.len();
-                self.emit_legacy_class_decorator_assignment(
-                    &class_name,
-                    &legacy_class_decorators,
-                    commonjs_exported,
-                    commonjs_default,
-                    false,
-                    &class.members.nodes,
-                );
-                let after_len = self.writer.len();
-                let full_output = self.writer.get_output().to_string();
-                let emitted = &full_output[before_len..after_len];
-
-                // Replace `Name = __decorate` with `Name = Name_1 = __decorate`
-                let pattern = format!("{class_name} = __decorate");
-                let replacement = format!("{class_name} = {alias} = __decorate");
-                let modified = emitted.replacen(&pattern, &replacement, 1);
-                self.writer.truncate(before_len);
-                self.write(&modified);
-            } else {
-                self.emit_legacy_class_decorator_assignment(
-                    &class_name,
-                    &legacy_class_decorators,
-                    commonjs_exported,
-                    commonjs_default,
-                    false,
-                    &class.members.nodes,
-                );
-            }
+            self.emit_legacy_class_decorator_assignment(
+                &class_name,
+                &legacy_class_decorators,
+                commonjs_exported,
+                commonjs_default,
+                false,
+                alias_name.as_deref(),
+                &class.members.nodes,
+            );
 
             // Clear type parameter names after decorator emission
             self.metadata_class_type_params = None;

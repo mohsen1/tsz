@@ -1488,6 +1488,7 @@ impl<'a> Printer<'a> {
                 false,
                 false,
                 false,
+                None,
                 &class_decl.members.nodes,
             );
         }

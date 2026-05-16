@@ -39,7 +39,7 @@ impl<'a> Printer<'a> {
         std::mem::swap(&mut self.writer, &mut temp_writer);
 
         self.emit_legacy_class_decorator_assignment(
-            class_name, decorators, false, false, false, members,
+            class_name, decorators, false, false, false, alias_name, members,
         );
 
         std::mem::swap(&mut self.writer, &mut temp_writer);
@@ -48,18 +48,11 @@ impl<'a> Printer<'a> {
             return String::new();
         }
 
-        let assignment = emitted
+        emitted
             .trim_start()
             .trim_end()
             .trim_end_matches(';')
-            .to_string();
-        if let Some(alias) = alias_name {
-            let pattern = format!("{class_name} = __decorate");
-            let replacement = format!("{class_name} = {alias} = __decorate");
-            assignment.replacen(&pattern, &replacement, 1)
-        } else {
-            assignment
-        }
+            .to_string()
     }
 
     pub(in crate::emitter::module_wrapper) fn system_legacy_decorated_class_alias(

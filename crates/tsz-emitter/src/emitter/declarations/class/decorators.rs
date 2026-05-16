@@ -846,6 +846,7 @@ impl<'a> Printer<'a> {
         commonjs_exported: bool,
         commonjs_default: bool,
         emit_commonjs_pre_assignment: bool,
+        assignment_alias: Option<&str>,
         class_members: &[NodeIndex],
     ) {
         if class_name.is_empty() {
@@ -889,6 +890,10 @@ impl<'a> Printer<'a> {
 
         self.write(class_name);
         self.write(" = ");
+        if let Some(alias) = assignment_alias {
+            self.write(alias);
+            self.write(" = ");
+        }
         self.write_helper("__decorate");
         self.write("([");
         self.write_line();

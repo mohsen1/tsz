@@ -1152,6 +1152,7 @@ impl<'a> Printer<'a> {
                                     true,  // commonjs_exported
                                     false, // commonjs_default
                                     false, // emit_commonjs_pre_assignment (already emitted above)
+                                    None,
                                     &members,
                                 );
                             }
