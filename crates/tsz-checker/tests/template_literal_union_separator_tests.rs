@@ -236,7 +236,7 @@ const _: ["hello", "world"] = result;
 // over union members.  Keeping them here ensures both paths stay correct.
 
 /// `Split<S>` using `infer` in an extends clause with a union separator.
-/// Rule: `S extends \`${infer H}${"," | ";"}${infer T}\`` splits at the
+/// Rule: `S extends <head><comma-or-semicolon><tail>` splits at the
 /// first occurrence of any union member.
 #[test]
 fn conditional_union_separator_comma() {
