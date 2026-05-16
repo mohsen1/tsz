@@ -424,15 +424,11 @@ impl<'a> Printer<'a> {
 
         if needs_temp {
             // Check if initializer is a simple identifier we can reuse
-            let can_reuse = initializer_idx.is_some()
-                && self
-                    .arena
-                    .get(initializer_idx)
-                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16);
+            let reusable_source_name = self.reusable_object_rest_initializer_name(initializer_idx);
 
-            if can_reuse {
+            if let Some(reusable_source_name) = reusable_source_name {
                 // Reuse the identifier name
-                source_name = self.get_identifier_text(initializer_idx);
+                source_name = reusable_source_name;
                 if !non_rest_elements.is_empty() && !nested_rest_indices.is_empty() {
                     self.emit_object_rest_with_nested(
                         &non_rest_elements,
@@ -536,6 +532,26 @@ impl<'a> Printer<'a> {
                 self.write("])");
             }
         }
+    }
+
+    fn reusable_object_rest_initializer_name(&self, initializer_idx: NodeIndex) -> Option<String> {
+        if initializer_idx.is_none()
+            || !self
+                .arena
+                .get(initializer_idx)
+                .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16)
+        {
+            return None;
+        }
+
+        let source_name = self.get_identifier_text(initializer_idx);
+        if let Some((class_name, alias)) = &self.private_static_class_alias
+            && source_name == *class_name
+        {
+            return Some(alias.clone());
+        }
+
+        Some(source_name)
     }
 
     /// Emit the exclude list items for a `__rest()` call.

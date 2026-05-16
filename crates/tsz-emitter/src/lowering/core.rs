@@ -270,9 +270,9 @@ impl<'a> LoweringPass<'a> {
             self.transforms
                 .insert(idx, TransformDirective::ES5ForOf { for_of_node: idx });
             if for_in_of.await_modifier {
-                self.transforms.helpers_mut().async_values = true;
+                self.transforms.helpers_mut().mark_async_values();
             } else if self.ctx.options.downlevel_iteration {
-                self.transforms.helpers_mut().values = true;
+                self.transforms.helpers_mut().mark_values();
             }
         }
 
@@ -285,7 +285,7 @@ impl<'a> LoweringPass<'a> {
             // Mark __read helper when destructuring is used with downlevelIteration
             // TypeScript emits __read to convert iterator results to arrays for destructuring
             if self.ctx.target_es5 && self.ctx.options.downlevel_iteration {
-                self.transforms.helpers_mut().read = true;
+                self.transforms.helpers_mut().mark_read();
             }
             // Set in_assignment_target to prevent spread in destructuring from triggering __spreadArray
             let prev = self.in_assignment_target;
@@ -369,7 +369,7 @@ impl<'a> LoweringPass<'a> {
                 } else if has_default {
                     // Default-only import: import d from "mod" -> needs __importDefault
                     let helpers = self.transforms.helpers_mut();
-                    helpers.import_default = true;
+                    helpers.mark_import_default();
                 }
 
                 // Namespace import: import * as ns from "mod" -> needs __importStar
@@ -416,7 +416,7 @@ impl<'a> LoweringPass<'a> {
                             });
                         if has_default_named_import {
                             let helpers = self.transforms.helpers_mut();
-                            helpers.import_default = true;
+                            helpers.mark_import_default();
                         }
                     }
                 }
@@ -748,7 +748,7 @@ impl<'a> LoweringPass<'a> {
             });
             if has_default_specifier {
                 let helpers = self.transforms.helpers_mut();
-                helpers.import_default = true;
+                helpers.mark_import_default();
             }
         }
 
@@ -902,7 +902,7 @@ impl<'a> LoweringPass<'a> {
             } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
                 // Mark rest helper if parameters have rest
                 if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().rest = true;
+                    self.transforms.helpers_mut().mark_rest();
                 }
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
@@ -918,7 +918,7 @@ impl<'a> LoweringPass<'a> {
             }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
             if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().rest = true;
+                self.transforms.helpers_mut().mark_rest();
             }
             directives.push(TransformDirective::ES5FunctionParameters { function_node });
         }
@@ -1280,7 +1280,7 @@ impl<'a> LoweringPass<'a> {
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
             // Mark rest helper if parameters have rest
             if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().rest = true;
+                self.transforms.helpers_mut().mark_rest();
             }
             TransformDirective::ES5FunctionParameters { function_node: idx }
         } else {
@@ -1804,11 +1804,11 @@ impl<'a> LoweringPass<'a> {
                 if self.call_spread_needs_spread_array(args.nodes.as_slice())
                     || self.ctx.options.downlevel_iteration
                 {
-                    self.transforms.helpers_mut().spread_array = true;
+                    self.transforms.helpers_mut().mark_spread_array();
                     // When downlevelIteration is enabled, spread on iterables
                     // needs __read to convert iterator results to arrays.
                     if self.ctx.options.downlevel_iteration {
-                        self.transforms.helpers_mut().read = true;
+                        self.transforms.helpers_mut().mark_read();
                     }
                 }
             }
@@ -1841,9 +1841,9 @@ impl<'a> LoweringPass<'a> {
                     .insert(idx, TransformDirective::ES5NewSpread { new_expr: idx });
                 // New expressions always need __spreadArray because we
                 // prepend void 0 to the args array for bind().
-                self.transforms.helpers_mut().spread_array = true;
+                self.transforms.helpers_mut().mark_spread_array();
                 if self.ctx.options.downlevel_iteration {
-                    self.transforms.helpers_mut().read = true;
+                    self.transforms.helpers_mut().mark_read();
                 }
             }
         }
@@ -1924,7 +1924,7 @@ impl<'a> LoweringPass<'a> {
                 );
             } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
                 if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().rest = true;
+                    self.transforms.helpers_mut().mark_rest();
                 }
                 self.transforms.insert(
                     idx,
@@ -1944,7 +1944,7 @@ impl<'a> LoweringPass<'a> {
             }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
             if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().rest = true;
+                self.transforms.helpers_mut().mark_rest();
             }
             self.transforms.insert(
                 idx,

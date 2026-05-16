@@ -370,6 +370,22 @@ pub const REWRITE_RELATIVE_IMPORT_EXTENSION_HELPER: &str = r#"var __rewriteRelat
     return path;
 };"#;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HelperEmitOrder {
+    Await,
+    AsyncGenerator,
+    AsyncDelegator,
+    Rest,
+    Values,
+    Read,
+    SpreadArray,
+    ImportDefault,
+    ClassPrivateFieldGet,
+    ClassPrivateFieldSet,
+    ClassPrivateFieldIn,
+    AsyncValues,
+}
+
 /// Tracks which helper functions are needed in the output.
 #[derive(Default, Clone)]
 pub struct HelpersNeeded {
@@ -407,9 +423,76 @@ pub struct HelpersNeeded {
     pub prop_key: bool,
     pub set_function_name: bool,
     pub rewrite_relative_import_extension: bool,
+    pub unprioritized_order: Vec<HelperEmitOrder>,
 }
 
 impl HelpersNeeded {
+    fn remember_unprioritized(&mut self, helper: HelperEmitOrder) {
+        if !self.unprioritized_order.contains(&helper) {
+            self.unprioritized_order.push(helper);
+        }
+    }
+
+    pub fn mark_rest(&mut self) {
+        self.rest = true;
+        self.remember_unprioritized(HelperEmitOrder::Rest);
+    }
+
+    pub fn mark_await_helper(&mut self) {
+        self.await_helper = true;
+        self.remember_unprioritized(HelperEmitOrder::Await);
+    }
+
+    pub fn mark_async_generator(&mut self) {
+        self.async_generator = true;
+        self.remember_unprioritized(HelperEmitOrder::AsyncGenerator);
+    }
+
+    pub fn mark_async_delegator(&mut self) {
+        self.async_delegator = true;
+        self.remember_unprioritized(HelperEmitOrder::AsyncDelegator);
+    }
+
+    pub fn mark_values(&mut self) {
+        self.values = true;
+        self.remember_unprioritized(HelperEmitOrder::Values);
+    }
+
+    pub fn mark_read(&mut self) {
+        self.read = true;
+        self.remember_unprioritized(HelperEmitOrder::Read);
+    }
+
+    pub fn mark_spread_array(&mut self) {
+        self.spread_array = true;
+        self.remember_unprioritized(HelperEmitOrder::SpreadArray);
+    }
+
+    pub fn mark_import_default(&mut self) {
+        self.import_default = true;
+        self.remember_unprioritized(HelperEmitOrder::ImportDefault);
+    }
+
+    pub fn mark_async_values(&mut self) {
+        self.async_values = true;
+        self.remember_unprioritized(HelperEmitOrder::AsyncValues);
+    }
+
+    pub fn mark_class_private_field_get(&mut self) {
+        self.class_private_field_get = true;
+        self.remember_unprioritized(HelperEmitOrder::ClassPrivateFieldGet);
+    }
+
+    pub fn mark_class_private_field_set(&mut self) {
+        self.class_private_field_set = true;
+        self.remember_unprioritized(HelperEmitOrder::ClassPrivateFieldSet);
+    }
+
+    pub fn mark_class_private_field_in(&mut self) {
+        self.class_private_field_in = true;
+        self.remember_unprioritized(HelperEmitOrder::ClassPrivateFieldIn);
+    }
+
     /// Returns true if any helper is needed.
     pub const fn any_needed(&self) -> bool {
         self.extends
@@ -493,42 +576,7 @@ impl HelpersNeeded {
         if self.dispose_resources {
             names.push("__disposeResources");
         }
-        if self.await_helper {
-            names.push("__await");
-        }
-        if self.async_generator {
-            names.push("__asyncGenerator");
-        }
-        if self.async_delegator {
-            names.push("__asyncDelegator");
-        }
-        if self.rest {
-            names.push("__rest");
-        }
-        if self.values {
-            names.push("__values");
-        }
-        if self.read {
-            names.push("__read");
-        }
-        if self.spread_array {
-            names.push("__spreadArray");
-        }
-        if self.async_values {
-            names.push("__asyncValues");
-        }
-        if self.import_default {
-            names.push("__importDefault");
-        }
-        if self.class_private_field_get {
-            names.push("__classPrivateFieldGet");
-        }
-        if self.class_private_field_set {
-            names.push("__classPrivateFieldSet");
-        }
-        if self.class_private_field_in {
-            names.push("__classPrivateFieldIn");
-        }
+        self.push_unprioritized_names(&mut names);
         if self.prop_key {
             names.push("__propKey");
         }
@@ -539,6 +587,56 @@ impl HelpersNeeded {
             names.push("__rewriteRelativeImportExtension");
         }
         names
+    }
+
+    fn push_unprioritized_names(&self, names: &mut Vec<&'static str>) {
+        if self.unprioritized_order.is_empty() {
+            if self.await_helper {
+                names.push("__await");
+            }
+            if self.async_generator {
+                names.push("__asyncGenerator");
+            }
+            if self.async_delegator {
+                names.push("__asyncDelegator");
+            }
+            if self.rest {
+                names.push("__rest");
+            }
+            if self.values {
+                names.push("__values");
+            }
+            if self.read {
+                names.push("__read");
+            }
+            if self.spread_array {
+                names.push("__spreadArray");
+            }
+            if self.async_values {
+                names.push("__asyncValues");
+            }
+            if self.import_default {
+                names.push("__importDefault");
+            }
+            if self.class_private_field_get {
+                names.push("__classPrivateFieldGet");
+            }
+            if self.class_private_field_set {
+                names.push("__classPrivateFieldSet");
+            }
+            if self.class_private_field_in {
+                names.push("__classPrivateFieldIn");
+            }
+            return;
+        }
+
+        let mut pushed = Vec::new();
+        for &helper in &self.unprioritized_order {
+            push_unprioritized_name(helper, self, names, &mut pushed);
+        }
+        for helper in fallback_unprioritized_order(self) {
+            push_unprioritized_name(helper, self, names, &mut pushed);
+        }
     }
 }
 
@@ -643,71 +741,121 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(DISPOSE_RESOURCES_HELPER);
         output.push('\n');
     }
-    // Async generator helpers (after awaiter/generator/disposable helpers)
-    if helpers.await_helper {
-        output.push_str(AWAIT_HELPER);
-        output.push('\n');
-    }
-    if helpers.async_generator {
-        output.push_str(ASYNC_GENERATOR_HELPER);
-        output.push('\n');
-    }
-    if helpers.async_delegator {
-        output.push_str(ASYNC_DELEGATOR_HELPER);
-        output.push('\n');
-    }
-    // No priority (come last in tsc order): rest, values, read, spreadArray,
-    // asyncValues, importDefault, classPrivateField*, disposable helpers
-    if helpers.rest {
-        output.push_str(REST_HELPER);
-        output.push('\n');
-    }
-    if helpers.values {
-        output.push_str(VALUES_HELPER);
-        output.push('\n');
-    }
-    if helpers.read {
-        output.push_str(READ_HELPER);
-        output.push('\n');
-    }
-    if helpers.spread_array {
-        output.push_str(SPREAD_ARRAY_HELPER);
-        output.push('\n');
-    }
-    if helpers.import_default {
-        output.push_str(IMPORT_DEFAULT_HELPER);
-        output.push('\n');
-    }
-    // Emit Get/Set helpers in first-use order (tsc tracks insertion order)
-    if helpers.class_private_field_set_before_get {
-        if helpers.class_private_field_set {
-            output.push_str(CLASS_PRIVATE_FIELD_SET_HELPER);
-            output.push('\n');
-        }
-        if helpers.class_private_field_get {
-            output.push_str(CLASS_PRIVATE_FIELD_GET_HELPER);
-            output.push('\n');
-        }
-    } else {
-        if helpers.class_private_field_get {
-            output.push_str(CLASS_PRIVATE_FIELD_GET_HELPER);
-            output.push('\n');
-        }
-        if helpers.class_private_field_set {
-            output.push_str(CLASS_PRIVATE_FIELD_SET_HELPER);
-            output.push('\n');
-        }
-    }
-    if helpers.class_private_field_in {
-        output.push_str(CLASS_PRIVATE_FIELD_IN_HELPER);
-        output.push('\n');
-    }
-    if helpers.async_values {
-        output.push_str(ASYNC_VALUES_HELPER);
-        output.push('\n');
-    }
+    emit_unprioritized_helpers(helpers, &mut output);
 
     output
+}
+
+fn emit_unprioritized_helpers(helpers: &HelpersNeeded, output: &mut String) {
+    let mut emitted = Vec::new();
+
+    if helpers.unprioritized_order.is_empty() {
+        for helper in fallback_unprioritized_order(helpers) {
+            emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+        }
+        return;
+    }
+
+    for &helper in &helpers.unprioritized_order {
+        emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+    }
+    for helper in fallback_unprioritized_order(helpers) {
+        emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+    }
+}
+
+fn fallback_unprioritized_order(helpers: &HelpersNeeded) -> [HelperEmitOrder; 12] {
+    [
+        HelperEmitOrder::Await,
+        HelperEmitOrder::AsyncGenerator,
+        HelperEmitOrder::AsyncDelegator,
+        HelperEmitOrder::Rest,
+        HelperEmitOrder::Values,
+        HelperEmitOrder::Read,
+        HelperEmitOrder::SpreadArray,
+        HelperEmitOrder::ImportDefault,
+        if helpers.class_private_field_set_before_get {
+            HelperEmitOrder::ClassPrivateFieldSet
+        } else {
+            HelperEmitOrder::ClassPrivateFieldGet
+        },
+        if helpers.class_private_field_set_before_get {
+            HelperEmitOrder::ClassPrivateFieldGet
+        } else {
+            HelperEmitOrder::ClassPrivateFieldSet
+        },
+        HelperEmitOrder::ClassPrivateFieldIn,
+        HelperEmitOrder::AsyncValues,
+    ]
+}
+
+fn emit_unprioritized_helper(
+    helper: HelperEmitOrder,
+    helpers: &HelpersNeeded,
+    output: &mut String,
+    emitted: &mut Vec<HelperEmitOrder>,
+) {
+    if emitted.contains(&helper) {
+        return;
+    }
+    let helper_text = match helper {
+        HelperEmitOrder::Await if helpers.await_helper => AWAIT_HELPER,
+        HelperEmitOrder::AsyncGenerator if helpers.async_generator => ASYNC_GENERATOR_HELPER,
+        HelperEmitOrder::AsyncDelegator if helpers.async_delegator => ASYNC_DELEGATOR_HELPER,
+        HelperEmitOrder::Rest if helpers.rest => REST_HELPER,
+        HelperEmitOrder::Values if helpers.values => VALUES_HELPER,
+        HelperEmitOrder::Read if helpers.read => READ_HELPER,
+        HelperEmitOrder::SpreadArray if helpers.spread_array => SPREAD_ARRAY_HELPER,
+        HelperEmitOrder::ImportDefault if helpers.import_default => IMPORT_DEFAULT_HELPER,
+        HelperEmitOrder::ClassPrivateFieldGet if helpers.class_private_field_get => {
+            CLASS_PRIVATE_FIELD_GET_HELPER
+        }
+        HelperEmitOrder::ClassPrivateFieldSet if helpers.class_private_field_set => {
+            CLASS_PRIVATE_FIELD_SET_HELPER
+        }
+        HelperEmitOrder::ClassPrivateFieldIn if helpers.class_private_field_in => {
+            CLASS_PRIVATE_FIELD_IN_HELPER
+        }
+        HelperEmitOrder::AsyncValues if helpers.async_values => ASYNC_VALUES_HELPER,
+        _ => return,
+    };
+    output.push_str(helper_text);
+    output.push('\n');
+    emitted.push(helper);
+}
+
+fn push_unprioritized_name(
+    helper: HelperEmitOrder,
+    helpers: &HelpersNeeded,
+    names: &mut Vec<&'static str>,
+    pushed: &mut Vec<HelperEmitOrder>,
+) {
+    if pushed.contains(&helper) {
+        return;
+    }
+    let helper_name = match helper {
+        HelperEmitOrder::Await if helpers.await_helper => "__await",
+        HelperEmitOrder::AsyncGenerator if helpers.async_generator => "__asyncGenerator",
+        HelperEmitOrder::AsyncDelegator if helpers.async_delegator => "__asyncDelegator",
+        HelperEmitOrder::Rest if helpers.rest => "__rest",
+        HelperEmitOrder::Values if helpers.values => "__values",
+        HelperEmitOrder::Read if helpers.read => "__read",
+        HelperEmitOrder::SpreadArray if helpers.spread_array => "__spreadArray",
+        HelperEmitOrder::ImportDefault if helpers.import_default => "__importDefault",
+        HelperEmitOrder::ClassPrivateFieldGet if helpers.class_private_field_get => {
+            "__classPrivateFieldGet"
+        }
+        HelperEmitOrder::ClassPrivateFieldSet if helpers.class_private_field_set => {
+            "__classPrivateFieldSet"
+        }
+        HelperEmitOrder::ClassPrivateFieldIn if helpers.class_private_field_in => {
+            "__classPrivateFieldIn"
+        }
+        HelperEmitOrder::AsyncValues if helpers.async_values => "__asyncValues",
+        _ => return,
+    };
+    names.push(helper_name);
+    pushed.push(helper);
 }
 
 #[cfg(test)]
@@ -853,6 +1001,7 @@ mod tests {
             prop_key: true,
             set_function_name: true,
             rewrite_relative_import_extension: true,
+            ..HelpersNeeded::default()
         };
 
         let names = helpers.needed_names();
@@ -1082,6 +1231,51 @@ mod tests {
         // unprioritized; in this configuration without disposable helpers,
         // async_values still comes after import_default.
         assert!(i_import_default < i_async_values);
+    }
+
+    #[test]
+    fn emit_helpers_unprioritized_helpers_follow_first_request_order() {
+        // tsc keeps same-priority helpers in request order. Object rest can be
+        // seen before async-generator helpers in the source walk.
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_rest();
+        helpers.mark_await_helper();
+        helpers.mark_async_generator();
+
+        let output = emit_helpers(&helpers);
+        let i_rest = find_helper(&output, "__rest");
+        let i_await = find_helper(&output, "__await");
+        let i_async_generator = find_helper(&output, "__asyncGenerator");
+        assert!(i_rest < i_await);
+        assert!(i_await < i_async_generator);
+    }
+
+    #[test]
+    fn emit_helpers_private_field_before_rest_when_requested_first() {
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_class_private_field_get();
+        helpers.mark_rest();
+
+        let output = emit_helpers(&helpers);
+        let i_get = find_helper(&output, "__classPrivateFieldGet");
+        let i_rest = find_helper(&output, "__rest");
+        assert!(i_get < i_rest);
+    }
+
+    #[test]
+    fn needed_names_tracks_unprioritized_first_request_order() {
+        let mut helpers = HelpersNeeded {
+            assign: true,
+            ..HelpersNeeded::default()
+        };
+        helpers.mark_rest();
+        helpers.mark_import_default();
+        helpers.mark_read();
+
+        assert_eq!(
+            helpers.needed_names(),
+            vec!["__assign", "__rest", "__importDefault", "__read"],
+        );
     }
 
     #[test]
