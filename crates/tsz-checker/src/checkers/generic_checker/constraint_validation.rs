@@ -1342,6 +1342,7 @@ impl<'a> CheckerState<'a> {
                             );
                             continue;
                         }
+                        self.ensure_refs_resolved(base);
                         let base_for_check = self.resolve_lazy_members_in_union(base);
                         let base_for_check = self.evaluate_type_for_assignability(base_for_check);
                         let mut is_satisfied = self
