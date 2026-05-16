@@ -60,6 +60,16 @@ fn export_default_decorated_named_class_no_ts1206() {
     );
 }
 
+#[test]
+fn malformed_decorator_expression_recovery_makes_progress() {
+    let (parser, _root) = parse_source("}[@\u{4}");
+
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "malformed decorator recovery should emit diagnostics instead of looping"
+    );
+}
+
 /// Decorators on class declarations remain valid (baseline sanity check).
 #[test]
 fn decorator_on_class_declaration_no_ts1206() {

@@ -123,12 +123,20 @@ name = "tc39_named_class_expression_set_function_name_tests"
 path = "tests/tc39_named_class_expression_set_function_name_tests.rs"
 
 [[test]]
+name = "tagged_template_escape_emit_tests"
+path = "tests/tagged_template_escape_emit_tests.rs"
+
+[[test]]
 name = "script_mode_import_equals_interface_alias_tests"
 path = "tests/script_mode_import_equals_interface_alias_tests.rs"
 
 [[test]]
 name = "enum_constant_value_emit_tests"
 path = "tests/enum_constant_value_emit_tests.rs"
+
+[[test]]
+name = "for_statement_recovery_tests"
+path = "tests/for_statement_recovery_tests.rs"
 
 [[test]]
 name = "system_top_level_using_env_position_tests"
