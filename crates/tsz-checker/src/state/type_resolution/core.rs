@@ -827,6 +827,31 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
+                if name == "Readonly"
+                    && !is_intrinsic_type
+                    && !is_builtin_array
+                    && type_param.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
+                    && self.ctx.actual_lib_def_id_for_bare_name(name).is_some()
+                    && let Some(args) = &type_ref.type_arguments
+                    && let Some(&arg_idx) = args.nodes.first()
+                {
+                    let arg_type = self.get_type_from_type_node(arg_idx);
+                    let resolved_arg = self.evaluate_type_with_resolution(arg_type);
+                    let array_like =
+                        crate::query_boundaries::type_checking_utilities::classify_array_like(
+                            self.ctx.types,
+                            resolved_arg,
+                        );
+                    if matches!(
+                        array_like,
+                        crate::query_boundaries::common::ArrayLikeKind::Array(_)
+                            | crate::query_boundaries::common::ArrayLikeKind::Tuple
+                            | crate::query_boundaries::common::ArrayLikeKind::Readonly(_)
+                    ) {
+                        return self.ctx.types.factory().readonly_type(resolved_arg);
+                    }
+                }
                 if !is_builtin_array && let Some(sym_id) = sym_id {
                     // Generic user-defined references lower to Application(Lazy(def), args).
                     // Ensure the base symbol has already materialized its structural

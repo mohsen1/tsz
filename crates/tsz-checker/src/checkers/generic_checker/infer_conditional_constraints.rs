@@ -199,7 +199,7 @@ impl<'a> CheckerState<'a> {
         self.infer_type_appears_as_tuple_rest(cond_extends, cond_true)
     }
 
-    pub(super) fn array_element_infer_alias_satisfies_constraint(
+    pub(crate) fn array_element_infer_alias_satisfies_constraint(
         &mut self,
         type_arg: TypeId,
         inst_constraint: TypeId,

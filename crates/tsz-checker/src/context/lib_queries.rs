@@ -58,6 +58,10 @@ impl<'a> CheckerContext<'a> {
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 
+        if self.current_file_type_shadow_for_name(name) {
+            return true;
+        }
+
         self.binder.file_locals.get(name).is_some_and(|sym_id| {
             let is_actual_or_merged_lib = self.symbol_is_from_actual_lib(sym_id)
                 || self.binder.lib_symbol_ids.contains(&sym_id);
@@ -69,6 +73,30 @@ impl<'a> CheckerContext<'a> {
                     .binder
                     .get_symbol(sym_id)
                     .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+        })
+    }
+
+    fn current_file_type_shadow_for_name(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(entries) = self
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+        else {
+            return false;
+        };
+
+        entries.iter().any(|&(file_idx, sym_id)| {
+            if file_idx != self.current_file_idx || self.symbol_is_from_actual_or_cloned_lib(sym_id)
+            {
+                return false;
+            }
+
+            self.get_binder_for_file(file_idx)
+                .or(Some(self.binder))
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
         })
     }
 

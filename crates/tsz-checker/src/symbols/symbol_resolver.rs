@@ -1632,13 +1632,7 @@ impl<'a> CheckerState<'a> {
                     matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
                         && self
                             .ctx
-                            .binder
-                            .file_locals
-                            .get(ident.escaped_text.as_str())
-                            .is_some_and(|sym_id| {
-                                !self.ctx.symbol_is_from_actual_lib(sym_id)
-                                    && self.symbol_has_declared_type_meaning(sym_id)
-                            });
+                            .file_local_type_shadow_for_lib_name(ident.escaped_text.as_str());
                 if !shadows_compiler_managed_type {
                     return None;
                 }
