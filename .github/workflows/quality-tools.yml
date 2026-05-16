@@ -1,0 +1,148 @@
+name: Quality Tools
+
+on:
+  schedule:
+    - cron: '37 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: Tool family to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - miri
+          - coverage
+          - fuzz
+          - mutants
+          - sanitizers
+          - perf
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-tools-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  miri:
+    name: miri
+    if: github.event_name == 'schedule' || inputs.tool == 'all' || inputs.tool == 'miri'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly Miri
+        run: |
+          rustup toolchain install nightly --component miri
+          cargo +nightly miri setup
+      - name: Run focused Miri suite
+        run: scripts/quality/run-miri.sh
+
+  coverage:
+    name: coverage
+    if: github.event_name == 'schedule' || inputs.tool == 'all' || inputs.tool == 'coverage'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_LLVM_COV_VERSION: "0.8.7"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-llvm-cov
+        run: |
+          if command -v cargo-llvm-cov >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-llvm-cov v${CARGO_LLVM_COV_VERSION}:"; then
+            echo "cargo-llvm-cov ${CARGO_LLVM_COV_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-llvm-cov --version "${CARGO_LLVM_COV_VERSION}" --locked
+      - name: Install llvm-tools
+        run: rustup component add llvm-tools-preview
+      - name: Run focused coverage report
+        run: scripts/quality/run-coverage.sh
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-tools-lcov
+          path: target/llvm-cov/quality-tools.lcov
+          retention-days: 14
+          if-no-files-found: error
+
+  fuzz:
+    name: fuzz-smoke
+    if: github.event_name == 'schedule' || inputs.tool == 'all' || inputs.tool == 'fuzz'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_FUZZ_VERSION: "0.13.1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly Rust
+        run: rustup toolchain install nightly
+      - name: Install cargo-fuzz
+        run: |
+          if command -v cargo-fuzz >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-fuzz v${CARGO_FUZZ_VERSION}:"; then
+            echo "cargo-fuzz ${CARGO_FUZZ_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
+      - name: Run parser fuzz smoke
+        run: scripts/quality/run-fuzz-smoke.sh
+
+  mutants:
+    name: mutants-smoke
+    if: github.event_name == 'schedule' || inputs.tool == 'all' || inputs.tool == 'mutants'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARGO_MUTANTS_VERSION: "27.0.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-mutants
+        run: |
+          if command -v cargo-mutants >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-mutants v${CARGO_MUTANTS_VERSION}:"; then
+            echo "cargo-mutants ${CARGO_MUTANTS_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-mutants --version "${CARGO_MUTANTS_VERSION}" --locked
+      - name: List focused mutants
+        run: scripts/quality/run-mutants-smoke.sh
+
+  sanitizers:
+    name: sanitizer-smoke
+    if: github.event_name == 'schedule' || inputs.tool == 'all' || inputs.tool == 'sanitizers'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly rust-src
+        run: rustup toolchain install nightly --component rust-src
+      - name: Run address sanitizer smoke
+        run: scripts/quality/run-sanitizer.sh
+
+  perf:
+    name: perf-probes
+    if: github.event_name == 'schedule' || inputs.tool == 'all' || inputs.tool == 'perf'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BLOAT_VERSION: "0.12.1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-bloat
+        run: |
+          if command -v cargo-bloat >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-bloat v${CARGO_BLOAT_VERSION}:"; then
+            echo "cargo-bloat ${CARGO_BLOAT_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-bloat --version "${CARGO_BLOAT_VERSION}" --locked
+      - name: Run profile build and bloat report
+        run: scripts/quality/run-perf-probes.sh

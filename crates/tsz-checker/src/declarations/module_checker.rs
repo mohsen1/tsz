@@ -16,6 +16,30 @@ impl<'a> CheckerState<'a> {
     // Export Module Specifier Validation
     // =========================================================================
 
+    /// Returns `true` when an `ExportDeclaration` clause is a `NAMED_EXPORTS`
+    /// node with zero specifiers (i.e. `export { } from "..."` or
+    /// `export type { } from "..."`).
+    ///
+    /// Such a declaration binds nothing from the module, so tsc skips
+    /// module resolution for it and emits no TS2307. Wildcard re-exports
+    /// (`export * from "..."`), namespace re-exports (`export * as ns from
+    /// "..."`), and absent export clauses are all distinct AST shapes and
+    /// fall through to the normal resolution path.
+    fn export_named_clause_is_empty(&self, export_clause_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(export_clause_idx) else {
+            return false;
+        };
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_named_imports(clause_node)
+            .is_some_and(|named| named.elements.nodes.is_empty())
+    }
+
     /// Check export declaration module specifier for unresolved modules.
     ///
     /// Validates that the module specifier in an export ... from "module" statement
@@ -43,6 +67,16 @@ impl<'a> CheckerState<'a> {
         let Some(export_decl) = self.ctx.arena.get_export_decl(node) else {
             return;
         };
+
+        // Skip module resolution for `export { } from "..."` and
+        // `export type { } from "..."` — when the export clause is present
+        // (NAMED_EXPORTS) and contains zero specifiers, nothing is actually
+        // imported from the module, so tsc does not require the module to
+        // exist. We match that behavior structurally on the AST shape:
+        // export_decl + NAMED_EXPORTS clause + empty elements list.
+        if self.export_named_clause_is_empty(export_decl.export_clause) {
+            return;
+        }
 
         let resolution_mode =
             self.requested_resolution_mode(export_decl.attributes, export_decl.is_type_only);

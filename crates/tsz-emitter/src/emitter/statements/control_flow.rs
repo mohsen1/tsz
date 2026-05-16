@@ -1,4 +1,4 @@
-use super::super::Printer;
+use super::super::{Printer, get_trailing_comment_ranges};
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -292,12 +292,68 @@ impl<'a> Printer<'a> {
             self.emit(loop_stmt.incrementor);
             self.ctx.flags.in_statement_expression = prev_stmt;
         }
+        let recovered_empty_header_comment =
+            self.recovered_empty_for_header_body_comment(node, loop_stmt);
+        if let Some((comment_pos, comment_end, comment_has_trailing_newline)) =
+            recovered_empty_header_comment
+        {
+            if let Some(text) = self.source_text
+                && let Ok(comment_text) =
+                    crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+            {
+                self.write(" ");
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+                if comment_has_trailing_newline {
+                    self.write_line();
+                }
+            }
+        }
+
         // Map closing `)` — scan backward from body start
         if let Some(body_node) = self.arena.get(loop_stmt.statement) {
             self.map_closing_paren_backward(node.pos, body_node.pos);
         }
         self.write(")");
         self.emit_loop_body(loop_stmt.statement);
+    }
+
+    fn recovered_empty_for_header_body_comment(
+        &self,
+        node: &Node,
+        loop_stmt: &tsz_parser::parser::node::LoopData,
+    ) -> Option<(u32, u32, bool)> {
+        if loop_stmt.initializer.is_some()
+            || loop_stmt.condition.is_some()
+            || loop_stmt.incrementor.is_some()
+        {
+            return None;
+        }
+
+        let text = self.source_text?;
+        let body_node = self.arena.get(loop_stmt.statement)?;
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return None;
+        }
+
+        let bytes = text.as_bytes();
+        let search_start = body_node.pos as usize;
+        let search_end = (body_node.end as usize).min(bytes.len());
+        let brace_pos = bytes
+            .get(search_start..search_end)?
+            .iter()
+            .position(|&b| b == b'{')
+            .map(|offset| search_start + offset)?;
+
+        let header_start = node.pos as usize;
+        let header_end = brace_pos.min(bytes.len());
+        if bytes.get(header_start..header_end)?.contains(&b';') {
+            return None;
+        }
+
+        let comment = get_trailing_comment_ranges(text, brace_pos + 1)
+            .into_iter()
+            .next()?;
+        Some((comment.pos, comment.end, comment.has_trailing_newline))
     }
 
     pub(in crate::emitter) fn emit_for_in_statement(&mut self, node: &Node) {

@@ -773,8 +773,10 @@ impl<'a> Printer<'a> {
         }
 
         // Type assertion that erases away to a bare object literal:
-        // `(<Type>{}).foo` → `({}.foo)` — wrap ourselves and place suffix
-        // outside (matches tsc's emit for the bare-cast variant).
+        // `(<Type>{}).foo` -> `{}.foo` in expression positions. If that
+        // access is the whole expression statement, `emit_expression_statement`
+        // owns the leading-token disambiguation and wraps the whole expression:
+        // `(<Type>{}).foo;` -> `({}.foo);`.
         let inner_is_erasable = if let Some(inner) = self.arena.get(paren.expression) {
             inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner.kind == syntax_kind_ext::AS_EXPRESSION
@@ -784,12 +786,12 @@ impl<'a> Printer<'a> {
             false
         };
 
-        self.write("(");
-        self.emit(paren.expression);
         if inner_is_erasable {
+            self.emit(paren.expression);
             emit_suffix(self);
-            self.write(")");
         } else {
+            self.write("(");
+            self.emit(paren.expression);
             self.write(")");
             emit_suffix(self);
         }
