@@ -1434,29 +1434,34 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let is_disallowed_top_level_await_decl = matches!(
-                node.kind,
-                syntax_kind_ext::VARIABLE_DECLARATION
-                    | syntax_kind_ext::BINDING_ELEMENT
-                    | syntax_kind_ext::FUNCTION_DECLARATION
-                    | syntax_kind_ext::CLASS_DECLARATION
-                    | syntax_kind_ext::IMPORT_CLAUSE
-                    | syntax_kind_ext::IMPORT_SPECIFIER
-                    | syntax_kind_ext::NAMESPACE_IMPORT
-            );
-            if !is_disallowed_top_level_await_decl {
-                continue;
-            }
+            let (report_idx, declaration_idx) = if node.kind == SyntaxKind::Identifier as u16 {
+                let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+                    continue;
+                };
+                let parent = ext.parent;
+                let Some(parent_node) = self.ctx.arena.get(parent) else {
+                    continue;
+                };
+                if !Self::is_top_level_await_decl_kind(parent_node.kind)
+                    || !self.is_plain_await_identifier(decl_idx)
+                {
+                    continue;
+                }
+                (decl_idx, parent)
+            } else {
+                if !Self::is_top_level_await_decl_kind(node.kind) {
+                    continue;
+                }
+                let Some(name_idx) = self.await_identifier_name_node_for_decl(decl_idx) else {
+                    continue;
+                };
+                if !self.is_plain_await_identifier(name_idx) {
+                    continue;
+                }
+                (name_idx, decl_idx)
+            };
 
-            let is_plain_await_identifier = self
-                .await_identifier_name_node_for_decl(decl_idx)
-                .is_some_and(|name_idx| self.is_plain_await_identifier(source_file, name_idx));
-
-            if !is_plain_await_identifier {
-                continue;
-            }
-
-            let mut current = decl_idx;
+            let mut current = declaration_idx;
             let mut is_top_level = false;
             while let Some(ext) = self.ctx.arena.get_extended(current) {
                 let parent = ext.parent;
@@ -1474,17 +1479,25 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let report_idx = self
-                .await_identifier_name_node_for_decl(decl_idx)
-                .unwrap_or(decl_idx);
             self.error_at_node(
                 report_idx,
                 "Identifier expected. 'await' is a reserved word at the top-level of a module.",
                 crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
             );
         }
+    }
 
-        self.emit_top_level_await_text_fallback(source_file);
+    const fn is_top_level_await_decl_kind(kind: u16) -> bool {
+        matches!(
+            kind,
+            syntax_kind_ext::VARIABLE_DECLARATION
+                | syntax_kind_ext::BINDING_ELEMENT
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::IMPORT_CLAUSE
+                | syntax_kind_ext::IMPORT_SPECIFIER
+                | syntax_kind_ext::NAMESPACE_IMPORT
+        )
     }
 
     fn await_identifier_name_node_for_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
@@ -1523,25 +1536,18 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_plain_await_identifier(
-        &self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-        node_idx: NodeIndex,
-    ) -> bool {
+    fn is_plain_await_identifier(&self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
         if node.kind != SyntaxKind::Identifier as u16 {
             return false;
         }
-        let Some((start, end)) = self.get_node_span(node_idx) else {
-            return false;
-        };
 
-        source_file
-            .text
-            .get(start as usize..end as usize)
-            .is_some_and(|text| text == "await")
+        self.ctx
+            .arena
+            .get_identifier(node)
+            .is_some_and(|ident| ident.escaped_text == "await" && ident.original_text.is_none())
     }
 
     fn source_file_has_module_indicator(
@@ -1560,218 +1566,6 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::IMPORT_DECLARATION
             )
         })
-    }
-
-    fn emit_ts1262_at_first_await(&mut self, statement_start: u32, statement_text: &str) -> bool {
-        let Some(offset) = statement_text.find("await") else {
-            return false;
-        };
-
-        self.emit_ts1262_at_await_offset(statement_start, offset)
-    }
-
-    fn emit_ts1262_at_await_offset(&mut self, statement_start: u32, offset: usize) -> bool {
-        self.error_at_position(
-            statement_start + offset as u32,
-            5,
-            "Identifier expected. 'await' is a reserved word at the top-level of a module.",
-            crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
-        );
-        true
-    }
-
-    fn statement_contains_any(text: &str, patterns: &[&str]) -> bool {
-        patterns.iter().any(|pattern| text.contains(pattern))
-    }
-
-    const fn is_identifier_char(byte: u8) -> bool {
-        byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
-    }
-
-    fn skip_ascii_whitespace(text: &[u8], mut index: usize) -> usize {
-        while matches!(text.get(index), Some(byte) if byte.is_ascii_whitespace()) {
-            index += 1;
-        }
-        index
-    }
-
-    fn next_non_whitespace_byte(text: &[u8], mut index: usize) -> Option<u8> {
-        index = Self::skip_ascii_whitespace(text, index);
-        text.get(index).copied()
-    }
-
-    fn starts_with_variable_keyword(text: &[u8]) -> Option<usize> {
-        let index = Self::skip_ascii_whitespace(text, 0);
-        for keyword in [b"const".as_slice(), b"let".as_slice(), b"var".as_slice()] {
-            if text[index..].starts_with(keyword)
-                && !matches!(text.get(index + keyword.len()), Some(byte) if Self::is_identifier_char(*byte))
-            {
-                return Some(index + keyword.len());
-            }
-        }
-        None
-    }
-
-    fn is_standalone_await(text: &[u8], index: usize) -> bool {
-        text[index..].starts_with(b"await")
-            && !matches!(index.checked_sub(1).and_then(|prev| text.get(prev)), Some(byte) if Self::is_identifier_char(*byte))
-            && !matches!(text.get(index + 5), Some(byte) if Self::is_identifier_char(*byte))
-    }
-
-    fn find_await_in_binding_pattern(text: &[u8], open_index: usize) -> Option<usize> {
-        let mut stack = vec![text[open_index]];
-        let mut index = open_index + 1;
-
-        while index < text.len() {
-            match text[index] {
-                b'{' | b'[' => stack.push(text[index]),
-                b'}' if stack.last() == Some(&b'{') => {
-                    stack.pop();
-                    if stack.is_empty() {
-                        return None;
-                    }
-                }
-                b']' if stack.last() == Some(&b'[') => {
-                    stack.pop();
-                    if stack.is_empty() {
-                        return None;
-                    }
-                }
-                b'a' if Self::is_standalone_await(text, index) => {
-                    let is_object_property_name = stack.last() == Some(&b'{')
-                        && Self::next_non_whitespace_byte(text, index + 5) == Some(b':');
-                    if !is_object_property_name {
-                        return Some(index);
-                    }
-                    index += 4;
-                }
-                _ => {}
-            }
-
-            index += 1;
-        }
-
-        None
-    }
-
-    fn find_await_destructuring_binding_offsets(statement_text: &str) -> Vec<usize> {
-        let text = statement_text.as_bytes();
-        let Some(mut index) = Self::starts_with_variable_keyword(text) else {
-            return Vec::new();
-        };
-        let mut offsets = Vec::new();
-
-        loop {
-            index = Self::skip_ascii_whitespace(text, index);
-            match text.get(index).copied() {
-                Some(b'{') | Some(b'[') => {
-                    if let Some(await_index) = Self::find_await_in_binding_pattern(text, index) {
-                        offsets.push(await_index);
-                    }
-                }
-                Some(b';') | None => return offsets,
-                _ => {}
-            }
-
-            while let Some(byte) = text.get(index).copied() {
-                match byte {
-                    b',' => {
-                        index += 1;
-                        break;
-                    }
-                    b';' => return offsets,
-                    _ => index += 1,
-                }
-            }
-        }
-    }
-
-    fn emit_top_level_await_text_fallback(
-        &mut self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        let ts1262_code =
-            crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE;
-        // Text fallback only runs when the AST path emitted nothing. After the
-        // break removal above, the AST path emits for every qualifying binding,
-        // so this early-return is still correct: if any TS1262 was produced by
-        // the AST path, there is nothing more for the text scan to add.
-        if self
-            .ctx
-            .diagnostics
-            .iter()
-            .any(|diag| diag.code == ts1262_code)
-        {
-            return;
-        }
-
-        let has_module_indicator = self.source_file_has_module_indicator(source_file);
-        let is_js_like_file = self.is_js_file();
-
-        let import_patterns = [
-            "import await from",
-            "import * as await from",
-            "import { await } from",
-            "import { await as await } from",
-        ];
-        let js_variable_patterns = ["const await", "let await", "var await"];
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-
-            let Some((start, end)) = self.get_node_span(stmt_idx) else {
-                continue;
-            };
-            let Some(stmt_text) = source_file.text.get(start as usize..end as usize) else {
-                continue;
-            };
-
-            match stmt_node.kind {
-                syntax_kind_ext::IMPORT_DECLARATION
-                    if Self::statement_contains_any(stmt_text, &import_patterns)
-                        && self.emit_ts1262_at_first_await(start, stmt_text) =>
-                {
-                    return;
-                }
-                syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                    let has_await_import_equals = stmt_text.contains("import await =");
-                    let is_require_form = stmt_text.contains("require(");
-                    if has_await_import_equals
-                        && (is_require_form || has_module_indicator)
-                        && self.emit_ts1262_at_first_await(start, stmt_text)
-                    {
-                        return;
-                    }
-                }
-                syntax_kind_ext::VARIABLE_STATEMENT => {
-                    let binding_pattern_await_offsets =
-                        Self::find_await_destructuring_binding_offsets(stmt_text);
-                    let has_js_var_await = is_js_like_file
-                        && Self::statement_contains_any(stmt_text, &js_variable_patterns);
-                    if !binding_pattern_await_offsets.is_empty() {
-                        for offset in binding_pattern_await_offsets {
-                            self.emit_ts1262_at_await_offset(start, offset);
-                        }
-                        continue;
-                    }
-                    if has_js_var_await && self.emit_ts1262_at_first_await(start, stmt_text) {
-                        return;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if has_module_indicator && let Some(offset) = source_file.text.find("const await") {
-            self.error_at_position(
-                offset as u32 + 6,
-                5,
-                "Identifier expected. 'await' is a reserved word at the top-level of a module.",
-                ts1262_code,
-            );
-        }
     }
 
     /// Check a statement and produce type errors.

@@ -1,3 +1,4 @@
+use tsz_checker::test_utils::check_js_source_code_messages;
 use tsz_checker::test_utils::check_source_code_messages;
 
 /// Regression test for: checker emits TS1262 for only the first top-level `await`
@@ -78,5 +79,23 @@ var [ await ] = [4];
     assert_eq!(
         ts1262_count, 4,
         "expected TS1262 for each destructured `await` binding; got {ts1262_count}; full diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Checked JavaScript files with module syntax use the same top-level reserved
+/// `await` gate as TypeScript modules.
+#[test]
+fn ts1262_emitted_for_checked_js_await_declaration_in_module() {
+    let diagnostics = check_js_source_code_messages(
+        r#"
+const await = 1;
+export {};
+"#,
+    );
+
+    let ts1262_count = diagnostics.iter().filter(|(code, _)| *code == 1262).count();
+    assert_eq!(
+        ts1262_count, 1,
+        "expected TS1262 for checked-JS module `await` declaration; got {ts1262_count}; full diagnostics: {diagnostics:#?}"
     );
 }
