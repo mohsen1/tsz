@@ -839,7 +839,9 @@ impl<'a> Printer<'a> {
         self.write("return");
         if ret.expression.is_some() {
             self.write(" ");
-            self.emit_expression(ret.expression);
+            if !self.try_emit_object_literal_es5_return_expression(ret.expression) {
+                self.emit_expression(ret.expression);
+            }
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();

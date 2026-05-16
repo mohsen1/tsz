@@ -495,24 +495,7 @@ impl<'a> Printer<'a> {
         self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
         if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
-            let mut ref_vars = Vec::new();
-            ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
-            ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
-
-            if !ref_vars.is_empty() {
-                let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
-                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
-            }
-
-            if !self.hoisted_assignment_value_temps.is_empty() {
-                let var_decl = format!(
-                    "{}var {};",
-                    indent,
-                    self.hoisted_assignment_value_temps.join(", ")
-                );
-                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
-            }
+            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
         }
 
         if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
@@ -634,6 +617,31 @@ impl<'a> Printer<'a> {
             self.write(&ref_vars.join(", "));
             self.write(";");
             self.write_line();
+        }
+    }
+
+    pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(
+        &mut self,
+        byte_offset: usize,
+        line_no: u32,
+    ) {
+        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+
+        if !ref_vars.is_empty() {
+            let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+        }
+
+        if !self.hoisted_assignment_value_temps.is_empty() {
+            let var_decl = format!(
+                "{}var {};",
+                indent,
+                self.hoisted_assignment_value_temps.join(", ")
+            );
+            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
         }
     }
 

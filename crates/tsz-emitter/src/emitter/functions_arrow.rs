@@ -817,6 +817,16 @@ impl<'a> Printer<'a> {
             return true;
         }
 
+        if self.ctx.target_es5
+            && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && let Some(literal) = self.arena.get_literal_expr(node)
+            && literal.elements.nodes.iter().copied().any(|element| {
+                crate::transforms::emit_utils::is_computed_property_member(self.arena, element)
+            })
+        {
+            return true;
+        }
+
         if let Some(binary) = self.arena.get_binary_expr(node) {
             if binary.operator_token == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
                 && !self.is_simple_nullish_expression(binary.left)

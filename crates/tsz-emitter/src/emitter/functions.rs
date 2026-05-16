@@ -211,12 +211,23 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let is_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = false;
+
         self.write("{ ");
+        let var_insert_pos = is_function_body_block.then_some(self.writer.len());
         for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
             if i > 0 {
                 self.write(" ");
             }
             self.emit(stmt_idx);
+        }
+        if let Some(byte_offset) = var_insert_pos
+            && !self.hoisted_assignment_temps.is_empty()
+        {
+            let var_decl = format!("var {}; ", self.hoisted_assignment_temps.join(", "));
+            self.writer.insert_at(byte_offset, &var_decl);
+            self.hoisted_assignment_temps.clear();
         }
         self.write(" }");
     }
@@ -236,9 +247,13 @@ impl<'a> Printer<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+        let is_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = false;
         self.ctx.block_scope_state.enter_function_scope();
         self.skip_block_opening_line_comments(block_node, block);
         self.emit_param_prologue(transforms);
+        let hoisted_var_byte_offset =
+            is_function_body_block.then_some((self.writer.len(), self.writer.current_line()));
 
         for &stmt_idx in &block.statements.nodes {
             let before_len = self.writer.len();
@@ -249,6 +264,9 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.block_scope_state.exit_scope();
+        if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
+            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
+        }
         self.decrease_indent();
         self.write("}");
     }
