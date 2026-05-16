@@ -323,6 +323,19 @@ impl<'a> Completions<'a> {
             return;
         }
 
+        // `ReadonlyType` and `NoInfer` are transparent wrappers for member access; strip and recurse.
+        if let Some(inner) = visitor::unwrap_readonly_or_noinfer(interner, evaluated) {
+            self.collect_properties_for_type_inner(
+                inner,
+                interner,
+                checker,
+                visited,
+                props,
+                include_private,
+            );
+            return;
+        }
+
         if let Some(shape_id) = visitor::object_shape_id(interner, evaluated)
             .or_else(|| visitor::object_with_index_shape_id(interner, evaluated))
         {
@@ -348,13 +361,13 @@ impl<'a> Completions<'a> {
                 self.collect_shape_props(props, interner, &shape.properties, include_private);
             }
             // Prefer the lib-defined Function interface; fall back to apparent members.
-            if let Some(boxed_fn) = interner.get_boxed_type(IntrinsicKind::Function) {
-                self.collect_properties_for_type_inner(
-                    boxed_fn, interner, checker, visited, props, false,
-                );
-            } else {
-                self.collect_intrinsic_members(IntrinsicKind::Function, interner, props);
-            }
+            self.collect_intrinsic_members_or_boxed(
+                IntrinsicKind::Function,
+                interner,
+                checker,
+                visited,
+                props,
+            );
             return;
         }
 
@@ -477,12 +490,18 @@ impl<'a> Completions<'a> {
         }
 
         if visitor::template_literal_id(interner, evaluated).is_some() {
-            self.collect_intrinsic_members(IntrinsicKind::String, interner, props);
+            self.collect_intrinsic_members_or_boxed(
+                IntrinsicKind::String,
+                interner,
+                checker,
+                visited,
+                props,
+            );
             return;
         }
 
         if let Some(kind) = tsz_solver::apparent_intrinsic_kind(interner, evaluated) {
-            self.collect_intrinsic_members(kind, interner, props);
+            self.collect_intrinsic_members_or_boxed(kind, interner, checker, visited, props);
         }
     }
 
@@ -827,7 +846,7 @@ impl<'a> Completions<'a> {
                         let Some(name) = self.arena.get_identifier_text(signature.name) else {
                             continue;
                         };
-                        if name != property_name || !signature.type_annotation.is_some() {
+                        if name != property_name || signature.type_annotation.is_none() {
                             continue;
                         }
                         self.append_members_from_type_node(
@@ -856,7 +875,7 @@ impl<'a> Completions<'a> {
                         let Some(name) = self.arena.get_identifier_text(prop.name) else {
                             continue;
                         };
-                        if name != property_name || !prop.type_annotation.is_some() {
+                        if name != property_name || prop.type_annotation.is_none() {
                             continue;
                         }
                         self.append_members_from_type_node(prop.type_annotation, seen_names, items);
@@ -1318,6 +1337,25 @@ impl<'a> Completions<'a> {
                 type_id,
                 is_method,
             );
+        }
+    }
+
+    /// Prefers the lib-defined boxed interface for a primitive intrinsic type when available,
+    /// falling back to the apparent-members table otherwise.
+    fn collect_intrinsic_members_or_boxed(
+        &self,
+        kind: IntrinsicKind,
+        interner: &TypeInterner,
+        checker: &mut CheckerState,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        if let Some(boxed_type) = interner.get_boxed_type(kind) {
+            self.collect_properties_for_type_inner(
+                boxed_type, interner, checker, visited, props, false,
+            );
+        } else {
+            self.collect_intrinsic_members(kind, interner, props);
         }
     }
 

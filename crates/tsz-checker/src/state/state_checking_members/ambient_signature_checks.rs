@@ -1266,8 +1266,10 @@ impl<'a> CheckerState<'a> {
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                && let Some(name_text) = self.node_text(param.name)
-                && name_text == "static"
+                && let Some(name_node) = self.ctx.arena.get(param.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == "static"
+                && ident.original_text.is_none()
             {
                 self.ctx.error(
                             param_node.pos,
