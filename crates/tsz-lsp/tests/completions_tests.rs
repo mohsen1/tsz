@@ -3802,6 +3802,188 @@ fn test_completions_array_prototype_methods_on_array_literal() {
     );
 }
 
+// ── Primitive type completion filtering ─────────────────────────────────────
+//
+// Structural rule: member completions for primitive types (string, number,
+// boolean, bigint, symbol) must expose only members declared in the type's
+// own TypeScript interface at ES2015 baseline. Object.prototype members
+// (constructor, hasOwnProperty, isPrototypeOf, propertyIsEnumerable) and
+// post-ES2015 string methods (padStart/padEnd, matchAll, replaceAll, ...)
+// must not appear in the no-lib fallback.
+
+#[test]
+fn test_completions_string_excludes_object_prototype_members() {
+    // Object.prototype members must not appear on string. Multiple bindings
+    // prove the fix is structural, not a single-name patch.
+    for source in [
+        "const s: string = \"abc\";\ns.",
+        "const t = \"hello\";\nt.",
+        "const u: string = \"x\";\nu.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "constructor",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "String completions must not include Object.prototype member '{excluded}'; got: {names:?}"
+            );
+        }
+        for expected in [
+            "length", "charAt", "indexOf", "slice", "toString", "valueOf",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "String completions must include own-interface member '{expected}'; got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_string_excludes_post_es2015_members() {
+    let names = member_names_at_end("const s: string = \"x\";\ns.");
+    for excluded in [
+        "padStart",
+        "padEnd",
+        "matchAll",
+        "replaceAll",
+        "trimStart",
+        "trimEnd",
+        "trimLeft",
+        "trimRight",
+        "isWellFormed",
+        "toWellFormed",
+        "at",
+    ] {
+        assert!(
+            !names.contains(&excluded.to_string()),
+            "String completions must not include post-ES2015 member '{excluded}' in no-lib fallback; got: {names:?}"
+        );
+    }
+    for expected in [
+        "includes",
+        "startsWith",
+        "endsWith",
+        "repeat",
+        "codePointAt",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "String completions must include ES2015 member '{expected}'; got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_number_excludes_object_prototype_members() {
+    for source in ["const n: number = 42;\nn.", "const x: number = 0;\nx."] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Number completions must not include Object.prototype member '{excluded}'; got: {names:?}"
+            );
+        }
+        for expected in [
+            "toFixed",
+            "toExponential",
+            "toPrecision",
+            "toString",
+            "valueOf",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "Number completions must include own-interface member '{expected}'; got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_boolean_exposes_only_valueof() {
+    for source in [
+        "const b: boolean = true;\nb.",
+        "const flag: boolean = false;\nflag.",
+        "const b = true;\nb.",
+        "const flag = false;\nflag.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "toLocaleString",
+            "toString",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Boolean completions must not include '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+        assert!(
+            names.contains(&"valueOf".to_string()),
+            "Boolean completions must include 'valueOf' (source: {source:?}); got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_bigint_excludes_object_prototype_members() {
+    for source in [
+        "const n: bigint = 1n;\nn.",
+        "const x = 42n;\nx.",
+        "const y = 0n;\ny.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Bigint completions must not include Object.prototype member '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_symbol_excludes_object_prototype_members() {
+    for source in [
+        "const s: symbol = Symbol();\ns.",
+        "declare const sym: symbol;\nsym.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Symbol completions must not include Object.prototype member '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+        assert!(
+            names.contains(&"valueOf".to_string()),
+            "Symbol completions must include 'valueOf' (source: {source:?}); got: {names:?}"
+        );
+    }
+}
+
 // ── Tuple member completions ─────────────────────────────────────────────────
 
 #[test]

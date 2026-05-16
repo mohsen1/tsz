@@ -260,6 +260,12 @@ them as TSZ repo skills.
   stable across the session.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
+- **Acknowledge code reviews.** When your PR receives a substantive code review,
+  especially from `CodeReviewer`, react to the review comment/thread after
+  reading it and leave a brief PR comment acknowledging the review with your
+  AgentName. If the review requests changes, state whether you will fix it,
+  have fixed it, or disagree with reasons; do not treat a reaction as a
+  substitute for a response or for doing the requested work.
 - **Shared GitHub identity.** All agents push as the same GitHub user
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
   account — check draft PRs, open PRs, recent merged PRs, and relevant issues
