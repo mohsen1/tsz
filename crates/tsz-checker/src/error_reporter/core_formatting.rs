@@ -1557,24 +1557,12 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let Some(alias) = self.ctx.types.get_display_alias(target)
-            && alias != target
-            && self.ts2820_target_contains_application_surface(alias)
-        {
-            return true;
-        }
-
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, target).or_else(|| {
-                crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+        self.ctx
+            .types
+            .get_display_alias(target)
+            .is_some_and(|alias| {
+                crate::query_boundaries::common::application_info(self.ctx.types, alias).is_some()
             })
-        {
-            return members
-                .iter()
-                .any(|&member| self.ts2820_target_contains_application_surface(member));
-        }
-
-        false
     }
 
     pub(super) fn first_nonpublic_constructor_param_property(
