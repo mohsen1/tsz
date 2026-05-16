@@ -130,16 +130,10 @@ impl<'a> CheckerState<'a> {
             return Some((source_display, target_display.to_string()));
         }
 
-        let Some(expr_idx) = self
+        let expr_idx = self
             .direct_diagnostic_source_expression(anchor_idx)
-            .or_else(|| self.assignment_source_expression(anchor_idx))
-        else {
-            return None;
-        };
-        let Some(annotation_text) = self.declared_type_annotation_text_for_expression(expr_idx)
-        else {
-            return None;
-        };
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
         if annotation_text == source_display
             || annotation_text.trim_start().starts_with("typeof ")
             || source_display.starts_with("import(")
