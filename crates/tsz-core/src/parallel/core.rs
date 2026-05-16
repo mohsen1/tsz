@@ -2054,8 +2054,8 @@ impl BoundFile {
     }
 }
 
-use tsz_solver::TypeInterner;
-use tsz_solver::def::DefinitionStore;
+use crate::tsz_solver::TypeInterner;
+use crate::tsz_solver::def::DefinitionStore;
 
 /// Merged program state after parallel binding
 pub struct MergedProgram {
@@ -2533,7 +2533,7 @@ pub fn resolve_heritage_in_store(
     store: &DefinitionStore,
     interner: &TypeInterner,
 ) {
-    use tsz_solver::def::DefKind;
+    use crate::tsz_solver::def::DefKind;
 
     for (&sym_id, entry) in semantic_defs {
         let def_id = match store.find_def_by_symbol(sym_id.0) {
@@ -4202,7 +4202,7 @@ use crate::checker::diagnostics::Diagnostic;
 use crate::checker::state::CheckerState;
 use crate::lib_loader::LibFile;
 use crate::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use crate::tsz_solver::TypeId;
 
 /// Result of type checking a single function body
 #[derive(Debug)]
@@ -4452,6 +4452,360 @@ fn add_reexported_module_augmentation_enum_conflict_diagnostics(
             .diagnostics
             .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
     }
+}
+
+const PARALLEL_INTERFACE_MEMBER_KIND_PROPERTY: u8 = 1;
+const PARALLEL_INTERFACE_MEMBER_KIND_METHOD: u8 = 1 << 1;
+
+#[derive(Clone)]
+struct ParallelGlobalAugmentationMember {
+    file_idx: usize,
+    name: String,
+    name_node: NodeIndex,
+    kind: u8,
+}
+
+fn add_parallel_global_augmentation_member_conflict_diagnostics(
+    program: &MergedProgram,
+    file_results: &mut [FileCheckResult],
+) {
+    use crate::checker::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+    let mut members_by_interface: FxHashMap<String, Vec<ParallelGlobalAugmentationMember>> =
+        FxHashMap::default();
+
+    for (file_idx, file) in program.files.iter().enumerate() {
+        for (interface_name, augmentations) in file.global_augmentations.iter() {
+            let members = members_by_interface
+                .entry(interface_name.clone())
+                .or_default();
+            for augmentation in augmentations {
+                let arena = augmentation
+                    .arena
+                    .as_deref()
+                    .unwrap_or_else(|| file.arena.as_ref());
+                let Some(node) = arena.get(augmentation.node) else {
+                    continue;
+                };
+                let Some(interface) = arena.get_interface(node) else {
+                    continue;
+                };
+
+                for &member_idx in &interface.members.nodes {
+                    let Some(member_node) = arena.get(member_idx) else {
+                        continue;
+                    };
+                    let kind = match member_node.kind {
+                        syntax_kind_ext::PROPERTY_SIGNATURE => {
+                            PARALLEL_INTERFACE_MEMBER_KIND_PROPERTY
+                        }
+                        syntax_kind_ext::METHOD_SIGNATURE => PARALLEL_INTERFACE_MEMBER_KIND_METHOD,
+                        _ => continue,
+                    };
+                    let Some(signature) = arena.get_signature(member_node) else {
+                        continue;
+                    };
+                    let Some(name) =
+                        parallel_global_augmentation_member_name(arena, signature.name)
+                    else {
+                        continue;
+                    };
+                    members.push(ParallelGlobalAugmentationMember {
+                        file_idx,
+                        name,
+                        name_node: signature.name,
+                        kind,
+                    });
+                }
+            }
+        }
+    }
+
+    let mut seen = FxHashSet::default();
+    for members in members_by_interface.values() {
+        for member in members {
+            let opposite_kind = if member.kind == PARALLEL_INTERFACE_MEMBER_KIND_METHOD {
+                PARALLEL_INTERFACE_MEMBER_KIND_PROPERTY
+            } else {
+                PARALLEL_INTERFACE_MEMBER_KIND_METHOD
+            };
+            let has_remote_conflict = members.iter().any(|other| {
+                other.file_idx != member.file_idx
+                    && other.name == member.name
+                    && other.kind == opposite_kind
+            });
+            if !has_remote_conflict {
+                continue;
+            }
+
+            let Some(file_result) = file_results.get_mut(member.file_idx) else {
+                continue;
+            };
+            let Some(file) = program.files.get(member.file_idx) else {
+                continue;
+            };
+            let Some(name_node) = file.arena.get(member.name_node) else {
+                continue;
+            };
+            let key = (
+                member.file_idx,
+                name_node.pos,
+                diagnostic_codes::DUPLICATE_IDENTIFIER,
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+
+            let message =
+                format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&member.name]);
+            file_result.diagnostics.push(Diagnostic::error(
+                file.file_name.clone(),
+                name_node.pos,
+                name_node.end.saturating_sub(name_node.pos),
+                message,
+                diagnostic_codes::DUPLICATE_IDENTIFIER,
+            ));
+        }
+    }
+
+    for result in file_results {
+        result
+            .diagnostics
+            .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        result
+            .diagnostics
+            .dedup_by(|a, b| a.start == b.start && a.code == b.code);
+    }
+}
+
+fn parallel_global_augmentation_member_name(
+    arena: &NodeArena,
+    name_idx: NodeIndex,
+) -> Option<String> {
+    let node = arena.get(name_idx)?;
+    if node.kind == SyntaxKind::Identifier as u16 {
+        return arena
+            .get_identifier(node)
+            .map(|ident| ident.escaped_text.clone());
+    }
+    arena.get_literal(node).map(|literal| literal.text.clone())
+}
+
+fn suppress_parallel_import_shadowing_namespace_type_diagnostics(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    file_results: &mut [FileCheckResult],
+) {
+    use crate::checker::diagnostics::diagnostic_codes;
+
+    for result in file_results {
+        let Some(file) = program.files.get(result.file_idx) else {
+            continue;
+        };
+        let arena = file.arena.as_ref();
+        result.diagnostics.retain(|diagnostic| {
+            if diagnostic.code != diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_TYPE {
+                return true;
+            }
+            let Some(name) = source_text_at_span(arena, diagnostic.start, diagnostic.length) else {
+                return true;
+            };
+            !named_import_targets_shadowed_namespace_type(
+                program,
+                resolved_module_paths,
+                result.file_idx,
+                name,
+            )
+        });
+    }
+}
+
+fn source_text_at_span(arena: &NodeArena, start: u32, length: u32) -> Option<&str> {
+    let source = arena.source_files.first()?.text.as_ref();
+    let start = usize::try_from(start).ok()?;
+    let end = start.checked_add(usize::try_from(length).ok()?)?;
+    source.get(start..end)
+}
+
+fn named_import_targets_shadowed_namespace_type(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    file_idx: usize,
+    local_name: &str,
+) -> bool {
+    let Some(file) = program.files.get(file_idx) else {
+        return false;
+    };
+    let arena = file.arena.as_ref();
+    let Some(source_file) = arena.source_files.first() else {
+        return false;
+    };
+
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+            continue;
+        }
+        let Some(import_decl) = arena.get_import_decl(stmt_node) else {
+            continue;
+        };
+        let Some(module_name) = arena
+            .get(import_decl.module_specifier)
+            .and_then(|node| arena.get_literal(node))
+            .map(|literal| literal.text.as_str())
+        else {
+            continue;
+        };
+        let Some(clause_node) = arena.get(import_decl.import_clause) else {
+            continue;
+        };
+        let Some(clause) = arena.get_import_clause(clause_node) else {
+            continue;
+        };
+        let Some(bindings_node) = arena.get(clause.named_bindings) else {
+            continue;
+        };
+        if bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+            continue;
+        }
+        let Some(named) = arena.get_named_imports(bindings_node) else {
+            continue;
+        };
+        for &spec_idx in &named.elements.nodes {
+            let Some(spec_node) = arena.get(spec_idx) else {
+                continue;
+            };
+            let Some(spec) = arena.get_specifier(spec_node) else {
+                continue;
+            };
+            let local_name_idx = if spec.name.is_some() {
+                spec.name
+            } else {
+                spec.property_name
+            };
+            let Some(local_ident) = arena.get_identifier_at(local_name_idx) else {
+                continue;
+            };
+            if local_ident.escaped_text != local_name {
+                continue;
+            }
+            let imported_name_idx = if spec.property_name.is_some() {
+                spec.property_name
+            } else {
+                local_name_idx
+            };
+            let Some(imported_ident) = arena.get_identifier_at(imported_name_idx) else {
+                continue;
+            };
+            let Some(&target_file_idx) =
+                resolved_module_paths.get(&(file_idx, module_name.to_string()))
+            else {
+                continue;
+            };
+            if exported_namespace_import_has_type_companion(
+                program,
+                target_file_idx,
+                &imported_ident.escaped_text,
+            ) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn exported_namespace_import_has_type_companion(
+    program: &MergedProgram,
+    file_idx: usize,
+    export_name: &str,
+) -> bool {
+    let Some(file) = program.files.get(file_idx) else {
+        return false;
+    };
+    if !program
+        .module_exports
+        .get(file.file_name.as_str())
+        .is_some_and(|exports| exports.has(export_name))
+    {
+        return false;
+    }
+    file_has_namespace_import_named(file.arena.as_ref(), export_name)
+        && file_has_type_declaration_named(file.arena.as_ref(), export_name)
+}
+
+fn file_has_namespace_import_named(arena: &NodeArena, name: &str) -> bool {
+    let Some(source_file) = arena.source_files.first() else {
+        return false;
+    };
+    source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .any(|stmt_idx| {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                return false;
+            }
+            let Some(import_decl) = arena.get_import_decl(stmt_node) else {
+                return false;
+            };
+            let Some(clause_node) = arena.get(import_decl.import_clause) else {
+                return false;
+            };
+            let Some(clause) = arena.get_import_clause(clause_node) else {
+                return false;
+            };
+            let Some(bindings_node) = arena.get(clause.named_bindings) else {
+                return false;
+            };
+            if bindings_node.kind != syntax_kind_ext::NAMESPACE_IMPORT {
+                return false;
+            }
+            arena
+                .get_named_imports(bindings_node)
+                .and_then(|namespace_import| arena.get_identifier_at(namespace_import.name))
+                .is_some_and(|ident| ident.escaped_text == name)
+        })
+}
+
+fn file_has_type_declaration_named(arena: &NodeArena, name: &str) -> bool {
+    let Some(source_file) = arena.source_files.first() else {
+        return false;
+    };
+    source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .any(|stmt_idx| {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                return false;
+            };
+            let name_idx = match stmt_node.kind {
+                kind if kind == syntax_kind_ext::INTERFACE_DECLARATION => arena
+                    .get_interface(stmt_node)
+                    .map(|interface| interface.name),
+                kind if kind == syntax_kind_ext::CLASS_DECLARATION => {
+                    arena.get_class(stmt_node).map(|class| class.name)
+                }
+                kind if kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    arena.get_type_alias(stmt_node).map(|alias| alias.name)
+                }
+                kind if kind == syntax_kind_ext::ENUM_DECLARATION => {
+                    arena.get_enum(stmt_node).map(|enum_decl| enum_decl.name)
+                }
+                _ => None,
+            };
+            name_idx
+                .and_then(|idx| arena.get_identifier_at(idx))
+                .is_some_and(|ident| ident.escaped_text == name)
+        })
 }
 
 fn collect_lib_interface_node_symbols(
@@ -5824,6 +6178,12 @@ pub fn check_files_parallel(
         resolved_module_paths.as_ref(),
         &mut file_results,
     );
+    suppress_parallel_import_shadowing_namespace_type_diagnostics(
+        program,
+        resolved_module_paths.as_ref(),
+        &mut file_results,
+    );
+    add_parallel_global_augmentation_member_conflict_diagnostics(program, &mut file_results);
 
     let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
 
