@@ -13,17 +13,18 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.type_query_static_array_structural_display(&array_display) {
             return Some(display);
         }
-        if !array_display.contains("Static<typeof") && !array_display.ends_with("[]") {
-            return None;
-        }
-        if !self.is_static_schema_application_display(element_type) {
+        if !self.is_static_schema_application(element_type) {
             return None;
         }
         if let Some(schema_type) = self.static_schema_application_schema_type(element_type) {
             let schema_type = self.evaluate_type_for_assignability(schema_type);
-            let schema_display = self.format_type_diagnostic(schema_type);
-            if let Some(display) = Self::typebox_schema_static_display_from_text(&schema_display) {
-                return Some(format!("{display}[]"));
+            if let Some(static_type) = self.typebox_schema_static_type(schema_type, 0) {
+                let static_type = self.evaluate_type_for_assignability(static_type);
+                let static_type = self.widen_type_for_display(static_type);
+                let static_type = self.normalize_assignability_display_type(static_type);
+                let rebuilt = self.ctx.types.array(static_type);
+                let display = self.format_assignability_type_for_message(rebuilt, other);
+                return Some(display);
             }
         }
         let evaluated_element = self.static_schema_element_structural_type(element_type)?;
@@ -33,19 +34,46 @@ impl<'a> CheckerState<'a> {
         Some(self.format_assignability_type_for_message(rebuilt, other))
     }
 
-    fn is_static_schema_application_display(&mut self, type_id: TypeId) -> bool {
-        if self
-            .format_type_diagnostic(type_id)
-            .starts_with("Static<typeof ")
-        {
-            return true;
+    fn is_static_schema_application(&self, type_id: TypeId) -> bool {
+        self.static_schema_application_schema_type(type_id)
+            .is_some()
+    }
+
+    pub(crate) fn type_alias_projects_static_member(&self, base: TypeId) -> bool {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return false;
         }
+        let Some(body) = def.body else {
+            return false;
+        };
+        let Some(indexed) =
+            crate::query_boundaries::common::get_indexed_access_type(self.ctx.types, body)
+        else {
+            return false;
+        };
+        self.is_static_property_name(indexed.index_type)
+    }
+
+    fn is_static_property_name(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::string_literal_value(self.ctx.types, type_id)
+            .is_some_and(|name| self.ctx.types.resolve_atom_ref(name).as_ref() == "static")
+    }
+
+    fn static_schema_application_info(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
         let app_info = crate::query_boundaries::common::application_info(self.ctx.types, type_id)
             .or_else(|| {
-                let alias = self.ctx.types.get_display_alias(type_id)?;
-                crate::query_boundaries::common::application_info(self.ctx.types, alias)
-            });
-        app_info.is_some_and(|(base, _)| self.format_type_diagnostic(base) == "Static")
+            let alias = self.ctx.types.get_display_alias(type_id)?;
+            crate::query_boundaries::common::application_info(self.ctx.types, alias)
+        })?;
+        self.type_alias_projects_static_member(app_info.0)
+            .then_some(app_info)
     }
 
     fn static_schema_element_structural_type(&mut self, element_type: TypeId) -> Option<TypeId> {
@@ -107,49 +135,33 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn static_schema_application_schema_type(&self, type_id: TypeId) -> Option<TypeId> {
-        let (_base, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id).or_else(
-                || {
-                    let alias = self.ctx.types.get_display_alias(type_id)?;
-                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
-                },
-            )?;
+    pub(crate) fn static_schema_application_schema_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let (_base, args) = self.static_schema_application_info(type_id)?;
         args.first().copied()
     }
 
     fn typebox_schema_static_type(&mut self, schema_type: TypeId, depth: u8) -> Option<TypeId> {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
-        if depth > 6 {
+        if depth > 12 {
             return None;
         }
         let schema_type = self.evaluate_type_for_assignability(schema_type);
-        if self.format_type_diagnostic(schema_type) == "TString" {
-            return Some(TypeId::STRING);
+
+        if let Some(static_type) = self.schema_property_type(schema_type, "static") {
+            let static_type = self.evaluate_type_for_assignability(static_type);
+            if !matches!(static_type, TypeId::ERROR | TypeId::UNKNOWN)
+                && !crate::query_boundaries::common::contains_free_type_parameters(
+                    self.ctx.types,
+                    static_type,
+                )
+            {
+                return Some(
+                    self.rewrite_nested_static_projection_members(static_type, depth + 1)
+                        .unwrap_or(static_type),
+                );
+            }
         }
 
-        let properties_type = if let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, schema_type).or_else(
-                || {
-                    let alias = self.ctx.types.get_display_alias(schema_type)?;
-                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
-                },
-            ) {
-            if self.format_type_diagnostic(base) != "TObject" {
-                return None;
-            }
-            args.first().copied()?
-        } else {
-            match self.resolve_property_access_with_env(schema_type, "properties") {
-                PropertyAccessResult::Success { type_id, .. }
-                | PropertyAccessResult::PossiblyNullOrUndefined {
-                    property_type: Some(type_id),
-                    ..
-                } => type_id,
-                _ => return None,
-            }
-        };
+        let properties_type = self.schema_property_type(schema_type, "properties")?;
         let properties_type = self.evaluate_type_for_assignability(properties_type);
         let shape = crate::query_boundaries::common::object_shape_for_type(
             self.ctx.types,
@@ -167,26 +179,48 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.factory().object(properties))
     }
 
-    fn typebox_schema_static_display_from_text(schema: &str) -> Option<String> {
-        let schema = schema.trim();
-        if schema == "TString" {
-            return Some("string".to_string());
+    fn rewrite_nested_static_projection_members(
+        &mut self,
+        type_id: TypeId,
+        depth: u8,
+    ) -> Option<TypeId> {
+        if depth > 12 {
+            return None;
         }
-        let inner = schema.strip_prefix("TObject<")?.strip_suffix('>')?.trim();
-        let properties = inner.strip_prefix('{')?.strip_suffix('}')?.trim();
-        let mut rendered = Vec::new();
-        for entry in Self::split_top_level_typebox_properties(properties) {
-            let entry = entry.trim();
-            if entry.is_empty() {
-                continue;
+        if let Some(schema_type) = self.static_schema_application_schema_type(type_id) {
+            let schema_type = self.evaluate_type_for_assignability(schema_type);
+            return self.typebox_schema_static_type(schema_type, depth + 1);
+        }
+
+        let type_id = self.evaluate_type_for_assignability(type_id);
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)?;
+        let mut changed = false;
+        let mut properties = Vec::with_capacity(shape.properties.len());
+        for prop in &shape.properties {
+            let mut next = prop.clone();
+            if let Some(rewritten) =
+                self.rewrite_nested_static_projection_members(prop.type_id, depth + 1)
+            {
+                next.type_id = rewritten;
+                changed = true;
             }
-            let colon = Self::top_level_colon(entry)?;
-            let name = entry[..colon].trim();
-            let value = entry[colon + 1..].trim();
-            let value_display = Self::typebox_schema_static_display_from_text(value)?;
-            rendered.push(format!("{name}: {value_display};"));
+            properties.push(next);
         }
-        Some(format!("{{ {} }}", rendered.join(" ")))
+        changed.then(|| self.ctx.types.factory().object(properties))
+    }
+
+    fn schema_property_type(&mut self, schema_type: TypeId, property: &str) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        match self.resolve_property_access_with_env(schema_type, property) {
+            PropertyAccessResult::Success { type_id, .. }
+            | PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => Some(type_id),
+            _ => None,
+        }
     }
 
     pub(in crate::error_reporter) fn type_query_static_array_structural_display(
@@ -205,48 +239,11 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(tsz_parser::NodeIndex::NONE);
         let schema_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
         let schema_type = self.evaluate_type_for_assignability(schema_type);
-        let schema_display = self.format_type_diagnostic(schema_type);
-        Self::typebox_schema_static_display_from_text(&schema_display)
-            .map(|display| format!("{display}[]"))
-    }
-
-    fn split_top_level_typebox_properties(properties: &str) -> Vec<&str> {
-        let mut parts = Vec::new();
-        let mut start = 0;
-        let mut angle_depth = 0i32;
-        let mut brace_depth = 0i32;
-        for (idx, ch) in properties.char_indices() {
-            match ch {
-                '<' => angle_depth += 1,
-                '>' => angle_depth -= 1,
-                '{' => brace_depth += 1,
-                '}' => brace_depth -= 1,
-                ';' if angle_depth == 0 && brace_depth == 0 => {
-                    parts.push(&properties[start..idx]);
-                    start = idx + ch.len_utf8();
-                }
-                _ => {}
-            }
-        }
-        if start < properties.len() {
-            parts.push(&properties[start..]);
-        }
-        parts
-    }
-
-    fn top_level_colon(entry: &str) -> Option<usize> {
-        let mut angle_depth = 0i32;
-        let mut brace_depth = 0i32;
-        for (idx, ch) in entry.char_indices() {
-            match ch {
-                '<' => angle_depth += 1,
-                '>' => angle_depth -= 1,
-                '{' => brace_depth += 1,
-                '}' => brace_depth -= 1,
-                ':' if angle_depth == 0 && brace_depth == 0 => return Some(idx),
-                _ => {}
-            }
-        }
-        None
+        let static_type = self.typebox_schema_static_type(schema_type, 0)?;
+        let static_type = self.evaluate_type_for_assignability(static_type);
+        let static_type = self.widen_type_for_display(static_type);
+        let static_type = self.normalize_assignability_display_type(static_type);
+        let rebuilt = self.ctx.types.array(static_type);
+        Some(self.format_type_diagnostic(rebuilt))
     }
 }

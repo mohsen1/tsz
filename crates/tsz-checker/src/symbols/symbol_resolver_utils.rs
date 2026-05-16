@@ -448,6 +448,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        self.is_unresolved_import_symbol_id(sym_id)
+    }
+
+    pub(crate) fn is_unresolved_import_symbol_id(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };

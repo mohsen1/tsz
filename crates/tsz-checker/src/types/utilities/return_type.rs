@@ -391,6 +391,68 @@ impl<'a> CheckerState<'a> {
         type_id
     }
 
+    pub(crate) fn maybe_evaluate_inferred_return_contribution(
+        &mut self,
+        type_id: TypeId,
+        return_context: Option<TypeId>,
+    ) -> TypeId {
+        if return_context.is_some() || self.ctx.emit_declarations() {
+            return type_id;
+        }
+
+        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).is_some() {
+            return type_id;
+        }
+
+        self.record_index_access_value_type(type_id)
+            .map(|value| self.maybe_evaluate_inferred_return_contribution(value, None))
+            .unwrap_or(type_id)
+    }
+
+    fn record_index_access_value_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let (object_type, _index_type) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, type_id)?;
+        let app_type = self
+            .ctx
+            .types
+            .get_display_alias(object_type)
+            .unwrap_or(object_type);
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, app_type)?;
+        if !self.application_alias_maps_keys_to_second_type_arg(app.base) || app.args.len() != 2 {
+            return None;
+        }
+        Some(app.args[1])
+    }
+
+    fn application_alias_maps_keys_to_second_type_arg(&self, base: TypeId) -> bool {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != 2 {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+        let Some(mapped) = crate::query_boundaries::common::mapped_type_info(self.ctx.types, body)
+        else {
+            return false;
+        };
+        let Some(template_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, mapped.template)
+        else {
+            return false;
+        };
+
+        mapped.name_type.is_none()
+            && mapped.type_param.name == def.type_params[0].name
+            && template_param.name == def.type_params[1].name
+    }
+
     /// Structurally detect whether a return expression is a const assertion
     /// (`expr as const` or `<const>expr`), skipping any wrapping parentheses.
     /// Mirrors the detection in `dispatch.rs` that toggles `in_const_assertion`
@@ -555,6 +617,7 @@ impl<'a> CheckerState<'a> {
 
         if node.kind != syntax_kind_ext::BLOCK {
             let raw = self.return_expression_type(body_idx, return_context);
+            let raw = self.maybe_evaluate_inferred_return_contribution(raw, return_context);
             return self.maybe_widen_return_contribution(body_idx, raw, return_context);
         }
 
@@ -845,6 +908,10 @@ impl<'a> CheckerState<'a> {
                         );
                         let return_type =
                             self.return_expression_type(return_data.expression, infer_context);
+                        let return_type = self.maybe_evaluate_inferred_return_contribution(
+                            return_type,
+                            return_context,
+                        );
                         let widened = self.maybe_widen_return_contribution(
                             return_data.expression,
                             return_type,

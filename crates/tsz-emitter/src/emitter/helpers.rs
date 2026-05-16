@@ -1,5 +1,5 @@
 use super::{JsxEmit, ModuleKind, Printer};
-use crate::output::source_writer::SourcePosition;
+use crate::output::source_writer::{DelimiterKind, SourcePosition};
 use crate::safe_slice;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -47,6 +47,16 @@ impl<'a> Printer<'a> {
 
     /// Write text to output.
     pub(super) fn write(&mut self, text: &str) {
+        self.write_pending_block_comment_space_before(text);
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer.write_node(text, source_pos);
+        } else {
+            self.writer.write(text);
+        }
+    }
+
+    /// Preserve tsc spacing after inline block comments before the next token.
+    fn write_pending_block_comment_space_before(&mut self, text: &str) {
         // If an inline block comment was just emitted, insert a separating space
         // before non-whitespace text to match tsc output (e.g. `/*comment*/ yield`).
         if self.pending_block_comment_space {
@@ -59,27 +69,12 @@ impl<'a> Printer<'a> {
                 self.writer.write_space();
             }
         }
-        if let Some(source_pos) = self.take_pending_source_pos() {
-            self.writer.write_node(text, source_pos);
-        } else {
-            self.writer.write(text);
-        }
     }
 
     /// Write a mapped token and also emit an end-of-token mapping.
     /// tsc emits these for single-character tokens like `;`, `{`, `}`.
     pub(super) fn write_with_end_marker(&mut self, text: &str) {
-        // Handle pending block comment space (e.g., `/*comment*/ ;`).
-        if self.pending_block_comment_space {
-            self.pending_block_comment_space = false;
-            if !text.is_empty()
-                && !text.starts_with(' ')
-                && !text.starts_with('\n')
-                && !text.starts_with('\r')
-            {
-                self.writer.write_space();
-            }
-        }
+        self.write_pending_block_comment_space_before(text);
         if let Some(source_pos) = self.take_pending_source_pos() {
             self.writer.write_node_with_end(text, source_pos);
         } else {
@@ -89,17 +84,7 @@ impl<'a> Printer<'a> {
 
     /// Write identifier text to output with name mapping when available.
     pub(super) fn write_identifier(&mut self, text: &str) {
-        // Handle pending block comment space (e.g., `/** comment */ identifier`).
-        if self.pending_block_comment_space {
-            self.pending_block_comment_space = false;
-            if !text.is_empty()
-                && !text.starts_with(' ')
-                && !text.starts_with('\n')
-                && !text.starts_with('\r')
-            {
-                self.writer.write_space();
-            }
-        }
+        self.write_pending_block_comment_space_before(text);
         if let Some(source_pos) = self.take_pending_source_pos() {
             self.writer.write_node_with_name(text, source_pos, text);
         } else {
@@ -127,6 +112,44 @@ impl<'a> Printer<'a> {
         } else {
             self.writer.write_char(ch);
         }
+    }
+
+    fn write_open_delimiter(&mut self, delimiter: DelimiterKind) {
+        let mut buf = [0u8; 4];
+        let text = delimiter.open_char().encode_utf8(&mut buf);
+        self.write_pending_block_comment_space_before(text);
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer.write_open_delimiter_node(delimiter, source_pos);
+        } else {
+            self.writer.write_open_delimiter(delimiter);
+        }
+    }
+
+    fn write_close_delimiter(&mut self, delimiter: DelimiterKind) {
+        let mut buf = [0u8; 4];
+        let text = delimiter.close_char().encode_utf8(&mut buf);
+        self.write_pending_block_comment_space_before(text);
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer
+                .write_close_delimiter_node(delimiter, source_pos);
+        } else {
+            self.writer.write_close_delimiter(delimiter);
+        }
+    }
+
+    pub(super) fn open_paren(&mut self) {
+        self.write_open_delimiter(DelimiterKind::Paren);
+    }
+
+    pub(super) fn close_paren(&mut self) {
+        self.write_close_delimiter(DelimiterKind::Paren);
+    }
+
+    pub(super) fn parenthesized<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
+        self.open_paren();
+        let result = emit(self);
+        self.close_paren();
+        result
     }
 
     /// Write a runtime helper call name (e.g. `__awaiter`).
@@ -180,12 +203,11 @@ impl<'a> Printer<'a> {
             } else {
                 false
             };
+            let expression = data.expression;
             if needs_parens {
-                self.write("(");
-            }
-            self.emit(data.expression);
-            if needs_parens {
-                self.write(")");
+                self.parenthesized(|emitter| emitter.emit(expression));
+            } else {
+                self.emit(expression);
             }
         } else {
             self.emit(idx);
