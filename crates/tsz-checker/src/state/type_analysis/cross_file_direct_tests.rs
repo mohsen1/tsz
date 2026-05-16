@@ -476,6 +476,18 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
                 "constructed Intl.NumberFormat.resolvedOptions should return merged ResolvedNumberFormatOptions",
             );
         }
+        if name == "Locale" {
+            let calendar = state.ctx.types.intern_string("calendar");
+            assert!(
+                crate::query_boundaries::common::raw_property_type(
+                    state.ctx.types.as_type_database(),
+                    ty,
+                    calendar,
+                )
+                .is_some(),
+                "Intl.Locale should include inherited LocaleOptions members",
+            );
+        }
         assert!(
             state.ctx.lib_delegation_cache.contains_symbol_type(sym_id),
             "{name} should populate the delegation cache",

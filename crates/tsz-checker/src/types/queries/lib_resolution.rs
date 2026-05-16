@@ -489,7 +489,13 @@ impl<'a> CheckerState<'a> {
         let lib_contexts = self.ctx.lib_contexts.clone();
 
         // Look up the symbol and its declarations
-        let Some(sym_id) = self.resolve_lib_symbol_by_entity_name(name) else {
+        let sym_id = name
+            .split_once('.')
+            .and_then(|(namespace, export_name)| {
+                self.resolve_lib_namespace_export_symbol(namespace, export_name)
+            })
+            .or_else(|| self.resolve_lib_symbol_by_entity_name(name));
+        let Some(sym_id) = sym_id else {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
@@ -605,15 +611,31 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let heritage_namespace = name.split_once('.').map(|(namespace, _)| namespace);
+
         // Now resolve each base type and merge, applying type argument substitution
         for base in &bases {
-            if let Some(mut base_type) = self
-                .resolve_scoped_lib_typeof_class_heritage(base, &lib_contexts)
-                .or_else(|| self.resolve_lib_type_by_entity_name(&base.name))
+            let namespace_base_sym = heritage_namespace
+                .filter(|_| !base.name.contains('.'))
+                .and_then(|namespace| {
+                    self.resolve_lib_namespace_export_symbol(namespace, &base.name)
+                });
+            let mut base_type = self.resolve_scoped_lib_typeof_class_heritage(base, &lib_contexts);
+            if base_type.is_none()
+                && let (Some(namespace), Some(sym_id)) = (heritage_namespace, namespace_base_sym)
             {
+                let cache_name = format!("{namespace}.{}", base.name);
+                base_type = self.resolve_lib_interface_type_by_symbol(&cache_name, sym_id);
+            }
+            if base_type.is_none() {
+                base_type = self.resolve_lib_type_by_entity_name(&base.name);
+            }
+
+            if let Some(mut base_type) = base_type {
                 // If there are type arguments, resolve them and substitute
                 if !base.type_arg_indices.is_empty() {
-                    let base_sym = self.resolve_lib_symbol_by_entity_name(&base.name);
+                    let base_sym = namespace_base_sym
+                        .or_else(|| self.resolve_lib_symbol_by_entity_name(&base.name));
                     if let Some(base_sym_id) = base_sym {
                         let base_params = self.get_type_params_for_symbol(base_sym_id);
                         if !base_params.is_empty() {
