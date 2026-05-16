@@ -312,6 +312,9 @@ pub struct Printer<'a> {
     /// Source text for detecting single-line constructs
     pub(crate) source_text: Option<&'a str>,
 
+    /// Cached JSX pragmas extracted from the current source file.
+    pub(crate) jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts,
+
     /// Source text for source map generation (kept separate from comment emission).
     pub(crate) source_map_text: Option<&'a str>,
 
@@ -971,6 +974,7 @@ impl<'a> Printer<'a> {
             emit_plan,
             emit_missing_initializer_as_void_0: false,
             source_text: None,
+            jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
             source_map_text: None,
             line_map: None,
             pending_source_pos: None,
@@ -1234,6 +1238,7 @@ impl<'a> Printer<'a> {
     /// Set the source text (for detecting single-line constructs).
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
+        self.jsx_pragmas = crate::jsx_pragmas::JsxPragmaFacts::from_source(text);
         self.source_comment_ranges = if self.ctx.options.remove_comments {
             Vec::new()
         } else {

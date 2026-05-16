@@ -87,6 +87,25 @@ fn arrow_default_nullish_temp_is_scoped_to_es2015_body() {
 }
 
 #[test]
+fn recovered_arrow_conditional_tail_emits_branch_statements() {
+    let source = "(a?) => { return a; } ? (b)=>(c)=>81 : (c)=>(d)=>82;\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("(a) => { return a; };"),
+        "The block-bodied arrow should emit as the first recovered expression statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(b) => (c) => 81;"),
+        "The invalid conditional true branch should remain emit-visible.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(c) => (d) => 82;"),
+        "The invalid conditional false branch should remain emit-visible.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn arrow_default_optional_chain_temp_is_scoped_to_es5_body() {
     let source = "const a = (): { d: string } | undefined => undefined;\n((b = a()?.d) => {})();";
     let output = parse_lower_print(source, PrintOptions::es5());

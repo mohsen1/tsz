@@ -2301,13 +2301,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn iterator_result_required_value_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
-        let source_display = self.format_type(source);
-        let Some((source_name, source_args)) =
-            parse_simple_type_application_display(&source_display)
-        else {
+        let Some(source_args) = self.iterator_result_application_args(source) else {
             return false;
         };
-        if source_name != "IteratorResult" || source_args.get(1).copied() != Some("undefined") {
+        if source_args
+            .get(1)
+            .copied()
+            .is_none_or(|return_type| !self.type_evaluates_to(return_type, TypeId::UNDEFINED))
+        {
             return false;
         }
 
@@ -2329,6 +2330,19 @@ impl<'a> CheckerState<'a> {
         let value_type = value_prop.type_id;
 
         !self.is_assignable_to(TypeId::UNDEFINED, value_type)
+    }
+
+    fn iterator_result_application_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {
+        let (base, args) = self.application_info_or_display_alias(type_id)?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))?;
+        let iterator_result_def =
+            self.resolve_entity_name_text_to_def_id_for_lowering("IteratorResult")?;
+        (def_id == iterator_result_def).then_some(args)
+    }
+
+    fn type_evaluates_to(&mut self, type_id: TypeId, expected: TypeId) -> bool {
+        type_id == expected || self.evaluate_type_for_assignability(type_id) == expected
     }
 
     fn iterator_next_type_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {

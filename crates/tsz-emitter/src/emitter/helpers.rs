@@ -831,6 +831,14 @@ impl<'a> Printer<'a> {
             return 0;
         };
 
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && self.assignment_pattern_has_object_rest(binary.left)
+        {
+            return 2 + self.estimate_object_rest_assignment_pattern_temps(binary.left, true);
+        }
+
         if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(node) else {
                 return 0;
@@ -1082,13 +1090,13 @@ impl<'a> Printer<'a> {
             // the chain is lowered to a conditional expression that needs parens in extends.
             let needs_parens = self.heritage_expr_needs_optional_chain_parens(expr.expression);
             if needs_parens {
-                self.write("(");
-            }
-            if !self.try_emit_parent_namespace_heritage_reference(expr.expression) {
+                self.parenthesized(|emitter| {
+                    if !emitter.try_emit_parent_namespace_heritage_reference(expr.expression) {
+                        emitter.emit(expr.expression);
+                    }
+                });
+            } else if !self.try_emit_parent_namespace_heritage_reference(expr.expression) {
                 self.emit(expr.expression);
-            }
-            if needs_parens {
-                self.write(")");
             }
             // Type arguments are erased in JS output since JavaScript doesn't
             // support generics at runtime. Skip any comments inside the erased
@@ -1106,13 +1114,13 @@ impl<'a> Printer<'a> {
             // Direct expression (no ExpressionWithTypeArguments wrapper).
             let needs_parens = self.heritage_expr_needs_optional_chain_parens(idx);
             if needs_parens {
-                self.write("(");
-            }
-            if !self.try_emit_parent_namespace_heritage_reference(idx) {
+                self.parenthesized(|emitter| {
+                    if !emitter.try_emit_parent_namespace_heritage_reference(idx) {
+                        emitter.emit(idx);
+                    }
+                });
+            } else if !self.try_emit_parent_namespace_heritage_reference(idx) {
                 self.emit(idx);
-            }
-            if needs_parens {
-                self.write(")");
             }
         }
     }

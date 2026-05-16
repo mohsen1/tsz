@@ -1915,6 +1915,24 @@ impl<'a> IRPrinter<'a> {
                             return;
                         }
 
+                        if matches!(
+                            directive,
+                            crate::context::transform::TransformDirective::ES5ForOf { .. }
+                        ) && node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                            && let Some(ref transforms) = self.transforms
+                        {
+                            let mut printer = AstPrinter::with_transforms_and_options(
+                                arena,
+                                transforms.clone(),
+                                self.make_ast_printer_options(),
+                            );
+                            self.configure_ast_printer_namespace(&mut printer);
+                            printer.emit(*idx);
+                            let output = printer.get_output().trim_end();
+                            self.write_embedded_output(output);
+                            return;
+                        }
+
                         // Note: For other directive types, fall through to source text copy
                         // This is intentional - we only handle directives that are ready
                     }
