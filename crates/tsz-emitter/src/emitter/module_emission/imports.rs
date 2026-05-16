@@ -262,23 +262,15 @@ impl<'a> Printer<'a> {
     }
 
     fn classic_jsx_factory_roots(&self) -> Vec<String> {
-        let runtime = self
-            .source_text
-            .and_then(crate::jsx_pragmas::extract_jsx_runtime_pragma);
-        let uses_classic_factory = match runtime {
-            Some("classic") => true,
-            Some("automatic") => false,
-            _ => matches!(
-                self.ctx.options.jsx,
-                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-            ),
-        };
-        if !uses_classic_factory {
+        if !matches!(
+            self.effective_jsx_emit(),
+            JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+        ) {
             return Vec::new();
         }
 
         crate::jsx_pragmas::classic_jsx_factory_roots(
-            self.source_text,
+            self.jsx_pragma_text(),
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),
         )

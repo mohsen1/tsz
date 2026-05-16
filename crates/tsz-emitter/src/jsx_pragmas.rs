@@ -107,15 +107,15 @@ fn is_dotted_identifier_chain(s: &str) -> bool {
 /// This keeps import elision and helper scheduling aligned with the printer's
 /// factory lookup, including per-file `@jsx` / `@jsxFrag` pragmas.
 pub(crate) fn classic_jsx_factory_roots(
-    source_text: Option<&str>,
+    file_text: Option<&str>,
     jsx_factory: Option<&str>,
     jsx_fragment_factory: Option<&str>,
 ) -> Vec<String> {
-    let jsx_factory = source_text
+    let jsx_factory = file_text
         .and_then(extract_jsx_factory)
         .or_else(|| jsx_factory.map(ToOwned::to_owned))
         .unwrap_or_else(|| "React.createElement".to_string());
-    let jsx_fragment_factory = source_text
+    let jsx_fragment_factory = file_text
         .and_then(extract_jsx_fragment_factory)
         .or_else(|| jsx_fragment_factory.map(ToOwned::to_owned))
         .unwrap_or_else(|| "React.Fragment".to_string());

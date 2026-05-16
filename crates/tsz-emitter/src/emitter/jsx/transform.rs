@@ -639,7 +639,7 @@ impl<'a> Printer<'a> {
             return self.ctx.options.jsx;
         }
         match self
-            .source_text
+            .jsx_pragma_text()
             .and_then(crate::jsx_pragmas::extract_jsx_runtime_pragma)
         {
             Some("classic") => JsxEmit::React,
@@ -652,6 +652,10 @@ impl<'a> Printer<'a> {
             }
             _ => self.ctx.options.jsx,
         }
+    }
+
+    pub(in crate::emitter) fn jsx_pragma_text(&self) -> Option<&'a str> {
+        self.source_text_for_map()
     }
 
     /// Get the CJS variable name for the JSX runtime module import.
@@ -706,7 +710,7 @@ impl<'a> Printer<'a> {
     /// Extract `@jsxImportSource <package>` pragma from the file's leading comments.
     /// Returns the package name (e.g. `"preact"`) or `None` if no pragma found.
     pub(in super::super) fn extract_jsx_import_source_pragma(&self) -> Option<String> {
-        let text = self.source_text?;
+        let text = self.jsx_pragma_text()?;
         extract_jsx_import_source(text)
     }
 

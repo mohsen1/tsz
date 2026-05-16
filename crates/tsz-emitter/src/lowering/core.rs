@@ -72,6 +72,8 @@ pub struct LoweringPass<'a> {
     pub(super) enclosing_capture_names: Vec<Arc<str>>,
     /// Source text for the source file currently being traversed.
     pub(super) current_source_text: Option<&'a str>,
+    /// Classic JSX factory value roots for the source file currently being traversed.
+    pub(super) current_classic_jsx_factory_roots: Vec<String>,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -98,6 +100,7 @@ impl<'a> LoweringPass<'a> {
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
             current_source_text: None,
+            current_classic_jsx_factory_roots: Vec::new(),
         }
     }
 
@@ -470,9 +473,11 @@ impl<'a> LoweringPass<'a> {
     }
 
     fn classic_jsx_factory_roots(&self) -> Vec<String> {
-        let runtime = self
-            .current_source_text
-            .and_then(crate::jsx_pragmas::extract_jsx_runtime_pragma);
+        self.current_classic_jsx_factory_roots.clone()
+    }
+
+    pub(super) fn classic_jsx_factory_roots_for_file(&self, file_text: &str) -> Vec<String> {
+        let runtime = crate::jsx_pragmas::extract_jsx_runtime_pragma(file_text);
         let uses_classic_factory = match runtime {
             Some("classic") => true,
             Some("automatic") => false,
@@ -486,7 +491,7 @@ impl<'a> LoweringPass<'a> {
         }
 
         crate::jsx_pragmas::classic_jsx_factory_roots(
-            self.current_source_text,
+            Some(file_text),
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),
         )

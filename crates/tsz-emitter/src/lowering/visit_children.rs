@@ -17,11 +17,17 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::SOURCE_FILE => {
                 if let Some(sf) = self.arena.get_source_file(node) {
                     let previous_source_text = self.current_source_text;
+                    let previous_factory_roots =
+                        std::mem::take(&mut self.current_classic_jsx_factory_roots);
+                    let file_text = sf.text.as_ref();
                     self.current_source_text = Some(sf.text.as_ref());
+                    self.current_classic_jsx_factory_roots =
+                        self.classic_jsx_factory_roots_for_file(file_text);
                     for &stmt in &sf.statements.nodes {
                         self.visit(stmt);
                     }
                     self.current_source_text = previous_source_text;
+                    self.current_classic_jsx_factory_roots = previous_factory_roots;
                 }
             }
             k if k == syntax_kind_ext::BLOCK
