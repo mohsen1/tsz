@@ -93,6 +93,16 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        if self.source_is_js_file && !is_private {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(method_idx);
+            if self.emit_jsdoc_overload_method_signatures(method_idx, &jsdoc_overload_signatures) {
+                if let Some(ref name) = method_name {
+                    self.method_names_with_overloads.insert(name.clone());
+                }
+                return;
+            }
+        }
+
         self.write_indent();
 
         // Modifiers
@@ -720,6 +730,15 @@ impl<'a> DeclarationEmitter<'a> {
             // This is an implementation - check if we've seen constructor overloads
             if self.class_has_constructor_overloads {
                 // Skip implementation constructor when overloads exist
+                return;
+            }
+        }
+
+        if self.source_is_js_file {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(ctor_idx);
+            if self.emit_jsdoc_overload_constructor_signatures(ctor_idx, &jsdoc_overload_signatures)
+            {
+                self.class_has_constructor_overloads = true;
                 return;
             }
         }

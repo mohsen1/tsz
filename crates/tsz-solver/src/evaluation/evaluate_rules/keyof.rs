@@ -4,6 +4,7 @@
 
 use crate::TypeDatabase;
 use crate::instantiation::instantiate::instantiate_generic;
+use crate::objects::apparent::literal_value_intrinsic_kind;
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
@@ -517,11 +518,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     | IntrinsicKind::Symbol => self.apparent_primitive_keyof(kind),
                 },
                 TypeData::Literal(literal) => {
-                    if let Some(kind) = self.apparent_literal_kind(&literal) {
-                        self.apparent_primitive_keyof(kind)
-                    } else {
-                        self.interner().keyof(operand)
-                    }
+                    self.apparent_primitive_keyof(literal_value_intrinsic_kind(&literal))
                 }
                 TypeData::TemplateLiteral(_) => {
                     self.apparent_primitive_keyof(IntrinsicKind::String)
