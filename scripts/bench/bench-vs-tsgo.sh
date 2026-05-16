@@ -851,18 +851,24 @@ check_prerequisites() {
                 fi
             fi
 
-            echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
-            if [[ "$profdata_ready" == true ]] && (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
-                CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli --bin tsz); then
-                : # PGO build succeeded — binary is in optimized_target_dir
-            else
-                if [[ "$profdata_ready" == true ]]; then
+            if [[ "$profdata_ready" == true ]]; then
+                echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
+                if ! (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                    cargo build --profile dist -p tsz-cli --bin tsz); then
                     # LLVM PGO can fail when the profile-use link step encounters
                     # incompatible bitcode/ProfileSummary metadata in this toolchain.
                     echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+                    rm -rf "$optimized_target_dir"
+                    optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+                    (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                        CARGO_INCREMENTAL=0 \
+                        RUSTFLAGS="-Ctarget-cpu=native" \
+                        cargo build --profile dist -p tsz-cli --bin tsz)
                 fi
+            else
+                echo -e "${YELLOW}PGO Step 3/3: no profile data available; using standard dist build${NC}"
                 rm -rf "$optimized_target_dir"
                 optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
                 (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
