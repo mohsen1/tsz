@@ -614,10 +614,9 @@ jobs:
     #
     # `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` (set by the gate as `unit_packages`) is
     # a space-separated list of crate names. When non-empty, the unit script
-    # runs `cargo nextest run -p <crate>` for just those crates instead of the
-    # full workspace — used as the P4 draft-phase fast-fail (gate only sets
-    # this for draft PRs whose changes are localized to known unit-tested
-    # crate source).
+    # runs unit tests for just those crates instead of the full workspace.
+    # tsz-checker is special-cased to run declared integration targets without
+    # compiling its oversized lib-test artifact.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
