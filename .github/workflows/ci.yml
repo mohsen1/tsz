@@ -50,9 +50,16 @@ jobs:
             # CI run from the same SHA's open/sync events, so skip.
             if [[ "${{ github.event.action }}" == "labeled" \
                   && "${{ github.event.label.name }}" != "ci-approved" ]]; then
+              # Skip the actual CI work — a non-ci-approved label add just
+              # duplicates the existing CI run from the same SHA's open/sync
+              # events. But KEEP required_summary=true so the CI Summary job
+              # (the required-status-check name) still runs and passes via the
+              # `should_run=false` short-circuit. Setting required_summary=false
+              # here would rename the summary to "CI Light Summary", which
+              # branch protection does not recognize → PR stays BLOCKED until
+              # a non-label event fires.
               echo "Label '${{ github.event.label.name }}' is not 'ci-approved' — skipping redundant run."
               should_run=false
-              required_summary=false
             fi
             if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
               # Draft PRs still run the light CI suite (lint, build, unit).
@@ -282,7 +289,7 @@ jobs:
 
   lint:
     name: lint
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -297,7 +304,7 @@ jobs:
 
   cargo-shear:
     name: cargo-shear
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 10
@@ -347,7 +354,7 @@ jobs:
 
   dist-binaries:
     name: dist-binaries
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
@@ -382,7 +389,7 @@ jobs:
 
   project-compile-guard:
     name: project-compile-guard
-    needs: [gate, dist-binaries, unit]
+    needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -403,9 +410,45 @@ jobs:
       - name: Run project compile guard
         run: scripts/ci/project-compile-guard.sh
 
+  project-compile-canary:
+    name: project-compile-canary
+    needs: [gate, dist-binaries]
+    if: needs.gate.outputs.full_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    continue-on-error: true
+    env:
+      npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile-canary
+      TSZ_CI_CACHE_SAVE: "0"
+      TSZ_PROJECT_COMPILE_SET: canary
+      TSZ_PROJECT_COMPILE_ALLOW_FAILURES: "1"
+      TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Run compile canaries
+        run: scripts/ci/project-compile-guard.sh
+      - name: Upload compile canary logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-compile-canary-logs
+          path: .target/project-compile-guard/*.log
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 1
+
   wasm:
     name: wasm
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -444,7 +487,7 @@ jobs:
 
   node-harness-prep:
     name: node-harness-prep
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
@@ -476,9 +519,16 @@ jobs:
           compression-level: 1
 
   unit:
-    # Keep unit as the first Rust compile gate. The tsz-checker lib-test target
-    # can exit silently when it is built through sccache from a restored warm
-    # target cache, so use a clean non-sccache compile path here.
+    # Single nextest job (no sharding). The nextest-archive shard architecture
+    # was tried in #1657 and reverted in 7984876d7b for two reasons:
+    #   1. Many fixture-loading tests use `if !path.exists() { return }` and
+    #      silently pass when workspace source isn't on the shard runner.
+    #   2. The archive upload/download overhead (~3+ min) dominated the
+    #      modest test-execution savings.
+    # Today the bottleneck is compile (~14 min) not test execution (~3 min),
+    # so sharding test execution is not the lever. Re-evaluate sharding once
+    # the sccache silent-exit issue is fixed (then compile drops to seconds
+    # on cache hit and sharding becomes worth the overhead).
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
@@ -498,11 +548,12 @@ jobs:
         run: scripts/ci/github-suite.sh unit
 
   conformance:
-    # Keep the heavy shards behind the unit compile gate. The checker lib-test
-    # target is large enough that concurrent conformance/fourslash/emit fanout
-    # can starve rustc on the 8-vCPU cloud runners.
+    # Conformance shards consume the dist-fast binaries artifact and run the
+    # tsz-conformance harness; they do not need unit's test outputs. Each
+    # shard runs on its own self-hosted 8-vCPU runner, so concurrent fanout
+    # does not compete with the unit-archive compile for rustc capacity.
     name: conformance-${{ matrix.shard }}
-    needs: [gate, dist-binaries, unit]
+    needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
@@ -535,8 +586,8 @@ jobs:
 
   conformance-aggregate:
     name: conformance-aggregate
-    needs: [gate, unit, conformance]
-    if: needs.gate.outputs.full_run == 'true' && needs.unit.result == 'success' && !cancelled()
+    needs: [gate, conformance]
+    if: needs.gate.outputs.full_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -574,7 +625,7 @@ jobs:
 
   emit:
     name: emit
-    needs: [gate, dist-binaries, node-harness-prep, unit]
+    needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
@@ -618,7 +669,7 @@ jobs:
     # capacity. Shift those two runners here; weighted snapshot timings reduce
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
-    needs: [gate, dist-binaries, node-harness-prep, unit]
+    needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
@@ -665,8 +716,8 @@ jobs:
 
   fourslash-aggregate:
     name: fourslash-aggregate
-    needs: [gate, unit, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && needs.unit.result == 'success' && !cancelled()
+    needs: [gate, fourslash]
+    if: needs.gate.outputs.full_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
