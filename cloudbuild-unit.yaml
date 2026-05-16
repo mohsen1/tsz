@@ -13,7 +13,6 @@
 steps:
   - id: unit-test
     name: rust:1
-    entrypoint: bash
     env:
       # Use all available vCPUs. CARGO_BUILD_JOBS is workspace-wide.
       - 'CARGO_BUILD_JOBS=32'
