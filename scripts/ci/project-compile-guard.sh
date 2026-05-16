@@ -32,11 +32,19 @@ run_with_timeout() {
   local timeout_secs="$1"
   shift
 
+  LAST_PEAK_RSS_BYTES=0
   "$@" &
   local pid=$!
+  local timeout_file
+  timeout_file="$(mktemp)"
+  rm -f "$timeout_file"
   local rss_file=""
   local rss_monitor_pid=""
-  perl -e 'sleep shift; kill 9, shift' "$timeout_secs" "$pid" &
+  (
+    sleep "$timeout_secs"
+    touch "$timeout_file"
+    kill -9 "$pid" 2>/dev/null || true
+  ) &
   local watchdog_pid=$!
   if measure_peak_rss_enabled; then
     rss_file=$(mktemp)
@@ -59,6 +67,12 @@ run_with_timeout() {
   local exit_code=0
   wait "$pid" 2>/dev/null || exit_code=$?
 
+  local timed_out=0
+  if [ -e "$timeout_file" ]; then
+    timed_out=1
+  fi
+  rm -f "$timeout_file"
+
   kill "$watchdog_pid" 2>/dev/null || true
   wait "$watchdog_pid" 2>/dev/null || true
   if [ -n "$rss_monitor_pid" ]; then
@@ -70,7 +84,7 @@ run_with_timeout() {
     rm -f "$rss_file"
   fi
 
-  if [[ "$exit_code" -eq 137 ]]; then
+  if [[ "$timed_out" -eq 1 && "$exit_code" -eq 137 ]]; then
     return 124
   fi
   return "$exit_code"
@@ -424,7 +438,7 @@ fi
 if should_check_project "type-challenges-solutions-project"; then
   ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
   write_type_challenges_solutions_config
-  check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json"
+  check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
 fi
 }
 

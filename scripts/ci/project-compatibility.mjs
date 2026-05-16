@@ -105,15 +105,30 @@ function lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }) {
 }
 
 function readRows(input) {
+  const result = { rows: [], malformedLineCount: 0, malformedExamples: [] };
   try {
-    return fs.readFileSync(input, "utf8")
+    const lines = fs.readFileSync(input, "utf8")
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+      .filter(Boolean);
+    for (const [index, line] of lines.entries()) {
+      try {
+        result.rows.push(JSON.parse(line));
+      } catch (error) {
+        result.malformedLineCount += 1;
+        if (result.malformedExamples.length < 3) {
+          result.malformedExamples.push({
+            line: index + 1,
+            error: error instanceof Error ? error.message : String(error),
+            text: line.slice(0, 240),
+          });
+        }
+      }
+    }
   } catch {
-    return [];
+    return result;
   }
+  return result;
 }
 
 function record() {
@@ -159,7 +174,7 @@ function record() {
 }
 
 function summarize() {
-  const rows = readRows(process.env.SUMMARY_JSONL_FILE || "");
+  const { rows, malformedLineCount, malformedExamples } = readRows(process.env.SUMMARY_JSONL_FILE || "");
   const byState = rows.reduce((counts, row) => {
     const key = row.exit_class === "exit success" && row.diagnostic_status === "none"
       ? "green"
@@ -177,6 +192,8 @@ function summarize() {
     allow_failures: process.env.SUMMARY_ALLOW_FAILURES === "1",
     failures: Number(process.env.SUMMARY_FAILURES || 0),
     row_count: rows.length,
+    malformed_jsonl_lines: malformedLineCount,
+    malformed_jsonl_examples: malformedExamples,
     by_state: byState,
     rows,
   };
