@@ -794,7 +794,7 @@ impl<'a> CheckerState<'a> {
                         || class_props_from_construct
                             .as_ref()
                             .is_some_and(|props| {
-                                crate::query_boundaries::common::contains_mapped_type_with_readonly_modifier(
+                                crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
                                     self.ctx.types,
                                     *props,
                                 )

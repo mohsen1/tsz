@@ -776,14 +776,6 @@ pub(crate) fn is_mapped_type_with_readonly_modifier(
     tsz_solver::operations::property::is_mapped_type_with_readonly_modifier(db, type_id)
 }
 
-/// Check whether a type surface contains an explicit-readonly mapped type.
-pub(crate) fn contains_mapped_type_with_readonly_modifier(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::operations::property::contains_mapped_type_with_readonly_modifier(db, type_id)
-}
-
 /// Check whether a tuple element at a fixed position is readonly.
 pub(crate) fn is_readonly_tuple_fixed_element(
     db: &dyn TypeDatabase,

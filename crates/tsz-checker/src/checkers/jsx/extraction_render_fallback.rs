@@ -8,7 +8,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::PropertyAccessResult::Success {
                 type_id,
                 ..
-            } if crate::query_boundaries::common::contains_mapped_type_with_readonly_modifier(
+            } if crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
                 self.ctx.types,
                 type_id,
             )
