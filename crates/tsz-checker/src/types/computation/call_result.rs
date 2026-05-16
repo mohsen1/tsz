@@ -27,11 +27,11 @@ pub(super) struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
-    fn relation_evidence_for_pair<'e>(
-        relation_evidence: &'e [CallRelationEvidence],
+    fn relation_evidence_for_pair(
+        relation_evidence: &[CallRelationEvidence],
         source: TypeId,
         target: TypeId,
-    ) -> Option<&'e crate::query_boundaries::assignability::RelationOutcome> {
+    ) -> Option<&crate::query_boundaries::assignability::RelationOutcome> {
         relation_evidence
             .iter()
             .rev()

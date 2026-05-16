@@ -115,46 +115,46 @@ impl<'a> CheckerState<'a> {
         // TS2559: When the spread type has no properties in common with the target
         // props type (a "weak type" violation), tsc emits TS2559 instead of proceeding
         // with per-property TS2322 checks.
-        if let Some(outcome) = concrete_spread_outcome {
-            if outcome.weak_union_violation {
-                let resolved_spread = self.evaluate_type_with_env(spread_type);
-                let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
-                let has_jsx_managed_prop = crate::query_boundaries::common::object_shape_for_type(
-                    self.ctx.types,
-                    resolved_spread,
-                )
-                .map(|shape| {
-                    shape.properties.iter().any(|p| {
-                        let name = self.ctx.types.resolve_atom(p.name);
-                        name == "key"
-                            || name == "ref"
-                            || name == "children"
-                            || name.starts_with("data-")
-                            || name.starts_with("aria-")
-                    })
+        if let Some(outcome) = concrete_spread_outcome
+            && outcome.weak_union_violation
+        {
+            let resolved_spread = self.evaluate_type_with_env(spread_type);
+            let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
+            let has_jsx_managed_prop = crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                resolved_spread,
+            )
+            .map(|shape| {
+                shape.properties.iter().any(|p| {
+                    let name = self.ctx.types.resolve_atom(p.name);
+                    name == "key"
+                        || name == "ref"
+                        || name == "children"
+                        || name.starts_with("data-")
+                        || name.starts_with("aria-")
                 })
-                .unwrap_or(false);
-                let jsx_intrinsic_dom_spread_target =
-                    self.jsx_spread_target_allows_no_common_properties(props_type, display_target);
+            })
+            .unwrap_or(false);
+            let jsx_intrinsic_dom_spread_target =
+                self.jsx_spread_target_allows_no_common_properties(props_type, display_target);
 
-                if !has_jsx_managed_prop && !jsx_intrinsic_dom_spread_target {
-                    let source_str = self.format_type(spread_type);
-                    let target_str = if display_target.is_empty() {
-                        self.format_type(props_type)
-                    } else {
-                        display_target.to_string()
-                    };
-                    let message = format_message(
-                        diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                        &[&source_str, &target_str],
-                    );
-                    self.error_at_node(
-                        tag_name_idx,
-                        &message,
-                        diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
-                    );
-                    return true;
-                }
+            if !has_jsx_managed_prop && !jsx_intrinsic_dom_spread_target {
+                let source_str = self.format_type(spread_type);
+                let target_str = if display_target.is_empty() {
+                    self.format_type(props_type)
+                } else {
+                    display_target.to_string()
+                };
+                let message = format_message(
+                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                    &[&source_str, &target_str],
+                );
+                self.error_at_node(
+                    tag_name_idx,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                );
+                return true;
             }
         }
 
