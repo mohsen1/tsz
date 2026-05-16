@@ -12,6 +12,8 @@ Checks for:
 - Forbidden imports of solver internals (`TypeKey`, raw interner) from checker code
 - Direct `CompatChecker` access from TS2322-family paths (should route through `query_boundaries`)
 - Cross-layer imports that violate the pipeline architecture
+- Track 10 ratchet metrics for post-check fingerprint rewrites, checker
+  `source_text.contains` decisions, and rendered-type string decisions
 
 ```bash
 # Run manually
