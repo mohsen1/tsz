@@ -506,6 +506,34 @@ fn es5_class_method_object_rest_parameter_uses_rest_helper() {
 }
 
 #[test]
+fn invalid_nonlast_object_rest_is_recovery_only() {
+    let output = emit_with_target(
+        "var {...a, x } = { x: 1 };\n\
+         ({...a, x } = { x: 1 });\n\
+         var {...a, x, ...b } = { x: 1 };\n\
+         ({...a, x, ...b } = { x: 1 });\n",
+        ScriptTarget::ES2015,
+    );
+
+    assert!(
+        output.contains("var _c = { x: 1 }, { x } = _c;"),
+        "A nonlast binding rest should be skipped while preserving tsc's temp-based recovery.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(_a = { x: 1 }, { x } = _a);"),
+        "A nonlast assignment rest should be skipped while preserving later property assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _d = { x: 1 }, { x } = _d, b = __rest(_d, [\"a\", \"x\"]);"),
+        "A later valid binding rest should keep the invalid rest identifier in its exclude list.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(_b = { x: 1 }, { x } = _b, b = __rest(_b, [\"x\"]));"),
+        "Assignment recovery should not add the invalid rest expression to the later exclude list.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn array_object_rest_es2017_defers_later_default_until_after_rest_binding() {
     let output = emit_with_target(
         "let [{ ...a }, b = a]: any[] = [{ x: 1 }];",

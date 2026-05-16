@@ -724,13 +724,18 @@ impl<'a> Printer<'a> {
         let mut excluded_props = Vec::new();
         let mut rest_element = None;
 
-        for &elem_idx in &elements {
+        for (index, &elem_idx) in elements.iter().enumerate() {
             let Some(elem_node) = self.arena.get(elem_idx) else {
                 continue;
             };
 
             match elem_node.kind {
                 k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                    let has_later_element =
+                        elements.iter().skip(index + 1).any(|idx| !idx.is_none());
+                    if has_later_element {
+                        continue;
+                    }
                     rest_element = Some(elem_idx);
                 }
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {

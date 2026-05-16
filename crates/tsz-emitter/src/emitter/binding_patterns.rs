@@ -310,8 +310,9 @@ impl<'a> Printer<'a> {
         let mut nested_rest_indices: Vec<usize> = Vec::new();
         // Whether any element has a dynamic computed property name
         let mut has_dynamic_computed = false;
+        let mut saw_invalid_nonlast_rest = false;
 
-        for &elem_idx in &pattern.elements.nodes {
+        for (index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
             let Some(elem_node) = self.arena.get(elem_idx) else {
                 continue;
             };
@@ -320,6 +321,20 @@ impl<'a> Printer<'a> {
             };
 
             if elem.dot_dot_dot_token {
+                let has_later_element = pattern
+                    .elements
+                    .nodes
+                    .iter()
+                    .skip(index + 1)
+                    .any(|idx| !idx.is_none());
+                if has_later_element {
+                    saw_invalid_nonlast_rest = true;
+                    let invalid_rest_name = self.get_identifier_text(elem.name);
+                    if !invalid_rest_name.is_empty() {
+                        excluded_props.push(ExcludedProp::Identifier(invalid_rest_name));
+                    }
+                    continue;
+                }
                 rest_element = Some(elem_idx);
                 continue;
             }
@@ -361,6 +376,38 @@ impl<'a> Printer<'a> {
                 initializer_idx,
                 source_temp,
             );
+            return;
+        }
+
+        if rest_element.is_none() && nested_rest_indices.is_empty() {
+            if !non_rest_elements.is_empty() {
+                if let Some(temp) = source_temp {
+                    self.emit_object_pattern_without_rest(&non_rest_elements);
+                    self.write(" = ");
+                    self.write(temp);
+                } else if initializer_idx.is_some() {
+                    let can_reuse_initializer = self
+                        .arena
+                        .get(initializer_idx)
+                        .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16);
+                    if saw_invalid_nonlast_rest && !can_reuse_initializer {
+                        let source_name = self.get_temp_var_name();
+                        self.write(&source_name);
+                        self.write(" = ");
+                        self.emit_expression(initializer_idx);
+                        self.write(", ");
+                        self.emit_object_pattern_without_rest(&non_rest_elements);
+                        self.write(" = ");
+                        self.write(&source_name);
+                    } else {
+                        self.emit_object_pattern_without_rest(&non_rest_elements);
+                        self.write(" = ");
+                        self.emit_expression(initializer_idx);
+                    }
+                } else {
+                    self.emit_object_pattern_without_rest(&non_rest_elements);
+                }
+            }
             return;
         }
 
