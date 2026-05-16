@@ -262,6 +262,7 @@ impl<'a> CheckerContext<'a> {
         // Traversal/context stacks and transient flags should be empty between
         // source files, matching a freshly constructed checker.
         self.type_parameter_scope.clear();
+        self.type_reference_arg_validation_cache.clear();
         self.in_conditional_extends_depth = 0;
         self.typeof_param_scope.clear();
         self.type_param_constraint_excluded_params.clear();

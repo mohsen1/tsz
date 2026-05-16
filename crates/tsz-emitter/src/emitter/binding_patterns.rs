@@ -717,7 +717,7 @@ impl<'a> Printer<'a> {
 
     /// Emit an object binding pattern but skip the rest element.
     /// Used when lowering: `{ a, b, ...rest } = x` → `{ a, b } = x`
-    fn emit_object_pattern_without_rest(&mut self, elements: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_object_pattern_without_rest(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("{}");
             return;

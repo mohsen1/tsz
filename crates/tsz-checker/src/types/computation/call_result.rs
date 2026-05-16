@@ -95,7 +95,7 @@ impl<'a> CheckerState<'a> {
                 name: None,
             },
             tsz_solver::TupleElement {
-                type_id: TypeId::UNKNOWN,
+                type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
                 name: None,
