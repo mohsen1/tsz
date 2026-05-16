@@ -1069,10 +1069,18 @@ impl<'a> CheckerState<'a> {
                 };
                 let spread_expr_idx = spread_data.expression;
                 let raw_spread_type = self.compute_type_of_node(spread_expr_idx);
-                if crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    raw_spread_type,
-                ) && !invalid_generic_spread_types.contains(&raw_spread_type)
+                let spread_has_type_parameters =
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        raw_spread_type,
+                    );
+                let unresolved_spread_into_generic_props = raw_spread_type == TypeId::UNKNOWN
+                    && crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        props_type,
+                    );
+                if (spread_has_type_parameters || unresolved_spread_into_generic_props)
+                    && !invalid_generic_spread_types.contains(&raw_spread_type)
                 {
                     invalid_generic_spread_types.push(raw_spread_type);
                 }

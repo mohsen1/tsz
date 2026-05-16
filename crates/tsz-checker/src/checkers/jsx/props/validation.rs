@@ -457,16 +457,103 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(in crate::checkers_domain::jsx) fn jsx_alias_declares_string_prop(
-        &self,
+        &mut self,
         type_id: TypeId,
         prop_name: &str,
     ) -> bool {
+        self.type_or_alias_declares_string_prop(type_id, prop_name, &mut Vec::new())
+    }
+
+    fn type_or_alias_declares_string_prop(
+        &mut self,
+        type_id: TypeId,
+        prop_name: &str,
+        visited: &mut Vec<TypeId>,
+    ) -> bool {
+        if visited.contains(&type_id) {
+            return false;
+        }
+        visited.push(type_id);
+
+        if self.type_declares_string_prop_from_alias(type_id, prop_name) {
+            return true;
+        }
+
+        if let Some(alias) = self.ctx.types.get_display_alias(type_id)
+            && alias != type_id
+            && self.type_or_alias_declares_string_prop(alias, prop_name, visited)
+        {
+            return true;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+            && members
+                .iter()
+                .any(|&member| self.type_or_alias_declares_string_prop(member, prop_name, visited))
+        {
+            return true;
+        }
+
+        if let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        {
+            if self.type_declares_string_prop_from_alias(base, prop_name) {
+                return true;
+            }
+            if args
+                .iter()
+                .any(|&arg| self.type_or_alias_declares_string_prop(arg, prop_name, visited))
+            {
+                return true;
+            }
+        }
+
+        let normalized = self.normalize_jsx_required_props_target(type_id);
+        if normalized != type_id
+            && normalized != TypeId::ERROR
+            && self.type_or_alias_declares_string_prop(normalized, prop_name, visited)
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn type_declares_string_prop_from_alias(&self, type_id: TypeId, prop_name: &str) -> bool {
         let alias_type = crate::query_boundaries::common::application_info(self.ctx.types, type_id)
             .map_or(type_id, |(base, _)| base);
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
-        else {
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(alias_type))
+            .or_else(|| {
+                self.ctx
+                    .definition_store
+                    .find_type_alias_by_body(alias_type)
+            })
+            .or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(alias_type)
+                    .and_then(|alias| {
+                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias)
+                            .or_else(|| self.ctx.definition_store.find_def_for_type(alias))
+                            .or_else(|| self.ctx.definition_store.find_type_alias_by_body(alias))
+                    })
+            });
+        let Some(def_id) = def_id else {
             return false;
         };
+        if self
+            .ctx
+            .definition_store
+            .get(def_id)
+            .and_then(|def| def.body)
+            .is_some_and(|body| {
+                self.type_structurally_declares_string_prop(body, prop_name, &mut Vec::new())
+            })
+        {
+            return true;
+        }
         let Some(symbol_id) = self
             .ctx
             .definition_store
@@ -492,6 +579,39 @@ impl<'a> CheckerState<'a> {
             };
             self.type_node_declares_string_prop(alias.type_node, prop_name)
         })
+    }
+
+    fn type_structurally_declares_string_prop(
+        &self,
+        type_id: TypeId,
+        prop_name: &str,
+        visited: &mut Vec<TypeId>,
+    ) -> bool {
+        if visited.contains(&type_id) {
+            return false;
+        }
+        visited.push(type_id);
+
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+            && shape.properties.iter().any(|prop| {
+                self.ctx.types.resolve_atom(prop.name) == prop_name
+                    && crate::query_boundaries::common::remove_undefined(
+                        self.ctx.types,
+                        prop.type_id,
+                    ) == TypeId::STRING
+            })
+        {
+            return true;
+        }
+
+        crate::query_boundaries::common::intersection_members(self.ctx.types, type_id).is_some_and(
+            |members| {
+                members.iter().any(|&member| {
+                    self.type_structurally_declares_string_prop(member, prop_name, visited)
+                })
+            },
+        )
     }
 
     fn type_node_declares_string_prop(&self, type_node_idx: NodeIndex, prop_name: &str) -> bool {
