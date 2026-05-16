@@ -451,6 +451,56 @@ fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
 }
 
 #[test]
+fn test_diagnostic_paths_do_not_branch_on_file_name_substrings() {
+    fn collect_rs_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries {
+            let entry = entry.expect("failed to read checker source directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, files);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    for dir in ["src/assignability", "src/checkers", "src/error_reporter"] {
+        collect_rs_files(Path::new(dir), &mut files);
+    }
+
+    let mut violations = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("file_name.contains(") {
+                violations.push(format!(
+                    "{}:{}: {}",
+                    path.display(),
+                    line_index + 1,
+                    trimmed
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "diagnostic/checker paths must not branch on file-name substrings; use semantic or syntax facts instead:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn test_diagnostic_source_preservation_does_not_hardcode_mapped_iterator_names() {
     let files = [
         "src/error_reporter/core/diagnostic_source/assignment_source_preservation.rs",
