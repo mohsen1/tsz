@@ -451,6 +451,35 @@ fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
 }
 
 #[test]
+fn test_diagnostic_source_preservation_does_not_hardcode_mapped_iterator_names() {
+    let files = [
+        "src/error_reporter/core/diagnostic_source/assignment_source_preservation.rs",
+        "src/error_reporter/core/diagnostic_source/assignment_formatting.rs",
+    ];
+    let mut violations = Vec::new();
+
+    for path in files {
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read diagnostic-source file {path}"));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            if line.contains("[P in ") || line.contains("[K in ") {
+                violations.push(format!("{}:{}: {}", path, line_index + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "diagnostic source preservation must recognize mapped clauses by syntax shape, not hardcoded iterator names:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
     let src = fs::read_to_string("src/state/state_checking_members/ambient_signature_checks.rs").expect(
         "failed to read state/state_checking_members/ambient_signature_checks.rs for architecture guard",
@@ -598,4 +627,38 @@ fn test_no_direct_type_data_pattern_matching_outside_query_boundaries() {
             violations.join("\n  ")
         );
     }
+}
+
+#[test]
+fn test_js_global_fallback_relocation_does_not_branch_on_rendered_messages() {
+    let path = Path::new("src/assignability/assignment_checker/js_global_fallback.rs");
+    let source =
+        fs::read_to_string(path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+
+    let forbidden = [
+        "message_text.contains(",
+        "message_text.starts_with(",
+        "message_text.ends_with(",
+    ];
+    let violations: Vec<_> = source
+        .lines()
+        .enumerate()
+        .filter_map(|(line_index, line)| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                return None;
+            }
+            forbidden
+                .iter()
+                .any(|needle| line.contains(needle))
+                .then(|| format!("{}:{}: {}", path.display(), line_index + 1, trimmed))
+        })
+        .collect();
+
+    assert!(
+        violations.is_empty(),
+        "JS global fallback relocation should use AST shape, span, and diagnostic code for \
+         decisions, not rendered diagnostic message text.\nViolations:\n  {}",
+        violations.join("\n  ")
+    );
 }

@@ -2216,9 +2216,8 @@ const c: Child = new Child();
 }
 
 #[test]
-#[ignore = "heritage resolution no longer populates DefinitionInfo.implements; resolved through type pipeline instead"]
-fn test_resolve_heritage_interface_implements() {
-    // Verify heritage resolution wires implements for interfaces.
+fn test_resolve_heritage_interface_extends() {
+    // Verify heritage resolution wires interface extends edges.
     let source = r#"
 interface Animal {
     name: string;
@@ -2244,6 +2243,11 @@ const d: Dog = { name: "Rex", breed: "Lab" };
     );
 
     checker.check_source_file(root);
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "valid interface extends assignment should not emit diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
 
     // Look up Dog's DefId
     let dog_sym = binder.file_locals.get("Dog");
@@ -2256,10 +2260,9 @@ const d: Dog = { name: "Rex", breed: "Lab" };
             "Dog's DefinitionInfo should exist in the store"
         );
         if let Some(info) = info {
-            // For interfaces, heritage goes into implements
             assert!(
-                !info.implements.is_empty(),
-                "Dog should have implements set to Animal's DefId after heritage resolution."
+                info.extends.is_some(),
+                "Dog should have extends set to Animal's DefId after heritage resolution."
             );
         }
     }
@@ -4341,6 +4344,10 @@ class C extends Iterator<number> {}
         "Expected TS2515 for missing abstract Iterator.next implementation. Got: {diagnostics:#?}"
     );
     assert!(
+        has_diagnostic_code_message(&diagnostics, 2515, "Iterator<number, undefined, unknown>"),
+        "Expected TS2515 to display builtin Iterator with scoped abstract defaults. Got: {diagnostics:#?}"
+    );
+    assert!(
         diagnostics.iter().all(|(code, _)| *code != 2351),
         "Expected no TS2351 for builtin Iterator constructor. Got: {diagnostics:#?}"
     );
@@ -4400,6 +4407,39 @@ const iter3 = iter2.flatMap(() => g1);
     assert!(
         has_diagnostic_code_message(&diagnostics, 2416, "Iterator<string, undefined, unknown>"),
         "Expected Iterator<string> heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_namespace_iterator_class_does_not_use_builtin_defaults_in_errors() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+namespace N {
+  export class Iterator<T> {
+    next(): T {
+      throw new Error();
+    }
+  }
+}
+class Bad extends N.Iterator<number> {
+  override next(): string {
+    return "";
+  }
+}
+"#,
+    );
+
+    assert!(
+        has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number>"),
+        "Expected user-defined namespace Iterator diagnostic to keep its written arity. Got: {diagnostics:#?}"
+    );
+    assert!(
+        !has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
+        "Expected user-defined namespace Iterator not to receive builtin Iterator defaults. Got: {diagnostics:#?}"
     );
 }
 
