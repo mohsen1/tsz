@@ -250,6 +250,20 @@ impl<'a> CheckerState<'a> {
         member_idx: NodeIndex,
         prop: &PropertyDeclData,
     ) -> Option<TypeId> {
+        let raw = self.class_property_relation_declared_type(member_idx, prop)?;
+        Some(self.wrap_static_readonly_unique_symbol_type(member_idx, prop, raw))
+    }
+
+    /// Like [`effective_class_property_declared_type`] but returns the raw
+    /// annotation type, without the `static readonly: unique symbol` wrap.
+    /// Used at the declaration-site initializer assignability check, where
+    /// the relation must compare against the lowered `symbol` form so a
+    /// fresh-symbol initializer (`Symbol()`) is accepted.
+    pub(crate) fn class_property_relation_declared_type(
+        &mut self,
+        member_idx: NodeIndex,
+        prop: &PropertyDeclData,
+    ) -> Option<TypeId> {
         if prop.type_annotation.is_some() {
             if self.is_js_file() {
                 // In JS/checkJs, property type syntax still reports TS8010, but it
@@ -265,6 +279,31 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
+    }
+
+    /// Lift a `symbol`-typed `static readonly p: unique symbol` annotation to
+    /// `unique_symbol(SymbolRef(prop_sym))` so downstream `typeof Class.p`
+    /// queries see a distinct unique-symbol identity, mirroring the wrapping
+    /// that `get_type_of_variable_declaration` applies to const variables.
+    fn wrap_static_readonly_unique_symbol_type(
+        &mut self,
+        member_idx: NodeIndex,
+        prop: &PropertyDeclData,
+        raw_type: TypeId,
+    ) -> TypeId {
+        if raw_type != TypeId::SYMBOL
+            || !self.has_static_modifier(&prop.modifiers)
+            || !self.has_readonly_modifier(&prop.modifiers)
+            || !self.is_unique_symbol_type_annotation(prop.type_annotation)
+        {
+            return raw_type;
+        }
+        let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx) else {
+            return raw_type;
+        };
+        self.ctx
+            .types
+            .unique_symbol(tsz_solver::SymbolRef(sym_id.0))
     }
 
     /// Cache parameter types for function parameters.

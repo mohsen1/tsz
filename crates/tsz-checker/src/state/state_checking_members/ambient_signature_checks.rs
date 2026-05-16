@@ -318,7 +318,9 @@ impl<'a> CheckerState<'a> {
             self.check_await_expression(prop.initializer);
         }
 
-        let effective_declared_type = self.effective_class_property_declared_type(member_idx, prop);
+        // Use the relation-shape declared type here so a fresh-symbol
+        // initializer can flow into a `static readonly: unique symbol`.
+        let effective_declared_type = self.class_property_relation_declared_type(member_idx, prop);
         let contextual_member_type =
             self.contextual_class_member_type_from_request(request, prop.name);
         let mut inferred_initializer_type = None;
