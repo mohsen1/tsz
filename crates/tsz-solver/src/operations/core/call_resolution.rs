@@ -1480,6 +1480,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         // Handle generic functions FIRST so uninstantiated this_types don't fail assignability
         if !func.type_params.is_empty() {
+            if let Some(result) = self.resolve_trivial_single_type_param_call(func, arg_types) {
+                return result;
+            }
             if let Some(func) = self.generic_function_shape_for_inference(func, arg_types) {
                 return self.resolve_generic_call(&func, arg_types);
             }
