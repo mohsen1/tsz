@@ -1207,24 +1207,31 @@ impl<'a> CheckerState<'a> {
     }
 
     fn partial_self_argument_inner_type(&mut self, target: TypeId) -> Option<TypeId> {
-        let evaluated = self.evaluate_type_for_assignability(target);
-        for candidate in [target, evaluated] {
-            if let Some(inner) = self.optional_homomorphic_mapped_inner_type(candidate) {
-                return Some(inner);
-            }
-            if let Some(alias) = self.ctx.types.get_display_alias(candidate)
-                && let Some(inner) = self.optional_homomorphic_mapped_inner_type(alias)
-            {
-                return Some(inner);
-            }
+        let (base, args) = self.application_info_or_display_alias(target).or_else(|| {
+            let evaluated = self.evaluate_type_for_assignability(target);
+            self.application_info_or_display_alias(evaluated)
+        })?;
+        self.partial_like_application_inner_arg(base, &args)
+    }
+
+    fn partial_like_application_inner_arg(&self, base: TypeId, args: &[TypeId]) -> Option<TypeId> {
+        if args.len() == 1 && self.application_base_is_lib_partial(base) {
+            return args.first().copied();
         }
 
-        let (base, args) = self.application_info_or_display_alias(target)?;
-        if args.len() == 1 && self.application_base_is_lib_partial(base) {
-            args.first().copied()
-        } else {
-            None
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
+            return None;
         }
+        let inner = self.optional_homomorphic_mapped_inner_type(def.body?)?;
+        let param = type_param_info(self.ctx.types, inner)?;
+        let arg_idx = def
+            .type_params
+            .iter()
+            .position(|type_param| type_param.name == param.name)?;
+        args.get(arg_idx).copied()
     }
 
     fn optional_homomorphic_mapped_inner_type(&self, type_id: TypeId) -> Option<TypeId> {
