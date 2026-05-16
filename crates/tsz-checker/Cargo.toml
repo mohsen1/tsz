@@ -294,6 +294,10 @@ name = "readonly_tuple_source_display_tests"
 path = "tests/readonly_tuple_source_display_tests.rs"
 
 [[test]]
+name = "readonly_tuple_to_array_constraint_tests"
+path = "tests/readonly_tuple_to_array_constraint_tests.rs"
+
+[[test]]
 name = "module_augmentation_isolation_tests"
 path = "tests/module_augmentation_isolation_tests.rs"
 
