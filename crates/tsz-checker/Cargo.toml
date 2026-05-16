@@ -814,6 +814,10 @@ name = "cross_file_intrinsic_identifier_tests"
 path = "tests/cross_file_intrinsic_identifier_tests.rs"
 
 [[test]]
+name = "cross_file_lib_interface_identity_tests"
+path = "tests/cross_file_lib_interface_identity_tests.rs"
+
+[[test]]
 name = "jsdoc_augments_empty_tests"
 path = "tests/jsdoc_augments_empty_tests.rs"
 
