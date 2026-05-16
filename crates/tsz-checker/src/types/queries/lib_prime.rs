@@ -1,5 +1,5 @@
 use super::lib_resolution::{
-    collect_lib_decls_with_arenas, lib_def_id_from_node, no_value_resolver,
+    collect_lib_decls_with_arenas_in_contexts, lib_def_id_from_node, no_value_resolver,
     resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
 };
 use crate::state::CheckerState;
@@ -37,11 +37,12 @@ impl<'a> CheckerState<'a> {
 
         // prime_lib_type_params has no user-arena context (no local augmentations),
         // so pass None for user_arena.
-        let decls_with_arenas = collect_lib_decls_with_arenas(
+        let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
             self.ctx.binder,
             sym_id,
             &symbol.declarations,
             fallback_arena,
+            lib_contexts,
             None,
         );
         if decls_with_arenas.is_empty() {

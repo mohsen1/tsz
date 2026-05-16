@@ -188,9 +188,9 @@ impl<'a> Printer<'a> {
         let factory = self.get_jsx_factory();
         let fragment_factory = self.get_jsx_fragment_factory();
 
-        self.write(&factory);
+        self.emit_jsx_factory_call_target(&factory);
         self.write("(");
-        self.write(&fragment_factory);
+        self.emit_jsx_factory_reference(&fragment_factory);
         self.write(", null");
 
         // Children -- use multiline when multiple children or any child is a JSX element
@@ -233,7 +233,7 @@ impl<'a> Printer<'a> {
         let filtered_children = self.collect_jsx_children(children);
         let has_spread = attrs_info.has_spread;
 
-        self.write(&factory);
+        self.emit_jsx_factory_call_target(&factory);
         self.write("(");
 
         // Tag name
@@ -589,6 +589,41 @@ impl<'a> Printer<'a> {
             .as_deref()
             .unwrap_or("React.Fragment")
             .to_string()
+    }
+
+    fn emit_jsx_factory_call_target(&mut self, factory: &str) {
+        self.emit_jsx_factory_reference_with_context(factory, true);
+    }
+
+    fn emit_jsx_factory_reference(&mut self, factory: &str) {
+        self.emit_jsx_factory_reference_with_context(factory, false);
+    }
+
+    fn emit_jsx_factory_reference_with_context(&mut self, factory: &str, call_target: bool) {
+        let (root, suffix) = factory
+            .split_once('.')
+            .map_or((factory, ""), |(root, rest)| (root, rest));
+        if root.is_empty() {
+            self.write(factory);
+            return;
+        }
+
+        if let Some(substitution) = self.commonjs_named_import_substitutions.get(root).cloned() {
+            if call_target && suffix.is_empty() && !self.in_system_execute_body {
+                self.write("(0, ");
+                self.write(&substitution);
+                self.write(")");
+            } else {
+                self.write(&substitution);
+                if !suffix.is_empty() {
+                    self.write(".");
+                    self.write(suffix);
+                }
+            }
+            return;
+        }
+
+        self.write(factory);
     }
 
     /// Emit a JSX tag name as a function argument.
