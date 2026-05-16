@@ -14,7 +14,7 @@ use super::handlers_code_fixes_utils::{
     resolve_module_path,
 };
 use tsz::lsp::Project;
-use tsz::lsp::code_actions::{CodeActionProvider, ImportCandidate};
+use tsz::lsp::code_actions::{CodeActionProvider, CodeFixRegistry, ImportCandidate};
 use tsz::lsp::position::LineMap;
 use tsz::parser::ParserState;
 
@@ -1085,9 +1085,8 @@ impl Server {
     ) -> Vec<ImportCandidate> {
         // No diagnostics → nothing can be fixed by adding an import. Skip the
         // entire candidate scan (including the expensive "scan everything"
-        // fallback) to avoid O(project) work on every getCodeFixes call for
-        // error codes like 9007/9010 (isolated declarations) that are
-        // structurally unrelated to missing imports.
+        // fallback) to avoid O(project) work on getCodeFixes requests that
+        // have no import-eligible errors.
         if diagnostics.is_empty() {
             return Vec::new();
         }
@@ -1156,10 +1155,9 @@ impl Server {
                 // include a directly parseable missing identifier — but only for codes
                 // that `fixMissingImport` can actually address. Structural errors
                 // unrelated to missing imports must not trigger the O(project) full scan.
-                let has_import_eligible = diagnostics.iter().any(|d| {
-                    d.code
-                        .is_some_and(tsz::lsp::code_actions::CodeFixRegistry::is_import_fix_code)
-                });
+                let has_import_eligible = diagnostics
+                    .iter()
+                    .any(|d| d.code.is_some_and(CodeFixRegistry::is_import_fix_code));
                 if has_import_eligible {
                     candidates
                         .extend(project.get_import_candidates_for_prefix(current_file_path, ""));

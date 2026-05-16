@@ -908,7 +908,11 @@ impl Server {
                 .as_deref()
                 .and_then(tsz::config::ModuleResolutionKind::from_ts_str)
                 .is_some_and(|r| r == tsz::config::ModuleResolutionKind::Classic),
-            jsx_import_source: options.jsx_import_source.clone().unwrap_or_default(),
+            jsx_import_source: options
+                .jsx_import_source
+                .as_deref()
+                .unwrap_or_default()
+                .to_owned(),
             verbatim_module_syntax: options.verbatim_module_syntax,
             ignore_deprecations: false,
             allow_umd_global_access: options.allow_umd_global_access,
