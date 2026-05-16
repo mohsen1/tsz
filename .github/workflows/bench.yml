@@ -80,7 +80,10 @@ jobs:
   bench-prepare:
     name: bench-prepare
     needs: bench-gate
-    if: needs.bench-gate.outputs.should_run == 'true'
+    if: >-
+      needs.bench-gate.outputs.should_run == 'true' &&
+      !((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 90
     outputs:
@@ -269,11 +272,10 @@ jobs:
     needs: bench-gate
     if: >-
       needs.bench-gate.outputs.should_run == 'true' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *'))
+      ((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 120
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -293,11 +295,30 @@ jobs:
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
             .
 
+      - name: Download Cloud Build prep artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud storage cp \
+            "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.tar" \
+            bench-prep.tar
+          tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+
+      - name: Upload benchmark prep artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-prep
+          path: bench-prep.tar
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 1
+
   publish-latest-pgo:
     name: publish-latest-pgo
-    needs: bench-prepare
+    needs: bench-prepare-cloudbuild
     if: >-
-      needs.bench-prepare.outputs.should_run == 'true' &&
+      needs.bench-prepare-cloudbuild.result == 'success' &&
       ((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
        (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
     runs-on: [self-hosted, tsz-cloud-run]

@@ -1,11 +1,5 @@
-# Cloud Build config for an observational benchmark-prepare run on the private
+# Cloud Build config for benchmark-prepare runs on the private
 # `tsz-ci-build-pool` (e2-highcpu-32, 32 vCPU x 32 GiB, 200 GB SSD).
-#
-# This intentionally does not feed artifacts into the public benchmark shards
-# yet. `scripts/bench/bench-vs-tsgo.sh --prepare-only` builds the benchmark
-# binary with `-Ctarget-cpu=native`; benchmark measurements are machine-profile
-# sensitive, so the first step is to compare setup reliability and wall time
-# against the existing Cloud Run runner path before changing published numbers.
 
 steps:
   - id: bench-prepare
@@ -79,6 +73,14 @@ steps:
       trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
 
       ./scripts/bench/bench-vs-tsgo.sh --prepare-only
+      test -x .target-bench/dist/tsz
+      tar -cf bench-prep.tar .target-bench/tools .target-bench/dist
+
+artifacts:
+  objects:
+    location: gs://tsz-ci_cloudbuild/bench-prep/${_BENCH_TARGET_SHA}/
+    paths:
+      - bench-prep.tar
 
 substitutions:
   _BENCH_TARGET_SHA: unknown
