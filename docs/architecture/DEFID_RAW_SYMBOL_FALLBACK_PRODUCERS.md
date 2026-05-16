@@ -1,6 +1,6 @@
 # DefId Raw-Symbol Fallback Producer Map
 
-**Status**: Audit for #7029
+**Status**: Updated after #7717, #7756, and #7758
 **Scope**: `Lazy(DefId)` fallback paths that still recover from
 `interner.reference(SymbolRef(N))`-style construction.
 
@@ -10,24 +10,24 @@ identity spaces, so the resulting lazy type can only resolve when a resolver
 recognizes the raw-symbol shape and redirects it through the real
 symbol-to-definition mapping.
 
-This map is behavior-preserving. It records the current source-linked producer
-and resolver sites so future migration slices can remove one producer at a time.
+This map is behavior-preserving. It records the current resolver compatibility
+paths, deprecated wrapper APIs, and migrated producer sites so future slices can
+keep the raw-symbol fallback budget from growing again.
 
 ## Resolver Fallbacks
 
 | Site | Current behavior | Migration note |
 |---|---|---|
-| `crates/tsz-checker/src/context/resolver.rs` `CheckerContext::resolve_lazy` | If `def_symbol_identity(def_id)` misses, treats `DefId.0` as a candidate `SymbolId`, checks `DefinitionStore::find_def_by_symbol`, and resolves through the real symbol identity. | Keep until all checker producers avoid `interner.reference(SymbolRef)` fallback. This is the primary compatibility path described by #7027. |
+| `crates/tsz-checker/src/context/resolver.rs` `CheckerContext::resolve_lazy` | If `def_symbol_identity(def_id)` misses, treats `DefId.0` as a candidate `SymbolId`, checks `DefinitionStore::find_def_by_symbol`, and resolves through the real symbol identity. | Legacy compatibility path. Non-test checker sources now have a zero raw `.reference(...)` construction budget, so any hit should come from deprecated wrappers, tests, or non-checker callers. |
 | `crates/tsz-solver/src/def/resolver.rs` `TypeEnvironment::resolve_lazy` | If `get_def(def_id)` misses, treats the raw `DefId.0` as a symbol key into `symbol_to_def`, then resolves the real definition body or class instance type. | This is the solver-side type-environment compatibility path. `TSZ_PERF_COUNTERS` exposes `identity.type_environment_raw_symbol_lazy_fallbacks`, and trace logging includes raw and redirected IDs. |
 | `crates/tsz-solver/src/def/resolver.rs` `TypeEnvironment::symbol_to_def_id` | Falls back to the shared `DefinitionStore` when local `symbol_to_def` is missing. | This is a stabilizing lookup, not a raw producer; it reduces the need for caller-side raw fallback construction. |
 
 ## Active Checker Producers
 
-| Producer | Fallback shape | Why it still exists | Narrow migration path |
-|---|---|---|---|
-| `crates/tsz-checker/src/flow/control_flow/type_guards.rs` `check_array_buffer_is_view` | `resolve_symbol_to_lazy(symbol_ref).unwrap_or_else(|| interner.reference(symbol_ref))` for `ArrayBufferView` and `ArrayBufferLike`. | Manual predicate construction runs only when the signature predicate did not provide a resolved type. The preferred `TypeEnvironment` path can still be absent in that fallback branch. | Make the manual branch require a real `DefId` for both lib symbols, or plumb a pre-resolution step that guarantees `TypeEnvironment::symbol_to_def_id` before constructing the predicate type. |
-| `crates/tsz-checker/src/flow/control_flow/narrowing.rs` `instance_type_from_constructor` | `resolve_symbol_to_lazy(symbol_ref).unwrap_or_else(|| interner.reference(symbol_ref))` for class constructor symbols. | `instanceof` narrowing can fall back to binder symbol resolution when the expression type path cannot recover an instance type. | Replace the raw fallback with explicit DefId stabilization for the constructor symbol before returning a lazy instance type. |
-| `crates/tsz-checker/src/flow/control_flow/narrowing.rs` `instance_type_from_constructor` | Same fallback for global constructor variables with `INTERFACE | VARIABLE`. | Lib/global constructor symbols may be available as binder symbols before a type-environment mapping is visible to this helper. | Share the same explicit DefId stabilization path as class constructor symbols, with a focused lib/global constructor regression. |
+No active non-test checker producers remain. The architecture guard
+`test_checker_raw_symbol_reference_construction_budget` allows zero raw
+`.reference(...)` construction calls in checker sources, and focused guards cover
+the previously migrated `instanceof` and `ArrayBuffer.isView` branches.
 
 ## Deprecated API Surface
 
@@ -53,6 +53,13 @@ The following nearby paths should not be counted as remaining producers:
 - `crates/tsz-checker/src/flow/control_flow/assignment_fallback.rs` uses
   `resolve_symbol_to_lazy(SymbolRef(...))` before resolving through the active
   environment.
+- `crates/tsz-checker/src/flow/control_flow/type_guards.rs`
+  `check_array_buffer_is_view` now requires real `DefId`-backed lazy refs for
+  both `ArrayBufferView` and `ArrayBufferLike` before constructing the manual
+  predicate fallback.
+- `crates/tsz-checker/src/flow/control_flow/narrowing.rs`
+  `instance_type_from_constructor` now requires real `DefId`-backed lazy refs for
+  class symbols and global constructor variables with `INTERFACE | VARIABLE`.
 - `crates/tsz-checker/src/flow/control_flow/narrowing.rs` later type-predicate
   branches use `resolve_symbol_to_lazy` directly without raw fallback.
 - `crates/tsz-solver/src/relations/subtype/rules/objects.rs` and
@@ -63,9 +70,12 @@ The following nearby paths should not be counted as remaining producers:
 ## Suggested Follow-Up Order
 
 1. Use `identity.type_environment_raw_symbol_lazy_fallbacks` plus
-   `tsz::solver::def_id` traces to confirm runtime frequency and call stacks.
-2. Migrate one `instance_type_from_constructor` branch under #7030, because the
-   branch is small and already has clear class/global-constructor predicates.
-3. Migrate the `ArrayBuffer.isView` manual fallback after confirming lib symbol
-   DefIds are stable in that path.
-4. Tighten the guard from #7031 once the raw `.reference(...)` budget decreases.
+   `tsz::solver::def_id` traces on project-corpus runs to confirm whether the
+   resolver compatibility path still fires.
+2. If the counter is nonzero, group hits by caller and migrate the remaining
+   deprecated wrapper or non-checker producer instead of widening checker
+   fallbacks.
+3. Once runtime hits are understood, narrow or retire the checker/solver
+   `resolve_lazy` raw-symbol compatibility paths.
+4. Keep the zero-budget architecture guard in place so new checker code cannot
+   reintroduce raw `SymbolRef` lazy construction.
