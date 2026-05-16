@@ -684,21 +684,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .iter()
                 .find_map(|(_, arena)| arena.get_identifier_text(node_idx))
                 .or_else(|| self.ctx.arena.get_identifier_text(node_idx))?;
-            if !self.ctx.file_local_type_shadow_for_lib_name(name)
-                && let Some(def_id) = self.ctx.actual_lib_def_id_for_bare_name(name)
-            {
-                return Some(def_id);
-            }
             self.resolve_entity_name_text_symbol(name)
                 .map(|sym| self.ctx.get_or_create_def_id(sym))
         };
         let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
-            if !self.ctx.file_local_type_shadow_for_lib_name(type_name)
-                && let Some(def_id) = self.ctx.actual_lib_def_id_for_bare_name(type_name)
-            {
-                return Some(def_id);
-            }
             self.resolve_entity_name_text_symbol(type_name)
                 .map(|sym| self.ctx.get_or_create_def_id(sym))
         };
@@ -972,11 +962,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         }
                         return Some(resolved);
                     }
-                }
-                if !self.ctx.file_local_type_shadow_for_lib_name(name)
-                    && let Some(def_id) = self.ctx.actual_lib_def_id_for_bare_name(name)
-                {
-                    return Some(def_id);
                 }
                 let referenced_sym_id = resolve_text_symbol(name)?;
                 let resolved = def_id_for_symbol(referenced_sym_id, name);
