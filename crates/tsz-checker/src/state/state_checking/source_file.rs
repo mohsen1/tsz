@@ -1495,6 +1495,7 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::CLASS_DECLARATION
                 | syntax_kind_ext::IMPORT_CLAUSE
                 | syntax_kind_ext::IMPORT_SPECIFIER
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 | syntax_kind_ext::NAMESPACE_IMPORT
         )
     }
@@ -1526,6 +1527,11 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_specifier(node)
                 .map(|specifier| specifier.name),
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .ctx
+                .arena
+                .get_import_decl(node)
+                .map(|decl| decl.import_clause),
             syntax_kind_ext::NAMESPACE_IMPORT => self
                 .ctx
                 .arena
@@ -1563,6 +1569,7 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::EXPORT_DECLARATION
                     | syntax_kind_ext::EXPORT_ASSIGNMENT
                     | syntax_kind_ext::IMPORT_DECLARATION
+                    | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             )
         })
     }

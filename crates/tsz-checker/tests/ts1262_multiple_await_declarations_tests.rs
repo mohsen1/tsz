@@ -99,3 +99,21 @@ export {};
         "expected TS1262 for checked-JS module `await` declaration; got {ts1262_count}; full diagnostics: {diagnostics:#?}"
     );
 }
+
+/// Import-equals declarations store their binding name directly on the import
+/// declaration, not in an import clause. The AST path must still report TS1262
+/// without falling back to source-text scanning.
+#[test]
+fn ts1262_emitted_for_import_equals_await_name() {
+    let diagnostics = check_source_code_messages(
+        r#"
+import await = require("pkg");
+"#,
+    );
+
+    let ts1262_count = diagnostics.iter().filter(|(code, _)| *code == 1262).count();
+    assert_eq!(
+        ts1262_count, 1,
+        "expected TS1262 for import-equals `await` binding; got {ts1262_count}; full diagnostics: {diagnostics:#?}"
+    );
+}
