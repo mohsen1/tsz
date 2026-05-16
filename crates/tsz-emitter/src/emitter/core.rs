@@ -453,7 +453,7 @@ pub struct Printer<'a> {
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
 
-    /// SystemJS export names for the next namespace IIFE tail:
+    /// `SystemJS` export names for the next namespace IIFE tail:
     /// `(N || (exports_1("alias", exports_1("name", N = {}))))`.
     pub(crate) pending_system_namespace_export_fold: Option<Vec<String>>,
 
