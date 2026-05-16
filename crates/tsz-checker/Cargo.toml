@@ -150,6 +150,10 @@ name = "ts2862_keyof_tparam_tests"
 path = "tests/ts2862_keyof_tparam_tests.rs"
 
 [[test]]
+name = "ts2862_generic_class_index_write_tests"
+path = "tests/ts2862_generic_class_index_write_tests.rs"
+
+[[test]]
 name = "ts1210_arguments_param_in_class_tests"
 path = "tests/ts1210_arguments_param_in_class_tests.rs"
 
