@@ -94,12 +94,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
-        let (base, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
-        self.is_awaited_application_base(base)
-            .then(|| args.first().copied())
-            .flatten()
+    pub(crate) fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
+        // Cheap pre-check: read the base without materializing the args Vec.
+        // `evaluate_application_type` now consults this helper for every
+        // generic application; allocating an args Vec for `Array<T>`,
+        // `Map<K,V>`, etc. just to reject them is wasted work.
+        let base = crate::query_boundaries::common::get_application_base(self.ctx.types, type_id)?;
+        if !self.is_awaited_application_base(base) {
+            return None;
+        }
+        let (_, args) = crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
+        args.first().copied()
     }
 
     fn is_awaited_application_base(&self, base: TypeId) -> bool {

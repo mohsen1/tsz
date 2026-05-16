@@ -302,7 +302,11 @@ impl<'a> CheckerState<'a> {
             .set(self.ctx.instantiation_depth.get() + 1);
         self.ctx.eval_session.enter_instantiation();
 
-        let result = self.evaluate_application_type_inner(type_id);
+        // See `try_evaluate_awaited_application` for why generic `Awaited<X>`
+        // can't be left to the conditional evaluator.
+        let result = self
+            .try_evaluate_awaited_application(type_id)
+            .unwrap_or_else(|| self.evaluate_application_type_inner(type_id));
 
         self.ctx
             .instantiation_depth

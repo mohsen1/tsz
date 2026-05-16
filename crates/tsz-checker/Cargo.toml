@@ -110,6 +110,10 @@ name = "await_generic_non_promise_no_false_ts2339_tests"
 path = "tests/await_generic_non_promise_no_false_ts2339_tests.rs"
 
 [[test]]
+name = "awaited_generic_application_fold_tests"
+path = "tests/awaited_generic_application_fold_tests.rs"
+
+[[test]]
 name = "await_call_identifier_diagnostics_tests"
 path = "tests/await_call_identifier_diagnostics_tests.rs"
 

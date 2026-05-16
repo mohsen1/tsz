@@ -150,6 +150,17 @@ impl<'a> CheckerState<'a> {
         self.compute_awaited_type(expr_type, 0)
     }
 
+    /// Fold `Awaited<X>` eagerly when X reaches this point still wrapped in an
+    /// alias or as a generic union containing `Promise<T>`. The generic
+    /// conditional evaluator cannot match `Promise<T>`'s structural `then`
+    /// shape through a free type parameter, so we must distribute and unwrap
+    /// before the conditional runs.
+    pub(crate) fn try_evaluate_awaited_application(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let arg = self.awaited_application_arg_from_type(type_id)?;
+        let evaluated_arg = self.evaluate_type_with_env(arg);
+        Some(self.compute_awaited_type(evaluated_arg, 0))
+    }
+
     /// Compute the `Awaited<T>` of a type, mirroring tsc's `getAwaitedType`.
     ///
     /// Structural rule: when the input is a top-level union `A | B | ...`,
@@ -161,7 +172,7 @@ impl<'a> CheckerState<'a> {
     /// This is required so `await x` for `x: T | Promise<T>` produces `T`
     /// (= `Awaited<T> | Awaited<Promise<T>>` = `T | T` = `T`) rather than the
     /// original union, regardless of the type-parameter name the user picked.
-    fn compute_awaited_type(&mut self, type_id: TypeId, depth: u32) -> TypeId {
+    pub(crate) fn compute_awaited_type(&mut self, type_id: TypeId, depth: u32) -> TypeId {
         if depth > MAX_AWAIT_DEPTH {
             return type_id;
         }
