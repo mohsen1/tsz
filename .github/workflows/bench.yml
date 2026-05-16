@@ -19,12 +19,11 @@ on:
         type: boolean
 
 # Keep CI-followup benchmarks from displacing scheduled/manual publishing runs.
-# The CI lane may still coalesce pending workflow_run triggers as main advances,
-# but the publish lane must be able to complete so the website receives fresh
-# benchmark data.
+# Supersede older CI-followup runs as main advances, but let scheduled/manual
+# publishing runs finish so the website receives fresh benchmark data.
 concurrency:
   group: bench-${{ github.event_name == 'workflow_run' && 'ci-followup' || 'publish' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
 
 permissions:
   contents: write
