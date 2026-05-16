@@ -3048,3 +3048,236 @@ let k = <Widget><Child /><Child /></Widget>;
         "Two children for MyNode|MyNode[] must not produce TS2322; got: {codes:?}"
     );
 }
+
+// --- TS2746 / TS2747 display: namespace-qualified children type must show
+//     resolved symbol name (no `JSX.` qualifier, no trailing AST punctuation) ---
+
+/// Brand on `Element` blocks `Array<Element>` ⊑ `Element`, so multi-child
+/// against a single-child prop actually triggers TS2746 (open `Element {}`
+/// silently accepts arrays via structural fallback).
+const JSX_CHILDREN_BRANDED_PRELUDE: &str = r#"
+namespace JSX {
+    export interface Element { __brand_element: void; }
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; h1: {}; }
+}
+"#;
+
+/// TS2746 display: when the children type is a namespace-qualified reference like
+/// `JSX.Element`, the diagnostic must show the resolved symbol name (`Element`),
+/// not the raw AST annotation text (`JSX.Element`). tsc routes `typeToString`
+/// over the resolved type rather than printing the user's surface annotation.
+#[test]
+fn jsx_children_ts2746_strips_namespace_prefix_for_qualified_alias() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface SingleChildProp {{ children: JSX.Element; }}
+declare function SingleChildComp(p: SingleChildProp): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+declare function C(): JSX.Element;
+let k = <SingleChildComp><A /><B /><C /></SingleChildComp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against single JSX.Element; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'Element'"),
+        "TS2746 message must use 'Element' (resolved symbol name), not 'JSX.Element' or other forms; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'JSX.Element'"),
+        "TS2746 message must NOT include the 'JSX.' namespace prefix; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("Element;"),
+        "TS2746 message must NOT include a trailing semicolon from AST source text; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2746 display: a top-level user-defined alias must be preserved verbatim
+/// — `Cb` stays `Cb`, never the structural body it resolves to.
+#[test]
+fn jsx_children_ts2746_preserves_user_defined_alias_name() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Brand {{ __brand_cb: void; }}
+type Cb = Brand;
+interface Prop {{ children: Cb; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+declare function C(): JSX.Element;
+let k = <Comp><A /><B /><C /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against single alias-typed children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'Cb'"),
+        "TS2746 message must use the alias name 'Cb' (matching the AST annotation), not its structural body; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("__brand_cb"),
+        "TS2746 message must NOT expand the alias to its structural body; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2746 display: when the children type is renamed to a non-`Element` name
+/// inside the JSX namespace, the resolved symbol name (not the qualifier) is
+/// what shows up. Proves the fix is not name-keyed to `Element`.
+#[test]
+fn jsx_children_ts2746_strips_namespace_prefix_for_arbitrary_member_name() {
+    let src = r#"
+namespace JSX {
+    export interface Element { __brand_element: void; }
+    export interface MyNode { __brand_my_node: void; }
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; }
+}
+interface SingleChildProp { children: JSX.MyNode; }
+declare function SingleChildComp(p: SingleChildProp): JSX.Element;
+declare function A(): JSX.MyNode;
+declare function B(): JSX.MyNode;
+declare function C(): JSX.MyNode;
+let k = <SingleChildComp><A /><B /><C /></SingleChildComp>;
+"#;
+    let diagnostics = check_jsx(src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!("Expected TS2746 for multi-child against JSX.MyNode; got: {diagnostics:?}")
+        });
+    assert!(
+        ts2746.message_text.contains("'MyNode'"),
+        "TS2746 must use 'MyNode' (resolved name), not 'JSX.MyNode'; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'JSX.MyNode'"),
+        "TS2746 must NOT include 'JSX.' namespace prefix; got: {}",
+        ts2746.message_text
+    );
+}
+
+#[test]
+fn jsx_children_ts2746_preserves_dotted_string_literal_type_text() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: "foo.bar"; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+let k = <Comp><A /><B /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against string-literal children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'\"foo.bar\"'"),
+        "TS2746 must preserve dotted string literal text; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'\"bar\"'"),
+        "TS2746 must not strip dotted prefixes inside string literals; got: {}",
+        ts2746.message_text
+    );
+}
+
+#[test]
+fn jsx_children_ts2746_preserves_dotted_template_literal_type_text() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: `foo.bar`; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+let k = <Comp><A /><B /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against template-literal children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'`foo.bar`'"),
+        "TS2746 must preserve dotted template literal text; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'`bar`'"),
+        "TS2746 must not strip dotted prefixes inside template literals; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2747 display: same structural rule applies to text-children rejection
+/// messages. Both TS2746 and TS2747 flow through the same children-type-display
+/// helper and must produce the same namespace-stripped output.
+#[test]
+fn jsx_children_ts2747_strips_namespace_prefix() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: JSX.Element | JSX.Element[]; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+let k = <Comp>hello<A /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2747 = diagnostics
+        .iter()
+        .find(|d| d.code == 2747)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2747 for text children against JSX.Element-union prop; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        !ts2747.message_text.contains("'JSX.Element"),
+        "TS2747 message must NOT include the 'JSX.' namespace prefix; got: {}",
+        ts2747.message_text
+    );
+    assert!(
+        !ts2747.message_text.contains("Element;"),
+        "TS2747 message must NOT include a trailing semicolon; got: {}",
+        ts2747.message_text
+    );
+}
