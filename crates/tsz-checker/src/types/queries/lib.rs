@@ -37,6 +37,22 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|v| !v.is_empty())
     }
 
+    fn lib_name_depends_on_builtin_iterator_return(name: &str) -> bool {
+        matches!(
+            name,
+            "Array"
+                | "ArrayIterator"
+                | "Iterator"
+                | "IteratorObject"
+                | "Map"
+                | "MapIterator"
+                | "RegExpStringIterator"
+                | "Set"
+                | "SetIterator"
+                | "StringIterator"
+        )
+    }
+
     /// True when callers must skip `shared_lib_type_cache` for `name`:
     /// either this checker locally augments `name`, or `name` is multi-lib
     /// merged where property-listing order in printed diagnostic messages
@@ -46,6 +62,9 @@ impl<'a> CheckerState<'a> {
         // shared TypeIds expose property-order races to the type printer
         // (e.g. mappedTypeWithAsClauseAndLateBoundProperty).
         if name == "Array" || name.starts_with("Intl.") {
+            return true;
+        }
+        if Self::lib_name_depends_on_builtin_iterator_return(name) {
             return true;
         }
         self.lib_name_has_local_augmentation(name)
@@ -93,7 +112,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
-        let lib_contexts = &*self.ctx.lib_contexts;
+        let lib_contexts = self.ctx.lib_contexts.clone();
 
         let mut lib_types: Vec<TypeId> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;
@@ -101,7 +120,7 @@ impl<'a> CheckerState<'a> {
         // Subsequent definitions will have their type params substituted with these.
         let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
 
-        for lib_ctx in lib_contexts {
+        for lib_ctx in lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
             {
@@ -130,7 +149,7 @@ impl<'a> CheckerState<'a> {
                         node_idx,
                         &decls_with_arenas,
                         fallback_arena,
-                        lib_contexts,
+                        &lib_contexts,
                     )
                     .map(|sym_id| sym_id.0)
                 };
@@ -140,7 +159,7 @@ impl<'a> CheckerState<'a> {
                         node_idx,
                         &decls_with_arenas,
                         fallback_arena,
-                        lib_contexts,
+                        &lib_contexts,
                     )
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
@@ -262,8 +281,12 @@ impl<'a> CheckerState<'a> {
             _ => None,
         };
 
+        if let Some(ty) = lib_type_id {
+            lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
+        }
+
         // Merge global augmentations (declare global { interface X { ... } }).
-        if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, lib_contexts) {
+        if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
             lib_type_id = Some(merged);
         }
 
