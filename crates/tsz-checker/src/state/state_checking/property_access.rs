@@ -651,7 +651,11 @@ impl<'a> CheckerState<'a> {
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
         let prop_atom = self.ctx.types.intern_string(prop_name);
-        let cache_key = (mapped_type, prop_atom);
+        let cache_key = (
+            mapped_type,
+            tsz_solver::TypeResolver::resolver_generation(&self.ctx),
+            prop_atom,
+        );
 
         if let Some(cached) = self
             .ctx

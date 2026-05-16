@@ -613,6 +613,10 @@ impl<'a> CheckerState<'a> {
                 .is_none()
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
+                let resolver_generation = tsz_solver::TypeResolver::resolver_generation(&self.ctx);
+                let cache_key = |resolved_base: TypeId, property_name: tsz_common::Atom| {
+                    (resolved_base, resolver_generation, property_name)
+                };
 
                 // property_cache stores Option<TypeId>: Some(id) = resolved type,
                 // None = property not found (fall through for TS2339 diagnostics).
@@ -621,7 +625,7 @@ impl<'a> CheckerState<'a> {
                     .narrowing_cache
                     .property_cache
                     .borrow()
-                    .get(&(resolved_base, prop_atom))
+                    .get(&cache_key(resolved_base, prop_atom))
                     .copied();
                 if let Some(Some(type_id)) = cached_property_type {
                     let mut result_type = self.refine_expando_property_read_type(
@@ -703,7 +707,7 @@ impl<'a> CheckerState<'a> {
                                 .narrowing_cache
                                 .property_cache
                                 .borrow_mut()
-                                .insert((resolved_base, prop_atom), Some(refined_type_id));
+                                .insert(cache_key(resolved_base, prop_atom), Some(refined_type_id));
                             let mut result_type =
                                 effective_write_result(refined_type_id, write_type);
                             if base_nullish.is_some()
@@ -741,7 +745,7 @@ impl<'a> CheckerState<'a> {
                             .narrowing_cache
                             .property_cache
                             .borrow_mut()
-                            .insert((resolved_base, prop_atom), property_type);
+                            .insert(cache_key(resolved_base, prop_atom), property_type);
                         let mut result_type = property_type.unwrap_or(TypeId::ERROR);
                         if base_nullish.is_some()
                             && !crate::query_boundaries::common::type_contains_undefined(
@@ -763,7 +767,7 @@ impl<'a> CheckerState<'a> {
                             .narrowing_cache
                             .property_cache
                             .borrow_mut()
-                            .insert((resolved_base, prop_atom), None);
+                            .insert(cache_key(resolved_base, prop_atom), None);
                         // Fall through to full diagnostic path.
                     }
                     PropertyAccessResult::IsUnknown => {
