@@ -1390,6 +1390,60 @@ enum E14 { a, b: any \"hello\" += 1, c, d }",
 }
 
 #[test]
+fn decl_enum_reserved_name_recovery_keeps_reserved_statement() {
+    for source in ["enum void {}", "enum typeof {}", "enum delete {}"] {
+        let (parser, root) = parse_source(source);
+        assert_has_errors(&parser, "reserved enum name");
+
+        let arena = parser.get_arena();
+        let statements = get_statements(arena, root);
+        assert_eq!(
+            statements.len(),
+            2,
+            "{source}: should recover anonymous enum plus reserved-word statement"
+        );
+
+        let enum_node = arena.get(statements[0]).expect("enum statement");
+        assert_eq!(enum_node.kind, syntax_kind_ext::ENUM_DECLARATION);
+        assert_eq!(enum_node.pos, 0, "{source}: enum start");
+        assert_eq!(enum_node.end, 4, "{source}: enum should end at keyword");
+        let enum_data = arena.get_enum(enum_node).expect("enum data");
+        assert_eq!(
+            arena.get_identifier_text(enum_data.name),
+            Some(""),
+            "{source}: recovered enum name should be missing"
+        );
+        assert!(enum_data.members.nodes.is_empty(), "{source}: no members");
+
+        let expr_node = arena
+            .get(statements[1])
+            .expect("reserved-word expression statement");
+        assert_eq!(expr_node.kind, syntax_kind_ext::EXPRESSION_STATEMENT);
+        assert_eq!(node_text(arena, source, statements[1]), &source[5..]);
+    }
+
+    let source = "enum class {}";
+    let (parser, root) = parse_source(source);
+    assert_has_errors(&parser, "reserved enum class name");
+
+    let arena = parser.get_arena();
+    let statements = get_statements(arena, root);
+    assert_eq!(
+        statements.len(),
+        2,
+        "{source}: should recover anonymous enum plus class declaration"
+    );
+    let enum_node = arena.get(statements[0]).expect("enum statement");
+    assert_eq!(enum_node.kind, syntax_kind_ext::ENUM_DECLARATION);
+    assert_eq!(enum_node.end, 4, "{source}: enum should end at keyword");
+    let enum_data = arena.get_enum(enum_node).expect("enum data");
+    assert_eq!(arena.get_identifier_text(enum_data.name), Some(""));
+    let class_node = arena.get(statements[1]).expect("class declaration");
+    assert_eq!(class_node.kind, syntax_kind_ext::CLASS_DECLARATION);
+    assert_eq!(node_text(arena, source, statements[1]), "class {}");
+}
+
+#[test]
 fn decl_const_enum() {
     // `const enum Flags { A, B }`
     let (parser, root) = parse_source("const enum Flags { A, B }");
