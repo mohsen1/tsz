@@ -1948,7 +1948,6 @@ impl<'a> CheckerState<'a> {
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())
     }
-
     pub(crate) fn recursive_non_generic_alias_body_name(&self, ty: TypeId) -> String {
         crate::query_boundaries::recursive_alias::recursive_non_generic_type_alias_body_name(
             self.ctx.types.as_type_database(),
