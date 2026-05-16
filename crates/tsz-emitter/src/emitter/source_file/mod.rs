@@ -234,7 +234,7 @@ mod tests {
 
         assert!(
             output.contains("function f1(x_1)")
-                && output.contains("m(x_1) {\n        const _super = Object.create(null, {"),
+                && output.contains("m(x_1) { const _super = Object.create(null, {"),
             "Lowered async generators should use function-local placeholder temp scopes.\nOutput:\n{output}"
         );
         assert!(
