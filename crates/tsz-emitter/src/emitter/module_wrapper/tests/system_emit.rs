@@ -151,6 +151,49 @@ import(path);
     );
 }
 
+#[test]
+fn system_wrapper_inlines_const_enum_member_accesses() {
+    let source = r#"declare function use(a: any);
+const enum TopLevelConstEnum { X }
+
+export function foo() {
+    use(TopLevelConstEnum.X);
+    use(M.NonTopLevelConstEnum.X);
+}
+
+namespace M {
+    export const enum NonTopLevelConstEnum { X }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("use(0 /* TopLevelConstEnum.X */);"),
+        "System wrapper should inline top-level const enum member accesses.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("use(0 /* M.NonTopLevelConstEnum.X */);"),
+        "System wrapper should inline namespace const enum member accesses.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("use(TopLevelConstEnum.X)")
+            && !output.contains("use(M.NonTopLevelConstEnum.X)"),
+        "System wrapper must not leave runtime const enum property accesses.\nOutput:\n{output}"
+    );
+}
+
 /// `/// <reference .../>` directives should be stripped from JS output.
 /// tsc never emits these in JS — they are only preserved in .d.ts files.
 #[test]

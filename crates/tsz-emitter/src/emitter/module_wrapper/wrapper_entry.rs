@@ -32,6 +32,10 @@ impl<'a> Printer<'a> {
         source: &tsz_parser::parser::node::SourceFileData,
         source_idx: NodeIndex,
     ) {
+        if !self.ctx.options.no_const_enum_inlining {
+            self.collect_const_enum_values(&source.statements);
+        }
+
         match format {
             crate::context::transform::ModuleFormat::AMD => {
                 self.emit_amd_wrapper(dependencies, source_node, source_idx);
