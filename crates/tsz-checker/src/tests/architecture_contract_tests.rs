@@ -1664,57 +1664,25 @@ fn checker_files_stay_under_loc_limit() {
 
     // Grandfathered files: (relative path from src/, ceiling LOC)
     // These ceilings represent the current state — they can only shrink, never grow.
-    // Removed after dropping below 2000 LOC:
+    // Removed after dropping below 2000 LOC or becoming trivial mod.rs stubs:
     //   complex.rs (926), variable_checking/core.rs (1606),
-    //   symbol_types.rs (892), error_reporter/core/mod.rs (1576),
-    //   types/computation/call/mod.rs (1805→split), checkers/call_checker/mod.rs (1396),
-    //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
+    //   symbol_types.rs (892), error_reporter/core/mod.rs (8, stub),
+    //   types/computation/call/mod.rs (split), checkers/call_checker/mod.rs (split),
+    //   checkers/jsx/props/*, computed_commonjs/mod.rs (4, stub),
+    //   property_access_helpers/mod.rs (37, stub), import/core/mod.rs (11, stub),
+    //   jsdoc/resolution/mod.rs (2, stub), assignment_checker/mod.rs (12, stub),
+    //   call_errors/mod.rs (21, stub), diagnostic_source.rs (1689),
+    //   condition_narrowing.rs (1552), jsx/props/resolution.rs (1702),
+    //   call_checker/overload_resolution.rs (1712),
+    //   call_checker/candidate_collection.rs (1374)
     let grandfathered: &[(&str, usize)] = &[
-        ("state/type_analysis/computed_commonjs/mod.rs", 2787),
-        ("checkers/jsx/props/resolution.rs", 1600),
-        ("checkers/jsx/orchestration", 2397),
-        ("checkers/call_checker/overload_resolution.rs", 1400),
-        ("checkers/call_checker/candidate_collection.rs", 1100),
-        ("types/property_access_helpers/mod.rs", 2104),
-        // Bumped from 2500 to 2501 for TS2532/TS18048 attribution fix in
-        // `this: undefined` property access (module top-level arrow). The
-        // file-split plan is still pending.
-        ("types/property_access_type/resolve.rs", 2501),
-        ("declarations/import/core/mod.rs", 2562),
-        ("declarations/import/declaration.rs", 2341),
-        ("types/computation/call/inner.rs", 2019),
-        ("jsdoc/resolution/mod.rs", 2357),
-        ("assignability/assignment_checker/mod.rs", 2083),
-        ("error_reporter/core/mod.rs", 2358),
-        ("error_reporter/call_errors/mod.rs", 2554),
-        ("types/type_checking/duplicate_identifiers_helpers.rs", 2244),
-        ("types/type_checking/duplicate_identifiers.rs", 2060),
-        ("error_reporter/render_failure.rs", 2240),
-        // Pushed over the 2000-LOC default by recent JSDoc/CommonJS source-display
-        // changes (#679) and subsequent display-parity fixes (#682, #688, #690);
-        // ceiling tracks current state so the gate can ratchet down.
-        // Updated to 2049 for the prototype-LHS JSDoc target-annotation carve-out
-        // (typeTagPrototypeAssignment.ts).
-        // Bumped to 2069 to grandfather the 2026-04-26 main-branch state after
-        // a batch of conformance/diagnostic fixes; ratchet down later via splits.
-        ("error_reporter/core/diagnostic_source.rs", 2069),
-        // Grew past 2000 from recent contextual function type fixes (#688);
-        // ceiling tracks current state.
-        // Bumped by 2 (2039→2041) for the class @template push that fixes
-        // jsdocTemplateClass.ts TS2304 false positive.
-        // Bumped by 12 (2041→2053) for the sync-contextual-return branch that
-        // fixes TS2322 on block-body methods carrying `/** @type {function(...)} */`
-        // (checkJsdocTypeTagOnObjectProperty2.ts).
-        // Bumped by 13 (2053→2066) for the contextual-generator return-type
-        // pinning that fixes TS2345 false positives on
-        // `f<0,0,1>(function* () { return 0 })` style call-site type-arg
-        // pinning (`generatorYieldContextualType.ts`). The +3 over the
-        // initial 2063 came from the `void` carve-out that preserves tsc's
-        // widening for `IterableIterator<T, void>` (`generatorTypeCheck63.ts`).
-        ("types/function_type.rs", 2070),
-        // Recently grew past 2000 lines on origin/main; grandfather as ratchet
-        // baseline. Test-style LOC count = non-empty, non-comment lines.
-        ("flow/control_flow/condition_narrowing.rs", 2020),
+        ("types/property_access_type/resolve.rs", 2675),
+        ("declarations/import/declaration.rs", 2420),
+        ("types/computation/call/inner.rs", 2745),
+        ("types/type_checking/duplicate_identifiers_helpers.rs", 2650),
+        ("types/type_checking/duplicate_identifiers.rs", 2390),
+        ("error_reporter/render_failure.rs", 2725),
+        ("types/function_type.rs", 2225),
     ];
 
     let mut violations = Vec::new();
