@@ -831,19 +831,6 @@ impl Server {
         }
     }
 
-    fn parse_jsx_mode(jsx: &Option<String>) -> tsz_common::checker_options::JsxMode {
-        jsx.as_deref()
-            .and_then(tsz::config::jsx_string_to_mode)
-            .unwrap_or_default()
-    }
-
-    fn parse_implied_classic_resolution(module_resolution: &Option<String>) -> bool {
-        module_resolution
-            .as_deref()
-            .and_then(tsz::config::ModuleResolutionKind::from_ts_str)
-            .is_some_and(|r| r == tsz::config::ModuleResolutionKind::Classic)
-    }
-
     pub(crate) fn build_checker_options(&self, options: &CheckOptions) -> CheckerOptions {
         let emitter_target = Self::parse_target(&options.target);
         let checker_target = checker_target_from_emitter(emitter_target);
@@ -902,7 +889,11 @@ impl Server {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
-            jsx_mode: Self::parse_jsx_mode(&options.jsx),
+            jsx_mode: options
+                .jsx
+                .as_deref()
+                .and_then(tsz::config::jsx_string_to_mode)
+                .unwrap_or_default(),
             module_explicitly_set: options.module.is_some(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
@@ -912,9 +903,11 @@ impl Server {
             // CLI/checker behavior for the same options.
             allow_importing_ts_extensions: options.allow_importing_ts_extensions,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
-            implied_classic_resolution: Self::parse_implied_classic_resolution(
-                &options.module_resolution,
-            ),
+            implied_classic_resolution: options
+                .module_resolution
+                .as_deref()
+                .and_then(tsz::config::ModuleResolutionKind::from_ts_str)
+                .is_some_and(|r| r == tsz::config::ModuleResolutionKind::Classic),
             jsx_import_source: options.jsx_import_source.clone().unwrap_or_default(),
             verbatim_module_syntax: options.verbatim_module_syntax,
             ignore_deprecations: false,

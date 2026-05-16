@@ -1153,15 +1153,12 @@ impl Server {
         if candidates.is_empty() {
             if fallback_names.is_empty() {
                 // Preserve legacy behavior for diagnostics whose message shape does not
-                // include a directly parseable missing identifier — but only when at
-                // least one diagnostic has a code that could plausibly be fixed by
-                // adding an import. Isolated-declarations (9007-9039), JSX syntax
-                // errors (17004/17010/17011), and similar structural errors can never
-                // be resolved by importing a symbol; running the O(project) full scan
-                // for them wastes tens of seconds on React-heavy test fixtures.
+                // include a directly parseable missing identifier — but only for codes
+                // that `fixMissingImport` can actually address. Structural errors
+                // unrelated to missing imports must not trigger the O(project) full scan.
                 let has_import_eligible = diagnostics.iter().any(|d| {
                     d.code
-                        .is_some_and(Self::diagnostic_code_may_need_import_fix)
+                        .is_some_and(tsz::lsp::code_actions::CodeFixRegistry::is_import_fix_code)
                 });
                 if has_import_eligible {
                     candidates
@@ -1266,14 +1263,6 @@ impl Server {
 
         reorder_import_candidates_for_package_roots(&mut deduped);
         deduped
-    }
-
-    /// Returns `true` when `code` is in the "cannot find name/namespace" family
-    /// that `fixMissingImport` can address. Used to gate the expensive O(project)
-    /// full-symbol scan; codes unrelated to missing imports (isolated-declarations
-    /// family, JSX syntax errors, etc.) return `false`.
-    pub(super) fn diagnostic_code_may_need_import_fix(code: u32) -> bool {
-        tsz::lsp::code_actions::CodeFixRegistry::is_import_fix_code(code)
     }
 
     fn missing_name_from_diagnostic_message(message: &str) -> Option<String> {
