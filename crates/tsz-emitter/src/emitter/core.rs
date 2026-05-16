@@ -453,6 +453,10 @@ pub struct Printer<'a> {
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
 
+    /// SystemJS export name for the next namespace IIFE tail:
+    /// `(N || (exports_1("name", N = {})))`.
+    pub(crate) pending_system_namespace_export_fold: Option<String>,
+
     /// When true, the next namespace IIFE should use the plain `N || (N = {})`
     /// closing even if the name is in `default_exported_func_names`. This is set
     /// when an `export namespace N` merges with `export default function N` —
@@ -1022,6 +1026,7 @@ impl<'a> Printer<'a> {
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
+            pending_system_namespace_export_fold: None,
             suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),

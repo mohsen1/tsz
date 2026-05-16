@@ -333,7 +333,11 @@ impl<'a> Printer<'a> {
                 if use_cjs {
                     self.pending_cjs_namespace_export_fold = false;
                 }
+                let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                if let Some(export_name) = system_export_fold.as_deref() {
+                    ns_emitter.set_system_export_fold(export_name);
+                }
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(namespace_node);

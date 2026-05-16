@@ -52,9 +52,13 @@ impl<'a> Printer<'a> {
             if use_cjs {
                 self.pending_cjs_namespace_export_fold = false;
             }
+            let system_export_fold = self.pending_system_namespace_export_fold.take();
             let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            if let Some(export_name) = system_export_fold.as_deref() {
+                es5_emitter.set_system_export_fold(export_name);
+            }
             if !self.ctx.module_state.default_exported_func_names.is_empty() {
                 es5_emitter.set_default_exported_func_names(
                     self.ctx
@@ -362,6 +366,11 @@ impl<'a> Printer<'a> {
         } else {
             false
         };
+        let system_export_fold = if parent_name.is_none() {
+            self.pending_system_namespace_export_fold.take()
+        } else {
+            None
+        };
 
         // Capture and consume: when an exported namespace merges with a
         // default-exported function, the IIFE closing uses the plain pattern.
@@ -482,24 +491,21 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.write(&name);
             self.write(" = {}));");
+        } else if let Some(export_name) = system_export_fold.as_deref() {
+            self.write(&name);
+            self.write(" || (exports_1(\"");
+            self.emit_escaped_string(export_name, '"');
+            self.write("\", ");
+            self.write(&name);
+            self.write(" = {})));");
         } else if cjs_export_fold {
-            if self.in_system_execute_body {
-                // System module: (N || (exports_1("N", N = {})))
-                self.write(&name);
-                self.write(" || (exports_1(\"");
-                self.write(&name);
-                self.write("\", ");
-                self.write(&name);
-                self.write(" = {})));");
-            } else {
-                // CJS export fold: (N || (exports.N = N = {}))
-                self.write(&name);
-                self.write(" || (exports.");
-                self.write(&name);
-                self.write(" = ");
-                self.write(&name);
-                self.write(" = {}));");
-            }
+            // CJS export fold: (N || (exports.N = N = {}))
+            self.write(&name);
+            self.write(" || (exports.");
+            self.write(&name);
+            self.write(" = ");
+            self.write(&name);
+            self.write(" = {}));");
         } else if !suppress_default_merge
             && self.ctx.is_commonjs()
             && self

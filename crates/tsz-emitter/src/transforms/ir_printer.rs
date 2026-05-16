@@ -40,6 +40,7 @@ use tsz_parser::syntax_kind_ext;
 struct NamespaceIifeContext<'a> {
     is_exported: bool,
     attach_to_exports: bool,
+    system_export_name: Option<&'a str>,
     should_declare_var: bool,
     default_export_merge: bool,
     parent_name: Option<&'a str>,
@@ -2165,6 +2166,7 @@ impl<'a> IRPrinter<'a> {
                 body,
                 is_exported,
                 attach_to_exports,
+                system_export_name,
                 should_declare_var,
                 parent_name,
                 param_name,
@@ -2179,6 +2181,7 @@ impl<'a> IRPrinter<'a> {
                     NamespaceIifeContext {
                         is_exported: *is_exported,
                         attach_to_exports: *attach_to_exports,
+                        system_export_name: system_export_name.as_deref(),
                         should_declare_var: *should_declare_var,
                         default_export_merge: *default_export_merge,
                         parent_name: parent_name.as_deref(),
@@ -2364,6 +2367,7 @@ impl<'a> IRPrinter<'a> {
                 NamespaceIifeContext {
                     is_exported: context.is_exported,
                     attach_to_exports: context.attach_to_exports,
+                    system_export_name: None,
                     should_declare_var: true,
                     default_export_merge: false,
                     parent_name: None,
@@ -2398,6 +2402,13 @@ impl<'a> IRPrinter<'a> {
                 self.write(" = ");
                 self.write(current_name);
                 self.write(" = {})");
+            } else if let Some(export_name) = context.system_export_name {
+                self.write(current_name);
+                self.write(" || (exports_1(\"");
+                self.write_escaped(export_name);
+                self.write("\", ");
+                self.write(current_name);
+                self.write(" = {}))");
             } else if context.default_export_merge {
                 self.write("exports.");
                 self.write(current_name);

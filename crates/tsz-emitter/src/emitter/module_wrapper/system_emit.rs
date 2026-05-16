@@ -1425,18 +1425,18 @@ impl<'a> Printer<'a> {
     fn emit_system_namespace_with_export_fold(
         &mut self,
         stmt_idx: NodeIndex,
-        ns_name: &str,
+        _ns_name: &str,
         export_name: &str,
     ) {
-        let start_pos = self.writer.len();
+        let before_len = self.writer.len();
+        let prev_system_fold = self
+            .pending_system_namespace_export_fold
+            .replace(export_name.to_string());
         self.emit(stmt_idx);
-        let output = self.writer.get_output()[start_pos..].to_string();
-        self.writer.truncate(start_pos);
-        let from = format!("({ns_name} || ({ns_name} = {{}}))");
-        let to = format!("({ns_name} || (exports_1(\"{export_name}\", {ns_name} = {{}})))");
-        let replaced = output.replacen(&from, &to, 1);
-        self.write(replaced.trim_end_matches('\n'));
-        self.write_line();
+        self.pending_system_namespace_export_fold = prev_system_fold;
+        if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+            self.write_line();
+        }
     }
 
     pub(super) fn system_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {

@@ -1275,6 +1275,50 @@ fn system_exported_object_binding_bracket_access_does_not_add_numeric_dot() {
 }
 
 #[test]
+fn system_reexported_namespace_folds_export_into_es2015_iife_tail() {
+    let source = "namespace N { export const x = 1; }\nexport { N as Out };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(r#"})(N || (exports_1("Out", N = {})));"#),
+        "System namespace re-export should be scheduled in the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"exports_1("Out", N);"#),
+        "System namespace re-export should not emit a redundant separate export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_reexported_namespace_folds_export_into_es5_iife_tail() {
+    let source = "namespace N { export var x = 1; }\nexport { N as Out };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(r#"})(N || (exports_1("Out", N = {})));"#),
+        "System ES5 namespace re-export should be scheduled in the IR IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"exports_1("Out", N);"#),
+        "System ES5 namespace re-export should not rely on a separate export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_export_import_namespace_alias_keeps_export_equals() {
     let source = "namespace x { interface c {} }\nexport import a = x.c;\nexport = x;\n";
     let output = parse_lower_print(
