@@ -735,6 +735,60 @@ fn class_expression_extending_abstract_class_still_emits_ts2653() {
 }
 
 #[test]
+fn ts2416_reported_for_class_property_against_weak_type_interface() {
+    let source = r#"
+        interface IHandler {
+            callback: { onClick?: () => void; onHover?: () => void };
+        }
+        class BadHandler implements IHandler {
+            callback: string = "";
+        }
+    "#;
+    let diags = check_default(source);
+    assert!(
+        has_code(&diags, 2416),
+        "TS2416 must be reported when class property type is incompatible with base (even for weak target), got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
+fn ts2416_reported_for_class_property_against_weak_type_interface_renamed() {
+    let source = r#"
+        interface IConfig {
+            opts: { timeout?: number; retries?: number };
+        }
+        class BadConfig implements IConfig {
+            opts: boolean = false;
+        }
+    "#;
+    let diags = check_default(source);
+    assert!(
+        has_code(&diags, 2416),
+        "TS2416 must be reported when class property is incompatible with weak interface property, got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
+fn ts2416_not_reported_for_compatible_class_property_against_weak_type_interface() {
+    let source = r#"
+        interface IHandler {
+            callback?: { onClick?: () => void };
+        }
+        class GoodHandler implements IHandler {
+            callback = { onClick: () => {} };
+        }
+    "#;
+    let diags = check_default(source);
+    assert!(
+        !has_code(&diags, 2416),
+        "Compatible class property should not emit TS2416, got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
 fn mixin_expression_auto_accessor_over_auto_accessor_has_no_ts2611() {
     let source = r#"
         function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
