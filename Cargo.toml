@@ -153,13 +153,13 @@ lto = "thin"
 # Used by cargo nextest in CI unit suite to cap peak LLVM memory.
 # debug=2 (inherited from dev) × codegen-units × concurrent jobs = OOM on 8-CPU runners.
 # Disabling debug info is the single largest memory win (~3-4× reduction in LLVM backend RSS).
-# Keep codegen parallelism conservative: the checker lib-test target is large
-# enough that high per-rustc codegen fanout can silently fail on the 8-CPU
+# Keep codegen parallelism disabled for CI unit artifacts: the checker lib-test
+# target is large enough that per-rustc LLVM fanout can hit SIGKILL on the 8-CPU
 # cloud runners even when Cargo itself is already capped to one build job.
 # CARGO_BUILD_JOBS is also memory-capped via scripts/ci/gcp-full-ci.sh.
 inherits = "dev"
 debug = false
-codegen-units = 4
+codegen-units = 1
 
 [profile.ci-lint]
 # Used by `cargo clippy` in the CI lint suite. Clippy doesn't ship binaries
