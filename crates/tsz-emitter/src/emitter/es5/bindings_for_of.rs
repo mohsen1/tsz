@@ -383,7 +383,6 @@ impl<'a> Printer<'a> {
             // Emit the loop body
             if let Some((loop_fn_name, param_vars, body_info)) = &capture_context {
                 self.emit_loop_call(loop_fn_name, param_vars, body_info);
-                self.write_line();
             } else {
                 self.emit_for_of_body(for_in_of.statement);
             }
