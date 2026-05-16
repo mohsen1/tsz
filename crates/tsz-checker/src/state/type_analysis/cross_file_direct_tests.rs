@@ -9,6 +9,36 @@ use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAlias
 use tsz_parser::parser::{ParserState, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+#[test]
+fn direct_actual_lib_alias_admission_list_is_track7_ratchet() {
+    const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING: usize = 26;
+
+    let admitted = super::DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS;
+    assert_eq!(
+        admitted.len(),
+        DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING,
+        "Track 7 actual-lib alias admissions are transitional; replace \
+         name-only admissions with stable lib identity queries before growing \
+         this ceiling.",
+    );
+    assert!(
+        admitted.windows(2).all(|pair| pair[0] < pair[1]),
+        "Keep actual-lib alias admissions sorted so additions are reviewable: {admitted:?}",
+    );
+    for name in admitted {
+        assert!(
+            super::is_direct_actual_lib_alias_body_admitted(name),
+            "{name} must be admitted by the shared classifier",
+        );
+    }
+    for name in ["Array", "Date", "Iterator", "Promise", "ReadonlyArray"] {
+        assert!(
+            !super::is_direct_actual_lib_alias_body_admitted(name),
+            "{name} is an interface/value helper, not a type-alias body admission",
+        );
+    }
+}
+
 fn parse_interface_declarations(
     source: &str,
 ) -> (
