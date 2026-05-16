@@ -33,15 +33,12 @@ const TINY_BENCHMARK_MAX_LINES = 200;
 const PROJECT_BENCHMARK_NAMES = new Set([
   "large-ts-repo",
   "utility-types-project",
-  "ts-toolbelt-project",
   "ts-essentials-project",
   "nextjs",
   "nextjs-fresh-app",
   "vite-vanilla-ts-app",
   "rxjs-project",
   "type-fest-project",
-  "zod-project",
-  "kysely-project",
 ]);
 const SINGLE_FILE_BENCHMARK_PREFIXES = [
   "utility-types/",
