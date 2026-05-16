@@ -4341,6 +4341,10 @@ class C extends Iterator<number> {}
         "Expected TS2515 for missing abstract Iterator.next implementation. Got: {diagnostics:#?}"
     );
     assert!(
+        has_diagnostic_code_message(&diagnostics, 2515, "Iterator<number, undefined, unknown>"),
+        "Expected TS2515 to display builtin Iterator with scoped abstract defaults. Got: {diagnostics:#?}"
+    );
+    assert!(
         diagnostics.iter().all(|(code, _)| *code != 2351),
         "Expected no TS2351 for builtin Iterator constructor. Got: {diagnostics:#?}"
     );
