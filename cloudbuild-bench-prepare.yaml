@@ -1,0 +1,82 @@
+# Cloud Build config for an observational benchmark-prepare run on the private
+# `tsz-ci-build-pool` (e2-highcpu-32, 32 vCPU x 32 GiB, 200 GB SSD).
+#
+# This intentionally does not feed artifacts into the public benchmark shards
+# yet. `scripts/bench/bench-vs-tsgo.sh --prepare-only` builds the benchmark
+# binary with `-Ctarget-cpu=native`; benchmark measurements are machine-profile
+# sensitive, so the first step is to compare setup reliability and wall time
+# against the existing Cloud Run runner path before changing published numbers.
+
+steps:
+  - id: bench-prepare
+    name: rust:1.95
+    env:
+      - 'BENCH_FULL=1'
+      - 'BENCH_COLD=1'
+      - 'BENCH_PGO=1'
+      - 'TSC_NPM_SPEC=6.0.2'
+      - 'CARGO_BUILD_JOBS=32'
+      - 'CARGO_INCREMENTAL=0'
+      - 'RUST_MIN_STACK=16777216'
+      - 'CARGO_TERM_COLOR=always'
+      - 'TSZ_CI_SKIP_HOST_APT=1'
+      - 'TSZ_CI_DISABLE_SCCACHE=1'
+      - '_BENCH_TARGET_SHA=${_BENCH_TARGET_SHA}'
+      - 'CARGO_HOME=/workspace/.ci-cache/cargo-home'
+      - 'npm_config_cache=/workspace/.ci-cache/npm'
+      - 'PNPM_STORE_DIR=/workspace/.ci-cache/pnpm-store'
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        bc \
+        ca-certificates \
+        curl \
+        git \
+        hyperfine \
+        jq \
+        nodejs \
+        npm \
+        pkg-config
+      rm -rf /var/lib/apt/lists/*
+
+      rustup component add llvm-tools-preview
+
+      if ! command -v pnpm >/dev/null 2>&1; then
+        npm install -g pnpm --silent
+      fi
+      pnpm config set store-dir "${PNPM_STORE_DIR}"
+
+      cargo --version
+      rustc --version
+      node --version
+      npm --version
+      pnpm --version
+      hyperfine --version
+
+      (
+        while true; do
+          echo "bench prepare cloudbuild heartbeat $(date -Is)"
+          uptime || true
+          free -h || true
+          df -h || true
+          ps -eo pid,ppid,%cpu,%mem,rss,cmd --sort=-rss 2>/dev/null | head -20 || true
+          sleep 30
+        done
+      ) &
+      monitor_pid=$!
+      trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+
+      ./scripts/bench/bench-vs-tsgo.sh --prepare-only
+
+substitutions:
+  _BENCH_TARGET_SHA: unknown
+
+options:
+  pool:
+    name: projects/tsz-ci/locations/us-central1/workerPools/tsz-ci-build-pool
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 7200s
