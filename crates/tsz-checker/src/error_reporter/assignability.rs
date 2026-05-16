@@ -1084,9 +1084,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn target_is_generic_keyof_display(&mut self, target: TypeId) -> bool {
-        if self.type_is_generic_keyof(target) {
-            return true;
-        }
         if let Some(alias) = self.ctx.types.get_display_alias(target)
             && self.type_is_generic_keyof(alias)
         {
