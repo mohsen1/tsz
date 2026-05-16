@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "generic_multi_prop_object_literal_tests"
+path = "tests/generic_multi_prop_object_literal_tests.rs"
+
+[[test]]
 name = "abstract_constructor_argument_tests"
 path = "tests/abstract_constructor_argument_tests.rs"
 
