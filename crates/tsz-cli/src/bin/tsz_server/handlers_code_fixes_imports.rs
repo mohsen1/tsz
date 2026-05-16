@@ -1268,27 +1268,12 @@ impl Server {
         deduped
     }
 
-    /// Returns `false` for diagnostic codes that are structurally impossible to
-    /// fix by adding an import. Used to gate the expensive O(project)
-    /// `get_import_candidates_for_prefix(file, "")` fallback scan so that codes
-    /// like the isolated-declarations family (9007-9039), JSX syntax errors
-    /// (17004/17010/17011), and module-mode errors (1xxx) never trigger it.
-    ///
-    /// The rule: a code "may need an import fix" when it is in the
-    /// "cannot find name/namespace/module" family that `tsz-lsp`'s
-    /// `import_candidates_for_diagnostics` explicitly handles (2304, 2503) or
-    /// when the message contains a parseable missing identifier that a targeted
-    /// prefix search could satisfy. Everything else returns `false`, preventing
-    /// the full-project symbol scan.
+    /// Returns `true` when `code` is in the "cannot find name/namespace" family
+    /// that `fixMissingImport` can address. Used to gate the expensive O(project)
+    /// full-symbol scan; codes unrelated to missing imports (isolated-declarations
+    /// family, JSX syntax errors, etc.) return `false`.
     pub(super) fn diagnostic_code_may_need_import_fix(code: u32) -> bool {
-        // Codes for which `import_candidates_for_diagnostics` produces candidates.
-        // 2304 = Cannot find name
-        // 2503 = Cannot find namespace
-        // 2583 = Cannot find name (target library variant)
-        // 2693 = Only refers to a type, but is being used as a value here
-        // 7016 = Could not find a declaration file for module
-        const IMPORT_ELIGIBLE: &[u32] = &[2304, 2503, 2583, 2693, 7016];
-        IMPORT_ELIGIBLE.contains(&code)
+        tsz::lsp::code_actions::CodeFixRegistry::is_import_fix_code(code)
     }
 
     fn missing_name_from_diagnostic_message(message: &str) -> Option<String> {

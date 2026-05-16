@@ -456,8 +456,6 @@ struct CheckOptions {
     allow_umd_global_access: bool,
     #[serde(default)]
     preserve_const_enums: bool,
-    // JSX/isolated-declarations options missing before this change.
-    // Wiring them through fixes timeouts in codeFixMissingTypeAnnotationOnExports47/48.
     #[serde(default)]
     isolated_declarations: bool,
     #[serde(default)]

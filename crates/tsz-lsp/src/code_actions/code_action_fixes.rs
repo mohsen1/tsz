@@ -621,6 +621,13 @@ impl CodeFixRegistry {
         }
     }
 
+    /// Returns `true` for diagnostic codes that `fixMissingImport` can address
+    /// by adding an import statement. Used to gate the expensive O(project)
+    /// full-symbol scan in import-candidate collection.
+    pub const fn is_import_fix_code(code: u32) -> bool {
+        matches!(code, 2304 | 2503 | 2583 | 2693 | 7016)
+    }
+
     /// Get all error codes that have registered code fixes.
     pub fn supported_error_codes() -> Vec<u32> {
         vec![

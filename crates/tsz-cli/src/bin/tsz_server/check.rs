@@ -831,22 +831,17 @@ impl Server {
         }
     }
 
-    pub(crate) fn parse_jsx_mode(jsx: &Option<String>) -> tsz_common::checker_options::JsxMode {
-        use tsz_common::checker_options::JsxMode;
-        match jsx.as_deref() {
-            Some("react") | Some("1") => JsxMode::React,
-            Some("react-jsx") | Some("4") => JsxMode::ReactJsx,
-            Some("react-jsxdev") | Some("5") => JsxMode::ReactJsxDev,
-            Some("preserve") | Some("2") => JsxMode::Preserve,
-            Some("react-native") | Some("3") => JsxMode::ReactNative,
-            _ => JsxMode::None,
-        }
+    fn parse_jsx_mode(jsx: &Option<String>) -> tsz_common::checker_options::JsxMode {
+        jsx.as_deref()
+            .and_then(tsz::config::jsx_string_to_mode)
+            .unwrap_or_default()
     }
 
-    /// Returns true when `moduleResolution` implies classic (non-node) path
-    /// resolution. This is rare in modern code; the default is node-style.
-    pub(crate) fn parse_implied_classic_resolution(module_resolution: &Option<String>) -> bool {
-        matches!(module_resolution.as_deref(), Some("classic") | Some("0"))
+    fn parse_implied_classic_resolution(module_resolution: &Option<String>) -> bool {
+        module_resolution
+            .as_deref()
+            .and_then(tsz::config::ModuleResolutionKind::from_ts_str)
+            .is_some_and(|r| r == tsz::config::ModuleResolutionKind::Classic)
     }
 
     pub(crate) fn build_checker_options(&self, options: &CheckOptions) -> CheckerOptions {
