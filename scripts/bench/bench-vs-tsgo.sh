@@ -166,6 +166,7 @@ while [[ $# -gt 0 ]]; do
             echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
             echo "  VITE_APP_BENCH_DIR=<path> Override generated Vite fixture directory"
             echo "  BENCH_PGO=0            Skip PGO training (default: 1 when llvm-profdata is available)"
+            echo "  BENCH_PGO_CACHE=0      Don't reuse the cached profdata across runs (default: 1)"
             echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
             echo "  BENCH_PGO_EXTRA_INPUTS=<path[:path]>  Extra .ts or tsconfig files to feed the PGO trainer"
             echo "  BENCH_PGO_VERBOSE=1    Print per-input wall time during PGO Step 2"
@@ -763,6 +764,12 @@ check_prerequisites() {
         # runs, but quick mode prefers a deterministic fast rebuild.
         local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
         local pgo_merged="$pgo_dir/merged.profdata"
+        # Cross-run profdata cache so iterative bench dev doesn't redo the
+        # ~5min instrumented-build + training cycle when source hasn't
+        # changed since the last bench run. Invalidated when any *.rs file
+        # in the workspace is newer than the cached profdata.
+        local pgo_cache_dir="$BENCH_TARGET_DIR/pgo-cache"
+        local pgo_cache_profdata="$pgo_cache_dir/merged.profdata"
         local pgo_target_dir
         local optimized_target_dir
         mkdir -p "$BENCH_TARGET_DIR"
@@ -776,31 +783,56 @@ check_prerequisites() {
         fi
 
         if [ "$use_pgo" = true ] && [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
-            echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
-            rm -rf "$pgo_dir"
-            mkdir -p "$pgo_dir"
-            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$pgo_target_dir" \
-                CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
-                cargo build --profile dist -p tsz-cli --bin tsz)
-
-            # Ensure the smallest external bench fixture is present so PGO
-            # trains on workload shapes the website actually measures (mapped/
-            # conditional/utility types), not a single-token const expression.
-            # Larger fixtures (ts-toolbelt, ts-essentials, next.js) are
-            # opportunistically used when they were already prepared by an
-            # earlier bench run, but never fetched here — that would more
-            # than double cold-start wall time on first run.
-            if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
-                ensure_utility_types_fixture
+            local skip_pgo_collect=false
+            if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" ]]; then
+                local newer_src
+                newer_src="$(find "$PROJECT_ROOT" \
+                    \( -path "$BENCH_TARGET_DIR" -o -path "$PROJECT_ROOT/.git" \) -prune -o \
+                    -type f -name "*.rs" -newer "$pgo_cache_profdata" -print -quit 2>/dev/null)"
+                if [ -z "$newer_src" ]; then
+                    echo -e "${CYAN}PGO cache hit: reusing $pgo_cache_profdata${NC}"
+                    mkdir -p "$pgo_dir"
+                    cp "$pgo_cache_profdata" "$pgo_merged"
+                    skip_pgo_collect=true
+                else
+                    echo -e "${YELLOW}PGO cache stale (source changed: $newer_src); regenerating profile data${NC}"
+                fi
             fi
 
-            echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
-            local pgo_tsz="$pgo_target_dir/dist/tsz"
-            collect_pgo_workload "$pgo_tsz"
+            if [ "$skip_pgo_collect" = false ]; then
+                echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
+                rm -rf "$pgo_dir"
+                mkdir -p "$pgo_dir"
+                (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$pgo_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
+                    cargo build --profile dist -p tsz-cli --bin tsz)
+
+                # Ensure the smallest external bench fixture is present so PGO
+                # trains on workload shapes the website actually measures (mapped/
+                # conditional/utility types), not a single-token const expression.
+                # Larger fixtures (ts-toolbelt, ts-essentials, next.js) are
+                # opportunistically used when they were already prepared by an
+                # earlier bench run, but never fetched here — that would more
+                # than double cold-start wall time on first run.
+                if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
+                    ensure_utility_types_fixture
+                fi
+
+                echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
+                local pgo_tsz="$pgo_target_dir/dist/tsz"
+                collect_pgo_workload "$pgo_tsz"
+
+                "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
+
+                # Persist the merged profdata for the next run's cache lookup.
+                if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
+                    mkdir -p "$pgo_cache_dir"
+                    cp "$pgo_merged" "$pgo_cache_profdata"
+                fi
+            fi
 
             echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
-            "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
             if ! (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
                 CARGO_INCREMENTAL=0 \
                 RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
