@@ -267,10 +267,11 @@ pub fn contains_mapped_type_with_readonly_modifier(
         seen.push(current);
 
         match interner.lookup(current) {
-            Some(TypeData::Mapped(mapped_id)) => {
-                if interner.get_mapped(mapped_id).readonly_modifier == Some(MappedModifier::Add) {
-                    return true;
-                }
+            Some(TypeData::Mapped(mapped_id))
+                if interner.get_mapped(mapped_id).readonly_modifier
+                    == Some(MappedModifier::Add) =>
+            {
+                return true;
             }
             Some(TypeData::Application(app_id)) => {
                 let resolved = evaluate_type(interner, current);
