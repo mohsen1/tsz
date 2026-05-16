@@ -25,39 +25,25 @@ steps:
       # CI gets fresh containers; nothing to gain from incremental fingerprints,
       # and they add their own non-determinism on multi-container builds.
       - 'CARGO_INCREMENTAL=0'
-      # Mirror .cargo/config.toml [env] entry — solver/checker hit recursion
-      # depths > the default 2 MiB stack on deeply nested TS test fixtures.
-      - 'RUST_MIN_STACK=8388608'
+      # Use the same stack budget as the existing CI unit path.
+      - 'RUST_MIN_STACK=16777216'
       - 'CARGO_TERM_COLOR=always'
+      - 'TSZ_CI_SUITE=unit'
+      - 'TSZ_CI_SKIP_HOST_APT=1'
+      - 'TSZ_CI_DISABLE_SCCACHE=1'
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
 
-      # cargo-nextest binary install (no compile). Single ~7 MB download.
-      curl -LsSf --retry 3 https://get.nexte.st/latest/linux \
-        | tar -xz -C /usr/local/bin cargo-nextest
-
       cargo --version
       rustc --version
-      cargo nextest --version
 
-      # Run the same unit test set as scripts/ci/gcp-full-ci.sh `run_unit_tests`.
-      # Profile ci-unit caps debug info to keep peak rustc RSS low; on this
-      # bigger box memory isn't the constraint, but profile parity with the
-      # Cloud Run flow keeps the binary outputs comparable.
-      cargo nextest run \
-        --profile ci \
-        --cargo-profile ci-unit \
-        --build-jobs 32 \
-        -p tsz-common \
-        -p tsz-scanner \
-        -p tsz-parser \
-        -p tsz-binder \
-        -p tsz-solver \
-        -p tsz-checker \
-        -p tsz-emitter \
-        -p tsz-lsp \
-        -p tsz-core
+      # Use the same setup path as the Cloud Run `unit` job so the TypeScript
+      # source tree is available for lib-backed checker tests. The source tar
+      # submitted to Cloud Build intentionally omits the ignored TypeScript
+      # working tree, so gcp-full-ci creates a synthetic checkout and fetches
+      # the pinned TypeScript ref before running nextest.
+      scripts/ci/gcp-full-ci.sh unit
 
 options:
   pool:
