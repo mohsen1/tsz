@@ -1248,14 +1248,6 @@ _check_conformance_regression_allowlist() {
 
   local all_failures_file="$tmp_dir/all-failures.txt"
   cat "$tmp_dir"/failures-shard-*.txt 2>/dev/null | sort -u > "$all_failures_file" || true
-  local fail_count
-  fail_count="$(wc -l < "$all_failures_file" | tr -d ' ')"
-
-  if [[ "$fail_count" -ne "$expected_deficit" ]]; then
-    echo "error: conformance aggregate deficit ${expected_deficit}, but collected ${fail_count} failing test paths" >&2
-    _show_conformance_regressions "$tmp_dir" "$prefix" "$expected_deficit"
-    return 1
-  fi
 
   python3 - "$all_failures_file" "$allowlist" "$expected_deficit" <<'PYEOF'
 import os
