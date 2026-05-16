@@ -118,6 +118,46 @@ fn list_files_only_resolve_json_module_does_not_list_unimported_json_roots() {
 }
 
 #[test]
+fn es2022_readonly_collection_assignments_do_not_cycle_display_aliases() {
+    let temp = TempDir::new("readonly_collection_display_alias_cycle").expect("temp dir");
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{"compilerOptions":{"target":"ES2022","lib":["ES2022"],"noEmit":true},"files":["collections.ts"]}"#,
+    );
+    write_file(
+        &temp.path.join("collections.ts"),
+        r#"
+const mapped: ReadonlyMap<string, string> = new Map<string, string>();
+const settled: ReadonlySet<number> = new Set<number>();
+"#,
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--extendedDiagnostics",
+            "--noEmit",
+            "-p",
+            "tsconfig.json",
+            "--pretty",
+            "false",
+        ],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "readonly collection assignment should terminate without diagnostics:\n{output}"
+    );
+    assert!(
+        output.contains("Total diagnostics:             0"),
+        "expected zero diagnostics in extended output:\n{output}"
+    );
+}
+
+#[test]
 fn relative_module_augmentation_missing_target_reports_ts2664() {
     let temp = TempDir::new("relative_module_augmentation_missing_target").expect("temp dir");
     write_file(
