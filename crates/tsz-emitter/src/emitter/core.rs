@@ -676,6 +676,9 @@ pub struct Printer<'a> {
     /// String enum member names from previously-evaluated enums.
     /// Used to detect cross-enum string member references in `is_syntactically_string`.
     pub(crate) prior_enum_string_members: FxHashMap<String, FxHashSet<String>>,
+    /// String enum member values from previously-evaluated enums.
+    /// Used to fold cross-enum string references such as `Other.AB + D`.
+    pub(crate) prior_enum_string_values: FxHashMap<String, FxHashMap<String, String>>,
 
     /// Private field `WeakMap` mapping for ES2015-ES2021 class private field lowering.
     /// Maps `field_name` (without `#`) → `_ClassName_fieldName` (`WeakMap` variable name).
@@ -1034,6 +1037,7 @@ impl<'a> Printer<'a> {
             const_enum_import_aliases: FxHashMap::default(),
             prior_enum_member_values: FxHashMap::default(),
             prior_enum_string_members: FxHashMap::default(),
+            prior_enum_string_values: FxHashMap::default(),
             private_field_weakmaps: FxHashMap::default(),
             private_member_info: FxHashMap::default(),
             pending_weakmap_inits: Vec::new(),
