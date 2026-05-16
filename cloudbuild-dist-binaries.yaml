@@ -1,0 +1,42 @@
+# Cloud Build config for the `dist-binaries` CI job.
+#
+# Runs on the same private pool as the unit Cloud Build experiment:
+# `tsz-ci-build-pool` (e2-highcpu-32, 32 vCPU x 32 GiB, 200 GB SSD).
+# The GitHub job remains responsible for publishing the Actions artifact used
+# by conformance, emit, fourslash, and project-compile jobs; this build only
+# produces the dist-fast tarball in GCS for the GitHub job to fetch.
+
+steps:
+  - id: dist-binaries
+    name: rust:1.95
+    env:
+      - 'CARGO_BUILD_JOBS=32'
+      - 'CARGO_INCREMENTAL=0'
+      - 'CARGO_TERM_COLOR=always'
+      - 'TSZ_CI_SUITE=dist-binaries'
+      - 'TSZ_CI_SKIP_HOST_APT=1'
+      - 'TSZ_CI_DISABLE_SCCACHE=1'
+      - 'TSZ_CI_CACHE_SAVE=0'
+      - 'TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0'
+      - '_TSZ_DIST_ARTIFACT_URI=${_TSZ_DIST_ARTIFACT_URI}'
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      : "$${_TSZ_DIST_ARTIFACT_URI:?_TSZ_DIST_ARTIFACT_URI is required}"
+
+      cargo --version
+      rustc --version
+
+      scripts/ci/gcp-full-ci.sh dist-binaries
+
+      tar -C .target/dist-fast -cf dist-fast-binaries.tar \
+        tsz tsz-server tsz-conformance generate-tsc-cache
+      gsutil -q cp dist-fast-binaries.tar "$${_TSZ_DIST_ARTIFACT_URI}"
+
+options:
+  pool:
+    name: projects/tsz-ci/locations/us-central1/workerPools/tsz-ci-build-pool
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s

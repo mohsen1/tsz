@@ -472,24 +472,23 @@ jobs:
     timeout-minutes: 30
     env:
       GITHUB_SHA: ${{ github.sha }}
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-      # The dist artifact unblocks conformance/emit/fourslash, so PRs avoid
-      # target-dir uploads. Trusted main runs publish cargo-target-deps only
-      # when Cargo.lock/profile inputs changed and the gate intentionally ran
-      # main CI to refresh the exact shared cache key.
-      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: ${{ needs.gate.outputs.rust_cache_refresh == 'true' && '1' || '0' }}
-      # Keep artifact production independent from sccache service hangs. The
-      # dist-fast build is short enough without sccache, and all harness suites
-      # are blocked until this artifact uploads.
-      TSZ_CI_DISABLE_SCCACHE: "1"
+      _TSZ_DIST_ARTIFACT_URI: gs://tsz-ci_cloudbuild/dist-fast-binaries/${{ github.run_id }}-${{ github.run_attempt }}.tar
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Build dist-fast binaries
-        run: scripts/ci/github-suite.sh dist-binaries
-      - name: Pack dist-fast binaries
-        run: tar -C .target/dist-fast -cf dist-fast-binaries.tar tsz tsz-server tsz-conformance generate-tsc-cache
+      - name: Build dist-fast binaries on Cloud Build
+        run: |
+          set -euo pipefail
+          gcloud builds submit \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --config=cloudbuild-dist-binaries.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            --substitutions=_TSZ_DIST_ARTIFACT_URI="${_TSZ_DIST_ARTIFACT_URI}" \
+            .
+      - name: Download dist-fast binaries
+        run: gsutil -q cp "${_TSZ_DIST_ARTIFACT_URI}" dist-fast-binaries.tar
       - name: Upload dist-fast binaries
         uses: actions/upload-artifact@v4
         with:
