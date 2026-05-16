@@ -18,7 +18,7 @@ and resolver sites so future migration slices can remove one producer at a time.
 | Site | Current behavior | Migration note |
 |---|---|---|
 | `crates/tsz-checker/src/context/resolver.rs` `CheckerContext::resolve_lazy` | If `def_symbol_identity(def_id)` misses, treats `DefId.0` as a candidate `SymbolId`, checks `DefinitionStore::find_def_by_symbol`, and resolves through the real symbol identity. | Keep until all checker producers avoid `interner.reference(SymbolRef)` fallback. This is the primary compatibility path described by #7027. |
-| `crates/tsz-solver/src/def/resolver.rs` `TypeEnvironment::resolve_lazy` | If `get_def(def_id)` misses, treats the raw `DefId.0` as a symbol key into `symbol_to_def`, then resolves the real definition body or class instance type. | This is the solver-side type-environment compatibility path. Instrumentation for #7028 should wrap this fallback rather than printing from callers. |
+| `crates/tsz-solver/src/def/resolver.rs` `TypeEnvironment::resolve_lazy` | If `get_def(def_id)` misses, treats the raw `DefId.0` as a symbol key into `symbol_to_def`, then resolves the real definition body or class instance type. | This is the solver-side type-environment compatibility path. `TSZ_PERF_COUNTERS` exposes `identity.type_environment_raw_symbol_lazy_fallbacks`, and trace logging includes raw and redirected IDs. |
 | `crates/tsz-solver/src/def/resolver.rs` `TypeEnvironment::symbol_to_def_id` | Falls back to the shared `DefinitionStore` when local `symbol_to_def` is missing. | This is a stabilizing lookup, not a raw producer; it reduces the need for caller-side raw fallback construction. |
 
 ## Active Checker Producers
@@ -62,8 +62,8 @@ The following nearby paths should not be counted as remaining producers:
 
 ## Suggested Follow-Up Order
 
-1. Add #7028 instrumentation around `TypeEnvironment::resolve_lazy`'s raw
-   fallback to confirm runtime frequency and call stacks.
+1. Use `identity.type_environment_raw_symbol_lazy_fallbacks` plus
+   `tsz::solver::def_id` traces to confirm runtime frequency and call stacks.
 2. Migrate one `instance_type_from_constructor` branch under #7030, because the
    branch is small and already has clear class/global-constructor predicates.
 3. Migrate the `ArrayBuffer.isView` manual fallback after confirming lib symbol
