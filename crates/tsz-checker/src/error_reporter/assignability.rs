@@ -1084,16 +1084,13 @@ impl<'a> CheckerState<'a> {
     }
 
     fn target_is_generic_keyof_display(&mut self, target: TypeId) -> bool {
-        let evaluated_target = self.evaluate_type_for_assignability(target);
-        for candidate in [target, evaluated_target] {
-            if self.type_is_generic_keyof(candidate) {
-                return true;
-            }
-            if let Some(alias) = self.ctx.types.get_display_alias(candidate)
-                && self.type_is_generic_keyof(alias)
-            {
-                return true;
-            }
+        if self.type_is_generic_keyof(target) {
+            return true;
+        }
+        if let Some(alias) = self.ctx.types.get_display_alias(target)
+            && self.type_is_generic_keyof(alias)
+        {
+            return true;
         }
         false
     }
