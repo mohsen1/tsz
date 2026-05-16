@@ -128,6 +128,7 @@ FILTER=""
 FORCE_REBUILD=false
 PREPARE_ONLY=false
 NEXTJS_BENCHMARK_ENABLED="${NEXTJS_BENCHMARK_ENABLED:-0}"
+TSZ_BENCH_INCLUDE_COMPILE_CANARIES="${TSZ_BENCH_INCLUDE_COMPILE_CANARIES:-0}"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
@@ -158,6 +159,7 @@ while [[ $# -gt 0 ]]; do
             echo "  TSC_NPM_SPEC=<spec>    Override pinned typescript npm version"
             echo "  TSZ=<path>             Use a specific tsz binary (skip benchmark build)"
             echo "  TSZ_LIB_DIR=<path>     Override tsz lib assets (default: embedded)"
+            echo "  TSZ_BENCH_INCLUDE_COMPILE_CANARIES=1 Include known-red project rows in local full runs"
             echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
             echo "  TS_TOOLBELT_REF=<sha>  Override pinned ts-toolbelt commit"
             echo "  TS_ESSENTIALS_REF=<sha> Override pinned ts-essentials commit"
@@ -1932,6 +1934,13 @@ is_benchmark_selected() {
     echo "$name" | grep -qE "$FILTER"
 }
 
+should_run_compile_canary_project() {
+    if [ -n "$FILTER" ]; then
+        return 0
+    fi
+    [ "$TSZ_BENCH_INCLUDE_COMPILE_CANARIES" = "1" ]
+}
+
 ensure_nextjs_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
 
@@ -2513,6 +2522,10 @@ run_utility_types_project_benchmarks() {
 }
 
 run_ts_toolbelt_project_benchmarks() {
+    if ! should_run_compile_canary_project; then
+        return
+    fi
+
     if ! is_benchmark_selected "ts-toolbelt-project"; then
         return
     fi
@@ -2602,6 +2615,10 @@ run_type_fest_project_benchmarks() {
 }
 
 run_zod_project_benchmarks() {
+    if ! should_run_compile_canary_project; then
+        return
+    fi
+
     if ! is_benchmark_selected "zod-project"; then
         return
     fi
@@ -2630,6 +2647,10 @@ run_zod_project_benchmarks() {
 }
 
 run_kysely_project_benchmarks() {
+    if ! should_run_compile_canary_project; then
+        return
+    fi
+
     if ! is_benchmark_selected "kysely-project"; then
         return
     fi
