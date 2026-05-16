@@ -6,6 +6,7 @@
 
 use crate::span::Span;
 use std::path::{Component, Path, PathBuf};
+use tsz_common::file_extensions::is_ts_declaration_file_name;
 
 use super::COULD_NOT_FIND_DECLARATION_FILE;
 
@@ -395,6 +396,11 @@ impl ModuleExtension {
         if path_str.ends_with(".d.cts") {
             return Self::DCts;
         }
+        // Arbitrary-extension declarations such as `native.d.node.ts` are
+        // declaration inputs, not `.ts` source files that should emit JS.
+        if is_ts_declaration_file_name(&path_str) {
+            return Self::Dts;
+        }
 
         match path.extension().and_then(|e| e.to_str()) {
             Some("ts") => Self::Ts,
@@ -441,7 +447,7 @@ impl ModuleExtension {
         matches!(self, Self::Cts | Self::Cjs | Self::DCts)
     }
 
-    /// Check if this is a declaration file extension (.d.ts, .d.mts, .d.cts).
+    /// Check if this is a declaration file extension (`.d.ts`, `.d.mts`, `.d.cts`).
     ///
     /// This replaces scattered `path.ends_with(".d.ts") || ...` checks in the driver.
     pub const fn is_declaration(&self) -> bool {

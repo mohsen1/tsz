@@ -89,7 +89,8 @@ pub(super) struct CheckerLibSet {
     pub(super) contexts: Arc<Vec<LibContext>>,
 }
 
-/// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
+/// Check if a filename is a TypeScript declaration file (`.d.ts`, `.d.cts`,
+/// `.d.mts`, or `.d.<ext>.ts`).
 fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
@@ -5790,9 +5791,11 @@ export type RowToColumns<TColumns> = {
         assert!(is_declaration_file("types.d.ts"));
         assert!(is_declaration_file("index.d.mts"));
         assert!(is_declaration_file("index.d.cts"));
+        assert!(is_declaration_file("native.d.node.ts"));
         assert!(is_declaration_file("/path/to/file.d.ts"));
         assert!(is_declaration_file("/path/to/file.d.mts"));
         assert!(is_declaration_file("/path/to/file.d.cts"));
+        assert!(is_declaration_file("/path/to/file.d.node.ts"));
 
         assert!(!is_declaration_file("index.ts"));
         assert!(!is_declaration_file("index.mts"));
