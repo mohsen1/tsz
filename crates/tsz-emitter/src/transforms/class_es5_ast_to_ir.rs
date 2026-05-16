@@ -4,6 +4,7 @@
 //! into IR nodes, avoiding `ASTRef` when possible.
 
 use super::*;
+use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use tsz_common::common::ModuleKind;
 use tsz_parser::syntax::transform_utils::contains_super_reference;
 
@@ -39,6 +40,9 @@ pub struct AstToIr<'a> {
     dynamic_import_promise_counter: Cell<u32>,
     /// Original module kind when this converter runs inside a module wrapper.
     module_kind: ModuleKind,
+    /// Static block recovery mode where bare `await` identifiers are emitted
+    /// as recovered `yield` tokens, matching `tsc` downlevel emit.
+    emit_await_as_yield: bool,
 }
 
 impl<'a> AstToIr<'a> {
@@ -57,6 +61,7 @@ impl<'a> AstToIr<'a> {
             hoisted_temps: RefCell::new(Vec::new()),
             dynamic_import_promise_counter: Cell::new(1),
             module_kind: ModuleKind::None,
+            emit_await_as_yield: false,
         }
     }
 
@@ -90,6 +95,11 @@ impl<'a> AstToIr<'a> {
 
     pub const fn with_module_kind(mut self, module_kind: ModuleKind) -> Self {
         self.module_kind = module_kind;
+        self
+    }
+
+    pub const fn with_await_as_yield(mut self, enabled: bool) -> Self {
+        self.emit_await_as_yield = enabled;
         self
     }
 
@@ -175,7 +185,7 @@ impl<'a> AstToIr<'a> {
             return IRNode::ASTRef(idx);
         };
 
-        match node.kind {
+        let statement = match node.kind {
             k if k == syntax_kind_ext::BLOCK => self.convert_block(idx),
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 self.convert_expression_statement(idx)
@@ -196,13 +206,82 @@ impl<'a> AstToIr<'a> {
             k if k == syntax_kind_ext::DEBUGGER_STATEMENT => IRNode::ExpressionStatement(Box::new(
                 IRNode::Identifier("debugger".to_string().into()),
             )),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.convert_function_declaration(idx)
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self.convert_class_declaration(idx),
             k if k == syntax_kind_ext::FOR_IN_STATEMENT
                 || k == syntax_kind_ext::FOR_OF_STATEMENT =>
             {
                 self.convert_for_in_of_statement(idx)
             }
             _ => IRNode::ASTRef(idx), // Fallback for unsupported statements
+        };
+
+        self.attach_trailing_comment(node, statement)
+    }
+
+    fn attach_trailing_comment(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        statement: IRNode,
+    ) -> IRNode {
+        let Some(source_text) = self.source_text else {
+            return statement;
+        };
+        for comment in crate::emitter::get_trailing_comment_ranges(source_text, node.end as usize) {
+            let comment_text = &source_text[comment.pos as usize..comment.end as usize];
+            let trimmed = comment_text.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("/*") {
+                return IRNode::Sequence(vec![
+                    statement,
+                    IRNode::TrailingComment(comment_text.to_string().into()),
+                ]);
+            }
         }
+        let line_start = (node.pos as usize).min(source_text.len());
+        let line_end = source_text[line_start..]
+            .find(['\n', '\r'])
+            .map_or(source_text.len(), |offset| line_start + offset);
+        let line = &source_text[line_start..line_end];
+        if let Some(comment_start) = Self::line_comment_start(line) {
+            let comment_text = &line[comment_start..];
+            return IRNode::Sequence(vec![
+                statement,
+                IRNode::TrailingComment(comment_text.to_string().into()),
+            ]);
+        }
+        statement
+    }
+
+    fn line_comment_start(line: &str) -> Option<usize> {
+        let bytes = line.as_bytes();
+        let mut i = 0;
+        let mut quote = None;
+        while i + 1 < bytes.len() {
+            let byte = bytes[i];
+            if let Some(delim) = quote {
+                if byte == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if byte == delim {
+                    quote = None;
+                }
+                i += 1;
+                continue;
+            }
+            if byte == b'\'' || byte == b'"' || byte == b'`' {
+                quote = Some(byte);
+                i += 1;
+                continue;
+            }
+            if byte == b'/' && bytes[i + 1] == b'/' {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
     }
 
     /// Convert an expression to IR
@@ -459,6 +538,88 @@ impl<'a> AstToIr<'a> {
         })
     }
 
+    fn convert_class_declaration(&self, idx: NodeIndex) -> IRNode {
+        let mut transformer = ES5ClassTransformer::new(self.arena);
+        transformer.set_module_kind(self.module_kind);
+        if let Some(transforms) = self.transforms.clone() {
+            transformer.set_transforms(transforms);
+        }
+        if let Some(source_text) = self.source_text {
+            transformer.set_source_text(source_text);
+        }
+
+        if let Some(ir) = transformer.transform_class_to_ir(idx) {
+            return ir;
+        }
+
+        IRNode::ASTRef(idx)
+    }
+
+    fn convert_function_declaration(&self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::ASTRef(idx);
+        };
+        let Some(func) = self.arena.get_function(node) else {
+            return IRNode::ASTRef(idx);
+        };
+
+        if func.is_async {
+            let mut transformer = AsyncES5Transformer::new(self.arena);
+            transformer.set_temp_var_counter(self.temp_var_counter.get());
+            if let Some(source_text) = self.source_text {
+                transformer.set_source_text(source_text);
+            }
+            let ir = transformer.transform_async_function(idx);
+            self.temp_var_counter.set(transformer.temp_var_counter());
+            return ir;
+        }
+
+        let hoisted_before = self.hoisted_temps.borrow().len();
+        let saved_temp_counter = self.temp_var_counter.get();
+        self.temp_var_counter.set(0);
+
+        let name = get_identifier_text(self.arena, func.name).unwrap_or_default();
+        let params = self.convert_parameters(&func.parameters);
+        let body_source_range = if func.body.is_some() {
+            self.arena
+                .get(func.body)
+                .map(|body_node| (body_node.pos, body_node.end))
+        } else {
+            None
+        };
+
+        // Function declarations have their own `this`; class/static-block
+        // substitutions must not leak into their bodies.
+        let prev_substitution = self.current_this_substitution.take();
+        let body = if func.body.is_none() {
+            vec![]
+        } else if let Some(body_node) = self.arena.get(func.body)
+            && let Some(block) = self.arena.get_block(body_node)
+        {
+            block
+                .statements
+                .nodes
+                .iter()
+                .map(|&s| self.convert_statement(s))
+                .collect()
+        } else {
+            vec![]
+        };
+        self.current_this_substitution.set(prev_substitution);
+        self.temp_var_counter.set(saved_temp_counter);
+
+        let mut body = body;
+        self.prepend_function_hoisted_temps(&mut body, hoisted_before);
+
+        IRNode::FunctionDecl {
+            name: name.into(),
+            parameters: params,
+            body,
+            body_source_range,
+            leading_comment: None,
+        }
+    }
+
     fn convert_throw_statement(&self, idx: NodeIndex) -> IRNode {
         let node = self
             .arena
@@ -692,6 +853,12 @@ impl<'a> AstToIr<'a> {
         if let Some(labeled) = self.arena.get_labeled_statement(node)
             && let Some(label) = get_identifier_text(self.arena, labeled.label)
         {
+            if self.emit_await_as_yield && label == "await" {
+                return IRNode::Sequence(vec![
+                    IRNode::expr_stmt(IRNode::Raw("yield ".into())),
+                    self.convert_statement(labeled.statement),
+                ]);
+            }
             return IRNode::LabeledStatement {
                 label: label.into(),
                 statement: Box::new(self.convert_statement(labeled.statement)),
@@ -774,6 +941,9 @@ impl<'a> AstToIr<'a> {
             .get(idx)
             .expect("NodeIndex must be valid in arena");
         if let Some(ident) = self.arena.get_identifier(node) {
+            if self.emit_await_as_yield && ident.escaped_text == "await" {
+                return IRNode::Raw("yield ".into());
+            }
             if let Some((name, replacement)) = self.identifier_substitution.as_ref()
                 && ident.escaped_text == *name
             {
@@ -1896,8 +2066,28 @@ impl<'a> AstToIr<'a> {
         IRNode::ASTRef(idx)
     }
 
-    const fn convert_await_expression(&self, idx: NodeIndex) -> IRNode {
-        // Await expressions are handled by the async transform
+    fn convert_await_expression(&self, idx: NodeIndex) -> IRNode {
+        if self.emit_await_as_yield {
+            let Some(node) = self.arena.get(idx) else {
+                return IRNode::Raw("yield ".into());
+            };
+            let Some(await_expr) = self.arena.get_unary_expr_ex(node) else {
+                return IRNode::Raw("yield ".into());
+            };
+            if await_expr.expression.is_none() {
+                return IRNode::Raw("yield ".into());
+            }
+            return IRNode::Raw(
+                format!(
+                    "yield {}",
+                    self.emit_ir_fragment_to_string(
+                        &self.convert_expression(await_expr.expression)
+                    )
+                )
+                .into(),
+            );
+        }
+        // Await expressions are handled by the async transform.
         IRNode::ASTRef(idx)
     }
 

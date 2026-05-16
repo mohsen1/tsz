@@ -711,6 +711,149 @@ fn test_static_block_only_class_alias_preamble() {
     );
 }
 
+#[test]
+fn test_static_block_super_call_does_not_emit_unused_alias() {
+    let source = r#"class B {}
+        class C extends B {
+            static {
+                super();
+            }
+        }"#;
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    let class_idx = source_file.statements.nodes[1];
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(class_idx)
+        .expect("class should lower to ES5 IR");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        output.contains("_super.call(this)"),
+        "Recovered static-block super() should still lower through _super.call(this).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = C;"),
+        "Deferred static blocks should not emit an unused class-value alias.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        transformer.temp_var_counter(),
+        0,
+        "Static-block super recovery should not consume a temp name when no class alias is emitted."
+    );
+}
+
+#[test]
+fn test_static_block_await_recovery_uses_yield_in_es5_ir() {
+    let source = r#"class C {
+            static {
+                await: if (true) {
+                }
+                await;
+            }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("yield ;\n    if (true)"),
+        "Recovered await labels in static blocks should emit a yield statement before the labeled statement body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("yield ;\n})();"),
+        "Recovered bare await statements in static blocks should emit as yield.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await:") && !output.contains("await;"),
+        "Static block recovery should not preserve await labels or bare await identifiers in ES5 IR.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_nested_class_declaration_in_static_block_uses_structured_ir() {
+    let source = r#"class B {}
+        class CC {
+            constructor() {
+                class C extends B {
+                    static {
+                        class DD extends B {
+                            constructor() {
+                                super();
+                            }
+                        }
+                        super();
+                    }
+                }
+            }
+        }"#;
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    let class_idx = source_file.statements.nodes[1];
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(class_idx)
+        .expect("class should lower to ES5 IR");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        output.contains("function CC() {\n        var C = /** @class */"),
+        "Nested class declarations in constructor bodies should be emitted as structured IR at the current indentation.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("        (function () {\n            var DD = /** @class */"),
+        "Nested class declarations inside deferred static blocks should stay inside the static-block IIFE indentation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\nvar C = /** @class */"),
+        "Nested class declarations should not restart at file indentation.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_block_this_alias_preserves_trailing_comments() {
+    let source = r#"class C {
+            static {
+                this.b; // should error
+                let b: typeof this.b; // ok
+                if (1) {
+                    this.b; // should error
+                }
+            }
+            static b = 1;
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("var _a;\n    _a = C;"),
+        "Static block value-position `this` should use the class alias `_a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.b; // should error"),
+        "Trailing comments on aliased static-block expression statements should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var b; // ok"),
+        "Trailing comments on erased typed declarations in static blocks should be preserved.\nOutput:\n{output}"
+    );
+}
+
 // Issue #3539: post-`super()` `for-of` and `for-in` bodies in derived ES5
 // constructors must preserve the `_this` substitution. Pre-fix the body
 // emitted `this.x` and crashed at runtime when the base constructor

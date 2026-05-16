@@ -199,6 +199,7 @@ fn test_emit_awaiter_call() {
         this_arg: Box::new(IRNode::this()),
         hoisted_var_groups: vec![],
         promise_constructor: None,
+        multiline_callback: false,
         generator_body: Box::new(IRNode::GeneratorBody {
             has_await: false,
             cases: vec![IRGeneratorCase {

@@ -660,7 +660,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Convert an AST statement to IR in static context (super uses `_super.X` not `_super.prototype.X`)
     fn convert_statement_static(&self, idx: NodeIndex) -> IRNode {
-        let converter = self.make_converter().with_static(true);
+        let converter = self
+            .make_converter()
+            .with_static(true)
+            .with_await_as_yield(true);
         let result = converter.convert_statement(idx);
         self.collect_from_converter(&converter);
         result
@@ -675,6 +678,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let converter = self
             .make_converter()
             .with_static(true)
+            .with_await_as_yield(true)
             .with_class_alias(Some(class_alias.to_string()));
         let result = converter.convert_statement(idx);
         self.collect_from_converter(&converter);
@@ -1763,7 +1767,7 @@ impl<'a> ES5ClassTransformer<'a> {
         self.computed_prop_temp_map.clear();
         self.current_static_class_alias =
             if self.static_members_need_class_alias(&class_data.members) {
-                Some(self.generate_temp_name())
+                Some(generated_auto_accessor_name(0))
             } else if self
                 .auto_accessors
                 .iter()
@@ -2043,16 +2047,20 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             None
         };
-        // The deferred static block IIFEs (rendered after the class IIFE) may
-        // reference the class self-reference alias when their `this` was
-        // rewritten by `convert_statement_static_with_class_alias`. In that
-        // case the alias must be declared/assigned outside the class IIFE so
-        // the post-IIFE blocks can resolve it (issue #3967).
-        let deferred_block_class_alias = if !deferred_static_blocks.is_empty() {
-            self.current_static_class_alias.clone()
-        } else {
-            None
-        };
+        // The deferred static block IIFEs (rendered after the class IIFE) only
+        // need an outside class-value alias when lowering actually referenced
+        // that alias. Recovered `super()` calls in invalid static blocks, for
+        // example, still lower through `_super.call(this)` and should not create
+        // a dead class alias.
+        let deferred_block_class_alias = self
+            .current_static_class_alias
+            .as_ref()
+            .filter(|alias| {
+                deferred_static_blocks
+                    .iter()
+                    .any(|block| block.contains_identifier(alias))
+            })
+            .cloned();
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone().into(),
             base_class: base_class.map(Box::new),

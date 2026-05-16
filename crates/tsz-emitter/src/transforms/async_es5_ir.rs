@@ -51,7 +51,7 @@
 
 use std::cell::Cell;
 
-use crate::transforms::es5::ES5ClassTransformer;
+use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::helpers::HelpersNeeded;
 use crate::transforms::ir::{IRGeneratorCase, IRNode, IRParam};
 use tsz_parser::parser::NodeIndex;
@@ -434,6 +434,7 @@ impl<'a> AsyncES5Transformer<'a> {
             generator_body: Box::new(generator_body),
             hoisted_var_groups,
             promise_constructor,
+            multiline_callback: captures_arguments,
         };
 
         // Build the function declaration/expression wrapper
@@ -976,6 +977,9 @@ impl<'a> AsyncES5Transformer<'a> {
                     current_statements,
                     current_label,
                 ) {
+                    return;
+                }
+                if self.lower_class_declaration_to_assignment(idx, current_statements) {
                     return;
                 }
                 current_statements.push(self.statement_to_ir(idx));
@@ -1955,6 +1959,63 @@ impl<'a> AsyncES5Transformer<'a> {
         true
     }
 
+    fn lower_class_declaration_to_assignment(
+        &mut self,
+        idx: NodeIndex,
+        current_statements: &mut Vec<IRNode>,
+    ) -> bool {
+        let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        if let Some(source_text) = self.source_text {
+            class_transformer.set_source_text(source_text);
+        }
+        let Some(class_ir) = class_transformer.transform_class_to_ir(idx) else {
+            return false;
+        };
+
+        let IRNode::ES5ClassIIFE {
+            name,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        } = class_ir
+        else {
+            return false;
+        };
+
+        for decl_name in weakmap_decls
+            .into_iter()
+            .chain(computed_prop_temp_decls)
+            .chain(deferred_block_class_alias.iter().cloned())
+            .chain(std::iter::once(name.to_string()))
+        {
+            current_statements.push(IRNode::VarDecl {
+                name: decl_name.into(),
+                initializer: None,
+            });
+        }
+
+        current_statements.push(IRNode::ES5ClassAssignment {
+            name,
+            base_class,
+            super_param,
+            body,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        });
+
+        true
+    }
+
     fn class_extends_suspension(
         &self,
         class_idx: NodeIndex,
@@ -1980,7 +2041,8 @@ impl<'a> AsyncES5Transformer<'a> {
         class_name: &str,
     ) -> Option<ES5ClassFactoryParts> {
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
-        let class_ir = class_transformer.transform_class_with_name(class_idx, Some(class_name))?;
+        let class_ir =
+            class_transformer.transform_class_to_ir_with_name(class_idx, Some(class_name))?;
         let IRNode::ES5ClassIIFE {
             body,
             super_param,

@@ -161,6 +161,41 @@ impl<'a> IRPrinter<'a> {
         self.write(" = {}));");
     }
 
+    fn emit_es5_class_expression(
+        &mut self,
+        name: &str,
+        base_class: Option<&IRNode>,
+        super_param: Option<&str>,
+        body: &[IRNode],
+    ) {
+        if !self.remove_comments {
+            self.write("/** @class */ ");
+        }
+        self.write("(function (");
+        if base_class.is_some() {
+            self.write(super_param.unwrap_or("_super"));
+        }
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        let prev_iife_name = self.current_class_iife_name.replace(name.to_string());
+        for stmt in body {
+            self.write_indent();
+            self.emit_node(stmt);
+            self.write_line();
+        }
+        self.current_class_iife_name = prev_iife_name;
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}(");
+        if let Some(base) = base_class {
+            self.emit_node(base);
+        }
+        self.write("))");
+    }
+
     fn extract_trailing_comment_from_function(&self, function: &IRNode) -> Option<String> {
         let source_text = self.source_text?;
         let (body_start, body_end) = match function {
@@ -926,12 +961,24 @@ impl<'a> IRPrinter<'a> {
                 self.write("if (");
                 self.emit_node(condition);
                 self.write(") ");
-                self.emit_node(then_branch);
+                if let IRNode::Block(stmts) = then_branch.as_ref()
+                    && stmts.is_empty()
+                {
+                    self.emit_empty_block_multiline();
+                } else {
+                    self.emit_node(then_branch);
+                }
                 if let Some(else_br) = else_branch {
                     self.write_line();
                     self.write_indent();
                     self.write("else ");
-                    self.emit_node(else_br);
+                    if let IRNode::Block(stmts) = else_br.as_ref()
+                        && stmts.is_empty()
+                    {
+                        self.emit_empty_block_multiline();
+                    } else {
+                        self.emit_node(else_br);
+                    }
                 }
             }
             IRNode::Block(stmts) => {
@@ -1135,35 +1182,14 @@ impl<'a> IRPrinter<'a> {
                 // var ClassName = /** @class */ (function (_super) { ... }(BaseClass));
                 self.write("var ");
                 self.write(name);
-                if self.remove_comments {
-                    self.write(" = (function (");
-                } else {
-                    self.write(" = /** @class */ (function (");
-                }
-                if base_class.is_some() {
-                    self.write(super_param.as_deref().unwrap_or("_super"));
-                }
-                self.write(") {");
-                self.write_line();
-                self.increase_indent();
-
-                let prev_iife_name = self.current_class_iife_name.replace(name.to_string());
-
-                // Emit body
-                for stmt in body {
-                    self.write_indent();
-                    self.emit_node(stmt);
-                    self.write_line();
-                }
-                self.current_class_iife_name = prev_iife_name;
-
-                self.decrease_indent();
-                self.write_indent();
-                self.write("}(");
-                if let Some(base) = base_class {
-                    self.emit_node(base);
-                }
-                self.write("));");
+                self.write(" = ");
+                self.emit_es5_class_expression(
+                    name,
+                    base_class.as_deref(),
+                    super_param.as_deref(),
+                    body,
+                );
+                self.write(";");
 
                 for init in computed_prop_temp_inits {
                     self.write_line();
@@ -1189,6 +1215,62 @@ impl<'a> IRPrinter<'a> {
                     self.write(";");
                 }
                 // Emit deferred static block IIFEs after the class IIFE
+                for deferred in deferred_static_blocks {
+                    self.write_line();
+                    self.write_indent();
+                    self.emit_node(deferred);
+                }
+            }
+            IRNode::ES5ClassAssignment {
+                name,
+                base_class,
+                super_param,
+                body,
+                computed_prop_temp_inits,
+                weakmap_inits,
+                leading_comment,
+                deferred_static_blocks,
+                deferred_block_class_alias,
+            } => {
+                if !self.remove_comments
+                    && let Some(comment) = leading_comment
+                {
+                    self.write(comment);
+                    self.write_line();
+                    self.write_indent();
+                }
+
+                self.write(name);
+                self.write(" = ");
+                self.emit_es5_class_expression(
+                    name,
+                    base_class.as_deref(),
+                    super_param.as_deref(),
+                    body,
+                );
+                self.write(";");
+
+                for init in computed_prop_temp_inits {
+                    self.write_line();
+                    self.write_indent();
+                    self.emit_node(init);
+                }
+
+                if !weakmap_inits.is_empty() {
+                    self.write_line();
+                    self.write(&weakmap_inits.join(", "));
+                    self.write(";");
+                }
+
+                if let Some(alias) = deferred_block_class_alias {
+                    self.write_line();
+                    self.write_indent();
+                    self.write(alias);
+                    self.write(" = ");
+                    self.write(name);
+                    self.write(";");
+                }
+
                 for deferred in deferred_static_blocks {
                     self.write_line();
                     self.write_indent();
@@ -1436,6 +1518,7 @@ impl<'a> IRPrinter<'a> {
                 generator_body,
                 hoisted_var_groups,
                 promise_constructor,
+                multiline_callback,
             } => {
                 let previous_generator_state_name = self.generator_state_name;
                 let hoisted_vars: Vec<&str> = hoisted_var_groups
@@ -1452,7 +1535,7 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     self.write(", void 0, void 0, function () {");
                 }
-                if hoisted_var_groups.is_empty() {
+                if hoisted_var_groups.is_empty() && !multiline_callback {
                     // TSC keeps the generator call on the awaiter callback's
                     // opening line when no hoisted variables are needed.
                     self.write(" ");
@@ -2475,6 +2558,13 @@ impl<'a> IRPrinter<'a> {
         }
 
         self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+    }
+
+    fn emit_empty_block_multiline(&mut self) {
+        self.write("{");
+        self.write_line();
         self.write_indent();
         self.write("}");
     }

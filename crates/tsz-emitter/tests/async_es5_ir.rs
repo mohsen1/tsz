@@ -18,6 +18,25 @@ fn transform_and_print(source: &str) -> String {
     }
 }
 
+#[test]
+fn test_class_declaration_in_async_body_uses_structured_es5_assignment() {
+    let output =
+        transform_and_print("async function foo() { class C extends B { static { await; } } }");
+
+    assert!(
+        output.contains("var C;\n        return __generator"),
+        "Class declarations inside async bodies should hoist the class binding to the awaiter scope.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("C = /** @class */ (function (_super)"),
+        "Class declarations inside async bodies should lower to an assignment, not raw class syntax.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class C extends B"),
+        "Async generator cases must not fall back to raw class source.\nOutput:\n{output}"
+    );
+}
+
 fn transform_generator_and_print(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
