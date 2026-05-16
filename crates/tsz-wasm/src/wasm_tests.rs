@@ -874,3 +874,38 @@ fn test_wasm_language_service_function_member_completions() {
         }
     }
 }
+
+#[test]
+fn test_wasm_language_service_array_member_completions() {
+    let cases: &[(&str, u32, u32, &str)] = &[
+        ("const arr = [1, 2, 3];\narr.", 1, 4, "array-literal"),
+        ("const arr: number[] = [];\narr.", 1, 4, "typed-array"),
+        ("const t: [string, number] = [\"a\", 1];\nt.", 1, 2, "tuple"),
+    ];
+    for (source, line, character, desc) in cases {
+        let labels = completion_labels_at(source, *line, *character);
+        for expected in ["length", "push", "pop", "map", "filter", "forEach", "slice"] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "expected `{expected}` in {desc} completions but got {labels:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_wasm_language_service_primitive_excludes_constructor() {
+    let cases: &[(&str, u32, u32, &str)] = &[
+        ("const b = true;\nb.", 1, 2, "boolean-literal"),
+        ("const b: boolean = false;\nb.", 1, 2, "typed-boolean"),
+        ("const n = 42;\nn.", 1, 2, "number-literal"),
+        ("const s: string = \"\";\ns.", 1, 2, "typed-string"),
+    ];
+    for (source, line, character, desc) in cases {
+        let labels = completion_labels_at(source, *line, *character);
+        assert!(
+            !labels.iter().any(|l| l == "constructor"),
+            "`constructor` must not appear in {desc} completions, got {labels:?}"
+        );
+    }
+}

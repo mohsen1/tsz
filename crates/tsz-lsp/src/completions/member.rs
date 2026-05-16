@@ -1326,6 +1326,11 @@ impl<'a> Completions<'a> {
     ) {
         let members = apparent_primitive_members(interner, kind);
         for member in members {
+            // tsc excludes `constructor` from primitive member completions
+            // even though `Object.prototype.constructor` is structurally present
+            if member.name == "constructor" {
+                continue;
+            }
             let type_id = match member.kind {
                 ApparentMemberKind::Value(type_id) | ApparentMemberKind::Method(type_id) => type_id,
             };
