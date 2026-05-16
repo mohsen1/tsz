@@ -58,12 +58,40 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(current) else {
                 continue;
             };
-            if node.kind == SyntaxKind::AnyKeyword as u16 {
+            if node.kind == SyntaxKind::AnyKeyword as u16
+                || self.is_bare_any_keyword_type_reference(node)
+            {
                 return true;
             }
             stack.extend(self.ctx.arena.get_children(current));
         }
         false
+    }
+
+    fn is_bare_any_keyword_type_reference(&self, node: &tsz_parser::parser::node::Node) -> bool {
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "any")
     }
 
     pub(crate) fn generic_indexed_access_argument_surface(&self, type_id: TypeId) -> bool {
