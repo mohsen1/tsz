@@ -2918,16 +2918,13 @@ namespace JSX {
 
 fn make_children_union_source(children_type: &str, jsx_body: &str) -> String {
     format!(
-        r#"{prelude}
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
 interface Props {{ children: {children_type}; }}
 declare function Comp(p: Props): JSX.Element;
 declare function A(): JSX.Element;
 declare function B(): JSX.Element;
 {jsx_body}
 "#,
-        prelude = JSX_CHILDREN_UNION_PRELUDE,
-        children_type = children_type,
-        jsx_body = jsx_body,
     )
 }
 
@@ -2972,14 +2969,13 @@ fn jsx_children_union_three_direct_children_no_ts2322() {
 fn jsx_children_union_node_name_variant_no_ts2322() {
     // Verify fix is not tied to the name "Element": use a user-defined Node type.
     let src = format!(
-        r#"{prelude}
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
 interface MyNode {{}}
 interface NodeProps {{ children: MyNode | MyNode[]; }}
 declare function Widget(p: NodeProps): JSX.Element;
 declare function Child(): JSX.Element;
 let k = <Widget><Child /><Child /></Widget>;
 "#,
-        prelude = JSX_CHILDREN_UNION_PRELUDE
     );
     let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
     assert!(
