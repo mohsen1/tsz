@@ -84,15 +84,25 @@ pub(crate) fn is_symbol_call_initializer(arena: &NodeArena, init_idx: NodeIndex)
 }
 
 pub(crate) fn has_declared_unique_symbol_owner(arena: &NodeArena, idx: NodeIndex) -> bool {
-    let Some(parent) = arena
-        .get_extended(idx)
-        .and_then(|ext| arena.get(ext.parent))
-    else {
+    let Some(parent_ext) = arena.get_extended(idx) else {
+        return false;
+    };
+    let parent_idx = parent_ext.parent;
+    let Some(parent) = arena.get(parent_idx) else {
         return false;
     };
 
     if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION {
         return true;
+    }
+
+    // `static readonly p: unique symbol` on a class owns a unique-symbol
+    // identity, the same way a `const x: unique symbol` does.
+    if parent.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+        let owner_idx = arena.get_extended(parent_idx).map(|ext| ext.parent);
+        if is_static_readonly_class_property(arena, parent_idx, owner_idx) {
+            return true;
+        }
     }
 
     if parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
@@ -120,4 +130,32 @@ pub(crate) fn has_declared_unique_symbol_owner(arena: &NodeArena, idx: NodeIndex
     }
 
     false
+}
+
+/// Returns true when `prop_idx` is a property declaration whose modifier list
+/// contains both `static` and `readonly`, and whose immediate owner is a
+/// class declaration/expression. Caller passes `owner_idx` (the property's
+/// parent) to avoid re-resolving `arena.get_extended(prop_idx)`.
+fn is_static_readonly_class_property(
+    arena: &NodeArena,
+    prop_idx: NodeIndex,
+    owner_idx: Option<NodeIndex>,
+) -> bool {
+    let Some(node) = arena.get(prop_idx) else {
+        return false;
+    };
+    let Some(prop) = arena.get_property_decl(node) else {
+        return false;
+    };
+    if !arena.is_static(&prop.modifiers) {
+        return false;
+    }
+    if !arena.has_modifier(&prop.modifiers, SyntaxKind::ReadonlyKeyword) {
+        return false;
+    }
+    let Some(owner) = owner_idx.and_then(|idx| arena.get(idx)) else {
+        return false;
+    };
+    owner.kind == syntax_kind_ext::CLASS_DECLARATION
+        || owner.kind == syntax_kind_ext::CLASS_EXPRESSION
 }
