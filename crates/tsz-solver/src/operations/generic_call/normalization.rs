@@ -80,6 +80,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if param_is_direct_union {
             return None;
         }
+        if !return_is_tp
+            && !matches!(
+                self.interner.lookup(arg_types[0]),
+                Some(TypeData::TypeParameter(_))
+            )
+        {
+            return None;
+        }
 
         // Bail out for self-referential constraints like `T extends Test<keyof T>`.
         // The fast path cannot properly instantiate the constraint with the inferred
@@ -166,7 +174,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && self.checker.is_assignable_to(arg_ty, ctx_type)
                 });
                 if should_preserve_literal
-                    || crate::visitor::is_literal_type(self.interner.as_type_database(), arg_ty)
+                    || (return_is_tp
+                        && crate::visitor::is_literal_type(
+                            self.interner.as_type_database(),
+                            arg_ty,
+                        ))
                 {
                     arg_ty
                 } else {
