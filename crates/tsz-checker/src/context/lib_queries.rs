@@ -68,6 +68,10 @@ impl<'a> CheckerContext<'a> {
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 
+        if !self.binder.is_external_module() {
+            return false;
+        }
+
         if self.current_file_type_shadow_for_name(name) {
             return true;
         }
@@ -88,6 +92,10 @@ impl<'a> CheckerContext<'a> {
 
     fn current_file_type_shadow_for_name(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
+
+        if !self.binder.is_external_module() {
+            return false;
+        }
 
         let Some(entries) = self
             .global_file_locals_index
@@ -162,6 +170,10 @@ impl<'a> CheckerContext<'a> {
         &self,
         name: &str,
     ) -> Option<SymbolId> {
+        if !self.binder.is_external_module() {
+            return None;
+        }
+
         self.arena.nodes.iter().enumerate().find_map(|(idx, _)| {
             let decl_idx = tsz_parser::NodeIndex(idx as u32);
             if self.is_global_augmentation_declaration(name, self.arena, decl_idx) {
@@ -174,6 +186,10 @@ impl<'a> CheckerContext<'a> {
     }
 
     pub(crate) fn same_file_type_declaration_exists(&self, name: &str) -> bool {
+        if !self.binder.is_external_module() {
+            return false;
+        }
+
         self.arena.nodes.iter().enumerate().any(|(idx, _)| {
             let decl_idx = tsz_parser::NodeIndex(idx as u32);
             !self.is_global_augmentation_declaration(name, self.arena, decl_idx)
