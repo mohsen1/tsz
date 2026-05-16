@@ -1596,13 +1596,9 @@ mod tests {
 mod integration_tests {
     use crate::test_utils::check_source_codes;
 
-    // ---- Promise / lib ref lowering ----
-
     #[test]
     fn promise_type_annotation_no_error() {
-        // Without lib contexts, Promise is unknown. We just verify no crash.
         let codes = check_source_codes("let p: Promise<number>;");
-        // TS2304 (Cannot find name) or TS2583 (needs lib change) expected without libs
         assert!(
             codes.contains(&2304) || codes.contains(&2583) || codes.is_empty(),
             "Promise without libs should produce TS2304/TS2583 or pass: {codes:?}"
@@ -1611,21 +1607,16 @@ mod integration_tests {
 
     #[test]
     fn async_function_returns_promise_no_crash() {
-        // Async functions implicitly return Promise — verify no panic during lowering
         let _codes = check_source_codes("async function f(): Promise<string> { return ''; }");
     }
 
     #[test]
     fn generic_lib_ref_annotation_no_crash() {
-        // Generic lib-like types referenced without lib contexts should not crash
         let _codes = check_source_codes("let a: Array<number> = [];");
     }
 
-    // ---- import type lowering ----
-
     #[test]
     fn import_type_basic_no_crash() {
-        // import() type expressions should not crash the lowering pipeline
         let _codes = check_source_codes("type T = import('./other').Foo;");
     }
 
@@ -1634,14 +1625,11 @@ mod integration_tests {
         let _codes = check_source_codes("type T = import('./other').Bar<number>;");
     }
 
-    // ---- lib keyword type refs ----
-
     #[test]
     fn keyword_type_refs_no_error() {
         let codes = check_source_codes(
             "let s: string; let n: number; let b: boolean; let v: void; let u: undefined;",
         );
-        // Keyword types always resolve (no lib needed)
         assert!(
             codes.is_empty(),
             "Keyword type annotations should produce no errors: {codes:?}"
@@ -1661,7 +1649,6 @@ mod integration_tests {
     #[test]
     fn null_and_never_types_no_error() {
         let codes = check_source_codes("let n: null = null; let x: never = undefined as never;");
-        // 'never' assignment may error, but should not crash
         let _ = codes;
     }
 
@@ -1674,11 +1661,8 @@ mod integration_tests {
         );
     }
 
-    // ---- Promise lowering edge cases ----
-
     #[test]
     fn promise_nested_generic_no_crash() {
-        // Nested Promise generics should not crash during lib lowering
         let _codes = check_source_codes("let p: Promise<Promise<number>>;");
     }
 
@@ -1704,8 +1688,6 @@ mod integration_tests {
         // PromiseLike is a separate lib interface
         let _codes = check_source_codes("let p: PromiseLike<string>;");
     }
-
-    // ---- lib ref lowering: generic types ----
 
     #[test]
     fn map_type_no_crash() {
