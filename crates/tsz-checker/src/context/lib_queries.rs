@@ -57,7 +57,9 @@ impl<'a> CheckerContext<'a> {
         use tsz_binder::symbol_flags;
 
         self.binder.file_locals.get(name).is_some_and(|sym_id| {
-            !self.symbol_is_from_actual_or_cloned_lib(sym_id)
+            let is_actual_or_merged_lib = self.symbol_is_from_actual_lib(sym_id)
+                || self.binder.lib_symbol_ids.contains(&sym_id);
+            !is_actual_or_merged_lib
                 && self
                     .binder
                     .get_symbol(sym_id)

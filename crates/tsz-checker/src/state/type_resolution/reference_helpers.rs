@@ -418,7 +418,11 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
                                     .or_else(|| {
                                         self.resolve_entity_name_text_to_def_id_for_lowering(name)
                                     })
@@ -430,7 +434,11 @@ impl<'a> CheckerState<'a> {
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
                                     .or_else(|| {
                                         self.resolve_entity_name_text_to_def_id_for_lowering(name)
                                     })
@@ -439,7 +447,11 @@ impl<'a> CheckerState<'a> {
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                                .then(|| {
+                                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                })
+                                .flatten()
                                 .or_else(|| {
                                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                                 })
@@ -470,7 +482,11 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
                                     .or_else(|| {
                                         self.resolve_entity_name_text_to_def_id_for_lowering(name)
                                     })
@@ -482,7 +498,11 @@ impl<'a> CheckerState<'a> {
                         };
                         let def_id_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {
-                                self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                (!self.ctx.file_local_type_shadow_for_lib_name(name))
+                                    .then(|| {
+                                        self.resolve_actual_lib_name_to_def_id_for_lowering(name)
+                                    })
+                                    .flatten()
                                     .or_else(|| {
                                         self.resolve_entity_name_text_to_def_id_for_lowering(name)
                                     })
@@ -491,7 +511,11 @@ impl<'a> CheckerState<'a> {
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                         let name_resolver = |type_name: &str| {
-                            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                                .then(|| {
+                                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                })
+                                .flatten()
                                 .or_else(|| {
                                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
                                 })

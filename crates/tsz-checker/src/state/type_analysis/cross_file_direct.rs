@@ -1279,7 +1279,9 @@ impl<'a> CheckerState<'a> {
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
-            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                .then(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
+                .flatten()
                 .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
         };
         let no_type_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
