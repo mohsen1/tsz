@@ -602,6 +602,10 @@ pub struct Printer<'a> {
     /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
     pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
 
+    /// Source span of a parser-recovery expression statement already folded into
+    /// the previous variable statement's emitted initializer.
+    pub(crate) consumed_recovered_expression_statement_span: Option<(u32, u32, String)>,
+
     /// Pending `super` capture declarations for lowered async arrows in a method body.
     pub(crate) pending_lowered_async_arrow_super_capture: Option<(
         crate::transforms::emit_utils::AsyncMethodSuperCapture,
@@ -957,6 +961,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
+            consumed_recovered_expression_statement_span: None,
             pending_lowered_async_arrow_super_capture: None,
             function_scope_depth: 0,
             arrow_function_scope_depth: 0,
