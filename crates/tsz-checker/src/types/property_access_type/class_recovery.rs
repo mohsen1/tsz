@@ -175,6 +175,77 @@ impl<'a> CheckerState<'a> {
             .map(|member| member.type_id)
     }
 
+    pub(super) fn recover_direct_this_class_chain_member(
+        &mut self,
+        direct_class_this_receiver: bool,
+        used_class_chain_method_type: bool,
+        receiver_expr: NodeIndex,
+        property_name: &str,
+        prop_type: TypeId,
+        object_type_for_access: TypeId,
+        original_object_type: TypeId,
+    ) -> Option<(TypeId, bool)> {
+        if used_class_chain_method_type
+            || !direct_class_this_receiver
+            || object_type_for_access != original_object_type
+            || self.enclosing_class_declares_member(property_name)
+        {
+            return None;
+        }
+
+        let summary = self.summarize_class_chain(self.nearest_enclosing_class(receiver_expr)?);
+        let member = summary.member_info(property_name, false, true)?;
+        if member.from_interface
+            || matches!(
+                member.type_id,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+            )
+            || member.type_id == prop_type
+        {
+            return None;
+        }
+
+        Some((member.type_id, member.is_method || member.is_accessor))
+    }
+
+    fn enclosing_class_declares_member(&self, property_name: &str) -> bool {
+        self.ctx.enclosing_class.as_ref().is_some_and(|class_info| {
+            class_info.member_nodes.iter().any(|&member_idx| {
+                self.get_member_name(member_idx).as_deref() == Some(property_name)
+            })
+        })
+    }
+
+    pub(super) fn substitute_direct_this_property_shape_type(
+        &self,
+        direct_class_this_receiver: bool,
+        used_class_chain_method_type: bool,
+        object_type_for_access: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        if used_class_chain_method_type || !direct_class_this_receiver {
+            return None;
+        }
+
+        let shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            object_type_for_access,
+        )?;
+        let raw_prop = shape
+            .properties
+            .iter()
+            .find(|prop| self.ctx.types.resolve_atom_ref(prop.name).as_ref() == property_name)?;
+        crate::query_boundaries::common::contains_this_type(self.ctx.types, raw_prop.type_id).then(
+            || {
+                crate::query_boundaries::common::substitute_this_type(
+                    self.ctx.types,
+                    raw_prop.type_id,
+                    self.ctx.types.this_type(),
+                )
+            },
+        )
+    }
+
     pub(super) fn has_recoverable_current_class_member(
         &mut self,
         is_current_class_member_initializer_receiver: bool,
