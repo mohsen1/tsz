@@ -12,7 +12,13 @@
 
 steps:
   - id: unit-test
-    name: rust:1
+    # Pin rustc to match the Cloud Run self-hosted runner's toolchain
+    # (verified 1.95.0 on 2026-05-16). The bare `rust:1` tag floats forward
+    # and surfaced determinism gaps in overload resolution
+    # (test `overload_with_outer_contextual_type_no_spurious_ts2769`) — the
+    # checker's std HashMap iteration order is rustc-version-sensitive in
+    # one code path. Same rustc → same behaviour.
+    name: rust:1.95
     env:
       # Use all available vCPUs. CARGO_BUILD_JOBS is workspace-wide.
       - 'CARGO_BUILD_JOBS=32'
