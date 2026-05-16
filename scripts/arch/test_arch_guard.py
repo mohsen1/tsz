@@ -1477,9 +1477,9 @@ const COMPATIBILITY_CORPUS_ROWS = [
 class ArchGuardRegexLineCountTests(unittest.TestCase):
     """Cover Track 10 count ratchets in `REGEX_LINE_COUNT_CHECKS`.
 
-    These checks make post-check fingerprint rewrites, checker source-text
-    snippet decisions, and rendered-type string decisions visible in the
-    shared architecture guard output.
+    These checks make post-check fingerprint rewrites, checker and emitter
+    source-text snippet decisions, and rendered-type string decisions visible
+    in the shared architecture guard output.
     """
 
     def setUp(self):
@@ -1528,6 +1528,19 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
         self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
         self.assertIn("source_decision.rs:1", hits[0])
+
+    def test_flags_emitter_source_text_contains_lines(self):
+        pattern, _max_lines = self._check_by_name("Emitter boundary")
+        root = self._make_tree(
+            {
+                "crates/tsz-emitter/src/recovery.rs": (
+                    'if source_text.contains("malformed emit shape") {}\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("recovery.rs:1", hits[0])
 
     def test_flags_file_name_and_path_substring_decisions(self):
         pattern, _max_lines = self._check_by_name("file-name/path")
@@ -1595,6 +1608,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         names = [entry[0] for entry in self.arch_guard.REGEX_LINE_COUNT_CHECKS]
         self.assertTrue(any("post-check" in name for name in names))
         self.assertTrue(any("source_text.contains" in name for name in names))
+        self.assertTrue(any("Emitter boundary" in name for name in names))
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
 
