@@ -310,6 +310,56 @@ mod tests {
     }
 
     #[test]
+    fn strict_prologue_leading_comment_moves_before_helpers() {
+        let source = "// issue comment\n\"use strict\";\nclass A {}\nclass B extends A { constructor() { super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.starts_with("// issue comment\n\"use strict\";\nvar __extends = "),
+            "Leading comments attached to a source strict prologue should move before helpers with the prologue.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_with_prefix_statements_returns_tail_super_call() {
+        let source = "class A {}\nclass B extends A { constructor() { \"ngInject\"; console.log(\"B\"); super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("\"ngInject\";\n        console.log(\"B\");\n        return _super.call(this) || this;"),
+            "Derived constructor with final super() should not materialize _this when no later statement needs it.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var _this = _super.call(this) || this;"),
+            "Tail super return should avoid the _this temp.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_async_method_with_multiply_default_stays_async_function() {
         let source = "declare var a: number, b: number;\ndeclare function g(): Promise<void>;\nvar o = { async m(x = a * b) { await g(); } };\n";
 
