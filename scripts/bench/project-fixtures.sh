@@ -331,6 +331,12 @@ type Equal<X, Y> =
   (<T>() => T extends Y ? 1 : 2)
     ? true
     : false;
+
+interface TreeNode {
+  val: number;
+  left: TreeNode | null;
+  right: TreeNode | null;
+}
 TYPES
 
   cat > "$compile_dir/tsconfig.tsz-guard.json" <<'JSON'
