@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::TypeData;
 use rustc_hash::FxHashMap;
 
-use super::{DiscriminantInfo, NarrowingContext, union_or_single_preserve};
+use super::{CachedPropertyType, DiscriminantInfo, NarrowingContext, union_or_single_preserve};
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::relations::subtype::is_subtype_of;
 use crate::type_queries::{
@@ -288,28 +288,33 @@ impl<'a> NarrowingContext<'a> {
         if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
             // Don't trust a cached Lazy type — re-resolve in case the TypeEnvironment
             // has been populated since the cache entry was created.
-            if let Some(prop_type) = cached {
+            if let Some(entry) = cached {
+                let prop_type = entry.type_id;
                 if prop_type != TypeId::ERROR
                     && !matches!(
                         self.db.lookup(prop_type),
                         Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
                     )
                 {
-                    return cached;
+                    return Some(prop_type);
                 }
                 // Re-resolve symbolic/error property types; an earlier no-resolver
                 // lookup may have run before the checker populated the environment.
                 let re_resolved = self.resolve_type(prop_type);
                 if re_resolved != prop_type {
+                    let re_resolved_entry = CachedPropertyType {
+                        type_id: re_resolved,
+                        from_index_signature: entry.from_index_signature,
+                    };
                     self.cache
                         .property_cache
                         .borrow_mut()
-                        .insert(key, Some(re_resolved));
+                        .insert(key, Some(re_resolved_entry));
                     return Some(re_resolved);
                 }
-                return cached;
+                return Some(prop_type);
             }
-            return cached;
+            return None;
         }
 
         // Cache the resolved property type so hot paths avoid an extra resolve pass.
@@ -329,7 +334,10 @@ impl<'a> NarrowingContext<'a> {
             None => true,
         };
         if should_cache {
-            self.cache.property_cache.borrow_mut().insert(key, result);
+            self.cache
+                .property_cache
+                .borrow_mut()
+                .insert(key, result.map(CachedPropertyType::explicit));
         }
         result
     }

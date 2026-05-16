@@ -5,7 +5,7 @@
 //! - Property type lookup for narrowing
 //! - Object-like type detection for instanceof support
 
-use super::NarrowingContext;
+use super::{CachedPropertyType, NarrowingContext};
 use crate::types::{ObjectFlags, ObjectShapeId, PropertyInfo, TypeData, TypeId, Visibility};
 use crate::visitor::{
     intersection_list_id, object_shape_id, object_with_index_shape_id, type_param_info,
@@ -412,28 +412,42 @@ impl<'a> NarrowingContext<'a> {
     ///
     /// Returns Some(type) if the property exists, None otherwise.
     pub(crate) fn get_property_type(&self, type_id: TypeId, property_name: Atom) -> Option<TypeId> {
+        self.get_property_type_entry(type_id, property_name)
+            .map(|entry| entry.type_id)
+    }
+
+    fn get_property_type_entry(
+        &self,
+        type_id: TypeId,
+        property_name: Atom,
+    ) -> Option<CachedPropertyType> {
         let resolved_type = self.resolve_type(type_id);
         let key = (resolved_type, self.resolver_generation(), property_name);
 
         if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
-            if let Some(cached_prop_type) = cached {
+            if let Some(cached_entry) = cached {
+                let cached_prop_type = cached_entry.type_id;
                 if cached_prop_type != TypeId::ERROR
                     && !matches!(
                         self.db.lookup(cached_prop_type),
                         Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
                     )
                 {
-                    return Some(cached_prop_type);
+                    return Some(cached_entry);
                 }
                 let resolved_cached = self.resolve_type(cached_prop_type);
                 if resolved_cached != cached_prop_type {
+                    let resolved_entry = CachedPropertyType {
+                        type_id: resolved_cached,
+                        from_index_signature: cached_entry.from_index_signature,
+                    };
                     self.cache
                         .property_cache
                         .borrow_mut()
-                        .insert(key, Some(resolved_cached));
-                    return Some(resolved_cached);
+                        .insert(key, Some(resolved_entry));
+                    return Some(resolved_entry);
                 }
-                return Some(cached_prop_type);
+                return Some(cached_entry);
             }
             return None;
         }
@@ -451,10 +465,10 @@ impl<'a> NarrowingContext<'a> {
         // Don't cache unresolved symbolic/error property types for the same reason as
         // discriminant lookups.
         let should_cache = match result {
-            Some(prop_type) => {
-                prop_type != TypeId::ERROR
+            Some(entry) => {
+                entry.type_id != TypeId::ERROR
                     && !matches!(
-                        self.db.lookup(prop_type),
+                        self.db.lookup(entry.type_id),
                         Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
                     )
             }
@@ -470,10 +484,10 @@ impl<'a> NarrowingContext<'a> {
         &self,
         resolved_type: TypeId,
         property_name: Atom,
-    ) -> Option<TypeId> {
+    ) -> Option<CachedPropertyType> {
         // Check intersection types - property exists if ANY member has it
         if let Some(prop) = self.get_property_info(resolved_type, property_name) {
-            return Some(prop.type_id);
+            return Some(CachedPropertyType::explicit(prop.type_id));
         }
 
         if let Some(members_id) = intersection_list_id(self.db, resolved_type) {
@@ -482,8 +496,8 @@ impl<'a> NarrowingContext<'a> {
             for &member in members.iter() {
                 // Resolve each member in the intersection
                 let resolved_member = self.resolve_type(member);
-                if let Some(prop_type) = self.get_property_type(resolved_member, property_name) {
-                    return Some(prop_type);
+                if let Some(entry) = self.get_property_type_entry(resolved_member, property_name) {
+                    return Some(entry);
                 }
             }
             return None;
@@ -495,21 +509,21 @@ impl<'a> NarrowingContext<'a> {
 
             // Check if the property exists in the object's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, property_name) {
-                return Some(prop.type_id);
+                return Some(CachedPropertyType::explicit(prop.type_id));
             }
 
             // Check index signatures
             // If the object has a string index signature, it has any string property
             if let Some(ref string_idx) = shape.string_index {
                 // String index signature matches any string property
-                return Some(string_idx.value_type);
+                return Some(CachedPropertyType::index_signature(string_idx.value_type));
             }
 
             // If the object has a number index signature and the property name is numeric
             if let Some(ref number_idx) = shape.number_index {
                 let prop_str = self.db.resolve_atom_ref(property_name);
                 if prop_str.chars().all(|c| c.is_ascii_digit()) {
-                    return Some(number_idx.value_type);
+                    return Some(CachedPropertyType::index_signature(number_idx.value_type));
                 }
             }
 
@@ -522,18 +536,18 @@ impl<'a> NarrowingContext<'a> {
 
             // Check properties first
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, property_name) {
-                return Some(prop.type_id);
+                return Some(CachedPropertyType::explicit(prop.type_id));
             }
 
             // Check index signatures
             if let Some(ref string_idx) = shape.string_index {
-                return Some(string_idx.value_type);
+                return Some(CachedPropertyType::index_signature(string_idx.value_type));
             }
 
             if let Some(ref number_idx) = shape.number_index {
                 let prop_str = self.db.resolve_atom_ref(property_name);
                 if prop_str.chars().all(|c| c.is_ascii_digit()) {
-                    return Some(number_idx.value_type);
+                    return Some(CachedPropertyType::index_signature(number_idx.value_type));
                 }
             }
 

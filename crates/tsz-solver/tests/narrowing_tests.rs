@@ -267,7 +267,50 @@ fn test_in_property_narrowing_reuses_property_cache() {
     // Ensure the property cache includes the resolved object-shape lookup path
     // and can be reused across guard sense changes.
     let kind_key = (obj, resolver_generation, kind_name);
-    assert!(cache.property_cache.borrow().contains_key(&kind_key));
+    let cached_kind = cache
+        .property_cache
+        .borrow()
+        .get(&kind_key)
+        .and_then(|entry| *entry)
+        .expect("expected cached explicit property lookup");
+    assert_eq!(cached_kind.type_id, TypeId::STRING);
+    assert!(!cached_kind.from_index_signature);
+}
+
+#[test]
+fn test_in_property_narrowing_preserves_index_signature_cache_origin() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let key_name = interner.intern_string("dynamic");
+
+    let record_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let union = interner.union(vec![record_type, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(key_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, record_type);
+
+    let key = (record_type, ctx.resolver_generation(), key_name);
+    let cached_entry = cache
+        .property_cache
+        .borrow()
+        .get(&key)
+        .and_then(|entry| *entry)
+        .expect("expected cached index-signature property lookup");
+    assert_eq!(cached_entry.type_id, TypeId::STRING);
+    assert!(cached_entry.from_index_signature);
 }
 
 #[test]

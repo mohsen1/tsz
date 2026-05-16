@@ -301,7 +301,36 @@ pub struct DiscriminantInfo {
 type DiscriminantMembers = FxHashMap<TypeId, Vec<TypeId>>;
 type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
 type PropertyCacheKey = (TypeId, u64, Atom);
-type NarrowedPropertyCache = FxHashMap<PropertyCacheKey, Option<TypeId>>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CachedPropertyType {
+    pub type_id: TypeId,
+    pub from_index_signature: bool,
+}
+
+impl CachedPropertyType {
+    pub const fn new(type_id: TypeId, from_index_signature: bool) -> Self {
+        Self {
+            type_id,
+            from_index_signature,
+        }
+    }
+
+    pub const fn explicit(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            from_index_signature: false,
+        }
+    }
+
+    pub const fn index_signature(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            from_index_signature: true,
+        }
+    }
+}
+
+type NarrowedPropertyCache = FxHashMap<PropertyCacheKey, Option<CachedPropertyType>>;
 type RequiredPropertyCache = FxHashMap<PropertyCacheKey, bool>;
 
 /// Narrowing context for type guards and control flow analysis.

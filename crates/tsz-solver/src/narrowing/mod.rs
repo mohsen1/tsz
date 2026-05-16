@@ -46,8 +46,8 @@ pub use self::compound::NullishFilter;
 
 // Re-export all public items from core implementation
 pub use self::core::{
-    DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext, NarrowingResult,
-    OptionalPropertyChainKey, TypeGuard, TypeofKind,
+    CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
+    NarrowingResult, OptionalPropertyChainKey, TypeGuard, TypeofKind,
 };
 pub(crate) use self::core::{union_excluding_one, union_or_single_preserve};
 
