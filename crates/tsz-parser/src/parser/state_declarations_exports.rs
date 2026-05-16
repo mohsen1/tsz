@@ -2035,18 +2035,17 @@ impl ParserState {
         // Optional label — matching tsc's isIdentifier() which returns false for
         // `await` in await/static-block context and `yield` in generator context.
         // When the label would be a contextually reserved word (e.g., `break await;` in a
-        // static block), tsc's parseIdentifier emits TS1003 "Identifier expected".
+        // static block), tsc's parseIdentifier emits TS1003 "Identifier expected" and
+        // leaves the token unconsumed. The outer statement loop then re-parses the
+        // reserved word as an expression statement (e.g. `await` as an await expression
+        // with a missing operand), which is where TS1109 originates.
         let label = if !self.can_parse_semicolon_for_restricted_production()
             && self.is_identifier_or_keyword()
         {
             if self.is_contextually_reserved_label() {
                 // Emit TS1003 matching tsc's createIdentifier(false) behavior
                 self.error_identifier_expected();
-                if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
-                    self.parse_identifier_name()
-                } else {
-                    NodeIndex::NONE
-                }
+                NodeIndex::NONE
             } else {
                 self.parse_identifier_name()
             }
@@ -2071,19 +2070,16 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ContinueKeyword);
 
         // For restricted productions (continue), ASI applies immediately after line break
-        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        // Optional label — matching tsc's isIdentifier() which returns false for
-        // `await` in await/static-block context and `yield` in generator context.
+        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon().
+        // For contextually reserved-word labels (e.g. `continue await` in a static block),
+        // see `parse_break_statement` above for the full rationale: emit TS1003 and leave
+        // the token unconsumed so the outer loop can re-parse it as an expression.
         let label = if !self.can_parse_semicolon_for_restricted_production()
             && self.is_identifier_or_keyword()
         {
             if self.is_contextually_reserved_label() {
                 self.error_identifier_expected();
-                if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
-                    self.parse_identifier_name()
-                } else {
-                    NodeIndex::NONE
-                }
+                NodeIndex::NONE
             } else {
                 self.parse_identifier_name()
             }

@@ -298,7 +298,8 @@ subjective "cleanup" language.
 7. Emitter/DTS direct solver imports, direct type evaluation during printing,
    and `TypeData`/`lookup()` guardrail exceptions. The current direct
    `tsz_solver` import guard outside solver/checker is pinned at `39`; reduce
-   it through focused compiler-service/front-door PRs instead of broad cleanup.
+   it through focused compiler-service/front-door PRs instead of broad cleanup,
+   or justify any cap bump in the same PR.
 8. `Printer` and `DeclarationEmitter` ambient state fields, especially fields
    added for one transform or one baseline family.
 9. Emitter/DTS tests that assert fragments instead of exact output or structured

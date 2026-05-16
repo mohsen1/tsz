@@ -1449,6 +1449,23 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
         self.assertIn("source_decision.rs:1", hits[0])
 
+    def test_flags_file_name_and_path_substring_decisions(self):
+        pattern, _max_lines = self._check_by_name("file-name/path")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/file_decision.rs": (
+                    'if file_name.contains("node_modules") {}\n'
+                    "if source_file.file_name.contains(\"node_modules\") {}\n"
+                    'if !source_path.contains("/node_modules/") {}\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("file_decision.rs:1", hits[0])
+        self.assertIn("file_decision.rs:2", hits[1])
+        self.assertIn("file_decision.rs:3", hits[2])
+
     def test_flags_rendered_type_string_decisions(self):
         pattern, _max_lines = self._check_by_name("rendered type strings")
         root = self._make_tree(
@@ -1498,6 +1515,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         names = [entry[0] for entry in self.arch_guard.REGEX_LINE_COUNT_CHECKS]
         self.assertTrue(any("post-check" in name for name in names))
         self.assertTrue(any("source_text.contains" in name for name in names))
+        self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
 
     def test_real_counts_pass_at_pinned_caps(self):

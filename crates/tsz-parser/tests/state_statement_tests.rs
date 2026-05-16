@@ -1813,6 +1813,74 @@ fn test_await_label_in_static_block_emits_ts1109() {
     );
 }
 
+/// `break <reserved-word>` in a context where the reserved word cannot be used
+/// as a label must emit TS1003 (Identifier expected) AND continue parsing the
+/// reserved word as an expression — for `await` in a static block this yields
+/// TS1109 (Expression expected) at the missing operand. tsc emits both; tsz
+/// previously consumed `await` as a (mis-named) label and missed the TS1109.
+#[test]
+fn test_break_reserved_word_in_static_block_emits_ts1003_and_ts1109() {
+    let source = r#"class C {
+    static {
+        break await;
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 for `break await` reserved-label in static block, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 for the await expression missing operand, got: {codes:?}"
+    );
+}
+
+/// Same structural rule for `continue <reserved-word>` — exercises the
+/// parallel branch in `parse_continue_statement`.
+#[test]
+fn test_continue_reserved_word_in_static_block_emits_ts1003_and_ts1109() {
+    let source = r#"class C {
+    static {
+        foo: while (true) {
+            continue await;
+        }
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 for `continue await` reserved-label in static block, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 for the await expression missing operand, got: {codes:?}"
+    );
+}
+
+/// Negative: a normal identifier label after `break` must still be accepted
+/// without emitting any of these diagnostics.
+#[test]
+fn test_break_named_label_still_parses_cleanly() {
+    let source = r#"function f() {
+    outer: for (let i = 0; i < 10; i++) {
+        break outer;
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Did not expect TS1003 for `break <named-label>`, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Did not expect TS1109 for `break <named-label>`, got: {codes:?}"
+    );
+}
+
 /// `declare class C extends await {}` in a `.d.ts` file is valid: `await` is
 /// allowed as an identifier in declaration files. Match tsc by suppressing
 /// the parser-level TS1109 emission in `parse_heritage_left_hand_expression_base`.
