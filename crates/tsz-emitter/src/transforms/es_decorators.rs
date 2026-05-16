@@ -29,6 +29,8 @@ pub struct TC39DecoratorEmitter<'a> {
     expression_mode: bool,
     /// Function name for class expression named evaluation (__setFunctionName).
     function_name: Option<String>,
+    /// Runtime temp used for anonymous decorated class expressions.
+    anonymous_class_name: Option<String>,
     /// When true, decorated fields stay as class field declarations (ES2022+).
     /// When false, decorated fields move to constructor assignments.
     use_define_for_class_fields: bool,
@@ -45,6 +47,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             tslib_import_binding: "tslib_1".to_string(),
             expression_mode: false,
             function_name: None,
+            anonymous_class_name: None,
             use_define_for_class_fields: false,
         }
     }
@@ -79,6 +82,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         self.function_name = Some(name);
     }
 
+    pub fn set_anonymous_class_name(&mut self, name: String) {
+        self.anonymous_class_name = Some(name);
+    }
+
     pub const fn set_use_define_for_class_fields(&mut self, use_define: bool) {
         self.use_define_for_class_fields = use_define;
     }
@@ -109,7 +116,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // For anonymous class expressions WITH class decorators, generate a temp name
         // (needed for the var assignment pattern). Without class decorators, keep anonymous.
         let class_name = if class_name.is_empty() && !class_decorators.is_empty() {
-            "class_1".to_string()
+            self.anonymous_class_name
+                .clone()
+                .unwrap_or_else(|| "class_1".to_string())
         } else {
             class_name
         };
@@ -413,9 +422,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{i2}}}\n"));
         }
 
-        let defer_class_init = self.use_static_blocks
-            && has_class_decorators
-            && self.has_user_static_members(&class_data.members);
+        let defer_class_init =
+            has_class_decorators && self.has_user_static_members(&class_data.members);
 
         // --- Emit class members ---
         // At ES2022, class is at indent+1, so members at indent+2.
@@ -460,8 +468,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
             // __setFunctionName
             let set_fn_name = self.helper("__setFunctionName");
+            let set_function_name = if self.expression_mode && class_name_was_empty {
+                self.function_name.as_deref().unwrap_or(&class_name)
+            } else {
+                &class_name
+            };
             out.push_str(&format!(
-                "{i1}{set_fn_name}({class_this_var}, \"{class_name}\");\n"
+                "{i1}{set_fn_name}({class_this_var}, \"{set_function_name}\");\n"
             ));
 
             // Decorator application as separate IIFE
@@ -478,7 +491,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 class_data,
                 &i2,
                 &mut out,
-                false,
+                defer_class_init,
                 &class_descriptor_var,
                 &class_this_var,
                 &class_super_var,
@@ -738,7 +751,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 .filter(|m| m.kind == MemberKind::Accessor)
                 .map(|m| m.member_idx)
                 .collect();
-
         let field_infos = self.collect_decorated_field_info(decorated_members, computed_key_vars);
         let auto_accessor_infos =
             self.collect_decorated_auto_accessor_info(decorated_members, computed_key_vars);
@@ -784,6 +796,24 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .filter_map(|&idx| self.arena.get(idx).map(|n| (idx, n)))
             .collect();
 
+        let mut plain_static_field_idx_set: std::collections::HashSet<NodeIndex> =
+            std::collections::HashSet::new();
+        let mut plain_static_field_assignments: Vec<String> = Vec::new();
+        if !self.use_static_blocks {
+            for (member_idx, member_node) in &all_members {
+                if decorated_field_idx_set.contains(member_idx) {
+                    continue;
+                }
+                let Some(assignment) =
+                    self.plain_static_field_assignment(member_node, _class_alias, indent)
+                else {
+                    continue;
+                };
+                plain_static_field_idx_set.insert(*member_idx);
+                plain_static_field_assignments.push(assignment);
+            }
+        }
+
         // Build assignment injection map
         let mut assignment_queue: Vec<String> = Vec::new();
         let mut injected_assignments: std::collections::HashMap<NodeIndex, Vec<String>> =
@@ -821,6 +851,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 node.kind != syntax_kind_ext::INDEX_SIGNATURE
                     && node.kind != syntax_kind_ext::SEMICOLON_CLASS_ELEMENT
                     && (fields_in_class_body || !decorated_field_idx_set.contains(idx))
+                    && !plain_static_field_idx_set.contains(idx)
             })
             .map(|(i, _)| i)
             .collect();
@@ -958,6 +989,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         // Handle remaining assignments
         let mut external_assignments: Vec<String> = Vec::new();
         let mut post_iife_assignments: Vec<String> = Vec::new();
+        post_iife_assignments.extend(plain_static_field_assignments);
         if !self.use_static_blocks {
             for info in auto_accessor_infos
                 .iter()
@@ -1125,9 +1157,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         // ES2022 + class decorators: deferred __runInitializers static block
         if defer_class_extra_init {
-            out.push_str(&format!(
-                "{indent}static {{\n{inner_indent}{run_init}({class_this_var}, {class_extra_initializers_var});\n{indent}}}\n"
-            ));
+            if self.use_static_blocks {
+                out.push_str(&format!(
+                    "{indent}static {{\n{inner_indent}{run_init}({class_this_var}, {class_extra_initializers_var});\n{indent}}}\n"
+                ));
+            } else {
+                post_iife_assignments.push(format!(
+                    "__EXTRA_INIT_IIFE__:{run_init}({class_this_var}, {class_extra_initializers_var})"
+                ));
+            }
         }
 
         if self.use_static_blocks
@@ -1553,6 +1591,85 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         }
         false
+    }
+
+    fn plain_static_field_assignment(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+        class_ref: &str,
+        indent: &str,
+    ) -> Option<String> {
+        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            return None;
+        }
+        let prop = self.arena.get_property_decl(member_node)?;
+        if !self.arena.is_static(&prop.modifiers)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+        {
+            return None;
+        }
+
+        let (property_access, property_key) = self.static_field_assignment_name(prop.name)?;
+        let value = if prop.initializer.is_some() {
+            self.node_text(prop.initializer)
+        } else {
+            "void 0".to_string()
+        };
+
+        if self.use_define_for_class_fields {
+            Some(format!(
+                "Object.defineProperty({class_ref}, {property_key}, {{\n{indent}    enumerable: true,\n{indent}    configurable: true,\n{indent}    writable: true,\n{indent}    value: {value}\n{indent}}})"
+            ))
+        } else {
+            Some(format!("{class_ref}{property_access} = {value}"))
+        }
+    }
+
+    fn static_field_assignment_name(&self, name_idx: NodeIndex) -> Option<(String, String)> {
+        let name_node = self.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let name = self
+                    .arena
+                    .get_identifier(name_node)
+                    .map(|id| id.escaped_text.clone())?;
+                Some((format!(".{name}"), format!("\"{name}\"")))
+            }
+            k if k == SyntaxKind::PrivateIdentifier as u16 => None,
+            k if k == SyntaxKind::StringLiteral as u16 => {
+                let name_text = self.node_text(name_idx);
+                if name_text.is_empty() {
+                    None
+                } else {
+                    Some((format!("[{name_text}]"), name_text))
+                }
+            }
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                let computed = self.arena.get_computed_property(name_node)?;
+                let key = self.node_text(computed.expression);
+                if key.is_empty() {
+                    None
+                } else {
+                    Some((format!("[{key}]"), key))
+                }
+            }
+            _ => {
+                let key = self.node_text(name_idx);
+                if key.is_empty() {
+                    None
+                } else {
+                    Some((format!("[{key}]"), key))
+                }
+            }
+        }
     }
 
     /// Find the position of the class closing brace by scanning forward from the

@@ -2,6 +2,7 @@ mod const_enums;
 mod emit;
 mod recovery;
 mod top_level_using;
+mod top_level_using_decorated;
 
 #[cfg(test)]
 mod tests {

@@ -1188,12 +1188,11 @@ impl<'a> Printer<'a> {
                                                         .arena
                                                         .get_class(clause_node)
                                                         .is_some_and(|class| {
-                                                            self.ctx.options.legacy_decorators
-                                                                && !self
-                                                                    .collect_class_decorators(
-                                                                        &class.modifiers,
-                                                                    )
-                                                                    .is_empty()
+                                                            !self
+                                                                .collect_class_decorators(
+                                                                    &class.modifiers,
+                                                                )
+                                                                .is_empty()
                                                         });
                                                 }
                                                 true
