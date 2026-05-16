@@ -391,7 +391,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             *first = false;
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.emit(initializer);
             self.write("[");
@@ -411,7 +411,7 @@ impl<'a> Printer<'a> {
             self.write_usize(binding_array_index);
             self.write("]");
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -467,7 +467,7 @@ impl<'a> Printer<'a> {
             self.write(", ");
         }
         *first = false;
-        self.write_identifier_text(rest_name_idx);
+        self.write_binding_identifier_text(rest_name_idx);
         self.write(" = ");
         self.emit(initializer);
         self.write(".slice(0)");
@@ -514,7 +514,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             *first = false;
-            self.write_identifier_text(first_elem_data.name);
+            self.write_binding_identifier_text(first_elem_data.name);
             self.write(" = ");
             self.write(expr);
             self.write("[0]");
@@ -529,7 +529,7 @@ impl<'a> Printer<'a> {
             self.write(expr);
             self.write("[0]");
             self.write(", ");
-            self.write_identifier_text(first_elem_data.name);
+            self.write_binding_identifier_text(first_elem_data.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -569,7 +569,7 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                 }
                 *first = false;
-                self.write_identifier_text(elem.name);
+                self.write_binding_identifier_text(elem.name);
                 self.write(" = ");
                 self.write(expr);
                 self.write(".slice(0)");
@@ -963,7 +963,7 @@ impl<'a> Printer<'a> {
         *first = false;
 
         if elem.initializer.is_none() {
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.emit_for_property_access(initializer);
             self.write_dot_token(initializer);
@@ -976,7 +976,7 @@ impl<'a> Printer<'a> {
             self.write_dot_token(initializer);
             self.write(&key_text);
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -1283,7 +1283,7 @@ impl<'a> Printer<'a> {
         }
 
         self.write(", ");
-        self.write_identifier_text(child_elem.name);
+        self.write_binding_identifier_text(child_elem.name);
         self.write(" = ");
         self.write(source_name);
         self.write(".");
@@ -1378,12 +1378,12 @@ impl<'a> Printer<'a> {
 
         if child_elem.initializer.is_none() {
             self.write(", ");
-            self.write_identifier_text(child_elem.name);
+            self.write_binding_identifier_text(child_elem.name);
             self.write(" = ");
             self.write(&value_name);
         } else {
             self.write(", ");
-            self.write_identifier_text(child_elem.name);
+            self.write_binding_identifier_text(child_elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");

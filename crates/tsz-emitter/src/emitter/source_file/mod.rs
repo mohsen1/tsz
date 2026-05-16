@@ -1469,6 +1469,50 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn es5_block_scoped_destructuring_uses_renamed_binding_targets() {
+        let source = "var z0: any, z1: any, z2: any;\n{\n    let [z0] = [1];\n    use(z0);\n    let { a: z1 } = { a: 1 };\n    use(z1);\n    let [...z2] = [1, 2];\n    use(z2);\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var z0_1 = [1][0];"),
+            "Array binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z0_1);"),
+            "Array binding references should match the declaration target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z1_1 = { a: 1 }.a;"),
+            "Object binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z1_1);"),
+            "Object binding references should match the declaration target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z2_1 = [1, 2].slice(0);"),
+            "Array rest binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z2_1);"),
+            "Array rest references should match the declaration target.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn esm_exported_object_rest_keeps_temp_local() {
         let source = "export const { x, ...rest } = { x: 'x', y: 'y' }, y = 3;\n";
 

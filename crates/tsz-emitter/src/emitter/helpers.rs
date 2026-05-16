@@ -533,6 +533,31 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(super) fn write_binding_identifier_text(&mut self, idx: NodeIndex) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(ident) = self.arena.get_identifier(node) else {
+            return;
+        };
+
+        let original_text = &ident.escaped_text;
+        let emit_text = ident.original_text.as_deref().unwrap_or(original_text);
+        if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text)
+            && renamed != *original_text
+        {
+            if let Some(source_pos) = self.take_pending_source_pos() {
+                self.writer
+                    .write_node_with_name(&renamed, source_pos, original_text);
+            } else {
+                self.writer.write(&renamed);
+            }
+            return;
+        }
+
+        self.write_identifier(emit_text);
+    }
+
     pub(in crate::emitter) fn is_static_block_await_identifier(&self, idx: NodeIndex) -> bool {
         self.ctx.flags.in_class_static_block && self.get_identifier_text_idx(idx) == "await"
     }

@@ -105,7 +105,7 @@ impl<'a> Printer<'a> {
         if elem.initializer.is_none() {
             // Emit: , bindingName = temp.propName
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.emit_assignment_target_es5_with_computed(
                 key_idx,
@@ -123,7 +123,7 @@ impl<'a> Printer<'a> {
                 computed_key_temp.as_deref(),
             );
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -213,7 +213,7 @@ impl<'a> Printer<'a> {
         if elem.initializer.is_none() {
             // Emit: , bindingName = temp[index]
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(temp_name);
             self.write("[");
@@ -229,7 +229,7 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -313,7 +313,7 @@ impl<'a> Printer<'a> {
 
         if elem.initializer.is_none() {
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(temp_name);
             self.write("[");
@@ -375,7 +375,7 @@ impl<'a> Printer<'a> {
                     temp: value_name,
                 });
             } else {
-                self.write_identifier_text(elem.name);
+                self.write_binding_identifier_text(elem.name);
                 self.write(" = ");
                 self.write(temp_name);
                 self.write(".slice(");
@@ -428,7 +428,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             *first = false;
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(temp_name);
             self.write("[");
@@ -470,7 +470,7 @@ impl<'a> Printer<'a> {
                 initializer,
             } => {
                 self.write(", ");
-                self.write_identifier_text(name);
+                self.write_binding_identifier_text(name);
                 self.write(" = ");
                 self.write(&temp);
                 self.write(" === void 0 ? ");
@@ -543,7 +543,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             *first = false;
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.emit_assignment_target_es5_with_computed(
                 key_idx,
@@ -564,7 +564,7 @@ impl<'a> Printer<'a> {
                 computed_key_temp.as_deref(),
             );
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -635,7 +635,7 @@ impl<'a> Printer<'a> {
                 self.write(")");
                 self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
             } else {
-                self.write_identifier_text(elem.name);
+                self.write_binding_identifier_text(elem.name);
                 self.write(" = ");
                 self.write(temp_name);
                 self.write(".slice(");
@@ -687,7 +687,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             *first = false;
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(temp_name);
             self.write("[");
@@ -706,7 +706,7 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -1539,7 +1539,7 @@ impl<'a> Printer<'a> {
             if !self.has_identifier_text(rest_target) {
                 return;
             }
-            self.write_identifier_text(rest_target);
+            self.write_binding_identifier_text(rest_target);
         }
         self.write(" = ");
         self.write(temp_name);
