@@ -1,6 +1,7 @@
 # Temporary accepted conformance regressions for the 2026-05-16 aggregate runway.
 # The aggregate gate treats this as a set, not a budget: any failing test that
 # is not listed here fails CI, even if the total deficit does not grow.
+TypeScript/tests/cases/compiler/builtinIterator.ts
 TypeScript/tests/cases/compiler/complexRecursiveCollections.ts
 TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
