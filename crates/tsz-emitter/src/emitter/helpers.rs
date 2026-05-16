@@ -533,6 +533,44 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn is_static_block_await_identifier(&self, idx: NodeIndex) -> bool {
+        self.ctx.flags.in_class_static_block && self.get_identifier_text_idx(idx) == "await"
+    }
+
+    pub(in crate::emitter) fn is_static_block_await_arrow_recovery(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        if !self.ctx.flags.in_class_static_block || func.parameters.nodes.len() != 1 {
+            return false;
+        }
+        let Some(&param_idx) = func.parameters.nodes.first() else {
+            return false;
+        };
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        self.get_identifier_text_idx(param.name) == "await"
+    }
+
+    pub(in crate::emitter) fn static_block_await_arrow_recovery_body(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = self.arena.get(idx)?;
+        let func = self.arena.get_function(node)?;
+        if !self.is_static_block_await_arrow_recovery(func) {
+            return None;
+        }
+        self.arena
+            .get(func.body)
+            .is_some_and(|body| body.kind == tsz_parser::parser::syntax_kind_ext::BLOCK)
+            .then_some(func.body)
+    }
+
     // =========================================================================
     // Unique Name Generation (mirrors TypeScript's makeUniqueName)
     // =========================================================================

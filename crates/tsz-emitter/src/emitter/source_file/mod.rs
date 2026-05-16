@@ -335,6 +335,43 @@ mod tests {
     }
 
     #[test]
+    fn class_static_block_await_recovery_matches_native_emit() {
+        let source = "class C {\n    static {\n        ({ [await]: 1 });\n        ({ await });\n        await:\n        break await;\n        const ff = (await) => { }\n        const fff = await => { }\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("({ [await ]: 1 });"),
+            "Bare await in static-block computed names should preserve tsc recovery spacing.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("({ await:  });"),
+            "Bare await shorthand in static blocks should recover as an empty property assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("await ;\n        break ;\n        await ;"),
+            "Bare await labels and break labels in static blocks should recover as separate statements.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "const ff = (await );\n        { }\n        const fff = await ;\n        { }"
+            ),
+            "Arrows with await parameters in static blocks should emit recovered parameter expressions plus body blocks.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn derived_constructor_with_prefix_statements_returns_tail_super_call() {
         let source = "class A {}\nclass B extends A { constructor() { \"ngInject\"; console.log(\"B\"); super(); } }\n";
 
