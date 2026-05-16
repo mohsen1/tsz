@@ -1078,6 +1078,39 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn default_tc39_decorated_named_class_keeps_class_1_binding() {
+        let source = "declare var dec: any;\nexport default @dec class class_1 {};\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2020,
+            import_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var class_1 = _classThis = class"),
+            "Named default decorated class should preserve the class_1 runtime binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__setFunctionName(_classThis, \"class_1\")"),
+            "Named default decorated class should use its source name for setFunctionName.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var default_1 = _classThis = class class_1"),
+            "Default export rewriting must not rename a real source class_1 binding.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn ambient_class_parenthesized_tail_emits_recovered_expression() {
         let source = "declare class foo();\nfunction foo() {}\n";
 

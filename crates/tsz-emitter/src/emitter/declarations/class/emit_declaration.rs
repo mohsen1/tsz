@@ -605,27 +605,8 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let mut output = output.trim_end_matches('\n').to_string();
-        if display_name == "default" {
-            output = output.replace(
-                "var class_1 = _classThis = class",
-                "var default_1 = _classThis = class",
-            );
-            output = output.replace(
-                "class_1 = _classThis = _classDescriptor.value",
-                "default_1 = _classThis = _classDescriptor.value",
-            );
-            output = output.replace(
-                "return class_1 = _classThis;",
-                "return default_1 = _classThis;",
-            );
-            output = output.replace(
-                "__setFunctionName(_classThis, \"class_1\")",
-                "__setFunctionName(_classThis, \"default\")",
-            );
-        }
-
-        self.write(&output);
+        let output = output.trim_end_matches('\n');
+        self.write(output);
         self.skip_comments_for_erased_node(node);
         true
     }
