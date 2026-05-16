@@ -2135,6 +2135,31 @@ fn jsx_multiple_children_no_ts2746_when_children_type_accepts_array() {
     );
 }
 
+#[test]
+fn jsx_multiple_children_readonly_mapped_wrapper_uses_shape_not_alias_name() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        type Frozen<T> = { readonly [Slot in keyof T]: T[Slot] };
+        type Renderable = string | number | Element;
+        declare namespace JSX {
+            interface Element {}
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { span: {}; }
+        }
+        declare class ComponentBase<P = {}> {
+            props: P & Frozen<{ children: Renderable[] }>;
+            render(): Renderable;
+        }
+        class Panel extends ComponentBase {}
+        <Panel><span /><span /></Panel>;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2746),
+        "Multiple children should use the structurally readonly mapped wrapper member, got: {diagnostics:?}"
+    );
+}
+
 /// Intra-expression JSX generic inference: when all attributes are function-valued
 /// (no concrete attrs), bootstrap inference from attrs whose contextual parameter
 /// types are concrete (don't depend on type params being inferred).
