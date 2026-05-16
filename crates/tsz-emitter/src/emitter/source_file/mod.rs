@@ -998,6 +998,38 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn reserved_enum_name_emits_anonymous_enum_and_reserved_statement() {
+        for (source, recovered_statement) in [
+            ("enum void {}", "void {};"),
+            ("enum typeof {}", "typeof {};"),
+            ("enum delete {}", "delete {};"),
+            ("enum class {}", "class {\n}"),
+            ("enum true {}", "true;\n{ }"),
+        ] {
+            let (parser, root) = parse_test_source(source);
+            let mut printer = EmitterPrinter::with_options(
+                &parser.arena,
+                PrinterOptions {
+                    always_strict: true,
+                    target: ScriptTarget::ES2015,
+                    ..Default::default()
+                },
+            );
+            printer.set_source_text(source);
+            printer.emit(root);
+            let output = printer.get_output().to_string();
+
+            assert_eq!(
+                output.trim_end(),
+                format!(
+                    "\"use strict\";\nvar ;\n(function () {{\n}})( || ( = {{}}));\n{recovered_statement}"
+                ),
+                "{source}: reserved enum recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+            );
+        }
+    }
+
+    #[test]
     fn unmatched_decorator_type_assertion_emits_empty_statement() {
         let source = "@<[[import(obju2c77,\n";
 
