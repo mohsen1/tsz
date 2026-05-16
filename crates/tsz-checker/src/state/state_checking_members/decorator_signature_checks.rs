@@ -46,6 +46,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let Some(resolved) = self.prepare_decorator_callee(resolved) else {
+            return;
+        };
+
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
             &[first_arg, TypeId::ANY],
@@ -60,6 +64,34 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             );
+        }
+    }
+
+    /// Mirror of tsc's `isUntypedFunctionCall` for decorator-callee resolution.
+    ///
+    /// When a decorator's resolved type is the global `Function` interface (or
+    /// a `Function`-shaped object — no call signatures but a `bind` member),
+    /// tsc treats the call as untyped and skips signature validation. Without
+    /// this fallback, any decorator factory whose declared return type is
+    /// `Function` would produce a spurious TS1238/TS1239/TS1240/TS1241.
+    ///
+    /// Returns `Some(t)` when the caller should continue with the (possibly
+    /// unchanged) callee, or `None` when the rewrite collapsed the callee to
+    /// an unchecked type (`ANY`/`UNKNOWN`/`ERROR`) and the caller should skip
+    /// the call check entirely.
+    ///
+    /// Hot path: most decorators are explicit function types with a known
+    /// call signature, so `has_function_shape` short-circuits before the more
+    /// expensive Function-membership probe.
+    pub(crate) fn prepare_decorator_callee(&mut self, decorator_type: TypeId) -> Option<TypeId> {
+        if crate::query_boundaries::common::has_function_shape(self.ctx.types, decorator_type) {
+            return Some(decorator_type);
+        }
+        let rewritten = self.replace_function_type_for_call(decorator_type, decorator_type);
+        if decorator_type_is_unchecked(rewritten) {
+            None
+        } else {
+            Some(rewritten)
         }
     }
 
@@ -101,6 +133,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let Some(resolved) = self.prepare_decorator_callee(resolved) else {
+            return;
+        };
+
         if self.method_decorator_has_zero_arg_factory_shape(
             decorator_expr,
             resolved,
@@ -110,7 +146,17 @@ impl<'a> CheckerState<'a> {
         }
 
         let arg_types = if experimental_decorators {
-            vec![TypeId::ANY, TypeId::STRING, TypeId::ANY]
+            // tsc's `getLegacyDecoratorArgumentCount` adapts the supplied
+            // argument count to the decorator's signature for method/accessor
+            // decorators: 2 args when every call signature has ≤ 2 parameters,
+            // 3 args otherwise. Without this adaptation, a 2-parameter legacy
+            // decorator factory like `(target: object, key: PropertyKey) =>
+            // void` produces a spurious TS1241 when applied to a method.
+            if Self::legacy_method_decorator_uses_two_args(self.ctx.types, resolved) {
+                vec![TypeId::ANY, TypeId::STRING]
+            } else {
+                vec![TypeId::ANY, TypeId::STRING, TypeId::ANY]
+            }
         } else {
             self.es_method_or_accessor_decorator_args(member_node)
                 .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT])
@@ -143,6 +189,47 @@ impl<'a> CheckerState<'a> {
             experimental_decorators,
             return_type,
         );
+    }
+
+    /// Mirror of tsc's `getLegacyDecoratorArgumentCount` for the
+    /// method/accessor decorator case. Returns `true` when every call
+    /// signature on the decorator has ≤ 2 parameters, indicating that tsc
+    /// would supply only 2 arguments (target, propertyKey) instead of the
+    /// usual 3 (target, propertyKey, descriptor).
+    ///
+    /// The decision is made over *all* call signatures so that an overloaded
+    /// decorator with a 3-parameter signature still receives the descriptor
+    /// argument. This matches tsc's overload semantics: the resolved
+    /// signature drives the arity, and any signature that needs the
+    /// descriptor will be chosen when 3 args are supplied.
+    fn legacy_method_decorator_uses_two_args(
+        db: &dyn tsz_solver::TypeDatabase,
+        decorator_type: TypeId,
+    ) -> bool {
+        if let Some(shape) = crate::query_boundaries::class_type::function_shape(db, decorator_type)
+        {
+            return shape.params.len() <= 2;
+        }
+
+        if let Some(callable) =
+            crate::query_boundaries::class_type::callable_shape_for_type(db, decorator_type)
+        {
+            if callable.call_signatures.is_empty() {
+                // Callable shape with no call signatures: the subsequent call
+                // will fail regardless of argcount, so pick the legacy 3-arg
+                // default to keep recovery-path diagnostics stable.
+                return false;
+            }
+            return callable
+                .call_signatures
+                .iter()
+                .all(|sig| sig.params.len() <= 2);
+        }
+
+        // No statically known shape: default to the historical 3-arg call so
+        // recovery paths and error reporting stay aligned with the prior
+        // unconditional behavior.
+        false
     }
 
     /// TS1329: Check if a method/accessor decorator accepts too few arguments.
@@ -445,6 +532,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let Some(resolved) = self.prepare_decorator_callee(resolved) else {
+            return;
+        };
+
         let arg_types: &[TypeId] = if is_auto_accessor {
             &[TypeId::ANY, TypeId::STRING, TypeId::ANY]
         } else {
@@ -560,6 +651,10 @@ impl<'a> CheckerState<'a> {
         if decorator_type_is_unchecked(resolved) {
             return;
         }
+
+        let Some(resolved) = self.prepare_decorator_callee(resolved) else {
+            return;
+        };
 
         // Per the runtime calling convention above, only the key argument
         // shape varies by parameter position.

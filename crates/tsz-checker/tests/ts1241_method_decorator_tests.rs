@@ -193,6 +193,191 @@ class LegacyOk {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// `getLegacyDecoratorArgumentCount` parity: a 2-parameter legacy decorator
+// factory must NOT emit TS1241 when applied to a method/get/set accessor.
+//
+// tsc adapts the supplied argument count to the decorator's parameter count
+// (2 args if ≤ 2 params, otherwise 3). tsz previously always passed 3 args,
+// producing a spurious TS1241 for the common `(target, key) => void` shape.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn legacy_two_arg_method_decorator_is_accepted() {
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function deco(target: object, key: PropertyKey) {}
+
+class TwoArgs {
+    @deco
+    method(): void {}
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        !codes.contains(&1241) && !codes.contains(&1329),
+        "A 2-param legacy method decorator factory should be accepted by adapting argCount=2; got: {codes:?}"
+    );
+}
+
+#[test]
+fn legacy_two_arg_method_decorator_is_accepted_with_renamed_params() {
+    // Same rule, different name choices — proves the fix is structural and
+    // does not depend on the spelling of parameter names.
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function pin(a: any, b: string) {}
+
+class Renamed {
+    @pin
+    run(): void {}
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        !codes.contains(&1241) && !codes.contains(&1329),
+        "Renamed-parameter 2-arg legacy decorator should still be accepted; got: {codes:?}"
+    );
+}
+
+#[test]
+fn legacy_two_arg_decorator_on_get_accessor_is_accepted() {
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function deco(target: object, key: PropertyKey) {}
+
+class Accessor {
+    @deco
+    get value(): string { return ""; }
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        !codes.contains(&1241) && !codes.contains(&1329),
+        "2-param legacy decorator should also be accepted on get accessors; got: {codes:?}"
+    );
+}
+
+#[test]
+fn legacy_two_arg_decorator_on_set_accessor_is_accepted() {
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function deco(target: object, key: PropertyKey) {}
+
+class Accessor {
+    @deco
+    set value(v: string) {}
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        !codes.contains(&1241) && !codes.contains(&1329),
+        "2-param legacy decorator should also be accepted on set accessors; got: {codes:?}"
+    );
+}
+
+#[test]
+fn legacy_method_decorator_with_computed_property_name_is_accepted() {
+    // The original regression repro from conformance: a 2-param decorator on
+    // a method with a dynamic computed name. tsc emits nothing here because
+    // the decorator's 2 parameters match the adapted 2-arg call.
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function x(o: object, k: PropertyKey) {}
+
+class I {
+    @x ["some" + "method"]() {}
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        !codes.contains(&1241),
+        "A 2-param legacy decorator on a method with a dynamic computed name should not emit TS1241; got: {codes:?}"
+    );
+}
+
+#[test]
+fn legacy_rest_param_method_decorator_is_accepted() {
+    // A rest-only signature `(...args: any[])` has `params.len() == 1`, so it
+    // falls into the ≤ 2 bucket and is invoked with 2 args. Rest absorbs the
+    // extras and the call succeeds — matching tsc.
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function deco(...args: any[]) {}
+
+class R {
+    @deco
+    method(): void {}
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        !codes.contains(&1241) && !codes.contains(&1329),
+        "Rest-param legacy decorator should be accepted; got: {codes:?}"
+    );
+}
+
+#[test]
+fn legacy_one_arg_method_decorator_still_emits_ts1241() {
+    // Boundary check: the argcount adaptation must not silently accept a
+    // decorator whose signature is too narrow for the supplied call. A
+    // 1-param decorator gets argCount=2 (since 1 ≤ 2) and 2 args overflow
+    // its 1 parameter, so tsc emits TS1241 — tsz must too.
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function narrow(only: any) {}
+
+class TooFew {
+    @narrow
+    method(): void {}
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        codes.contains(&1241),
+        "A 1-param legacy method decorator should still emit TS1241 (argCount=2 overflows 1 param); got: {codes:?}"
+    );
+}
+
+#[test]
+fn legacy_function_typed_decorator_factory_is_accepted() {
+    // tsc's `isUntypedFunctionCall` treats a `Function`-typed callee as
+    // callable with any signature. Without the fallback, a decorator factory
+    // that returns `Function` would produce a spurious TS1241.
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+function dec(): Function {
+    return function (target: any, propKey: string, descr: PropertyDescriptor): void {};
+}
+
+class HasMethod {
+    @dec()
+    foo(bar: string): void {}
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        !codes.contains(&1241),
+        "A decorator factory returning `Function` should be treated as an untyped call and not emit TS1241; got: {codes:?}"
+    );
+}
+
 #[test]
 fn stage3_getter_decorator_rejects_wrong_context_type() {
     let codes = check_source_codes(
