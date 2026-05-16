@@ -1394,6 +1394,86 @@ class ArchGuardSpeculationGuardNameTests(unittest.TestCase):
             )
 
 
+class ArchGuardProjectDashboardRowTests(unittest.TestCase):
+    """Cover Track 1 project dashboard row inventory checks.
+
+    The public compatibility dashboard must render every row the benchmark
+    artifact expects or compile-canary CI tracks. This keeps
+    `COMPATIBILITY_CORPUS_ROWS` from drifting behind
+    `EXPECTED_PROJECT_BENCHMARKS` / `COMPILE_CANARY_PROJECTS`.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, body: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "benchmark_data.js"
+            path.write_text(body, encoding="utf-8")
+            return self.arch_guard.scan_project_dashboard_rows(path)
+
+    def test_matching_expected_and_canary_rows_pass(self):
+        body = """
+const EXPECTED_PROJECT_BENCHMARKS = ["utility-types-project"];
+const COMPILE_CANARY_PROJECTS = ["zod-project"];
+const COMPATIBILITY_CORPUS_ROWS = [
+  { name: "utility-types-project", label: "utility-types" },
+  { name: "zod-project", label: "Zod" },
+];
+"""
+        self.assertEqual(self._write_and_scan(body), [])
+
+    def test_missing_dashboard_row_is_reported(self):
+        body = """
+const EXPECTED_PROJECT_BENCHMARKS = ["utility-types-project"];
+const COMPILE_CANARY_PROJECTS = ["zod-project"];
+const COMPATIBILITY_CORPUS_ROWS = [
+  { name: "zod-project", label: "Zod" },
+];
+"""
+        hits = self._write_and_scan(body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing compatibility dashboard row for utility-types-project", hits[0])
+
+    def test_stale_dashboard_row_is_reported(self):
+        body = """
+const EXPECTED_PROJECT_BENCHMARKS = ["utility-types-project"];
+const COMPILE_CANARY_PROJECTS = [];
+const COMPATIBILITY_CORPUS_ROWS = [
+  { name: "utility-types-project", label: "utility-types" },
+  { name: "removed-project", label: "removed" },
+];
+"""
+        hits = self._write_and_scan(body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("stale compatibility dashboard row for removed-project", hits[0])
+
+    def test_duplicate_dashboard_row_is_reported(self):
+        body = """
+const EXPECTED_PROJECT_BENCHMARKS = ["utility-types-project"];
+const COMPILE_CANARY_PROJECTS = [];
+const COMPATIBILITY_CORPUS_ROWS = [
+  { name: "utility-types-project", label: "utility-types" },
+  { name: "utility-types-project", label: "utility-types again" },
+];
+"""
+        hits = self._write_and_scan(body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("duplicate compatibility dashboard row for utility-types-project", hits[0])
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.PROJECT_DASHBOARD_ROW_CHECKS]
+        self.assertTrue(
+            any("Track 1" in name for name in names),
+            "Project dashboard row check missing from PROJECT_DASHBOARD_ROW_CHECKS",
+        )
+
+    def test_real_project_dashboard_rows_cover_expected_rows(self):
+        for name, file_path in self.arch_guard.PROJECT_DASHBOARD_ROW_CHECKS:
+            hits = self.arch_guard.scan_project_dashboard_rows(file_path)
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+
 class ArchGuardRegexLineCountTests(unittest.TestCase):
     """Cover Track 10 count ratchets in `REGEX_LINE_COUNT_CHECKS`.
 
