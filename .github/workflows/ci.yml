@@ -521,6 +521,17 @@ jobs:
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Run project compile guard
         run: scripts/ci/project-compile-guard.sh
+      - name: Upload project compile compatibility
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-compile-compatibility
+          path: |
+            .target/project-compile-guard/*.log
+            .target/project-compile-guard/project-compatibility.jsonl
+            .target/project-compile-guard/project-compatibility-summary.json
+          retention-days: 7
+          if-no-files-found: warn
 
   project-compile-canary:
     name: project-compile-canary
@@ -553,7 +564,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: project-compile-canary-logs
-          path: .target/project-compile-guard/*.log
+          path: |
+            .target/project-compile-guard/*.log
+            .target/project-compile-guard/project-compatibility.jsonl
+            .target/project-compile-guard/project-compatibility-summary.json
           retention-days: 7
           if-no-files-found: warn
           compression-level: 1

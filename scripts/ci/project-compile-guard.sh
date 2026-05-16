@@ -12,7 +12,10 @@ INCLUDE_GENERATED_APPS="${TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS:-1}"
 PROJECT_FILTER="${TSZ_PROJECT_COMPILE_FILTER:-}"
 PROJECT_SET="${TSZ_PROJECT_COMPILE_SET:-required}"
 ALLOW_FAILURES="${TSZ_PROJECT_COMPILE_ALLOW_FAILURES:-0}"
+PROJECT_COMPATIBILITY_JSONL="${TSZ_PROJECT_COMPILE_COMPATIBILITY_JSONL:-$FIXTURE_ROOT/project-compatibility.jsonl}"
+PROJECT_COMPATIBILITY_SUMMARY="${TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY:-$FIXTURE_ROOT/project-compatibility-summary.json}"
 FAILURES=0
+LAST_PEAK_RSS_BYTES=0
 
 # shellcheck source=scripts/bench/project-fixtures.sh
 source "$ROOT_DIR/scripts/bench/project-fixtures.sh"
@@ -23,27 +26,212 @@ if [[ ! -x "$TSZ_BIN" ]]; then
 fi
 
 mkdir -p "$FIXTURE_ROOT"
+: > "$PROJECT_COMPATIBILITY_JSONL"
 
 run_with_timeout() {
   local timeout_secs="$1"
   shift
 
+  LAST_PEAK_RSS_BYTES=0
   "$@" &
   local pid=$!
-  perl -e 'sleep shift; kill 9, shift' "$timeout_secs" "$pid" &
+  local timeout_file
+  timeout_file="$(mktemp)"
+  rm -f "$timeout_file"
+  local rss_file=""
+  local rss_monitor_pid=""
+  (
+    sleep "$timeout_secs"
+    touch "$timeout_file"
+    kill -9 "$pid" 2>/dev/null || true
+  ) &
   local watchdog_pid=$!
+  if measure_peak_rss_enabled; then
+    rss_file=$(mktemp)
+    printf '0\n' > "$rss_file"
+    (
+      local peak_kb=0
+      local rss_kb
+      while kill -0 "$pid" 2>/dev/null; do
+        rss_kb="$(process_tree_rss_kb "$pid" || true)"
+        if [[ "$rss_kb" =~ ^[0-9]+$ ]] && [ "$rss_kb" -gt "$peak_kb" ]; then
+          peak_kb="$rss_kb"
+          printf '%s\n' "$((peak_kb * 1024))" > "$rss_file"
+        fi
+        sleep 1
+      done
+    ) &
+    rss_monitor_pid=$!
+  fi
 
   local exit_code=0
   wait "$pid" 2>/dev/null || exit_code=$?
 
+  local timed_out=0
+  if [ -e "$timeout_file" ]; then
+    timed_out=1
+  fi
+  rm -f "$timeout_file"
+
   kill "$watchdog_pid" 2>/dev/null || true
   wait "$watchdog_pid" 2>/dev/null || true
+  if [ -n "$rss_monitor_pid" ]; then
+    kill "$rss_monitor_pid" 2>/dev/null || true
+    wait "$rss_monitor_pid" 2>/dev/null || true
+  fi
+  if [ -n "$rss_file" ]; then
+    LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || echo 0)"
+    rm -f "$rss_file"
+  fi
 
-  if [[ "$exit_code" -eq 137 ]]; then
+  if [[ "$timed_out" -eq 1 && "$exit_code" -eq 137 ]]; then
     return 124
   fi
   return "$exit_code"
 }
+
+measure_peak_rss_enabled() {
+  case "${TSZ_PROJECT_COMPILE_PEAK_RSS:-}" in
+    1|true|TRUE|yes|YES) return 0 ;;
+    0|false|FALSE|no|NO) return 1 ;;
+  esac
+
+  [ "${CI:-}" = "true" ] && [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]
+}
+
+process_tree_rss_kb() {
+  local root_pid="$1"
+
+  ps -e -o pid=,ppid=,rss= 2>/dev/null | awk -v root="$root_pid" '
+    {
+      pid[NR] = $1
+      ppid[NR] = $2
+      rss[NR] = $3
+      count = NR
+    }
+    END {
+      live[root] = 1
+      changed = 1
+      while (changed) {
+        changed = 0
+        for (i = 1; i <= count; i += 1) {
+          if (live[ppid[i]] && !live[pid[i]]) {
+            live[pid[i]] = 1
+            changed = 1
+          }
+        }
+      }
+      total = 0
+      for (i = 1; i <= count; i += 1) {
+        if (live[pid[i]]) total += rss[i]
+      }
+      print total
+    }
+  '
+}
+
+count_ts_files() {
+  local src_dir="$1"
+  { find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print 2>/dev/null || true; } \
+    | wc -l | tr -d ' '
+}
+
+diagnostic_lines_from_file() {
+  local label="$1"
+  local file="$2"
+
+  awk -v label="$label" '
+    {
+      sub(/\r$/, "")
+      if ($0 ~ /^[[:space:]]*$/) {
+        next
+      }
+      print label ": " $0
+      seen += 1
+      if (seen >= 20) {
+        exit
+      }
+    }
+  ' "$file" 2>/dev/null || true
+}
+
+project_failure_class() {
+  local status="$1"
+  shift || true
+
+  if [[ "$status" == *"timeout"* ]]; then
+    echo "timeout"
+    return
+  fi
+
+  local code
+  for code in "$@"; do
+    case "$code" in
+      124|142)
+        echo "timeout"
+        return
+        ;;
+      137)
+        echo "oom"
+        return
+        ;;
+      132|134|136|139)
+        echo "crash"
+        return
+        ;;
+    esac
+  done
+
+  echo "nonzero exit"
+}
+
+project_failure_status() {
+  case "$1" in
+    timeout) echo "compiler timed out" ;;
+    oom) echo "compiler OOM or killed" ;;
+    crash) echo "compiler crashed" ;;
+    *) echo "diagnostic mismatch or compiler error" ;;
+  esac
+}
+
+record_project_compatibility() {
+  local name="$1"
+  local exit_class="$2"
+  local phase="$3"
+  local diagnostic_status="$4"
+  local diagnostic_delta="${5:-}"
+  local files_reached="${6:-0}"
+  local peak_memory_bytes="${7:-}"
+  local tsz_exit_codes="${8:-}"
+  local tsconfig_path="${9:-}"
+  local source_root="${10:-}"
+
+  COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+  COMPAT_NAME="$name" \
+  COMPAT_EXIT_CLASS="$exit_class" \
+  COMPAT_PHASE="$phase" \
+  COMPAT_DIAGNOSTIC_STATUS="$diagnostic_status" \
+  COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
+  COMPAT_FILES_REACHED="$files_reached" \
+  COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
+  COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
+  COMPAT_TSCONFIG_PATH="$tsconfig_path" \
+  COMPAT_SOURCE_ROOT="$source_root" \
+  COMPAT_FIXTURE_ROOT="$FIXTURE_ROOT" \
+  node scripts/ci/project-compatibility.mjs record
+}
+
+write_project_compatibility_summary() {
+  SUMMARY_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+  SUMMARY_OUTPUT_FILE="$PROJECT_COMPATIBILITY_SUMMARY" \
+  SUMMARY_PROJECT_SET="$PROJECT_SET" \
+  SUMMARY_PROJECT_FILTER="$PROJECT_FILTER" \
+  SUMMARY_ALLOW_FAILURES="$ALLOW_FAILURES" \
+  SUMMARY_FAILURES="$FAILURES" \
+  node scripts/ci/project-compatibility.mjs summary
+}
+
+trap write_project_compatibility_summary EXIT
 
 ensure_git_fixture() {
   tsz_ensure_git_fixture "$@" 0
@@ -131,7 +319,10 @@ write_type_challenges_solutions_config() {
 check_project() {
   local name="$1"
   local tsconfig="$2"
+  local src_dir="${3:-$(dirname "$tsconfig")}"
   local log="$FIXTURE_ROOT/${name}.log"
+  local file_count
+  file_count="$(count_ts_files "$src_dir")"
 
   echo "::group::${name}"
   echo "Running: $TSZ_BIN --noEmit -p $tsconfig"
@@ -144,6 +335,21 @@ check_project() {
 
   if [[ "$rc" -ne 0 ]]; then
     FAILURES=$((FAILURES + 1))
+    local exit_class
+    local diagnostic_delta
+    exit_class="$(project_failure_class "$([[ "$rc" -eq 124 ]] && echo "timeout" || echo "nonzero exit")" "$rc")"
+    diagnostic_delta="$(diagnostic_lines_from_file "tsz" "$log")"
+    record_project_compatibility \
+      "$name" \
+      "$exit_class" \
+      "check" \
+      "$(project_failure_status "$exit_class")" \
+      "$diagnostic_delta" \
+      "$file_count" \
+      "$LAST_PEAK_RSS_BYTES" \
+      "$rc" \
+      "$tsconfig" \
+      "$src_dir"
     if [[ "$rc" -eq 124 ]]; then
       echo "error: ${name} timed out after ${PROJECT_TIMEOUT}s" >&2
     else
@@ -153,11 +359,11 @@ check_project() {
     echo "::endgroup::"
     if [[ "$ALLOW_FAILURES" == "1" ]]; then
       echo "::warning::${name} did not compile; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
-      return 0
     fi
-    return "$rc"
+    return 0
   fi
 
+  record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir"
   echo "${name} compiled successfully."
   echo "::endgroup::"
 }
@@ -171,25 +377,25 @@ run_required_projects() {
 if should_check_project "utility-types-project"; then
   ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$FIXTURE_ROOT/utility-types"
   write_utility_types_config
-  check_project "utility-types-project" "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json"
+  check_project "utility-types-project" "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/utility-types/src"
 fi
 
 if should_check_project "ts-essentials-project"; then
   ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$FIXTURE_ROOT/ts-essentials"
   write_ts_essentials_config
-  check_project "ts-essentials-project" "$FIXTURE_ROOT/ts-essentials/tsconfig.tsz-guard.json"
+  check_project "ts-essentials-project" "$FIXTURE_ROOT/ts-essentials/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-essentials/lib"
 fi
 
 if should_check_project "rxjs-project"; then
   ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$FIXTURE_ROOT/rxjs"
   write_rxjs_config
-  check_project "rxjs-project" "$FIXTURE_ROOT/rxjs/tsconfig.tsz-guard.json"
+  check_project "rxjs-project" "$FIXTURE_ROOT/rxjs/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/rxjs/$(tsz_rxjs_src_root "$FIXTURE_ROOT/rxjs")"
 fi
 
 if should_check_project "type-fest-project"; then
   ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$FIXTURE_ROOT/type-fest"
   write_type_fest_config
-  check_project "type-fest-project" "$FIXTURE_ROOT/type-fest/tsconfig.tsz-guard.json"
+  check_project "type-fest-project" "$FIXTURE_ROOT/type-fest/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-fest/source"
 fi
 
 if [[ "$INCLUDE_GENERATED_APPS" == "1" ]] \
@@ -201,12 +407,12 @@ if [[ "$INCLUDE_GENERATED_APPS" == "1" ]] \
 
   if should_check_project "vite-vanilla-ts-app"; then
     node scripts/bench/generate-vite-app-fixture.mjs "$FIXTURE_ROOT/vite-vanilla-ts-live"
-    check_project "vite-vanilla-ts-app" "$FIXTURE_ROOT/vite-vanilla-ts-live/tsconfig.json"
+    check_project "vite-vanilla-ts-app" "$FIXTURE_ROOT/vite-vanilla-ts-live/tsconfig.json" "$FIXTURE_ROOT/vite-vanilla-ts-live/src"
   fi
 
   if should_check_project "nextjs-fresh-app"; then
     node scripts/bench/generate-next-app-fixture.mjs "$FIXTURE_ROOT/next-app-live"
-    check_project "nextjs-fresh-app" "$FIXTURE_ROOT/next-app-live/tsconfig.json"
+    check_project "nextjs-fresh-app" "$FIXTURE_ROOT/next-app-live/tsconfig.json" "$FIXTURE_ROOT/next-app-live"
   fi
 fi
 }
@@ -215,31 +421,31 @@ run_canary_projects() {
 if should_check_project "ts-toolbelt-project"; then
   ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$FIXTURE_ROOT/ts-toolbelt"
   write_ts_toolbelt_config
-  check_project "ts-toolbelt-project" "$FIXTURE_ROOT/ts-toolbelt/tsconfig.tsz-guard.json"
+  check_project "ts-toolbelt-project" "$FIXTURE_ROOT/ts-toolbelt/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-toolbelt/sources"
 fi
 
 if should_check_project "zod-project"; then
   ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$FIXTURE_ROOT/zod"
   write_zod_config
-  check_project "zod-project" "$FIXTURE_ROOT/zod/tsconfig.tsz-guard.json"
+  check_project "zod-project" "$FIXTURE_ROOT/zod/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/zod"
 fi
 
 if should_check_project "kysely-project"; then
   ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$FIXTURE_ROOT/kysely"
   write_kysely_config
-  check_project "kysely-project" "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json"
+  check_project "kysely-project" "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/kysely/src"
 fi
 
 if should_check_project "type-challenges-project"; then
   ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
   write_type_challenges_config
-  check_project "type-challenges-project" "$FIXTURE_ROOT/type-challenges/.tsz-compile/tsconfig.tsz-guard.json"
+  check_project "type-challenges-project" "$FIXTURE_ROOT/type-challenges/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges/.tsz-compile/questions"
 fi
 
 if should_check_project "type-challenges-solutions-project"; then
   ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
   write_type_challenges_solutions_config
-  check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json"
+  check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
 fi
 }
 
@@ -262,4 +468,7 @@ esac
 
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "Project compile failures: $FAILURES"
+  if [[ "$ALLOW_FAILURES" != "1" ]]; then
+    exit 1
+  fi
 fi
